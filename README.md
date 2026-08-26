@@ -3,7 +3,7 @@
 SlimGuard 是一个 Python 编写的企业微信“微信客服”减脂助手。
 
 当前版本支持单轮 AI 回复：普通微信用户发送文字或图片后，SlimGuard
-会调用 OpenAI Responses API 进行减脂相关的识别和点评。图片可以是体重秤、食物或
+会调用智谱 GLM API 进行减脂相关的识别和点评。图片可以是体重秤、食物或
 运动截图。这一版不传历史消息，不使用 memory、工具调用或复杂 Agent 框架。
 
 通道已经包含企业微信会话状态管理：新会话会从“未处理”自动认领为“智能助手
@@ -41,25 +41,28 @@ WECOM_OPEN_KF_ID=客服账号ID
 WECOM_CALLBACK_TOKEN=回调Token
 WECOM_CALLBACK_AES_KEY=EncodingAESKey
 
-# 项目目前使用这个变量名，不是 OPENAI_API_KEY
-OPENAI_KEY=OpenAI API Key
+ZHIPU_API_KEY=智谱 API Key
 ```
 
-OpenAI 可选配置：
+智谱可选配置：
 
 ```dotenv
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_HTTP_TIMEOUT_SECONDS=45
-OPENAI_MAX_OUTPUT_TOKENS=500
+ZHIPU_TEXT_MODEL=glm-5.2
+ZHIPU_VISION_MODEL=glm-5v-turbo
+ZHIPU_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+ZHIPU_HTTP_TIMEOUT_SECONDS=45
+ZHIPU_MAX_OUTPUT_TOKENS=1024
 AGENT_REPLY_MAX_CHARS=1500
 
 # 模型或图片下载失败时发给用户的降级提示
 AGENT_FALLBACK_REPLY_TEXT=抱歉，我刚才没有成功分析这条记录，请稍后再发一次。
 ```
 
-如果服务器无法直连 `api.openai.com`，需要在服务器网络层解决，或将
-`OPENAI_BASE_URL` 设为你信任的 Responses API 兼容网关。不要把 Key 提交到 Git。
+文字消息由 `glm-5.2` 处理；图片消息由智谱 5 系列视觉模型
+`glm-5v-turbo` 处理。两者默认都关闭深度思考，以缩短微信回复时间。不要把 Key 提交到 Git。
+模型能力和参数以智谱官方的
+[`GLM-5.2`](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.2) 和
+[`GLM-5V-Turbo`](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5v-turbo) 文档为准。
 
 会话状态机可以使用以下可选配置，默认值通常无需修改：
 

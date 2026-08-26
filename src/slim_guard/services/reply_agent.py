@@ -42,7 +42,7 @@ class ReplyAgentProtocol(Protocol):
 
 
 class StaticReplyAgent:
-    """Safe startup fallback used when OPENAI_KEY is absent."""
+    """Safe startup fallback used when ZHIPU_API_KEY is absent."""
 
     def __init__(self, reply: str) -> None:
         self.reply = reply
@@ -51,23 +51,25 @@ class StaticReplyAgent:
         return self.reply
 
 
-class OpenAIReplyError(RuntimeError):
+class ZhipuReplyError(RuntimeError):
     pass
 
 
-class OpenAIReplyAgent:
+class ZhipuReplyAgent:
     def __init__(
         self,
         *,
         api_key: str,
-        model: str,
+        text_model: str,
+        vision_model: str,
         base_url: str,
         timeout_seconds: float,
         max_output_tokens: int,
         max_reply_chars: int,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self.model = model
+        self.text_model = text_model
+        self.vision_model = vision_model
         self.max_output_tokens = max_output_tokens
         self.max_reply_chars = max_reply_chars
         self._http = httpx.AsyncClient(
@@ -84,13 +86,13 @@ class OpenAIReplyAgent:
         await self._http.aclose()
 
     async def generate_reply(self, request: ReplyRequest) -> str:
-        content: list[dict[str, str]] = []
+        content: list[dict[str, Any]] = []
         context = f"客户昵称：{request.nickname}" if request.nickname else "客户昵称：未知"
         if request.text:
             context = f"{context}\n用户本次消息：{request.text}"
         elif request.image_bytes is not None:
             context = f"{context}\n用户本次发来一张图片，请识别并按照你的任务回复。"
-        content.append({"type": "input_text", "text": context})
+        content.append({"type": "text", "text": context})
         if request.image_bytes is not None:
             mime_type = _supported_image_mime_type(
                 request.image_bytes,
@@ -99,58 +101,50 @@ class OpenAIReplyAgent:
             encoded = base64.b64encode(request.image_bytes).decode("ascii")
             content.append(
                 {
-                    "type": "input_image",
-                    "image_url": f"data:{mime_type};base64,{encoded}",
-                    "detail": "high",
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
                 }
             )
         payload: dict[str, Any] = {
-            "model": self.model,
-            "instructions": SLIM_GUARD_INSTRUCTIONS,
-            "input": [{"role": "user", "content": content}],
-            "max_output_tokens": self.max_output_tokens,
-            "store": False,
-            "safety_identifier": hashlib.sha256(request.user_id.encode()).hexdigest(),
+            "model": (self.vision_model if request.image_bytes is not None else self.text_model),
+            "messages": [
+                {"role": "system", "content": SLIM_GUARD_INSTRUCTIONS},
+                {"role": "user", "content": content},
+            ],
+            "thinking": {"type": "disabled"},
+            "do_sample": False,
+            "max_tokens": self.max_output_tokens,
+            "user_id": hashlib.sha256(request.user_id.encode()).hexdigest(),
         }
         try:
-            response = await self._http.post("/responses", json=payload)
+            response = await self._http.post("/chat/completions", json=payload)
         except httpx.TimeoutException:
-            raise OpenAIReplyError("OpenAI request timed out") from None
+            raise ZhipuReplyError("Zhipu request timed out") from None
         except httpx.TransportError:
-            raise OpenAIReplyError("OpenAI network request failed") from None
+            raise ZhipuReplyError("Zhipu network request failed") from None
         if response.is_error:
-            raise OpenAIReplyError(f"OpenAI returned HTTP status {response.status_code}")
+            raise ZhipuReplyError(f"Zhipu returned HTTP status {response.status_code}")
         try:
             body = response.json()
         except ValueError:
-            raise OpenAIReplyError("OpenAI response was not JSON") from None
+            raise ZhipuReplyError("Zhipu response was not JSON") from None
         output_text = _extract_output_text(body)
         if not output_text:
-            raise OpenAIReplyError("OpenAI response did not contain output text")
+            raise ZhipuReplyError("Zhipu response did not contain output text")
         return output_text[: self.max_reply_chars]
 
 
 def _extract_output_text(body: Any) -> str:
     if not isinstance(body, dict):
         return ""
-    direct = body.get("output_text")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-    texts: list[str] = []
-    output = body.get("output")
-    if not isinstance(output, list):
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
         return ""
-    for item in output:
-        if not isinstance(item, dict) or not isinstance(item.get("content"), list):
-            continue
-        for part in item["content"]:
-            if (
-                isinstance(part, dict)
-                and part.get("type") == "output_text"
-                and isinstance(part.get("text"), str)
-            ):
-                texts.append(part["text"])
-    return "\n".join(texts).strip()
+    first = choices[0]
+    if not isinstance(first, dict) or not isinstance(first.get("message"), dict):
+        return ""
+    content = first["message"].get("content")
+    return content.strip() if isinstance(content, str) else ""
 
 
 def _supported_image_mime_type(image: bytes, declared: str | None) -> str:
@@ -165,4 +159,4 @@ def _supported_image_mime_type(image: bytes, declared: str | None) -> str:
         return "image/gif"
     if len(image) >= 12 and image.startswith(b"RIFF") and image[8:12] == b"WEBP":
         return "image/webp"
-    raise OpenAIReplyError("Unsupported image format")
+    raise ZhipuReplyError("Unsupported image format")

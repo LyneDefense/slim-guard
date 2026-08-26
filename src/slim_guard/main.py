@@ -17,9 +17,9 @@ from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
 from slim_guard.services.reply_agent import (
-    OpenAIReplyAgent,
     ReplyAgentProtocol,
     StaticReplyAgent,
+    ZhipuReplyAgent,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or Settings()
     owned_client: WeComClient | None = None
-    owned_reply_agent: OpenAIReplyAgent | None = None
+    owned_reply_agent: ZhipuReplyAgent | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -55,18 +55,19 @@ def create_app(
             active_client = owned_client
 
         active_reply_agent = reply_agent
-        if active_reply_agent is None and app_settings.openai_is_configured:
-            owned_reply_agent = OpenAIReplyAgent(
-                api_key=app_settings.openai_key,
-                model=app_settings.openai_model,
-                base_url=app_settings.openai_base_url,
-                timeout_seconds=app_settings.openai_http_timeout_seconds,
-                max_output_tokens=app_settings.openai_max_output_tokens,
+        if active_reply_agent is None and app_settings.zhipu_is_configured:
+            owned_reply_agent = ZhipuReplyAgent(
+                api_key=app_settings.zhipu_api_key,
+                text_model=app_settings.zhipu_text_model,
+                vision_model=app_settings.zhipu_vision_model,
+                base_url=app_settings.zhipu_base_url,
+                timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+                max_output_tokens=app_settings.zhipu_max_output_tokens,
                 max_reply_chars=app_settings.agent_reply_max_chars,
             )
             active_reply_agent = owned_reply_agent
         if active_reply_agent is None:
-            logger.warning("openai_not_configured_using_fallback_reply")
+            logger.warning("zhipu_not_configured_using_fallback_reply")
             active_reply_agent = StaticReplyAgent(app_settings.agent_fallback_reply_text)
 
         crypto: WeComCallbackCrypto | None = None

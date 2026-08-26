@@ -1155,11 +1155,11 @@ Docker Compose 启动：
 - SQLite 持久化 cursor、入站 `msgid` 和出站状态；
 - URL 验证和回调解密；
 - `sync_msg` 增量同步；
-- `send_msg` 发送 OpenAI 单轮 Agent 生成的减脂回复；
+- `send_msg` 发送智谱 GLM 单轮 Agent 生成的减脂回复；
 - 新会话自动执行 `0 → 1`，人工会话超时自动执行 `3 → 4` 并发送事件提示；
 - 预留 SlimGuard 内部 `pending_review` 队列，不使用企业微信状态 `3` 做常规人工审核；
 - 创建内部 UUID 用户和渠道身份映射，并通过 `kf/customer/batchget` 同步客户资料；
-- 文字直接调用 Responses API，图片通过 `media/get` 下载后作为视觉输入；
+- 文字调用 `glm-5.2`，图片通过 `media/get` 下载后交给 `glm-5v-turbo`；
 - 暂不做 memory、结构化业务记录、Redis 或提醒；
 - 按独立的 [Phase 1 实现文档](./PHASE1_PYTHON_CHANNEL_SPIKE.md) 真机验收。
 

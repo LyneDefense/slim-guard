@@ -38,11 +38,12 @@ class Settings(BaseSettings):
     callback_body_limit_bytes: int = Field(default=1_048_576, ge=1024)
     wecom_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     wecom_media_max_bytes: int = Field(default=10_485_760, ge=1024, le=20_971_520)
-    openai_key: str = ""
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4.1-mini"
-    openai_http_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
-    openai_max_output_tokens: int = Field(default=500, ge=64, le=4096)
+    zhipu_api_key: str = ""
+    zhipu_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    zhipu_text_model: str = "glm-5.2"
+    zhipu_vision_model: str = "glm-5v-turbo"
+    zhipu_http_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
+    zhipu_max_output_tokens: int = Field(default=1024, ge=64, le=32_768)
     agent_reply_max_chars: int = Field(default=1500, ge=100, le=4000)
 
     @cached_property
@@ -64,5 +65,5 @@ class Settings(BaseSettings):
         return self.wecom_callback_is_configured and self.wecom_api_is_configured
 
     @cached_property
-    def openai_is_configured(self) -> bool:
-        return bool(self.openai_key)
+    def zhipu_is_configured(self) -> bool:
+        return bool(self.zhipu_api_key)

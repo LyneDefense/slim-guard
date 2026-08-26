@@ -2,7 +2,7 @@
 
 > 日期：2026-08-26  
 > 状态：通道验证已完成，已升级为最小单轮 AI 助手
-> 目标：普通微信用户发送文字或图片后，SlimGuard 调用 OpenAI 生成减脂回复
+> 目标：普通微信用户发送文字或图片后，SlimGuard 调用智谱 GLM 生成减脂回复
 
 ## 1. 唯一验收链路
 
@@ -13,7 +13,7 @@
   → 调用 kf/sync_msg 拉取实际消息
   → 以 msgid 去重并保存同步 cursor
   → 文字直接交给 Agent；图片先通过 media/get 下载
-  → 调用 OpenAI Responses API（单轮、无 memory）
+  → 文字调用 glm-5.2，图片调用 glm-5v-turbo（单轮、无 memory）
   → 调用 kf/send_msg 发送模型回复
   → 用户在微信客服会话中看到回复
 ```
@@ -22,7 +22,7 @@ Agent 只看当前一条消息，不读取历史对话：
 
 ```python
 async def generate_reply(request: ReplyRequest) -> str:
-    return await openai_responses(request)
+    return await zhipu_chat_completion(request)
 ```
 
 回复生成与微信接入层通过 `ReplyAgentProtocol` 隔离。
@@ -41,7 +41,7 @@ async def generate_reply(request: ReplyRequest) -> str:
 - 按 `msgid` 防止重复回复；
 - 识别来自微信客户的入站消息；
 - `kf/send_msg` 发送 Agent 回复；
-- 下载微信图片并作为 OpenAI 视觉输入；
+- 下载微信图片并作为智谱视觉模型输入；
 - 使用客户昵称作为当次请求上下文；
 - 模型或媒体接口失败时发送降级提示；
 - 结构化日志和最小自动化测试；
