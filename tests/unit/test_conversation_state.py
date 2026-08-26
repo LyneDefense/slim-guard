@@ -8,7 +8,7 @@ from slim_guard.integrations.wecom_kf.schemas import SyncMessage, SyncPage
 from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import FixedReplySyncService
-from tests.fakes import FakeWeComClient
+from tests.fakes import FakeReplyAgent, FakeWeComClient
 
 
 def _build_service(
@@ -23,7 +23,8 @@ def _build_service(
         repository=repository,
         channel_id="default",
         configured_open_kfid="wk-test",
-        fixed_reply_text="fixed",
+        reply_agent=FakeReplyAgent("agent reply"),
+        fallback_reply_text="fallback",
         state_machine=state_machine,
         reply_delivery_mode=reply_delivery_mode,
     )
@@ -119,6 +120,6 @@ async def test_internal_review_keeps_wecom_in_agent_state_until_approved(tmp_pat
         approved = await repository.approve_review(pending[0].idempotency_key)
         assert approved is not None
         await service.dispatch_approved(approved)
-        assert [item.content for item in client.sent] == ["fixed"]
+        assert [item.content for item in client.sent] == ["agent reply"]
     finally:
         await database.close()

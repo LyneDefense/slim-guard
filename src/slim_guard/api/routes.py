@@ -13,7 +13,7 @@ from slim_guard.integrations.wecom_kf.errors import (
     WeComCryptoError,
     WeComMalformedPayloadError,
 )
-from slim_guard.services.fixed_reply import FixedReplySyncService
+from slim_guard.services.fixed_reply import AgentReplySyncService
 
 router = APIRouter()
 
@@ -104,7 +104,7 @@ async def receive_wecom_callback(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from exc
 
     if event is not None:
-        service = cast(FixedReplySyncService | None, request.app.state.sync_service)
+        service = cast(AgentReplySyncService | None, request.app.state.sync_service)
         if service is not None:
             background_tasks.add_task(service.handle_callback, event.token, event.open_kfid)
     return PlainTextResponse("success")

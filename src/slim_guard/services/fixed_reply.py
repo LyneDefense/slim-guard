@@ -4,17 +4,19 @@ import asyncio
 import hashlib
 import logging
 from collections import defaultdict
+from dataclasses import replace
 
 from slim_guard.db.repositories import ConversationRef, MessageRepository, OutboundPlan
 from slim_guard.integrations.wecom_kf.client import WeComClientProtocol
 from slim_guard.integrations.wecom_kf.errors import WeComAPIError, WeComTransportError
 from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
 from slim_guard.services.conversation_state import ConversationStateMachine
+from slim_guard.services.reply_agent import ReplyAgentProtocol, ReplyRequest
 
 logger = logging.getLogger(__name__)
 
 
-class FixedReplySyncService:
+class AgentReplySyncService:
     def __init__(
         self,
         *,
@@ -22,19 +24,25 @@ class FixedReplySyncService:
         repository: MessageRepository,
         channel_id: str,
         configured_open_kfid: str,
-        fixed_reply_text: str,
+        reply_agent: ReplyAgentProtocol,
+        fallback_reply_text: str,
         state_machine: ConversationStateMachine,
         reply_delivery_mode: str,
+        profile_refresh_seconds: int = 86_400,
+        media_max_bytes: int = 10_485_760,
     ) -> None:
         self.client = client
         self.repository = repository
         self.channel_id = channel_id
         self.configured_open_kfid = configured_open_kfid
-        self.fixed_reply_text = fixed_reply_text
+        self.reply_agent = reply_agent
+        self.fallback_reply_text = fallback_reply_text
         self.state_machine = state_machine
         self.reply_delivery_mode = reply_delivery_mode
+        self.profile_refresh_seconds = profile_refresh_seconds
+        self.media_max_bytes = media_max_bytes
         self._locks: defaultdict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._allowed_message_types = frozenset({"text"})
+        self._allowed_message_types = frozenset({"text", "image"})
 
     async def handle_callback(self, callback_token: str, open_kfid: str) -> None:
         try:
@@ -71,10 +79,12 @@ class FixedReplySyncService:
                     open_kfid=open_kfid,
                     messages=page.msg_list,
                     next_cursor=page.next_cursor,
-                    fixed_reply_text=self.fixed_reply_text,
+                    fallback_reply_text=self.fallback_reply_text,
                     allowed_message_types=self._allowed_message_types,
                     reply_delivery_mode=self.reply_delivery_mode,
+                    profile_refresh_seconds=self.profile_refresh_seconds,
                 )
+                await self._sync_customer_profiles(stored_page.profile_external_userids)
                 planned_users = {plan.external_userid for plan in stored_page.plans}
                 for conversation in stored_page.customer_conversations:
                     if conversation.external_userid not in planned_users:
@@ -103,6 +113,57 @@ class FixedReplySyncService:
         """Future review UIs can approve a draft and dispatch it through this method."""
 
         await self._dispatch(plan)
+
+    async def _sync_customer_profiles(self, external_userids: list[str]) -> None:
+        if not external_userids:
+            return
+        try:
+            batch = await self.client.get_customer_profiles(external_userids=external_userids)
+        except (WeComAPIError, WeComTransportError) as exc:
+            try:
+                await self.repository.mark_user_profile_sync_failed(
+                    channel_id=self.channel_id,
+                    external_userids=external_userids,
+                )
+            except Exception:
+                logger.exception(
+                    "slim_guard_customer_profile_failure_state_save_failed",
+                    extra={"customer_count": len(external_userids)},
+                )
+            logger.warning(
+                "wecom_customer_profile_sync_failed",
+                extra={
+                    "customer_count": len(external_userids),
+                    "result_code": getattr(exc, "errcode", None),
+                },
+            )
+            return
+        except Exception:
+            logger.exception(
+                "wecom_customer_profile_sync_unexpected_failure",
+                extra={"customer_count": len(external_userids)},
+            )
+            return
+        try:
+            await self.repository.update_user_profiles(
+                channel_id=self.channel_id,
+                requested_external_userids=external_userids,
+                profiles=batch.customer_list,
+                invalid_external_userids=batch.invalid_external_userid,
+            )
+        except Exception:
+            logger.exception(
+                "slim_guard_customer_profile_save_failed",
+                extra={"customer_count": len(external_userids)},
+            )
+            return
+        logger.info(
+            "wecom_customer_profiles_synced",
+            extra={
+                "customer_count": len(batch.customer_list),
+                "invalid_customer_count": len(batch.invalid_external_userid),
+            },
+        )
 
     async def _claim_conversation_without_reply(self, conversation: ConversationRef) -> None:
         try:
@@ -183,13 +244,54 @@ class FixedReplySyncService:
             return
 
         if plan.requires_review:
+            plan = await self._prepare_reply(plan, user_ref=user_ref)
             logger.info(
                 "slim_guard_reply_pending_internal_review",
                 extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
             )
             return
 
+        plan = await self._prepare_reply(plan, user_ref=user_ref)
         await self._send(plan, user_ref=user_ref)
+
+    async def _prepare_reply(self, plan: OutboundPlan, *, user_ref: str) -> OutboundPlan:
+        if plan.input_text is None and plan.image_media_id is None:
+            return plan
+        try:
+            user = await self.repository.get_user_context(
+                channel_id=plan.channel_id,
+                external_userid=plan.external_userid,
+            )
+            if user is None:
+                raise RuntimeError("SlimGuard user mapping is missing")
+            image_bytes: bytes | None = None
+            image_mime_type: str | None = None
+            if plan.image_media_id is not None:
+                media = await self.client.download_media(
+                    media_id=plan.image_media_id,
+                    max_bytes=self.media_max_bytes,
+                )
+                image_bytes = media.content
+                image_mime_type = media.content_type
+            content = await self.reply_agent.generate_reply(
+                ReplyRequest(
+                    user_id=user.id,
+                    nickname=user.nickname,
+                    text=plan.input_text,
+                    image_bytes=image_bytes,
+                    image_mime_type=image_mime_type,
+                )
+            )
+            if not content.strip():
+                raise RuntimeError("Reply agent returned empty content")
+        except Exception:
+            content = self.fallback_reply_text
+            logger.exception(
+                "slim_guard_agent_reply_failed",
+                extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
+            )
+        await self.repository.update_outbound_content(plan.idempotency_key, content)
+        return replace(plan, content=content, input_text=None, image_media_id=None)
 
     async def _send(self, plan: OutboundPlan, *, user_ref: str) -> None:
         if not await self.repository.claim(plan):
@@ -228,6 +330,10 @@ class FixedReplySyncService:
         else:
             await self.repository.complete(plan.idempotency_key, status="accepted")
             logger.info(
-                "wecom_fixed_reply_accepted",
+                "wecom_agent_reply_accepted",
                 extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
             )
+
+
+# Temporary compatibility alias for callers that still import the Phase 1 name.
+FixedReplySyncService = AgentReplySyncService

@@ -17,3 +17,10 @@ def test_callback_can_be_configured_before_secret_and_open_kfid(
     assert settings.wecom_callback_is_configured is True
     assert settings.wecom_api_is_configured is False
     assert settings.wecom_is_configured is False
+
+
+def test_project_specific_openai_key_is_supported() -> None:
+    settings = Settings(openai_key="test-openai-key")
+
+    assert settings.openai_is_configured is True
+    assert settings.openai_model == "gpt-4.1-mini"

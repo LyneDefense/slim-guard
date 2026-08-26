@@ -23,6 +23,6 @@ def test_settings(tmp_path: Path, encoding_aes_key: str) -> Settings:
         wecom_open_kf_id="wk-test",
         wecom_callback_token="callback-token",
         wecom_callback_aes_key=encoding_aes_key,
-        fixed_reply_text="收到，我已经连接成功。",
+        agent_fallback_reply_text="暂时无法分析。",
         log_level="WARNING",
     )

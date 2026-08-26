@@ -7,7 +7,7 @@ from slim_guard.config import Settings
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.integrations.wecom_kf.schemas import SyncMessage, SyncPage
 from slim_guard.main import create_app
-from tests.fakes import FakeWeComClient
+from tests.fakes import FakeReplyAgent, FakeWeComClient
 
 
 def _encrypted_callback(
@@ -30,7 +30,7 @@ def _encrypted_callback(
     return body, signature
 
 
-async def test_callback_to_fixed_reply(test_settings: Settings) -> None:
+async def test_callback_to_agent_reply(test_settings: Settings) -> None:
     fake = FakeWeComClient(
         {
             None: SyncPage(
@@ -50,7 +50,8 @@ async def test_callback_to_fixed_reply(test_settings: Settings) -> None:
             "done": SyncPage(next_cursor="done", has_more=False, msg_list=[]),
         }
     )
-    app: FastAPI = create_app(test_settings, client=fake)
+    reply_agent = FakeReplyAgent("收到，这是 AI 回复。")
+    app: FastAPI = create_app(test_settings, client=fake, reply_agent=reply_agent)
     crypto = WeComCallbackCrypto(
         test_settings.wecom_callback_token,
         test_settings.wecom_callback_aes_key,
@@ -85,7 +86,8 @@ async def test_callback_to_fixed_reply(test_settings: Settings) -> None:
             assert response.text == "success"
             assert duplicate.status_code == 200
             assert len(fake.sent) == 1
-            assert fake.sent[0].content == "收到，我已经连接成功。"
+            assert fake.sent[0].content == "收到，这是 AI 回复。"
+            assert [item.text for item in reply_agent.requests] == ["hello"]
 
 
 async def test_callback_url_verification(test_settings: Settings) -> None:

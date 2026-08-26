@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
 
 from slim_guard.integrations.wecom_kf.errors import WeComAPIError, WeComTransportError
 from slim_guard.integrations.wecom_kf.schemas import (
+    CustomerProfile,
+    CustomerProfileBatch,
     KfAccount,
     ServiceStateSnapshot,
     ServiceStateTransition,
@@ -16,6 +19,13 @@ from slim_guard.integrations.wecom_kf.schemas import (
 from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
 
 TOKEN_INVALID_ERROR_CODES = {40014, 42001, 42007, 42009}
+CUSTOMER_PROFILE_BATCH_SIZE = 100
+
+
+@dataclass(frozen=True, slots=True)
+class WeComMedia:
+    content: bytes
+    content_type: str | None
 
 
 class WeComClientProtocol(Protocol):
@@ -49,6 +59,12 @@ class WeComClientProtocol(Protocol):
     ) -> ServiceStateTransition: ...
 
     async def send_event_text(self, *, code: str, content: str, msgid: str) -> None: ...
+
+    async def get_customer_profiles(
+        self, *, external_userids: list[str]
+    ) -> CustomerProfileBatch: ...
+
+    async def download_media(self, *, media_id: str, max_bytes: int) -> WeComMedia: ...
 
 
 class WeComClient:
@@ -147,6 +163,47 @@ class WeComClient:
             },
         )
 
+    async def get_customer_profiles(self, *, external_userids: list[str]) -> CustomerProfileBatch:
+        customers: list[CustomerProfile] = []
+        invalid_external_userids: list[str] = []
+        unique_ids = list(dict.fromkeys(external_userids))
+        for start in range(0, len(unique_ids), CUSTOMER_PROFILE_BATCH_SIZE):
+            chunk = unique_ids[start : start + CUSTOMER_PROFILE_BATCH_SIZE]
+            payload = await self._authorized_request(
+                "POST",
+                "/cgi-bin/kf/customer/batchget",
+                json={
+                    "external_userid_list": chunk,
+                    "need_enter_session_context": 0,
+                },
+            )
+            page = CustomerProfileBatch.model_validate(payload)
+            customers.extend(page.customer_list)
+            invalid_external_userids.extend(page.invalid_external_userid)
+        return CustomerProfileBatch(
+            customer_list=customers,
+            invalid_external_userid=invalid_external_userids,
+        )
+
+    async def download_media(self, *, media_id: str, max_bytes: int) -> WeComMedia:
+        token = await self._get_access_token()
+        response = await self._request_media(media_id=media_id, access_token=token)
+        error_payload = self._media_error_payload(response)
+        if error_payload and int(error_payload.get("errcode", 0)) in TOKEN_INVALID_ERROR_CODES:
+            await self._invalidate_access_token(token)
+            token = await self._get_access_token()
+            response = await self._request_media(media_id=media_id, access_token=token)
+            error_payload = self._media_error_payload(response)
+        if error_payload is not None:
+            self._raise_for_api_error(error_payload)
+            raise WeComAPIError(-1, "media API returned JSON without an error code")
+        if len(response.content) > max_bytes:
+            raise WeComTransportError("WeCom media exceeded configured size limit")
+        return WeComMedia(
+            content=response.content,
+            content_type=response.headers.get("content-type"),
+        )
+
     async def list_accounts(self) -> list[KfAccount]:
         accounts: list[KfAccount] = []
         offset = 0
@@ -234,6 +291,33 @@ class WeComClient:
         if not isinstance(payload, dict):
             raise WeComAPIError(-1, "API response is not a JSON object")
         return payload
+
+    async def _request_media(self, *, media_id: str, access_token: str) -> httpx.Response:
+        try:
+            response = await self._http.get(
+                f"{self.base_url}/cgi-bin/media/get",
+                params={"access_token": access_token, "media_id": media_id},
+            )
+        except httpx.TimeoutException:
+            raise WeComTransportError("WeCom media request timed out") from None
+        except httpx.TransportError:
+            raise WeComTransportError("WeCom media network request failed") from None
+        if response.is_error:
+            raise WeComTransportError(
+                f"WeCom media returned HTTP status {response.status_code}"
+            ) from None
+        return response
+
+    @staticmethod
+    def _media_error_payload(response: httpx.Response) -> dict[str, Any] | None:
+        content_type = response.headers.get("content-type", "").lower()
+        if "json" not in content_type and not response.content.lstrip().startswith(b"{"):
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        return payload if isinstance(payload, dict) else None
 
     @staticmethod
     def _raise_for_api_error(payload: dict[str, Any]) -> None:

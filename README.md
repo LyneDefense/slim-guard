@@ -1,14 +1,10 @@
 # SlimGuard
 
-SlimGuard 第一阶段是一个 Python 编写的企业微信“微信客服”通道验证服务。
+SlimGuard 是一个 Python 编写的企业微信“微信客服”减脂助手。
 
-当前能力只有一条：普通微信用户向微信客服发送文本后，服务固定回复：
-
-```text
-收到，我已经连接成功。
-```
-
-当前版本不调用大模型，也不解析体重、图片、饮食或运动。
+当前版本支持单轮 AI 回复：普通微信用户发送文字或图片后，SlimGuard
+会调用 OpenAI Responses API 进行减脂相关的识别和点评。图片可以是体重秤、食物或
+运动截图。这一版不传历史消息，不使用 memory、工具调用或复杂 Agent 框架。
 
 通道已经包含企业微信会话状态管理：新会话会从“未处理”自动认领为“智能助手
 接待”，避免误入人工接待后 API 无法回复。若历史或误操作导致会话处于人工接待状态，
@@ -44,7 +40,26 @@ WECOM_KF_SECRET=微信客服Secret
 WECOM_OPEN_KF_ID=客服账号ID
 WECOM_CALLBACK_TOKEN=回调Token
 WECOM_CALLBACK_AES_KEY=EncodingAESKey
+
+# 项目目前使用这个变量名，不是 OPENAI_API_KEY
+OPENAI_KEY=OpenAI API Key
 ```
+
+OpenAI 可选配置：
+
+```dotenv
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_HTTP_TIMEOUT_SECONDS=45
+OPENAI_MAX_OUTPUT_TOKENS=500
+AGENT_REPLY_MAX_CHARS=1500
+
+# 模型或图片下载失败时发给用户的降级提示
+AGENT_FALLBACK_REPLY_TEXT=抱歉，我刚才没有成功分析这条记录，请稍后再发一次。
+```
+
+如果服务器无法直连 `api.openai.com`，需要在服务器网络层解决，或将
+`OPENAI_BASE_URL` 设为你信任的 Responses API 兼容网关。不要把 Key 提交到 Git。
 
 会话状态机可以使用以下可选配置，默认值通常无需修改：
 
@@ -54,6 +69,12 @@ WECOM_HUMAN_IDLE_TIMEOUT_SECONDS=600
 
 # 后台检查超时人工会话的间隔
 WECOM_SESSION_WATCHDOG_INTERVAL_SECONDS=30
+
+# 微信昵称、头像等客户资料的刷新间隔，默认24小时
+WECOM_CUSTOMER_PROFILE_REFRESH_SECONDS=86400
+
+# 允许下载的微信图片大小上限，默认10 MiB
+WECOM_MEDIA_MAX_BYTES=10485760
 
 # 自动结束人工会话后，通过事件响应接口发送给客户的提示
 WECOM_HUMAN_TIMEOUT_MESSAGE=人工服务暂时没有响应，已结束人工接待。请再发送一次刚才的内容，SlimGuard 减脂助手会继续为你服务。
@@ -93,18 +114,40 @@ https://你的公网域名/callbacks/wecom/kf
 data/slim_guard.sqlite3
 ```
 
-只保存同步 cursor、消息 ID、消息类型、去敏所需身份字段、会话状态和出站状态，不保存
-入站文本正文。新增的 `wecom_conversations` 表会在启动时自动创建，已有 SQLite 文件无需
-删除。删除 SQLite 文件会丢失去重和会话状态，可能导致历史消息被重新处理，真机环境不要
-随意删除。
+只保存同步 cursor、消息 ID、消息类型、用户身份与客户资料、会话状态和出站回复，不保存
+入站文本正文或下载的图片。图片仅在当次识别的内存中使用。新增表会在启动时自动创建，
+已有 SQLite 文件无需删除。删除 SQLite 文件会
+丢失用户、去重和会话状态，真机环境不要随意删除。
+
+## 用户与客户资料
+
+首次收到一个新的 `external_userid` 时，SlimGuard 会：
+
+1. 创建一个内部 UUID 用户，写入 `users`；
+2. 将 `(channel_id, external_userid)` 与内部用户关联，写入 `channel_identities`；
+3. 调用微信客服客户基础信息接口，保存昵称、头像、性别和可用的 `unionid`；
+4. 后续同一身份的消息继续更新同一个用户的 `last_seen_at`。
+
+`external_userid` 不会写入日志或 CLI 输出。服务器上可以用下面的命令查看用户，命令只显示
+哈希后的 `external_ref`：
+
+```bash
+docker compose exec app python -m slim_guard.tools.list_users
+```
+
+没有绑定符合要求的公众号或小程序微信开发者帐号时，`unionid` 为空属于正常情况，不影响
+SlimGuard 使用 `external_userid` 区分客户。客户资料接口暂时失败也不会阻止 Agent 回复，
+后续消息会再次尝试同步。
 
 正常运行时可关注以下日志：
 
 ```text
 wecom_session_claimed_by_agent
-wecom_fixed_reply_accepted
+wecom_agent_reply_accepted
+slim_guard_agent_reply_failed
 wecom_reply_deferred_by_service_state
 wecom_human_session_ended_after_timeout
+wecom_customer_profiles_synced
 slim_guard_reply_pending_internal_review
 ```
 

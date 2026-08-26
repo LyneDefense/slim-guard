@@ -843,6 +843,11 @@ planned
 | `outbox_events` | 事务 Outbox |
 | `audit_logs` | 管理操作审计 |
 
+Phase 1 已实现 `users` 与 `channel_identities`：一个企业微信 `external_userid` 在同一渠道下
+唯一映射到一个内部 UUID 用户；昵称、头像和性别作为可刷新客户资料保存，`unionid` 可用时
+保存在渠道身份上，为未来公众号、小程序和多客服入口的身份合并预留依据。昵称和头像不能
+作为用户唯一键。
+
 ### 20.2 关键唯一约束
 
 ```text
@@ -1150,10 +1155,12 @@ Docker Compose 启动：
 - SQLite 持久化 cursor、入站 `msgid` 和出站状态；
 - URL 验证和回调解密；
 - `sync_msg` 增量同步；
-- `send_msg` 固定回复“收到，我已经连接成功。”；
+- `send_msg` 发送 OpenAI 单轮 Agent 生成的减脂回复；
 - 新会话自动执行 `0 → 1`，人工会话超时自动执行 `3 → 4` 并发送事件提示；
 - 预留 SlimGuard 内部 `pending_review` 队列，不使用企业微信状态 `3` 做常规人工审核；
-- 不接模型、业务记录、图片识别、Redis 或提醒；
+- 创建内部 UUID 用户和渠道身份映射，并通过 `kf/customer/batchget` 同步客户资料；
+- 文字直接调用 Responses API，图片通过 `media/get` 下载后作为视觉输入；
+- 暂不做 memory、结构化业务记录、Redis 或提醒；
 - 按独立的 [Phase 1 实现文档](./PHASE1_PYTHON_CHANNEL_SPIKE.md) 真机验收。
 
 ### Phase 2：可靠性基础设施

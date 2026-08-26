@@ -25,10 +25,11 @@ class Settings(BaseSettings):
     wecom_open_kf_id: str = ""
     wecom_callback_token: str = ""
     wecom_callback_aes_key: str = ""
-    fixed_reply_text: str = "收到，我已经连接成功。"
+    agent_fallback_reply_text: str = "抱歉，我刚才没有成功分析这条记录，请稍后再发一次。"
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
     wecom_human_idle_timeout_seconds: int = Field(default=600, ge=60, le=86_400)
     wecom_session_watchdog_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    wecom_customer_profile_refresh_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
     wecom_human_timeout_message: str = (
         "人工服务暂时没有响应，已结束人工接待。请再发送一次刚才的内容，"
         "SlimGuard 减脂助手会继续为你服务。"
@@ -36,6 +37,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     callback_body_limit_bytes: int = Field(default=1_048_576, ge=1024)
     wecom_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    wecom_media_max_bytes: int = Field(default=10_485_760, ge=1024, le=20_971_520)
+    openai_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4.1-mini"
+    openai_http_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
+    openai_max_output_tokens: int = Field(default=500, ge=64, le=4096)
+    agent_reply_max_chars: int = Field(default=1500, ge=100, le=4000)
 
     @cached_property
     def wecom_callback_is_configured(self) -> bool:
@@ -54,3 +62,7 @@ class Settings(BaseSettings):
     @cached_property
     def wecom_is_configured(self) -> bool:
         return self.wecom_callback_is_configured and self.wecom_api_is_configured
+
+    @cached_property
+    def openai_is_configured(self) -> bool:
+        return bool(self.openai_key)

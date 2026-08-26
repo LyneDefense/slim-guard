@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -14,23 +15,34 @@ from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProt
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
-from slim_guard.services.fixed_reply import FixedReplySyncService
+from slim_guard.services.fixed_reply import AgentReplySyncService
+from slim_guard.services.reply_agent import (
+    OpenAIReplyAgent,
+    ReplyAgentProtocol,
+    StaticReplyAgent,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(
     settings: Settings | None = None,
     *,
     client: WeComClientProtocol | None = None,
+    reply_agent: ReplyAgentProtocol | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
     owned_client: WeComClient | None = None
+    owned_reply_agent: OpenAIReplyAgent | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal owned_client
+        nonlocal owned_client, owned_reply_agent
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
+        repository = MessageRepository(database)
+        await repository.backfill_users_from_messages()
 
         active_client = client
         if active_client is None and app_settings.wecom_api_is_configured:
@@ -42,8 +54,23 @@ def create_app(
             )
             active_client = owned_client
 
+        active_reply_agent = reply_agent
+        if active_reply_agent is None and app_settings.openai_is_configured:
+            owned_reply_agent = OpenAIReplyAgent(
+                api_key=app_settings.openai_key,
+                model=app_settings.openai_model,
+                base_url=app_settings.openai_base_url,
+                timeout_seconds=app_settings.openai_http_timeout_seconds,
+                max_output_tokens=app_settings.openai_max_output_tokens,
+                max_reply_chars=app_settings.agent_reply_max_chars,
+            )
+            active_reply_agent = owned_reply_agent
+        if active_reply_agent is None:
+            logger.warning("openai_not_configured_using_fallback_reply")
+            active_reply_agent = StaticReplyAgent(app_settings.agent_fallback_reply_text)
+
         crypto: WeComCallbackCrypto | None = None
-        sync_service: FixedReplySyncService | None = None
+        sync_service: AgentReplySyncService | None = None
         watchdog_stop: asyncio.Event | None = None
         watchdog_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
@@ -53,7 +80,6 @@ def create_app(
                 app_settings.wecom_corp_id,
             )
         if app_settings.wecom_is_configured and active_client is not None:
-            repository = MessageRepository(database)
             state_machine = ConversationStateMachine(
                 client=active_client,
                 repository=repository,
@@ -61,14 +87,17 @@ def create_app(
                 watchdog_interval_seconds=(app_settings.wecom_session_watchdog_interval_seconds),
                 human_timeout_message=app_settings.wecom_human_timeout_message,
             )
-            sync_service = FixedReplySyncService(
+            sync_service = AgentReplySyncService(
                 client=active_client,
                 repository=repository,
                 channel_id="default",
                 configured_open_kfid=app_settings.wecom_open_kf_id,
-                fixed_reply_text=app_settings.fixed_reply_text,
+                reply_agent=active_reply_agent,
+                fallback_reply_text=app_settings.agent_fallback_reply_text,
                 state_machine=state_machine,
                 reply_delivery_mode=app_settings.reply_delivery_mode,
+                profile_refresh_seconds=(app_settings.wecom_customer_profile_refresh_seconds),
+                media_max_bytes=app_settings.wecom_media_max_bytes,
             )
             watchdog_stop = asyncio.Event()
             watchdog_task = asyncio.create_task(
@@ -89,6 +118,8 @@ def create_app(
                 await watchdog_task
             if owned_client is not None:
                 await owned_client.close()
+            if owned_reply_agent is not None:
+                await owned_reply_agent.close()
             await database.close()
 
     application = FastAPI(
