@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///./data/slim_guard.sqlite3
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-18083}:8000"
+    volumes:
+      - slim_guard_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)
+      interval: 20s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  slim_guard_data:
