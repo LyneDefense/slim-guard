@@ -178,6 +178,8 @@ created_at       DATETIME NOT NULL
   → 调用 sync_msg
   → 在一个事务中写入本页新消息、planned outbound 和 next_cursor
   → 提交事务
+  → 调用 service_state/get 获取平台权威会话状态
+  → 状态 0 时调用 service_state/trans 转为状态 1
   → 将 planned outbound 原子更新为 sending
   → 使用稳定 msgid 调用 send_msg 发送固定回复
   → 保存 accepted/failed/unknown 状态
@@ -199,6 +201,14 @@ created_at       DATETIME NOT NULL
 
 Phase 1 首先只开启文本消息。文本闭环验收后，可以把图片消息加入允许列表，但仍然只回复固定文本，不下载图片。
 
+所有客户消息（包括当前不回复的图片）都会触发会话状态检查。状态 `2`、`3`、`4` 不调用
+普通发送接口；状态 `3` 下客户消息超过超时阈值且没有人工回复时，watchdog 调用 API 将
+会话结束为状态 `4`，再通过事件响应接口发送提示。客户再次发信后平台恢复为状态 `0`，
+服务重新执行 `0 → 1`。
+
+内部人工审核不使用企业微信状态 `3`。`REPLY_DELIVERY_MODE=internal_review` 时出站草稿
+保存为 `pending_review`，批准后仍由 `send_msg` 投递，保持企业微信状态 `1`。
+
 ## 8. 配置
 
 ```dotenv
@@ -212,6 +222,9 @@ WECOM_OPEN_KF_ID=
 WECOM_CALLBACK_TOKEN=
 WECOM_CALLBACK_AES_KEY=
 FIXED_REPLY_TEXT=收到，我已经连接成功。
+REPLY_DELIVERY_MODE=automatic
+WECOM_HUMAN_IDLE_TIMEOUT_SECONDS=600
+WECOM_SESSION_WATCHDOG_INTERVAL_SECONDS=30
 LOG_LEVEL=INFO
 ```
 
@@ -253,6 +266,9 @@ Phase 1 保证“同一 `msgid` 因重复回调不会再次创建发送请求”
 - `has_more=1` 且空消息页不会中断；
 - 服务重启后不会回复已经处理过的 `msgid`；
 - 模拟 `send_msg` 成功时，集成测试能观察到固定回复请求。
+- 状态 `0` 会先切换为状态 `1`，状态 `3` 不会尝试普通 API 回复；
+- 人工超时会执行 `3 → 4` 并发送事件提示；
+- 内部审核草稿批准后仍在状态 `1` 通过 API 发出。
 
 ### 真机
 

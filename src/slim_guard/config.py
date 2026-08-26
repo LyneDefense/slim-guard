@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import cached_property
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,6 +26,13 @@ class Settings(BaseSettings):
     wecom_callback_token: str = ""
     wecom_callback_aes_key: str = ""
     fixed_reply_text: str = "收到，我已经连接成功。"
+    reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
+    wecom_human_idle_timeout_seconds: int = Field(default=600, ge=60, le=86_400)
+    wecom_session_watchdog_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    wecom_human_timeout_message: str = (
+        "人工服务暂时没有响应，已结束人工接待。请再发送一次刚才的内容，"
+        "SlimGuard 减脂助手会继续为你服务。"
+    )
     log_level: str = "INFO"
     callback_body_limit_bytes: int = Field(default=1_048_576, ge=1024)
     wecom_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)

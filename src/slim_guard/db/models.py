@@ -31,6 +31,35 @@ class WeComSyncState(Base):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WeComConversation(Base):
+    __tablename__ = "wecom_conversations"
+    __table_args__ = (Index("ix_wecom_conversation_service_state", "service_state"),)
+
+    channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    open_kfid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    external_userid: Mapped[str] = mapped_column(String(256), primary_key=True)
+    service_state: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    servicer_userid: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    last_customer_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_servicer_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_state_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_state_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    human_timeout_handled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
 class InboundMessage(Base):
     __tablename__ = "inbound_messages"
     __table_args__ = (

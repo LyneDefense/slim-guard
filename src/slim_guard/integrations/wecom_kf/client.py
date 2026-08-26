@@ -7,7 +7,13 @@ from typing import Any, Protocol
 import httpx
 
 from slim_guard.integrations.wecom_kf.errors import WeComAPIError, WeComTransportError
-from slim_guard.integrations.wecom_kf.schemas import KfAccount, SyncPage
+from slim_guard.integrations.wecom_kf.schemas import (
+    KfAccount,
+    ServiceStateSnapshot,
+    ServiceStateTransition,
+    SyncPage,
+)
+from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
 
 TOKEN_INVALID_ERROR_CODES = {40014, 42001, 42007, 42009}
 
@@ -29,6 +35,20 @@ class WeComClientProtocol(Protocol):
         content: str,
         msgid: str,
     ) -> None: ...
+
+    async def get_service_state(
+        self, *, external_userid: str, open_kfid: str
+    ) -> ServiceStateSnapshot: ...
+
+    async def transition_service_state(
+        self,
+        *,
+        external_userid: str,
+        open_kfid: str,
+        service_state: WeComServiceState,
+    ) -> ServiceStateTransition: ...
+
+    async def send_event_text(self, *, code: str, content: str, msgid: str) -> None: ...
 
 
 class WeComClient:
@@ -86,6 +106,46 @@ class WeComClient:
             "text": {"content": content},
         }
         await self._authorized_request("POST", "/cgi-bin/kf/send_msg", json=body)
+
+    async def get_service_state(
+        self, *, external_userid: str, open_kfid: str
+    ) -> ServiceStateSnapshot:
+        payload = await self._authorized_request(
+            "POST",
+            "/cgi-bin/kf/service_state/get",
+            json={"open_kfid": open_kfid, "external_userid": external_userid},
+        )
+        return ServiceStateSnapshot.model_validate(payload)
+
+    async def transition_service_state(
+        self,
+        *,
+        external_userid: str,
+        open_kfid: str,
+        service_state: WeComServiceState,
+    ) -> ServiceStateTransition:
+        payload = await self._authorized_request(
+            "POST",
+            "/cgi-bin/kf/service_state/trans",
+            json={
+                "open_kfid": open_kfid,
+                "external_userid": external_userid,
+                "service_state": int(service_state),
+            },
+        )
+        return ServiceStateTransition.model_validate(payload)
+
+    async def send_event_text(self, *, code: str, content: str, msgid: str) -> None:
+        await self._authorized_request(
+            "POST",
+            "/cgi-bin/kf/send_msg_on_event",
+            json={
+                "code": code,
+                "msgid": msgid,
+                "msgtype": "text",
+                "text": {"content": content},
+            },
+        )
 
     async def list_accounts(self) -> list[KfAccount]:
         accounts: list[KfAccount] = []

@@ -27,3 +27,12 @@ class KfAccount(BaseModel):
     open_kfid: str
     name: str
     avatar: str | None = None
+
+
+class ServiceStateSnapshot(BaseModel):
+    service_state: int
+    servicer_userid: str | None = None
+
+
+class ServiceStateTransition(BaseModel):
+    msg_code: str | None = None

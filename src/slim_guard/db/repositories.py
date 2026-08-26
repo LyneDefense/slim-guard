@@ -5,10 +5,15 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.engine import CursorResult
 
-from slim_guard.db.models import InboundMessage, OutboundMessage, WeComSyncState
+from slim_guard.db.models import (
+    InboundMessage,
+    OutboundMessage,
+    WeComConversation,
+    WeComSyncState,
+)
 from slim_guard.db.session import Database
 from slim_guard.integrations.wecom_kf.schemas import SyncMessage
 
@@ -24,6 +29,20 @@ class OutboundPlan:
     open_kfid: str
     external_userid: str
     content: str
+    requires_review: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationRef:
+    channel_id: str
+    open_kfid: str
+    external_userid: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredPage:
+    plans: list[OutboundPlan]
+    customer_conversations: list[ConversationRef]
 
 
 class MessageRepository:
@@ -48,9 +67,11 @@ class MessageRepository:
         next_cursor: str | None,
         fixed_reply_text: str,
         allowed_message_types: frozenset[str],
-    ) -> list[OutboundPlan]:
+        reply_delivery_mode: str,
+    ) -> StoredPage:
         message_ids = [message.msgid for message in messages]
         async with self.database.session() as session, session.begin():
+            conversation_cache: dict[tuple[str, str, str], WeComConversation] = {}
             existing_ids: set[str] = set()
             if message_ids:
                 result = await session.scalars(
@@ -62,6 +83,7 @@ class MessageRepository:
                 existing_ids = set(result)
 
             plans: list[OutboundPlan] = []
+            customer_conversations: dict[tuple[str, str, str], ConversationRef] = {}
             seen_in_page: set[str] = set()
             for message in messages:
                 if message.msgid in existing_ids or message.msgid in seen_in_page:
@@ -79,6 +101,44 @@ class MessageRepository:
                     )
                 )
 
+                if message.external_userid:
+                    conversation_key = (channel_id, open_kfid, message.external_userid)
+                    conversation = conversation_cache.get(conversation_key)
+                    if conversation is None:
+                        conversation = await session.get(
+                            WeComConversation,
+                            {
+                                "channel_id": channel_id,
+                                "open_kfid": open_kfid,
+                                "external_userid": message.external_userid,
+                            },
+                        )
+                        if conversation is None:
+                            conversation = WeComConversation(
+                                channel_id=channel_id,
+                                open_kfid=open_kfid,
+                                external_userid=message.external_userid,
+                            )
+                            session.add(conversation)
+                        conversation_cache[conversation_key] = conversation
+                    sent_at = datetime.fromtimestamp(message.send_time, tz=UTC)
+                    if message.origin == CUSTOMER_ORIGIN:
+                        if conversation.last_customer_message_at is None or sent_at > self._as_utc(
+                            conversation.last_customer_message_at
+                        ):
+                            conversation.last_customer_message_at = sent_at
+                            conversation.human_timeout_handled_at = None
+                        customer_conversations[conversation_key] = ConversationRef(
+                            channel_id=channel_id,
+                            open_kfid=open_kfid,
+                            external_userid=message.external_userid,
+                        )
+                    elif message.origin == 4 and (
+                        conversation.last_servicer_message_at is None
+                        or sent_at > self._as_utc(conversation.last_servicer_message_at)
+                    ):
+                        conversation.last_servicer_message_at = sent_at
+
                 if not self._should_reply(message, allowed_message_types):
                     continue
                 assert message.external_userid is not None
@@ -94,6 +154,7 @@ class MessageRepository:
                     open_kfid=open_kfid,
                     external_userid=message.external_userid,
                     content=fixed_reply_text,
+                    requires_review=reply_delivery_mode == "internal_review",
                 )
                 session.add(
                     OutboundMessage(
@@ -104,7 +165,7 @@ class MessageRepository:
                         open_kfid=plan.open_kfid,
                         external_userid=plan.external_userid,
                         content=plan.content,
-                        status="planned",
+                        status=("pending_review" if plan.requires_review else "planned"),
                     )
                 )
                 plans.append(plan)
@@ -119,7 +180,10 @@ class MessageRepository:
             if next_cursor is not None:
                 state.cursor = next_cursor
             state.last_success_at = datetime.now(UTC)
-            return plans
+            return StoredPage(
+                plans=plans,
+                customer_conversations=list(customer_conversations.values()),
+            )
 
     @staticmethod
     def _should_reply(
@@ -131,6 +195,12 @@ class MessageRepository:
             and message.msgtype in allowed_message_types
             and bool(message.external_userid)
         )
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     async def claim(self, plan: OutboundPlan) -> bool:
         now = datetime.now(UTC)
@@ -163,6 +233,120 @@ class MessageRepository:
                     completed_at=datetime.now(UTC),
                 )
             )
+
+    async def record_service_state(
+        self,
+        *,
+        channel_id: str,
+        open_kfid: str,
+        external_userid: str,
+        service_state: int,
+        servicer_userid: str | None = None,
+        changed: bool = False,
+        human_timeout_handled: bool = False,
+    ) -> None:
+        now = datetime.now(UTC)
+        async with self.database.session() as session, session.begin():
+            conversation = await session.get(
+                WeComConversation,
+                {
+                    "channel_id": channel_id,
+                    "open_kfid": open_kfid,
+                    "external_userid": external_userid,
+                },
+            )
+            if conversation is None:
+                conversation = WeComConversation(
+                    channel_id=channel_id,
+                    open_kfid=open_kfid,
+                    external_userid=external_userid,
+                )
+                session.add(conversation)
+            state_changed = conversation.service_state != service_state
+            conversation.service_state = service_state
+            conversation.servicer_userid = servicer_userid
+            conversation.last_state_checked_at = now
+            if changed or state_changed:
+                conversation.last_state_changed_at = now
+            if human_timeout_handled:
+                conversation.human_timeout_handled_at = now
+
+    async def list_timed_out_human_conversations(
+        self, *, cutoff: datetime, limit: int = 100
+    ) -> list[ConversationRef]:
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(WeComConversation)
+                .where(
+                    WeComConversation.service_state == 3,
+                    WeComConversation.last_customer_message_at.is_not(None),
+                    WeComConversation.last_customer_message_at <= cutoff,
+                    or_(
+                        WeComConversation.last_servicer_message_at.is_(None),
+                        WeComConversation.last_servicer_message_at
+                        < WeComConversation.last_customer_message_at,
+                    ),
+                    WeComConversation.human_timeout_handled_at.is_(None),
+                )
+                .order_by(WeComConversation.last_customer_message_at)
+                .limit(limit)
+            )
+            return [
+                ConversationRef(
+                    channel_id=row.channel_id,
+                    open_kfid=row.open_kfid,
+                    external_userid=row.external_userid,
+                )
+                for row in rows
+            ]
+
+    async def approve_review(self, idempotency_key: str) -> OutboundPlan | None:
+        """Approve an internal review item without entering WeCom human state 3."""
+
+        async with self.database.session() as session, session.begin():
+            result = await session.execute(
+                update(OutboundMessage)
+                .where(
+                    OutboundMessage.idempotency_key == idempotency_key,
+                    OutboundMessage.status == "pending_review",
+                )
+                .values(status="planned")
+            )
+            if cast(CursorResult[Any], result).rowcount == 0:
+                return None
+            row = await session.get(OutboundMessage, idempotency_key)
+            assert row is not None
+            return OutboundPlan(
+                idempotency_key=row.idempotency_key,
+                platform_msgid=row.platform_msgid,
+                channel_id=row.channel_id,
+                inbound_msgid=row.inbound_msgid,
+                open_kfid=row.open_kfid,
+                external_userid=row.external_userid,
+                content=row.content,
+            )
+
+    async def list_pending_reviews(self, *, limit: int = 100) -> list[OutboundPlan]:
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(OutboundMessage)
+                .where(OutboundMessage.status == "pending_review")
+                .order_by(OutboundMessage.created_at)
+                .limit(limit)
+            )
+            return [
+                OutboundPlan(
+                    idempotency_key=row.idempotency_key,
+                    platform_msgid=row.platform_msgid,
+                    channel_id=row.channel_id,
+                    inbound_msgid=row.inbound_msgid,
+                    open_kfid=row.open_kfid,
+                    external_userid=row.external_userid,
+                    content=row.content,
+                    requires_review=True,
+                )
+                for row in rows
+            ]
 
     async def count_outbound(self) -> int:
         async with self.database.session() as session:

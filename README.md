@@ -10,6 +10,11 @@ SlimGuard 第一阶段是一个 Python 编写的企业微信“微信客服”�
 
 当前版本不调用大模型，也不解析体重、图片、饮食或运动。
 
+通道已经包含企业微信会话状态管理：新会话会从“未处理”自动认领为“智能助手
+接待”，避免误入人工接待后 API 无法回复。若历史或误操作导致会话处于人工接待状态，
+且客户消息在指定时间内没有人工回复，SlimGuard 会结束该人工会话并发送提示；客户再次
+发信后会重新由智能助手接待。
+
 ## 本地启动
 
 推荐 Python 3.13，代码和测试兼容 Python 3.11+。
@@ -41,6 +46,24 @@ WECOM_CALLBACK_TOKEN=回调Token
 WECOM_CALLBACK_AES_KEY=EncodingAESKey
 ```
 
+会话状态机可以使用以下可选配置，默认值通常无需修改：
+
+```dotenv
+# 人工接待收到客户消息后，多少秒无人回复则自动结束人工服务
+WECOM_HUMAN_IDLE_TIMEOUT_SECONDS=600
+
+# 后台检查超时人工会话的间隔
+WECOM_SESSION_WATCHDOG_INTERVAL_SECONDS=30
+
+# 自动结束人工会话后，通过事件响应接口发送给客户的提示
+WECOM_HUMAN_TIMEOUT_MESSAGE=人工服务暂时没有响应，已结束人工接待。请再发送一次刚才的内容，SlimGuard 减脂助手会继续为你服务。
+```
+
+`REPLY_DELIVERY_MODE` 默认为 `automatic`。代码已经预留 `internal_review` 模式：回复草稿
+进入 SlimGuard 自己的 `pending_review` 队列，批准后仍通过微信客服 API 发出，全程不把
+企业微信会话切换到状态 3。当前尚未提供审核管理页面，因此部署环境请保持
+`REPLY_DELIVERY_MODE=automatic`。
+
 首次开通时可以分两次填写：先配置 `WECOM_CORP_ID`、`WECOM_CALLBACK_TOKEN` 和
 `WECOM_CALLBACK_AES_KEY`，启动服务并让企业微信完成回调 URL 验证；验证完成、后台显示
 Secret 后，再补充 `WECOM_KF_SECRET` 和 `WECOM_OPEN_KF_ID`。补全前 `/health/ready` 返回 503
@@ -70,7 +93,20 @@ https://你的公网域名/callbacks/wecom/kf
 data/slim_guard.sqlite3
 ```
 
-只保存同步 cursor、消息 ID、消息类型、去敏所需身份字段和出站状态，不保存入站文本正文。删除 SQLite 文件会丢失去重状态，可能导致历史消息被重新处理，真机环境不要随意删除。
+只保存同步 cursor、消息 ID、消息类型、去敏所需身份字段、会话状态和出站状态，不保存
+入站文本正文。新增的 `wecom_conversations` 表会在启动时自动创建，已有 SQLite 文件无需
+删除。删除 SQLite 文件会丢失去重和会话状态，可能导致历史消息被重新处理，真机环境不要
+随意删除。
+
+正常运行时可关注以下日志：
+
+```text
+wecom_session_claimed_by_agent
+wecom_fixed_reply_accepted
+wecom_reply_deferred_by_service_state
+wecom_human_session_ended_after_timeout
+slim_guard_reply_pending_internal_review
+```
 
 ## 测试与检查
 

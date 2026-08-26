@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,7 @@ from slim_guard.db.session import Database
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.observability.logging import configure_logging
+from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import FixedReplySyncService
 
 
@@ -42,6 +44,8 @@ def create_app(
 
         crypto: WeComCallbackCrypto | None = None
         sync_service: FixedReplySyncService | None = None
+        watchdog_stop: asyncio.Event | None = None
+        watchdog_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -49,12 +53,27 @@ def create_app(
                 app_settings.wecom_corp_id,
             )
         if app_settings.wecom_is_configured and active_client is not None:
+            repository = MessageRepository(database)
+            state_machine = ConversationStateMachine(
+                client=active_client,
+                repository=repository,
+                human_idle_timeout_seconds=app_settings.wecom_human_idle_timeout_seconds,
+                watchdog_interval_seconds=(app_settings.wecom_session_watchdog_interval_seconds),
+                human_timeout_message=app_settings.wecom_human_timeout_message,
+            )
             sync_service = FixedReplySyncService(
                 client=active_client,
-                repository=MessageRepository(database),
+                repository=repository,
                 channel_id="default",
                 configured_open_kfid=app_settings.wecom_open_kf_id,
                 fixed_reply_text=app_settings.fixed_reply_text,
+                state_machine=state_machine,
+                reply_delivery_mode=app_settings.reply_delivery_mode,
+            )
+            watchdog_stop = asyncio.Event()
+            watchdog_task = asyncio.create_task(
+                state_machine.run_watchdog(watchdog_stop),
+                name="wecom-human-timeout-watchdog",
             )
 
         app.state.settings = app_settings
@@ -64,6 +83,10 @@ def create_app(
         try:
             yield
         finally:
+            if watchdog_stop is not None:
+                watchdog_stop.set()
+            if watchdog_task is not None:
+                await watchdog_task
             if owned_client is not None:
                 await owned_client.close()
             await database.close()

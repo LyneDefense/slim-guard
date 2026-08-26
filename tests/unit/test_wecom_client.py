@@ -5,6 +5,7 @@ import json
 import httpx
 
 from slim_guard.integrations.wecom_kf.client import WeComClient
+from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
 
 
 async def test_client_caches_token_and_builds_kf_requests() -> None:
@@ -52,6 +53,18 @@ async def test_client_caches_token_and_builds_kf_requests() -> None:
                     ],
                 },
             )
+        if request.url.path == "/cgi-bin/kf/service_state/get":
+            return httpx.Response(
+                200,
+                json={"errcode": 0, "service_state": 0},
+            )
+        if request.url.path == "/cgi-bin/kf/service_state/trans":
+            return httpx.Response(
+                200,
+                json={"errcode": 0, "errmsg": "ok", "msg_code": "state-code"},
+            )
+        if request.url.path == "/cgi-bin/kf/send_msg_on_event":
+            return httpx.Response(200, json={"errcode": 0, "errmsg": "ok"})
         raise AssertionError(f"unexpected path: {request.url.path}")
 
     client = WeComClient(
@@ -74,6 +87,15 @@ async def test_client_caches_token_and_builds_kf_requests() -> None:
             msgid="stable-msgid",
         )
         accounts = await client.list_accounts()
+        state = await client.get_service_state(external_userid="external-user", open_kfid="wk-test")
+        transition = await client.transition_service_state(
+            external_userid="external-user",
+            open_kfid="wk-test",
+            service_state=WeComServiceState.SMART_ASSISTANT,
+        )
+        await client.send_event_text(
+            code="state-code", content="session changed", msgid="event-msgid"
+        )
     finally:
         await client.close()
 
@@ -92,3 +114,14 @@ async def test_client_caches_token_and_builds_kf_requests() -> None:
     assert send_body["msgid"] == "stable-msgid"
     assert requests[1].url.params["access_token"] == "access-token"
     assert [(account.name, account.open_kfid) for account in accounts] == [("减脂助手", "wk-test")]
+    assert state.service_state == 0
+    assert transition.msg_code == "state-code"
+    state_body = json.loads(requests[4].content)
+    transition_body = json.loads(requests[5].content)
+    event_body = json.loads(requests[6].content)
+    assert state_body == {
+        "open_kfid": "wk-test",
+        "external_userid": "external-user",
+    }
+    assert transition_body["service_state"] == 1
+    assert event_body["code"] == "state-code"
