@@ -39,7 +39,6 @@ async def test_callback_to_fixed_reply(test_settings: Settings) -> None:
                 msg_list=[
                     SyncMessage(
                         msgid="incoming-1",
-                        open_kfid="wk-test",
                         external_userid="external-user-1",
                         send_time=1_700_000_000,
                         origin=3,

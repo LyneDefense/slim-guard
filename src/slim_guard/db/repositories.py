@@ -71,7 +71,7 @@ class MessageRepository:
                     InboundMessage(
                         channel_id=channel_id,
                         msgid=message.msgid,
-                        open_kfid=message.open_kfid,
+                        open_kfid=open_kfid,
                         external_userid=message.external_userid,
                         msgtype=message.msgtype,
                         origin=message.origin,
@@ -79,7 +79,7 @@ class MessageRepository:
                     )
                 )
 
-                if not self._should_reply(message, open_kfid, allowed_message_types):
+                if not self._should_reply(message, allowed_message_types):
                     continue
                 assert message.external_userid is not None
                 idempotency_key = sha256(
@@ -124,12 +124,10 @@ class MessageRepository:
     @staticmethod
     def _should_reply(
         message: SyncMessage,
-        configured_open_kfid: str,
         allowed_message_types: frozenset[str],
     ) -> bool:
         return (
             message.origin == CUSTOMER_ORIGIN
-            and message.open_kfid == configured_open_kfid
             and message.msgtype in allowed_message_types
             and bool(message.external_userid)
         )

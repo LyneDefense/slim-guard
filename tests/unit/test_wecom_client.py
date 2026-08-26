@@ -24,7 +24,16 @@ async def test_client_caches_token_and_builds_kf_requests() -> None:
                     "errcode": 0,
                     "next_cursor": "next",
                     "has_more": 0,
-                    "msg_list": [],
+                    "msg_list": [
+                        {
+                            "msgid": "incoming-1",
+                            "external_userid": "external-user",
+                            "send_time": 1_700_000_000,
+                            "origin": 3,
+                            "msgtype": "text",
+                            "text": {"content": "hello"},
+                        }
+                    ],
                 },
             )
         if request.url.path == "/cgi-bin/kf/send_msg":
@@ -69,6 +78,7 @@ async def test_client_caches_token_and_builds_kf_requests() -> None:
         await client.close()
 
     assert page.next_cursor == "next"
+    assert page.msg_list[0].msgid == "incoming-1"
     assert [request.url.path for request in requests].count("/cgi-bin/gettoken") == 1
     sync_body = json.loads(requests[1].content)
     send_body = json.loads(requests[2].content)

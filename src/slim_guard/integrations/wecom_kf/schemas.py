@@ -9,7 +9,6 @@ class SyncMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     msgid: str
-    open_kfid: str
     external_userid: str | None = None
     send_time: int = Field(ge=0)
     origin: int

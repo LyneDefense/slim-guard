@@ -58,3 +58,7 @@ def configure_logging(level: str) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
+    # httpx logs complete request URLs at INFO level. WeCom authenticates with
+    # query parameters, so those messages would expose secrets and access tokens.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

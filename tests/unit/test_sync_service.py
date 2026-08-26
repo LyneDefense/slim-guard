@@ -17,7 +17,6 @@ async def test_sync_follows_empty_page_and_deduplicates(tmp_path) -> None:
             msg_list=[
                 SyncMessage(
                     msgid="message-1",
-                    open_kfid="wk-test",
                     external_userid="user-1",
                     send_time=1_700_000_000,
                     origin=3,
@@ -33,7 +32,6 @@ async def test_sync_follows_empty_page_and_deduplicates(tmp_path) -> None:
             msg_list=[
                 SyncMessage(
                     msgid="message-2",
-                    open_kfid="wk-test",
                     external_userid="user-2",
                     send_time=1_700_000_001,
                     origin=3,
@@ -42,7 +40,6 @@ async def test_sync_follows_empty_page_and_deduplicates(tmp_path) -> None:
                 ),
                 SyncMessage(
                     msgid="servicer-message",
-                    open_kfid="wk-test",
                     external_userid="user-2",
                     send_time=1_700_000_002,
                     origin=4,
@@ -86,7 +83,6 @@ async def test_image_is_saved_but_not_replied_to(tmp_path) -> None:
                 msg_list=[
                     SyncMessage(
                         msgid="image-message",
-                        open_kfid="wk-test",
                         external_userid="user-1",
                         send_time=1_700_000_000,
                         origin=3,
