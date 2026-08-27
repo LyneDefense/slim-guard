@@ -11,12 +11,15 @@ from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
+from slim_guard.harness.manifest import AgentManifest
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
 from slim_guard.services.reply_agent import (
+    SLIM_GUARD_INSTRUCTIONS,
+    SLIM_GUARD_PROMPT_VERSION,
     ReplyAgentProtocol,
     StaticReplyAgent,
     ZhipuReplyAgent,
@@ -32,6 +35,28 @@ def create_app(
     reply_agent: ReplyAgentProtocol | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
+    if app_settings.agent_runtime_mode != "legacy":
+        raise ValueError(
+            f"AGENT_RUNTIME_MODE={app_settings.agent_runtime_mode!r} is not implemented yet"
+        )
+    agent_manifest = AgentManifest.build(
+        model_provider="zhipu",
+        text_model=app_settings.zhipu_text_model,
+        vision_model=app_settings.zhipu_vision_model,
+        model_parameters={
+            "thinking": {"type": "disabled"},
+            "do_sample": False,
+            "max_output_tokens": app_settings.zhipu_max_output_tokens,
+            "max_reply_chars": app_settings.agent_reply_max_chars,
+        },
+        system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
+        system_prompt=SLIM_GUARD_INSTRUCTIONS,
+        context_policy_version="legacy-single-turn-v1",
+        memory_policy_version="none-v1",
+        compaction_policy_version="none-v1",
+        safety_policy_version="legacy-prompt-v1",
+        code_revision=app_settings.agent_code_revision,
+    )
     owned_client: WeComClient | None = None
     owned_reply_agent: ZhipuReplyAgent | None = None
 
@@ -131,6 +156,8 @@ def create_app(
         redoc_url=None,
     )
     application.include_router(router)
+    application.state.agent_manifest = agent_manifest
+    application.state.agent_runtime_mode = app_settings.agent_runtime_mode
     return application
 
 

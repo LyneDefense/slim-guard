@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from slim_guard.config import Settings
+from slim_guard.main import create_app
 
 
 def test_callback_can_be_configured_before_secret_and_open_kfid(
@@ -25,3 +29,32 @@ def test_zhipu_models_are_configured_separately_by_modality() -> None:
     assert settings.zhipu_is_configured is True
     assert settings.zhipu_text_model == "glm-5.2"
     assert settings.zhipu_vision_model == "glm-5v-turbo"
+
+
+def test_agent_runtime_defaults_to_legacy() -> None:
+    settings = Settings()
+
+    assert settings.agent_runtime_mode == "legacy"
+
+
+def test_agent_runtime_rejects_unknown_mode() -> None:
+    with pytest.raises(ValidationError):
+        Settings(agent_runtime_mode="unknown")  # type: ignore[arg-type]
+
+
+def test_unimplemented_agent_runtime_mode_fails_fast() -> None:
+    settings = Settings(agent_runtime_mode="harness")
+
+    with pytest.raises(ValueError, match="not implemented yet"):
+        create_app(settings)
+
+
+def test_create_app_exposes_current_agent_manifest() -> None:
+    settings = Settings(agent_code_revision="test-commit")
+
+    app = create_app(settings)
+
+    assert app.state.agent_runtime_mode == "legacy"
+    assert app.state.agent_manifest.text_model == "glm-5.2"
+    assert app.state.agent_manifest.code_revision == "test-commit"
+    assert app.state.agent_manifest.version_id.startswith("agent-")

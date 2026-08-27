@@ -44,6 +44,15 @@ WECOM_CALLBACK_AES_KEY=EncodingAESKey
 ZHIPU_API_KEY=智谱 API Key
 ```
 
+Agent Runtime 当前保持兼容模式。`harness` 和 `shadow` 会在对应运行时实现后逐步开放，
+现阶段设置其他值会拒绝启动，避免配置看似生效但实际仍走旧路径：
+
+```dotenv
+AGENT_RUNTIME_MODE=legacy
+# 部署流水线可以写入 Git commit；未设置时为 development
+AGENT_CODE_REVISION=development
+```
+
 智谱可选配置：
 
 ```dotenv
@@ -177,4 +186,5 @@ Compose 会读取当前目录的 `.env`，并把 SQLite 数据保存在 Docker �
 
 - [Phase 1 实现设计](./PHASE1_PYTHON_CHANNEL_SPIKE.md)
 - [完整技术设计](./TECHNICAL_DESIGN.md)
+- [Agent Harness 设计与实施计划](./AGENT_HARNESS_IMPLEMENTATION_PLAN.md)
 - [MVP 产品范围](./MVP_0_WECHAT_BRIDGE.md)

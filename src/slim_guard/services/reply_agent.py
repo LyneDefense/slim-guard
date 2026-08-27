@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 import httpx
 
+SLIM_GUARD_PROMPT_VERSION = "legacy-v1"
 SLIM_GUARD_INSTRUCTIONS = "\n".join(
     (
         "你是 SlimGuard，一位温和、专业、务实的减脂记录助手。",
