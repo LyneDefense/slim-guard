@@ -19,6 +19,7 @@ from slim_guard.harness.errors import (
     PendingActionStateConflict,
 )
 from slim_guard.harness.events import PendingActionStatus, PendingActionType
+from slim_guard.tools.contracts import ToolExecutionMode
 
 _RESOLUTIONS = frozenset(
     {
@@ -40,6 +41,8 @@ class PendingActionRef:
     tool_name: str
     tool_version: str
     canonical_arguments: dict[str, Any]
+    execution_mode: ToolExecutionMode
+    isolated_write_environment: bool
     action_type: PendingActionType
     status: PendingActionStatus
     reason: str
@@ -68,10 +71,32 @@ class PendingActionStore(Protocol):
         tool_name: str,
         tool_version: str,
         canonical_arguments: Mapping[str, Any],
+        execution_mode: ToolExecutionMode,
+        isolated_write_environment: bool,
         action_type: PendingActionType,
         reason: str,
         expires_at: datetime,
     ) -> PendingActionCreation: ...
+
+    async def get(self, action_id: str) -> PendingActionRef | None: ...
+
+    async def list_for_execution(self, execution_key: str) -> list[PendingActionRef]: ...
+
+    async def resolve(
+        self,
+        *,
+        action_id: str,
+        resolution: PendingActionStatus,
+        resolved_by: str,
+        resolved_at: datetime | None = None,
+    ) -> PendingActionRef: ...
+
+    async def consume(
+        self,
+        *,
+        action_id: str,
+        consumed_at: datetime | None = None,
+    ) -> PendingActionRef: ...
 
 
 class PendingActionRepository:
@@ -89,6 +114,8 @@ class PendingActionRepository:
         tool_name: str,
         tool_version: str,
         canonical_arguments: Mapping[str, Any],
+        execution_mode: ToolExecutionMode,
+        isolated_write_environment: bool,
         action_type: PendingActionType,
         reason: str,
         expires_at: datetime,
@@ -104,6 +131,8 @@ class PendingActionRepository:
             tool_name=tool_name,
             tool_version=tool_version,
             canonical_arguments_json=arguments_json,
+            execution_mode=execution_mode.value,
+            isolated_write_environment=isolated_write_environment,
             action_type=action_type.value,
             status=PendingActionStatus.PENDING.value,
             reason=reason,
@@ -136,6 +165,8 @@ class PendingActionRepository:
                     tool_name=tool_name,
                     tool_version=tool_version,
                     arguments_json=arguments_json,
+                    execution_mode=execution_mode,
+                    isolated_write_environment=isolated_write_environment,
                     action_type=action_type,
                     reason=reason,
                     expires_at=normalized_expiry,
@@ -146,6 +177,15 @@ class PendingActionRepository:
         async with self.database.session() as session:
             row = await session.get(PendingActionRecord, action_id)
             return self._ref(row) if row is not None else None
+
+    async def list_for_execution(self, execution_key: str) -> list[PendingActionRef]:
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(PendingActionRecord)
+                .where(PendingActionRecord.execution_key == execution_key)
+                .order_by(PendingActionRecord.created_at)
+            )
+            return [self._ref(row) for row in rows]
 
     async def list_open(
         self,
@@ -311,6 +351,8 @@ class PendingActionRepository:
         tool_name: str,
         tool_version: str,
         arguments_json: str,
+        execution_mode: ToolExecutionMode,
+        isolated_write_environment: bool,
         action_type: PendingActionType,
         reason: str,
         expires_at: datetime,
@@ -324,6 +366,8 @@ class PendingActionRepository:
             tool_name,
             tool_version,
             arguments_json,
+            execution_mode.value,
+            isolated_write_environment,
             action_type.value,
             reason,
             expires_at,
@@ -337,6 +381,8 @@ class PendingActionRepository:
             row.tool_name,
             row.tool_version,
             row.canonical_arguments_json,
+            row.execution_mode,
+            row.isolated_write_environment,
             row.action_type,
             row.reason,
             PendingActionRepository._as_utc(row.expires_at),
@@ -370,6 +416,8 @@ class PendingActionRepository:
             tool_name=row.tool_name,
             tool_version=row.tool_version,
             canonical_arguments=arguments,
+            execution_mode=ToolExecutionMode(row.execution_mode),
+            isolated_write_environment=row.isolated_write_environment,
             action_type=PendingActionType(row.action_type),
             status=PendingActionStatus(row.status),
             reason=row.reason,

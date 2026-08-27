@@ -16,6 +16,7 @@ from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
+from slim_guard.tools.contracts import ToolExecutionMode
 
 
 def manifest() -> AgentManifest:
@@ -70,6 +71,8 @@ async def create_action(
         tool_name="record_weight",
         tool_version="v1",
         canonical_arguments={"weight_kg": weight_kg},
+        execution_mode=ToolExecutionMode.EVALUATION,
+        isolated_write_environment=True,
         action_type=PendingActionType.USER_CONFIRMATION,
         reason="Please confirm the weight before saving it.",
         expires_at=expires_at,

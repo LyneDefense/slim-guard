@@ -80,6 +80,8 @@ class ItemRef:
 
 
 class TurnStateStore(Protocol):
+    async def get_thread(self, thread_id: str) -> ThreadRef | None: ...
+
     async def get_turn(self, turn_id: str) -> TurnRef | None: ...
 
     async def transition_turn(
@@ -168,6 +170,11 @@ class HarnessStateRepository:
         async with self.database.session() as session:
             row = await session.get(AgentTurnRecord, turn_id)
             return self._turn_ref(row) if row is not None else None
+
+    async def get_thread(self, thread_id: str) -> ThreadRef | None:
+        async with self.database.session() as session:
+            row = await session.get(AgentThreadRecord, thread_id)
+            return self._thread_ref(row) if row is not None else None
 
     async def transition_turn(
         self,

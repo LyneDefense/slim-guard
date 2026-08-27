@@ -7,6 +7,10 @@ from slim_guard.harness.pending_actions import (
     PendingActionRepository,
     PendingActionStore,
 )
+from slim_guard.harness.pending_resume import (
+    PendingActionResumeCoordinator,
+    PendingResumeOutcome,
+)
 from slim_guard.harness.tool_calls import ToolCallCoordinator, ToolCallOutcome
 
 __all__ = [
@@ -14,7 +18,9 @@ __all__ = [
     "PendingActionCreation",
     "PendingActionRef",
     "PendingActionRepository",
+    "PendingActionResumeCoordinator",
     "PendingActionStore",
+    "PendingResumeOutcome",
     "ToolCallCoordinator",
     "ToolCallOutcome",
 ]

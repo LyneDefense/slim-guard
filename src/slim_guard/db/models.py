@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -133,6 +134,8 @@ class PendingActionRecord(Base):
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_version: Mapped[str] = mapped_column(String(128), nullable=False)
     canonical_arguments_json: Mapped[str] = mapped_column(Text, nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    isolated_write_environment: Mapped[bool] = mapped_column(Boolean, nullable=False)
     action_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     reason: Mapped[str] = mapped_column(String(1024), nullable=False)

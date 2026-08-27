@@ -97,6 +97,8 @@ class ToolCallCoordinator:
             tool_name=execution.tool_name,
             tool_version=execution.tool_version,
             canonical_arguments=execution.canonical_arguments,
+            execution_mode=context.execution_mode,
+            isolated_write_environment=authorization.isolated_write_environment,
             action_type=action_type,
             reason=execution.result.failure.message,
             expires_at=now + ttl,
