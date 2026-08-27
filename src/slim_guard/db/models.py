@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -160,6 +161,39 @@ class WeightRecord(Base):
     superseded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class ImageAssetRecord(Base):
+    __tablename__ = "image_assets"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_id",
+            "source_message_id",
+            name="uq_image_asset_channel_source",
+        ),
+        CheckConstraint("size_bytes > 0", name="ck_image_asset_nonempty"),
+        CheckConstraint(
+            "mime_type IN ('image/jpeg','image/png','image/gif','image/webp')",
+            name="ck_image_asset_mime_type",
+        ),
+        Index("ix_image_asset_user_created", "user_id", "created_at"),
+        Index("ix_image_asset_expiry", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_message_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class PendingActionRecord(Base):
