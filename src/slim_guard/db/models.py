@@ -431,6 +431,52 @@ class UserRoutinePreference(Base):
     )
 
 
+class RoutineJobRecord(Base):
+    __tablename__ = "routine_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "job_kind",
+            "local_date",
+            name="uq_routine_job_user_kind_date",
+        ),
+        CheckConstraint(
+            "job_kind IN ('weight','meal','daily_review')",
+            name="ck_routine_job_kind",
+        ),
+        CheckConstraint(
+            "status IN ('pending','running','completed','skipped','failed')",
+            name="ck_routine_job_status",
+        ),
+        Index("ix_routine_job_due", "status", "scheduled_for"),
+        Index("ix_routine_job_lease", "status", "lease_expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    job_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    local_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    result_turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    result_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ChannelIdentity(Base):
     __tablename__ = "channel_identities"
     __table_args__ = (

@@ -132,3 +132,11 @@
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证日程 Tool 出现在核心模型的冻结工具列表。
 - `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定日程 Tool 版本。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: add durable routine job ledger`
+
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 新增按用户、任务类型和本地日期唯一的日程 Job 表，记录执行状态、次数、租约、结果 Turn 和终止原因。
+- `src/slim_guard/domain/routine/jobs.py` → 日程 Job 状态机与规划器 → 按用户时区生成当天到期任务，通过原子抢占和过期租约实现并发防重与重启恢复，并限制终止状态转换。
+- `src/slim_guard/domain/routine/__init__.py` → 日程领域公共出口 → 暴露 Job 状态、引用、仓储和规划器。
+- `tests/unit/test_routine_jobs.py` → 日程 Job 状态机测试 → 验证未到时间不规划、同日规划幂等、租约期内不重复、租约过期可恢复以及只能完成一次。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
