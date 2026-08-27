@@ -4,9 +4,10 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.engine import CursorResult
 
 from slim_guard.db.models import (
     AgentItemRecord,
@@ -15,7 +16,39 @@ from slim_guard.db.models import (
     utc_now,
 )
 from slim_guard.db.session import Database
+from slim_guard.harness.errors import InvalidTurnTransition, TurnNotWritable, TurnStateConflict
 from slim_guard.harness.events import ItemStatus, ItemType, ThreadStatus, TurnStatus, TurnTrigger
+
+_TERMINAL_TURN_STATUSES = frozenset(
+    {TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.SUSPENDED}
+)
+_ALLOWED_TURN_TRANSITIONS: dict[TurnStatus, frozenset[TurnStatus]] = {
+    TurnStatus.RUNNING: frozenset(
+        {
+            TurnStatus.WAITING_USER_CONFIRMATION,
+            TurnStatus.WAITING_HUMAN_REVIEW,
+            TurnStatus.COMPLETED,
+            TurnStatus.FAILED,
+            TurnStatus.SUSPENDED,
+        }
+    ),
+    TurnStatus.WAITING_USER_CONFIRMATION: frozenset(
+        {
+            TurnStatus.RUNNING,
+            TurnStatus.COMPLETED,
+            TurnStatus.FAILED,
+            TurnStatus.SUSPENDED,
+        }
+    ),
+    TurnStatus.WAITING_HUMAN_REVIEW: frozenset(
+        {
+            TurnStatus.RUNNING,
+            TurnStatus.COMPLETED,
+            TurnStatus.FAILED,
+            TurnStatus.SUSPENDED,
+        }
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +65,8 @@ class TurnRef:
     agent_version_id: str
     trigger: TurnTrigger
     status: TurnStatus
+    deadline_at: datetime | None
+    completed_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +130,11 @@ class HarnessStateRepository:
             turn = await session.get(AgentTurnRecord, turn_id)
             if turn is None:
                 raise LookupError(f"Agent turn not found: {turn_id}")
+            turn_status = TurnStatus(turn.status)
+            if turn_status is not TurnStatus.RUNNING:
+                raise TurnNotWritable(
+                    f"Cannot append an item to turn {turn_id} in state {turn_status.value}"
+                )
             last_sequence = await session.scalar(
                 select(func.max(AgentItemRecord.sequence)).where(
                     AgentItemRecord.turn_id == turn_id
@@ -111,6 +151,54 @@ class HarnessStateRepository:
             session.add(row)
             await session.flush()
             return self._item_ref(row)
+
+    async def get_turn(self, turn_id: str) -> TurnRef | None:
+        async with self.database.session() as session:
+            row = await session.get(AgentTurnRecord, turn_id)
+            return self._turn_ref(row) if row is not None else None
+
+    async def transition_turn(
+        self,
+        *,
+        turn_id: str,
+        target: TurnStatus,
+        expected: TurnStatus | None = None,
+    ) -> TurnRef:
+        async with self.database.session() as session, session.begin():
+            row = await session.get(AgentTurnRecord, turn_id)
+            if row is None:
+                raise LookupError(f"Agent turn not found: {turn_id}")
+            current = TurnStatus(row.status)
+            if current is target:
+                return self._turn_ref(row)
+            if expected is not None and current is not expected:
+                raise TurnStateConflict(
+                    f"Expected turn {turn_id} to be {expected.value}, found {current.value}"
+                )
+            if target not in _ALLOWED_TURN_TRANSITIONS.get(current, frozenset()):
+                raise InvalidTurnTransition(
+                    f"Cannot transition turn {turn_id} from {current.value} to {target.value}"
+                )
+
+            transitioned_at = utc_now()
+            result = await session.execute(
+                update(AgentTurnRecord)
+                .where(AgentTurnRecord.id == turn_id, AgentTurnRecord.status == current.value)
+                .values(
+                    status=target.value,
+                    updated_at=transitioned_at,
+                    completed_at=(
+                        transitioned_at if target in _TERMINAL_TURN_STATUSES else None
+                    ),
+                )
+            )
+            if cast(CursorResult[Any], result).rowcount != 1:
+                raise TurnStateConflict(f"Turn {turn_id} changed concurrently")
+            await session.refresh(row)
+            thread = await session.get(AgentThreadRecord, row.thread_id)
+            assert thread is not None
+            thread.last_active_at = transitioned_at
+            return self._turn_ref(row)
 
     async def list_items(self, turn_id: str) -> list[ItemRef]:
         async with self.database.session() as session:
@@ -142,6 +230,8 @@ class HarnessStateRepository:
             agent_version_id=row.agent_version_id,
             trigger=TurnTrigger(row.trigger_type),
             status=TurnStatus(row.status),
+            deadline_at=row.deadline_at,
+            completed_at=row.completed_at,
         )
 
     @staticmethod

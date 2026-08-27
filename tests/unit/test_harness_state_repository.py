@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
+from slim_guard.harness.errors import InvalidTurnTransition, TurnNotWritable, TurnStateConflict
 from slim_guard.harness.events import ItemStatus, ItemType, ThreadStatus, TurnStatus, TurnTrigger
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
@@ -102,5 +105,137 @@ async def test_items_are_appended_in_turn_order(tmp_path) -> None:
             ItemType.MODEL_MESSAGE,
         ]
         assert items[0].payload == {"text": "今天77.6kg"}
+    finally:
+        await database.close()
+
+
+async def test_turn_can_wait_resume_and_complete(tmp_path) -> None:
+    database, user_id, agent_version_id = await prepare_state(tmp_path)
+    repository = HarnessStateRepository(database)
+    try:
+        turn = await repository.start_turn(
+            user_id=user_id,
+            agent_version_id=agent_version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+        )
+
+        waiting = await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.WAITING_USER_CONFIRMATION,
+            expected=TurnStatus.RUNNING,
+        )
+        resumed = await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.RUNNING,
+            expected=TurnStatus.WAITING_USER_CONFIRMATION,
+        )
+        completed = await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.COMPLETED,
+            expected=TurnStatus.RUNNING,
+        )
+
+        assert waiting.status is TurnStatus.WAITING_USER_CONFIRMATION
+        assert waiting.completed_at is None
+        assert resumed.status is TurnStatus.RUNNING
+        assert completed.status is TurnStatus.COMPLETED
+        assert completed.completed_at is not None
+        assert await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.COMPLETED,
+            expected=TurnStatus.RUNNING,
+        ) == completed
+    finally:
+        await database.close()
+
+
+async def test_terminal_turn_cannot_resume_or_accept_items(tmp_path) -> None:
+    database, user_id, agent_version_id = await prepare_state(tmp_path)
+    repository = HarnessStateRepository(database)
+    try:
+        turn = await repository.start_turn(
+            user_id=user_id,
+            agent_version_id=agent_version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+        )
+        await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.COMPLETED,
+        )
+
+        with pytest.raises(InvalidTurnTransition, match="completed to running"):
+            await repository.transition_turn(
+                turn_id=turn.id,
+                target=TurnStatus.RUNNING,
+            )
+        with pytest.raises(TurnNotWritable, match="state completed"):
+            await repository.append_item(
+                turn_id=turn.id,
+                item_type=ItemType.AGENT_MESSAGE,
+                status=ItemStatus.COMPLETED,
+                payload={"text": "late message"},
+            )
+    finally:
+        await database.close()
+
+
+async def test_waiting_turn_rejects_items_until_resumed(tmp_path) -> None:
+    database, user_id, agent_version_id = await prepare_state(tmp_path)
+    repository = HarnessStateRepository(database)
+    try:
+        turn = await repository.start_turn(
+            user_id=user_id,
+            agent_version_id=agent_version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+        )
+        await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.WAITING_HUMAN_REVIEW,
+        )
+
+        with pytest.raises(TurnNotWritable, match="waiting_human_review"):
+            await repository.append_item(
+                turn_id=turn.id,
+                item_type=ItemType.APPROVAL_RESULT,
+                status=ItemStatus.COMPLETED,
+                payload={"approved": True},
+            )
+
+        await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.RUNNING,
+            expected=TurnStatus.WAITING_HUMAN_REVIEW,
+        )
+        item = await repository.append_item(
+            turn_id=turn.id,
+            item_type=ItemType.APPROVAL_RESULT,
+            status=ItemStatus.COMPLETED,
+            payload={"approved": True},
+        )
+        assert item.sequence == 1
+    finally:
+        await database.close()
+
+
+async def test_transition_detects_unexpected_current_state(tmp_path) -> None:
+    database, user_id, agent_version_id = await prepare_state(tmp_path)
+    repository = HarnessStateRepository(database)
+    try:
+        turn = await repository.start_turn(
+            user_id=user_id,
+            agent_version_id=agent_version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+        )
+        await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.WAITING_USER_CONFIRMATION,
+        )
+
+        with pytest.raises(TurnStateConflict, match="Expected turn"):
+            await repository.transition_turn(
+                turn_id=turn.id,
+                target=TurnStatus.COMPLETED,
+                expected=TurnStatus.RUNNING,
+            )
     finally:
         await database.close()
