@@ -5,9 +5,15 @@ from slim_guard.tools.contracts import (
     ToolEffectLevel,
     ToolExecution,
     ToolExecutionMode,
+    ToolExecutionStatus,
     ToolFailure,
     ToolResult,
     ToolResultStatus,
+)
+from slim_guard.tools.execution_repository import (
+    ToolExecutionClaim,
+    ToolExecutionRef,
+    ToolExecutionRepository,
 )
 from slim_guard.tools.gateway import ToolExecutor, ToolGateway, ToolHandler
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
@@ -18,7 +24,11 @@ __all__ = [
     "ToolContext",
     "ToolEffectLevel",
     "ToolExecution",
+    "ToolExecutionClaim",
     "ToolExecutionMode",
+    "ToolExecutionRef",
+    "ToolExecutionRepository",
+    "ToolExecutionStatus",
     "ToolExecutor",
     "ToolFailure",
     "ToolGateway",

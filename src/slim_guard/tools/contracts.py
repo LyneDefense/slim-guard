@@ -27,6 +27,12 @@ class ToolExecutionMode(StrEnum):
     EVALUATION = "evaluation"
 
 
+class ToolExecutionStatus(StrEnum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class ToolContext(BaseModel):
     """Identity and isolation information supplied by the Harness, never the model."""
 

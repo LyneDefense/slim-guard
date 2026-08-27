@@ -16,3 +16,11 @@ class ToolGatewayConfigurationError(RuntimeError):
 
 class ToolContextMismatchError(RuntimeError):
     pass
+
+
+class ToolExecutionCollision(RuntimeError):
+    pass
+
+
+class ToolExecutionStateConflict(RuntimeError):
+    pass

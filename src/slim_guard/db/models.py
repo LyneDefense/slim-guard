@@ -106,6 +106,32 @@ class AgentItemRecord(Base):
     )
 
 
+class ToolExecutionRecord(Base):
+    __tablename__ = "tool_executions"
+    __table_args__ = (
+        UniqueConstraint("turn_id", "tool_call_id", name="uq_tool_execution_turn_call"),
+        Index("ix_tool_execution_status", "status"),
+    )
+
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_arguments_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class WeComSyncState(Base):
     __tablename__ = "wecom_sync_states"
 
