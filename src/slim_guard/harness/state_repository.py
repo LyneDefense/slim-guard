@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from sqlalchemy import func, select, update
 from sqlalchemy.engine import CursorResult
@@ -77,6 +77,18 @@ class ItemRef:
     item_type: ItemType
     status: ItemStatus
     payload: dict[str, Any]
+
+
+class TurnStateStore(Protocol):
+    async def get_turn(self, turn_id: str) -> TurnRef | None: ...
+
+    async def transition_turn(
+        self,
+        *,
+        turn_id: str,
+        target: TurnStatus,
+        expected: TurnStatus | None = None,
+    ) -> TurnRef: ...
 
 
 class HarnessStateRepository:

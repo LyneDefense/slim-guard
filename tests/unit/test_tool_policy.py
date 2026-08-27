@@ -7,11 +7,11 @@ from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectLevel,
     ToolExecutionMode,
+    ToolPolicyDecision,
 )
 from slim_guard.tools.policy import (
     DefaultToolPolicy,
     ToolAuthorization,
-    ToolPolicyDecision,
 )
 from slim_guard.tools.registry import RegisteredTool
 

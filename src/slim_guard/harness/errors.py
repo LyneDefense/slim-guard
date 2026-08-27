@@ -27,3 +27,7 @@ class InvalidPendingActionTransition(HarnessStateError):
 
 class PendingActionStateConflict(HarnessStateError):
     pass
+
+
+class PendingActionConfigurationError(HarnessStateError):
+    pass

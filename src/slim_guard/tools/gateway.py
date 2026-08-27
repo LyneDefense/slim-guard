@@ -15,6 +15,7 @@ from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolExecution,
+    ToolPolicyDecision,
     ToolResult,
 )
 from slim_guard.tools.errors import (
@@ -26,7 +27,6 @@ from slim_guard.tools.execution_repository import ToolExecutionRef, ToolExecutio
 from slim_guard.tools.policy import (
     ToolAuthorization,
     ToolPolicy,
-    ToolPolicyDecision,
 )
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
 
@@ -42,6 +42,16 @@ class ToolHandler(Protocol[ArgumentsT_contra]):
         context: ToolContext,
         arguments: ArgumentsT_contra,
     ) -> ToolResult: ...
+
+
+class ToolGatewayProtocol(Protocol):
+    async def execute(
+        self,
+        *,
+        call: NormalizedToolCall,
+        context: ToolContext,
+        authorization: ToolAuthorization,
+    ) -> ToolExecution: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +156,7 @@ class ToolGateway:
                 message=policy_result.reason,
                 canonical_arguments=canonical_arguments,
                 idempotency_key=idempotency_key,
+                policy_decision=policy_result.decision,
             )
         claim = await self._execution_store.claim(
             idempotency_key=idempotency_key,
@@ -198,6 +209,7 @@ class ToolGateway:
             tool_version=completed.tool_version,
             canonical_arguments=completed.canonical_arguments,
             idempotency_key=completed.idempotency_key,
+            policy_decision=ToolPolicyDecision.ALLOW,
             result=completed.result,
         )
 
@@ -217,6 +229,7 @@ class ToolGateway:
             tool_version=execution.tool_version,
             canonical_arguments=execution.canonical_arguments,
             idempotency_key=execution.idempotency_key,
+            policy_decision=ToolPolicyDecision.ALLOW,
             result=result,
         )
 
@@ -259,6 +272,7 @@ class ToolGateway:
         retryable: bool = False,
         canonical_arguments: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        policy_decision: ToolPolicyDecision | None = None,
     ) -> ToolExecution:
         return ToolExecution(
             tool_call_id=call.id,
@@ -266,6 +280,7 @@ class ToolGateway:
             tool_version=tool.version if tool is not None else None,
             canonical_arguments=canonical_arguments,
             idempotency_key=idempotency_key,
+            policy_decision=policy_decision,
             result=ToolResult.failed(
                 code=code,
                 message=message,

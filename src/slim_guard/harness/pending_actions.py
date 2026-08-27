@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
@@ -54,6 +54,24 @@ class PendingActionRef:
 class PendingActionCreation:
     action: PendingActionRef
     created: bool
+
+
+class PendingActionStore(Protocol):
+    async def create(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        source_item_id: str | None,
+        execution_key: str,
+        tool_call_id: str,
+        tool_name: str,
+        tool_version: str,
+        canonical_arguments: Mapping[str, Any],
+        action_type: PendingActionType,
+        reason: str,
+        expires_at: datetime,
+    ) -> PendingActionCreation: ...
 
 
 class PendingActionRepository:

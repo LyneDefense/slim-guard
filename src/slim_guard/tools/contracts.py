@@ -33,6 +33,13 @@ class ToolExecutionStatus(StrEnum):
     FAILED = "failed"
 
 
+class ToolPolicyDecision(StrEnum):
+    ALLOW = "allow"
+    CONFIRM = "confirm"
+    DENY = "deny"
+    REVIEW = "review"
+
+
 class ToolContext(BaseModel):
     """Identity and isolation information supplied by the Harness, never the model."""
 
@@ -122,4 +129,5 @@ class ToolExecution(BaseModel):
     tool_version: str | None = Field(default=None, min_length=1, max_length=128)
     canonical_arguments: dict[str, Any] | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    policy_decision: ToolPolicyDecision | None = None
     result: ToolResult

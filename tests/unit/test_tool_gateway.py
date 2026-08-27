@@ -15,6 +15,7 @@ from slim_guard.tools.contracts import (
     ToolEffectLevel,
     ToolExecutionMode,
     ToolExecutionStatus,
+    ToolPolicyDecision,
     ToolResult,
     ToolResultStatus,
 )
@@ -166,6 +167,7 @@ async def test_gateway_validates_arguments_executes_handler_and_returns_audit_da
 
     assert received[0][1] == WeightArguments(weight_kg=77.6)
     assert execution.result.status is ToolResultStatus.SUCCEEDED
+    assert execution.policy_decision is ToolPolicyDecision.ALLOW
     assert execution.result.source_ids == ("weight-1",)
     assert execution.canonical_arguments == {"weight_kg": 77.6}
     assert execution.idempotency_key is not None
@@ -324,6 +326,7 @@ async def test_gateway_applies_policy_before_ledger_and_handler() -> None:
     )
 
     assert denied.result.failure is not None
+    assert denied.policy_decision is ToolPolicyDecision.DENY
     assert denied.result.failure.code == "tool_not_authorized"
     assert denied.canonical_arguments == {"weight_kg": 77.6}
     assert denied.idempotency_key is not None

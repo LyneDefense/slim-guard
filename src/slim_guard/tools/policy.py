@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from slim_guard.tools.contracts import ToolContext, ToolEffectLevel, ToolExecutionMode
+from slim_guard.tools.contracts import (
+    ToolContext,
+    ToolEffectLevel,
+    ToolExecutionMode,
+    ToolPolicyDecision,
+)
 from slim_guard.tools.registry import RegisteredTool
-
-
-class ToolPolicyDecision(StrEnum):
-    ALLOW = "allow"
-    CONFIRM = "confirm"
-    DENY = "deny"
-    REVIEW = "review"
 
 
 class ToolAuthorization(BaseModel):
