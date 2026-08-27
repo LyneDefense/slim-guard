@@ -111,27 +111,23 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
 
         trend = await WeightRepository(database).recent_trend("user-1")
         items = await HarnessStateRepository(database).list_items(
-            result.initialized.turn.id
+            result.turn_id
         )
         stored_turn = await HarnessStateRepository(database).get_turn(
-            result.initialized.turn.id
+            result.turn_id
         )
         stored_manifest = await AgentVersionRepository(database).get(
             runtime.manifest.version_id
         )
 
-        assert result.loop.termination is HarnessTermination.FINAL_RESPONSE
+        assert result.termination is HarnessTermination.FINAL_RESPONSE
         assert result.final_text == "已记录今天空腹体重 77.6kg。这是第一条记录，先建立基线。"
         assert stored_manifest is not None
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
         assert len(trend.records) == 1
         assert trend.records[0].weight_grams == 77_600
-        assert trend.records[0].source_item_id == result.initialized.source_item_id
-        assert [outcome.execution.tool_name for outcome in result.loop.tool_outcomes] == [
-            RECORD_WEIGHT_TOOL_NAME,
-            GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-        ]
+        assert trend.records[0].source_item_id == items[0].id
         assert [item.item_type for item in items] == [
             ItemType.USER_MESSAGE,
             ItemType.CONTEXT_SNAPSHOT,
@@ -150,6 +146,11 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "source_message_id": "wecom-message-1",
             "text": "今天早上空腹 77.6kg",
         }
+        assert [
+            item.payload["tool_name"]
+            for item in items
+            if item.item_type is ItemType.TOOL_CALL
+        ] == [RECORD_WEIGHT_TOOL_NAME, GET_RECENT_WEIGHT_TREND_TOOL_NAME]
         assert model.requests[0].messages[0].content == SLIM_GUARD_HARNESS_PROMPT
         assert [tool.name for tool in model.requests[0].tools] == [
             RECORD_WEIGHT_TOOL_NAME,

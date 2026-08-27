@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
 from slim_guard.integrations.wecom_kf.client import WeComMedia
@@ -114,6 +116,18 @@ async def test_sync_follows_empty_page_and_deduplicates(tmp_path) -> None:
         assert [sent.external_userid for sent in client.sent] == ["user-1", "user-2"]
         assert all(sent.content == "agent reply" for sent in client.sent)
         assert [request.text for request in reply_agent.requests] == ["hello", "hi"]
+        assert [request.source_message_id for request in reply_agent.requests] == [
+            "message-1",
+            "message-2",
+        ]
+        assert [request.channel_id for request in reply_agent.requests] == [
+            "default",
+            "default",
+        ]
+        assert [request.occurred_at for request in reply_agent.requests] == [
+            datetime.fromtimestamp(1_700_000_000, tz=UTC),
+            datetime.fromtimestamp(1_700_000_001, tz=UTC),
+        ]
         assert [transition.service_state for transition in client.transitions] == [
             WeComServiceState.SMART_ASSISTANT,
             WeComServiceState.SMART_ASSISTANT,

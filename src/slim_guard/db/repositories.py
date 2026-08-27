@@ -32,6 +32,7 @@ class OutboundPlan:
     open_kfid: str
     external_userid: str
     content: str
+    occurred_at: datetime | None = None
     requires_review: bool = False
     input_text: str | None = None
     image_media_id: str | None = None
@@ -276,6 +277,7 @@ class MessageRepository:
                     open_kfid=open_kfid,
                     external_userid=message.external_userid,
                     content=fallback_reply_text,
+                    occurred_at=datetime.fromtimestamp(message.send_time, tz=UTC),
                     requires_review=reply_delivery_mode == "internal_review",
                     input_text=input_text,
                     image_media_id=image_media_id,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -14,8 +16,8 @@ from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.runner import (
     HarnessTurnGrants,
     HarnessTurnRunner,
-    HarnessTurnRunResult,
 )
+from slim_guard.harness.termination import HarnessTermination
 from slim_guard.tools.contracts import ToolExecutionMode
 
 
@@ -42,6 +44,23 @@ class AgentRuntimeRequest(BaseModel):
         return normalized
 
 
+@dataclass(frozen=True, slots=True)
+class AgentRuntimeResult:
+    thread_id: str
+    turn_id: str
+    agent_version_id: str
+    termination: HarnessTermination
+    final_text: str | None
+    failure_code: str | None
+
+
+class AgentRuntimeProtocol(Protocol):
+    async def run_user_message(
+        self,
+        request: AgentRuntimeRequest,
+    ) -> AgentRuntimeResult: ...
+
+
 class AgentRuntime:
     """Stable application entry point over the internal Agent Harness graph."""
 
@@ -59,9 +78,9 @@ class AgentRuntime:
     async def run_user_message(
         self,
         request: AgentRuntimeRequest,
-    ) -> HarnessTurnRunResult:
+    ) -> AgentRuntimeResult:
         await self._versions.register(self.manifest)
-        return await self._runner.run(
+        run = await self._runner.run(
             request=TurnInitializationRequest(
                 user_id=request.user_id,
                 agent_version_id=self.manifest.version_id,
@@ -80,4 +99,12 @@ class AgentRuntime:
             grants=HarnessTurnGrants(
                 isolated_write_environment=request.isolated_write_environment,
             ),
+        )
+        return AgentRuntimeResult(
+            thread_id=run.initialized.thread.id,
+            turn_id=run.initialized.turn.id,
+            agent_version_id=run.initialized.turn.agent_version_id,
+            termination=run.loop.termination,
+            final_text=run.final_text,
+            failure_code=run.loop.failure.code if run.loop.failure is not None else None,
         )

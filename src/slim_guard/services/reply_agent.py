@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
@@ -36,6 +37,9 @@ class ReplyRequest:
     text: str | None = None
     image_bytes: bytes | None = None
     image_mime_type: str | None = None
+    source_message_id: str | None = None
+    channel_id: str | None = None
+    occurred_at: datetime | None = None
 
 
 class ReplyAgentProtocol(Protocol):

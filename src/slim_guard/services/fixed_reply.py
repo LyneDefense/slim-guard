@@ -280,6 +280,9 @@ class AgentReplySyncService:
                     text=plan.input_text,
                     image_bytes=image_bytes,
                     image_mime_type=image_mime_type,
+                    source_message_id=plan.inbound_msgid,
+                    channel_id=plan.channel_id,
+                    occurred_at=plan.occurred_at,
                 )
             )
             if not content.strip():
