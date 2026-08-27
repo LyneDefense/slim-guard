@@ -85,3 +85,13 @@
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证饮食工具出现在核心模型的冻结工具列表。
 - `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定饮食工具版本。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: persist authoritative exercise records`
+
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 新增开放运动名称、时长、步数、距离、设备报告消耗、时间和完整来源链的运动记录表。
+- `src/slim_guard/domain/exercise/contracts.py` → 运动领域契约 → 使用开放活动名称承接多样运动表达，并对可选量化指标设置合理范围和时区校验。
+- `src/slim_guard/domain/exercise/errors.py` → 运动领域错误 → 区分来源不可信和幂等冲突。
+- `src/slim_guard/domain/exercise/repository.py` → 运动权威持久化边界 → 实现来源验证、幂等写入、冲突保护和近期运动查询。
+- `src/slim_guard/domain/exercise/__init__.py` → 运动领域公共出口 → 暴露领域契约和仓储。
+- `tests/unit/test_exercise_repository.py` → 运动仓储测试 → 覆盖幂等、时间排序、用户隔离和内容冲突保护。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

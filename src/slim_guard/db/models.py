@@ -234,6 +234,59 @@ class MealRecord(Base):
     )
 
 
+class ExerciseRecord(Base):
+    __tablename__ = "exercise_records"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_exercise_record_idempotency_key"),
+        CheckConstraint(
+            "status IN ('active','superseded','voided')",
+            name="ck_exercise_record_status",
+        ),
+        CheckConstraint(
+            "duration_minutes IS NULL OR duration_minutes BETWEEN 1 AND 1440",
+            name="ck_exercise_record_duration",
+        ),
+        CheckConstraint(
+            "steps IS NULL OR steps BETWEEN 0 AND 200000",
+            name="ck_exercise_record_steps",
+        ),
+        CheckConstraint(
+            "distance_meters IS NULL OR distance_meters BETWEEN 0 AND 1000000",
+            name="ck_exercise_record_distance",
+        ),
+        CheckConstraint(
+            "reported_energy_kcal IS NULL OR reported_energy_kcal BETWEEN 0 AND 20000",
+            name="ck_exercise_record_energy",
+        ),
+        Index("ix_exercise_record_user_occurred", "user_id", "occurred_at"),
+        Index("ix_exercise_record_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    activity_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    distance_meters: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reported_energy_kcal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class PendingActionRecord(Base):
     __tablename__ = "pending_actions"
     __table_args__ = (
