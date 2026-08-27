@@ -176,6 +176,8 @@ def create_app(
         routine_task: asyncio.Task[None] | None = None
         maintenance_stop: asyncio.Event | None = None
         maintenance_task: asyncio.Task[None] | None = None
+        outbox_stop: asyncio.Event | None = None
+        outbox_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -201,11 +203,20 @@ def create_app(
                 reply_delivery_mode=app_settings.reply_delivery_mode,
                 profile_refresh_seconds=(app_settings.wecom_customer_profile_refresh_seconds),
                 media_max_bytes=app_settings.wecom_media_max_bytes,
+                outbox_recovery_interval_seconds=(
+                    app_settings.wecom_outbox_recovery_interval_seconds
+                ),
+                outbox_send_stale_seconds=app_settings.wecom_outbox_send_stale_seconds,
             )
             watchdog_stop = asyncio.Event()
             watchdog_task = asyncio.create_task(
                 state_machine.run_watchdog(watchdog_stop),
                 name="wecom-human-timeout-watchdog",
+            )
+            outbox_stop = asyncio.Event()
+            outbox_task = asyncio.create_task(
+                sync_service.run_outbox_recovery(outbox_stop),
+                name="wecom-outbox-recovery",
             )
             if app_settings.routine_scheduler_enabled and active_runtime is not None:
                 preferences = RoutinePreferenceRepository(database)
@@ -276,12 +287,16 @@ def create_app(
                 routine_stop.set()
             if maintenance_stop is not None:
                 maintenance_stop.set()
+            if outbox_stop is not None:
+                outbox_stop.set()
             if watchdog_task is not None:
                 await watchdog_task
             if routine_task is not None:
                 await routine_task
             if maintenance_task is not None:
                 await maintenance_task
+            if outbox_task is not None:
+                await outbox_task
             if owned_client is not None:
                 await owned_client.close()
             if owned_reply_agent is not None:

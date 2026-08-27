@@ -86,6 +86,10 @@ WECOM_HUMAN_IDLE_TIMEOUT_SECONDS=600
 # 后台检查超时人工会话的间隔
 WECOM_SESSION_WATCHDOG_INTERVAL_SECONDS=30
 
+# 恢复进程退出前未完成的普通回复；使用原 platform msgid 防止重复
+WECOM_OUTBOX_RECOVERY_INTERVAL_SECONDS=30
+WECOM_OUTBOX_SEND_STALE_SECONDS=120
+
 # 微信昵称、头像等客户资料的刷新间隔，默认24小时
 WECOM_CUSTOMER_PROFILE_REFRESH_SECONDS=86400
 
@@ -188,6 +192,8 @@ slim_guard_reply_pending_internal_review
 routine_message_accepted
 routine_job_skipped
 routine_job_attempt_failed
+wecom_outbox_recovered
+wecom_outbox_recovery_failed
 ```
 
 ## 测试与检查

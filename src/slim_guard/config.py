@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
     wecom_human_idle_timeout_seconds: int = Field(default=600, ge=60, le=86_400)
     wecom_session_watchdog_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    wecom_outbox_recovery_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    wecom_outbox_send_stale_seconds: int = Field(default=120, ge=30, le=3600)
     wecom_customer_profile_refresh_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
     wecom_human_timeout_message: str = (
         "人工服务暂时没有响应，已结束人工接待。请再发送一次刚才的内容，"

@@ -5,6 +5,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 from slim_guard.db.repositories import ConversationRef, MessageRepository, OutboundPlan
 from slim_guard.integrations.wecom_kf.client import WeComClientProtocol
@@ -30,6 +31,8 @@ class AgentReplySyncService:
         reply_delivery_mode: str,
         profile_refresh_seconds: int = 86_400,
         media_max_bytes: int = 10_485_760,
+        outbox_recovery_interval_seconds: int = 30,
+        outbox_send_stale_seconds: int = 120,
     ) -> None:
         self.client = client
         self.repository = repository
@@ -41,6 +44,8 @@ class AgentReplySyncService:
         self.reply_delivery_mode = reply_delivery_mode
         self.profile_refresh_seconds = profile_refresh_seconds
         self.media_max_bytes = media_max_bytes
+        self.outbox_recovery_interval_seconds = outbox_recovery_interval_seconds
+        self.outbox_send_stale = timedelta(seconds=outbox_send_stale_seconds)
         self._locks: defaultdict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
         self._allowed_message_types = frozenset({"text", "image"})
 
@@ -113,6 +118,35 @@ class AgentReplySyncService:
         """Future review UIs can approve a draft and dispatch it through this method."""
 
         await self._dispatch(plan)
+
+    async def run_outbox_recovery(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            try:
+                await self.handle_outbox_recovery_once()
+            except Exception:
+                logger.exception("wecom_outbox_recovery_failed")
+            try:
+                await asyncio.wait_for(
+                    stop.wait(),
+                    timeout=self.outbox_recovery_interval_seconds,
+                )
+            except TimeoutError:
+                pass
+
+    async def handle_outbox_recovery_once(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        reference_time = now or datetime.now(UTC)
+        plans = await self.repository.list_recoverable_outbound(
+            stale_before=reference_time - self.outbox_send_stale,
+        )
+        for plan in plans:
+            await self._dispatch(plan)
+        if plans:
+            logger.info("wecom_outbox_recovered", extra={"message_count": len(plans)})
+        return len(plans)
 
     async def _sync_customer_profiles(self, external_userids: list[str]) -> None:
         if not external_userids:

@@ -214,3 +214,14 @@
 - `.env.example` → 部署配置模板 → 默认启用 Harness 并给出六小时图片清理周期。
 - `README.md` → 部署与运维说明 → 说明 Harness 默认值、legacy 回滚用途和短期图片自动清理行为。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: recover interrupted wecom outbox sends`
+
+- `src/slim_guard/db/repositories.py` → 企业微信消息与 Outbox 持久化边界 → 支持使用同一平台 msgid 原子重抢过期 sending 消息，并只扫描超过安全等待期的 planned/sending 回复，避免与正常生成流程竞争。
+- `src/slim_guard/services/fixed_reply.py` → 企业微信同步、Agent 生成与发送服务 → 新增 Outbox 周期恢复器，直接复用数据库中已冻结的回复内容，不重新调用 Agent，并记录恢复数量与失败。
+- `src/slim_guard/main.py` → FastAPI 生产装配与生命周期入口 → 启动和有序停止企业微信 Outbox 恢复后台任务。
+- `src/slim_guard/config.py` → 环境配置契约 → 增加 Outbox 恢复扫描周期和发送租约过期时间。
+- `tests/unit/test_sync_service.py` → 企业微信同步与发送服务测试 → 模拟进程在内容冻结后、平台发送前退出，验证恢复器不重新生成且只发送一次。
+- `.env.example` → 部署配置模板 → 给出 Outbox 恢复和过期抢占的安全默认值。
+- `README.md` → 部署与运维说明 → 说明 Outbox 恢复配置和关键日志。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
@@ -297,5 +297,66 @@ async def test_agent_failure_sends_configured_fallback(tmp_path) -> None:
     try:
         await service.sync_and_reply(callback_token="token", open_kfid="wk-test")
         assert [sent.content for sent in client.sent] == ["请稍后再试"]
+    finally:
+        await database.close()
+
+
+async def test_outbox_recovery_sends_frozen_plan_without_regenerating(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'outbox-recovery.sqlite3'}")
+    await database.create_schema()
+    client = FakeWeComClient({})
+    repository = MessageRepository(database)
+    stored = await repository.store_page(
+        channel_id="default",
+        open_kfid="wk-test",
+        messages=[
+            SyncMessage(
+                msgid="message-before-crash",
+                external_userid="user-1",
+                send_time=1_700_000_000,
+                origin=3,
+                msgtype="text",
+                text={"content": "hello"},
+            )
+        ],
+        next_cursor="done",
+        fallback_reply_text="fallback",
+        allowed_message_types=frozenset({"text"}),
+        reply_delivery_mode="automatic",
+        profile_refresh_seconds=86_400,
+    )
+    await repository.update_outbound_content(
+        stored.plans[0].idempotency_key,
+        "进程退出前已经冻结的回复",
+    )
+    reply_agent = FakeReplyAgent("不应重新生成")
+    service = FixedReplySyncService(
+        client=client,
+        repository=repository,
+        channel_id="default",
+        configured_open_kfid="wk-test",
+        reply_agent=reply_agent,
+        fallback_reply_text="fallback",
+        state_machine=ConversationStateMachine(
+            client=client,
+            repository=repository,
+            human_idle_timeout_seconds=600,
+            watchdog_interval_seconds=30,
+            human_timeout_message="timeout",
+        ),
+        reply_delivery_mode="automatic",
+        outbox_send_stale_seconds=120,
+    )
+    try:
+        recovered = await service.handle_outbox_recovery_once(
+            now=datetime.now(UTC) + timedelta(minutes=3)
+        )
+
+        assert recovered == 1
+        assert [sent.content for sent in client.sent] == ["进程退出前已经冻结的回复"]
+        assert reply_agent.requests == []
+        assert await repository.list_recoverable_outbound(
+            stale_before=datetime.now(UTC) + timedelta(hours=1)
+        ) == []
     finally:
         await database.close()

@@ -353,19 +353,70 @@ class MessageRepository:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
 
-    async def claim(self, plan: OutboundPlan) -> bool:
-        now = datetime.now(UTC)
+    async def claim(
+        self,
+        plan: OutboundPlan,
+        *,
+        now: datetime | None = None,
+        retry_after: timedelta = timedelta(minutes=2),
+    ) -> bool:
+        reference_time = now or datetime.now(UTC)
+        stale_before = reference_time - retry_after
         async with self.database.session() as session, session.begin():
             result = await session.execute(
                 update(OutboundMessage)
                 .where(
                     OutboundMessage.idempotency_key == plan.idempotency_key,
-                    OutboundMessage.status == "planned",
+                    or_(
+                        OutboundMessage.status == "planned",
+                        (
+                            (OutboundMessage.status == "sending")
+                            & (OutboundMessage.attempt_started_at <= stale_before)
+                        ),
+                    ),
                 )
-                .values(status="sending", attempt_started_at=now)
+                .values(status="sending", attempt_started_at=reference_time)
+                .execution_options(synchronize_session=False)
             )
             cursor_result = cast(CursorResult[Any], result)
             return cursor_result.rowcount > 0
+
+    async def list_recoverable_outbound(
+        self,
+        *,
+        stale_before: datetime,
+        limit: int = 100,
+    ) -> list[OutboundPlan]:
+        if stale_before.utcoffset() is None:
+            raise ValueError("Outbound recovery cutoff must be timezone-aware")
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(OutboundMessage)
+                .where(
+                    or_(
+                        (OutboundMessage.status == "planned")
+                        & (OutboundMessage.created_at <= stale_before),
+                        (
+                            (OutboundMessage.status == "sending")
+                            & (OutboundMessage.attempt_started_at <= stale_before)
+                        ),
+                    )
+                )
+                .order_by(OutboundMessage.created_at, OutboundMessage.idempotency_key)
+                .limit(limit)
+            )
+            return [
+                OutboundPlan(
+                    idempotency_key=row.idempotency_key,
+                    platform_msgid=row.platform_msgid,
+                    channel_id=row.channel_id,
+                    inbound_msgid=row.inbound_msgid,
+                    open_kfid=row.open_kfid,
+                    external_userid=row.external_userid,
+                    content=row.content,
+                )
+                for row in rows
+            ]
 
     async def complete(
         self,
