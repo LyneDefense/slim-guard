@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
+from slim_guard.agent.runtime import AgentRuntime
+from slim_guard.agent_models.gateway import ModelGateway
+from slim_guard.db.session import Database
+from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.harness.context import ContextCompiler
+from slim_guard.harness.initialization import TurnInitializer
+from slim_guard.harness.limits import HarnessLimits
+from slim_guard.harness.manifest import AgentManifest
+from slim_guard.harness.pending_actions import PendingActionRepository
+from slim_guard.harness.repository import AgentVersionRepository
+from slim_guard.harness.runner import HarnessTurnRunner
+from slim_guard.harness.state_repository import HarnessStateRepository
+from slim_guard.harness.tool_calls import ToolCallCoordinator
+from slim_guard.harness.trace import PersistentHarnessRunRecorder
+from slim_guard.tools.execution_repository import ToolExecutionRepository
+from slim_guard.tools.gateway import ToolGateway
+from slim_guard.tools.policy import DefaultToolPolicy
+from slim_guard.tools.registry import ToolRegistry
+from slim_guard.tools.weight import weight_tool_definitions, weight_tool_executors
+
+
+class AgentRuntimeDefinition(BaseModel):
+    """Versioned runtime choices needed to construct one Agent graph."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model_provider: str = Field(min_length=1, max_length=128)
+    text_model: str = Field(min_length=1, max_length=256)
+    vision_model: str = Field(min_length=1, max_length=256)
+    model_parameters: dict[str, Any] = Field(default_factory=dict)
+    code_revision: str = Field(min_length=1, max_length=256)
+    limits: HarnessLimits = Field(default_factory=HarnessLimits)
+    confirmation_ttl_seconds: int = Field(default=900, ge=1, le=86_400)
+    review_ttl_seconds: int = Field(default=86_400, ge=1, le=604_800)
+
+
+def build_agent_runtime(
+    *,
+    database: Database,
+    model: ModelGateway,
+    definition: AgentRuntimeDefinition,
+    clock: Callable[[], datetime] | None = None,
+) -> AgentRuntime:
+    """Compose production repositories and gateways without channel dependencies."""
+
+    tool_definitions = weight_tool_definitions()
+    registry = ToolRegistry(tool_definitions)
+    manifest = AgentManifest.build(
+        model_provider=definition.model_provider,
+        text_model=definition.text_model,
+        vision_model=definition.vision_model,
+        model_parameters=definition.model_parameters,
+        system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
+        system_prompt=SLIM_GUARD_HARNESS_PROMPT,
+        tool_versions=registry.versions,
+        context_policy_version="single-turn-tools-v1",
+        memory_policy_version="none-v1",
+        compaction_policy_version="none-v1",
+        safety_policy_version="weight-coach-v1",
+        code_revision=definition.code_revision,
+    )
+    state = HarnessStateRepository(database)
+    pending_actions = PendingActionRepository(database)
+    gateway = ToolGateway(
+        registry=registry,
+        executors=weight_tool_executors(
+            WeightRepository(database),
+            clock=clock,
+        ),
+        execution_store=ToolExecutionRepository(database),
+        policy=DefaultToolPolicy(),
+    )
+    tool_calls = ToolCallCoordinator(
+        gateway=gateway,
+        pending_actions=pending_actions,
+        turn_state=state,
+        confirmation_ttl=timedelta(seconds=definition.confirmation_ttl_seconds),
+        review_ttl=timedelta(seconds=definition.review_ttl_seconds),
+    )
+    recorder = PersistentHarnessRunRecorder(state)
+    runner = HarnessTurnRunner(
+        initializer=TurnInitializer(state),
+        compiler=ContextCompiler(
+            manifest=manifest,
+            system_prompt=SLIM_GUARD_HARNESS_PROMPT,
+            tools=registry,
+        ),
+        model=model,
+        tool_calls=tool_calls,
+        recorder=recorder,
+        limits=definition.limits,
+        clock=clock,
+    )
+    return AgentRuntime(
+        manifest=manifest,
+        versions=AgentVersionRepository(database),
+        runner=runner,
+    )
