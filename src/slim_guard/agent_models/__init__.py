@@ -13,7 +13,13 @@ from slim_guard.agent_models.gateway import (
     ToolChoice,
     ToolDefinition,
 )
+from slim_guard.agent_models.vision import (
+    VisionInspectionRequest,
+    VisionInspectionResponse,
+    VisionModelGateway,
+)
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
+from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 
 __all__ = [
     "MessageRole",
@@ -28,5 +34,9 @@ __all__ = [
     "ScriptedModelGateway",
     "ToolChoice",
     "ToolDefinition",
+    "VisionInspectionRequest",
+    "VisionInspectionResponse",
+    "VisionModelGateway",
     "ZhipuModelGateway",
+    "ZhipuVisionModelGateway",
 ]

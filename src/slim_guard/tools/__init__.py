@@ -23,6 +23,14 @@ from slim_guard.tools.gateway import (
     ToolGatewayProtocol,
     ToolHandler,
 )
+from slim_guard.tools.image import (
+    IMAGE_TOOL_VERSION,
+    INSPECT_IMAGE_TOOL_NAME,
+    ImageToolHandlers,
+    InspectImageArguments,
+    image_tool_definitions,
+    image_tool_executors,
+)
 from slim_guard.tools.policy import (
     DefaultToolPolicy,
     ToolAuthorization,
@@ -45,6 +53,10 @@ __all__ = [
     "RegisteredTool",
     "GET_RECENT_WEIGHT_TREND_TOOL_NAME",
     "GetRecentWeightTrendArguments",
+    "IMAGE_TOOL_VERSION",
+    "INSPECT_IMAGE_TOOL_NAME",
+    "ImageToolHandlers",
+    "InspectImageArguments",
     "RECORD_WEIGHT_TOOL_NAME",
     "RecordWeightArguments",
     "DefaultToolPolicy",
@@ -74,4 +86,6 @@ __all__ = [
     "WeightToolHandlers",
     "weight_tool_definitions",
     "weight_tool_executors",
+    "image_tool_definitions",
+    "image_tool_executors",
 ]

@@ -35,3 +35,14 @@
 - `src/slim_guard/domain/assets/__init__.py` → 图片资产模块公共出口 → 统一暴露领域契约和仓储。
 - `tests/unit/test_image_asset_repository.py` → 图片资产仓储测试 → 覆盖幂等、跨用户隔离、内容冲突、过期清理和格式欺骗。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: add controlled vision inspection tool`
+
+- `src/slim_guard/agent_models/vision.py` → 供应商无关的视觉模型契约 → 定义带图片字节、模型、Prompt、用量和请求 ID 的标准检查请求与响应。
+- `src/slim_guard/agent_models/zhipu_vision.py` → 智谱视觉模型适配器 → 调用 GLM 视觉接口并规范化超时、网络、HTTP 和无效响应错误。
+- `src/slim_guard/agent_models/__init__.py` → 模型模块公共出口 → 暴露视觉协议和智谱实现。
+- `src/slim_guard/tools/image.py` → Harness 图片检查工具 → 按当前用户读取短期资产，根据体重秤、饮食或运动关注点调用视觉模型，并返回非权威观察结果。
+- `src/slim_guard/tools/__init__.py` → Tool 模块公共出口 → 暴露图片工具定义、参数和执行器。
+- `tests/unit/test_zhipu_vision_gateway.py` → 智谱视觉适配器测试 → 验证多模态请求序列化、响应解析和供应商错误归一化。
+- `tests/unit/test_image_tools.py` → 图片 Tool 测试 → 验证资产所有权隔离、视觉请求内容和安全观察结果。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
