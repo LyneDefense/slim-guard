@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -104,6 +105,60 @@ class AgentItemRecord(Base):
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class WeightRecord(Base):
+    __tablename__ = "weight_records"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_weight_record_idempotency_key"),
+        UniqueConstraint("supersedes_id", name="uq_weight_record_supersedes_id"),
+        CheckConstraint(
+            "weight_grams BETWEEN 10000 AND 500000",
+            name="ck_weight_record_safe_range",
+        ),
+        CheckConstraint(
+            "original_unit IN ('kg','jin','lb')",
+            name="ck_weight_record_original_unit",
+        ),
+        CheckConstraint(
+            "measurement_condition IN ('fasting','post_meal','unspecified')",
+            name="ck_weight_record_condition",
+        ),
+        CheckConstraint(
+            "status IN ('active','superseded','voided')",
+            name="ck_weight_record_status",
+        ),
+        Index("ix_weight_record_user_measured", "user_id", "measured_at"),
+        Index("ix_weight_record_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    weight_grams: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_value: Mapped[str] = mapped_column(String(32), nullable=False)
+    original_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measurement_condition: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        ForeignKey("weight_records.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
