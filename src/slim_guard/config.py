@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     zhipu_http_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
     zhipu_max_output_tokens: int = Field(default=1024, ge=64, le=32_768)
     agent_reply_max_chars: int = Field(default=1500, ge=100, le=4000)
+    agent_image_retention_seconds: int = Field(
+        default=604_800,
+        ge=3600,
+        le=2_592_000,
+    )
 
     @cached_property
     def wecom_callback_is_configured(self) -> bool:

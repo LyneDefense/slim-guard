@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from slim_guard.domain.assets.contracts import SaveImageAssetCommand
+from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,
@@ -27,7 +30,9 @@ class AgentRuntimeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     user_id: str = Field(min_length=1, max_length=128)
-    text: str = Field(min_length=1, max_length=20_000)
+    text: str | None = Field(default=None, max_length=20_000)
+    image_bytes: bytes | None = Field(default=None, min_length=1, max_length=20_971_520)
+    image_mime_type: str | None = Field(default=None, max_length=128)
     source_message_id: str | None = Field(default=None, min_length=1, max_length=256)
     channel_id: str | None = Field(default=None, min_length=1, max_length=128)
     occurred_at: datetime | None = None
@@ -37,11 +42,19 @@ class AgentRuntimeRequest(BaseModel):
 
     @field_validator("text")
     @classmethod
-    def normalize_text(cls, value: str) -> str:
+    def normalize_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
-        if not normalized:
-            raise ValueError("Agent user message cannot be empty")
-        return normalized
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_content(self) -> AgentRuntimeRequest:
+        if self.text is None and self.image_bytes is None:
+            raise ValueError("Agent request requires text or an image")
+        if self.image_mime_type is not None and self.image_bytes is None:
+            raise ValueError("Image MIME type requires image bytes")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,16 +83,57 @@ class AgentRuntime:
         manifest: AgentManifest,
         versions: AgentVersionRepository,
         runner: HarnessTurnRunner,
+        assets: ImageAssetRepository,
+        image_retention: timedelta,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
+        if image_retention <= timedelta(0):
+            raise ValueError("Image retention must be positive")
         self.manifest = manifest
         self._versions = versions
         self._runner = runner
+        self._assets = assets
+        self._image_retention = image_retention
+        self._clock = clock or self._utc_now
 
     async def run_user_message(
         self,
         request: AgentRuntimeRequest,
     ) -> AgentRuntimeResult:
         await self._versions.register(self.manifest)
+        inputs: list[TurnInput] = []
+        if request.text is not None:
+            inputs.append(
+                TurnInput.user_message(
+                    text=request.text,
+                    source_message_id=request.source_message_id,
+                    channel_id=request.channel_id,
+                    occurred_at=request.occurred_at,
+                )
+            )
+        if request.image_bytes is not None:
+            now = self._clock()
+            if now.utcoffset() is None:
+                raise ValueError("Agent Runtime clock must be timezone-aware")
+            creation = await self._assets.save(
+                SaveImageAssetCommand(
+                    user_id=request.user_id,
+                    content=request.image_bytes,
+                    declared_mime_type=request.image_mime_type,
+                    channel_id=request.channel_id,
+                    source_message_id=request.source_message_id,
+                    expires_at=now + self._image_retention,
+                )
+            )
+            inputs.append(
+                TurnInput.image_attachment(
+                    asset_id=creation.asset.id,
+                    mime_type=creation.asset.mime_type,
+                    source_message_id=request.source_message_id,
+                    channel_id=request.channel_id,
+                    occurred_at=request.occurred_at,
+                )
+            )
         run = await self._runner.run(
             request=TurnInitializationRequest(
                 user_id=request.user_id,
@@ -87,14 +141,7 @@ class AgentRuntime:
                 trigger=TurnTrigger.USER_MESSAGE,
                 execution_mode=request.execution_mode,
                 deadline_at=request.deadline_at,
-                inputs=(
-                    TurnInput.user_message(
-                        text=request.text,
-                        source_message_id=request.source_message_id,
-                        channel_id=request.channel_id,
-                        occurred_at=request.occurred_at,
-                    ),
-                ),
+                inputs=tuple(inputs),
             ),
             grants=HarnessTurnGrants(
                 isolated_write_environment=request.isolated_write_environment,
@@ -108,3 +155,7 @@ class AgentRuntime:
             final_text=run.final_text,
             failure_code=run.loop.failure.code if run.loop.failure is not None else None,
         )
+
+    @staticmethod
+    def _utc_now() -> datetime:
+        return datetime.now(UTC)

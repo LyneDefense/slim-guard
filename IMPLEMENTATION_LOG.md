@@ -46,3 +46,19 @@
 - `tests/unit/test_zhipu_vision_gateway.py` → 智谱视觉适配器测试 → 验证多模态请求序列化、响应解析和供应商错误归一化。
 - `tests/unit/test_image_tools.py` → 图片 Tool 测试 → 验证资产所有权隔离、视觉请求内容和安全观察结果。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: connect image messages to agent runtime`
+
+- `src/slim_guard/agent/runtime.py` → 渠道无关的 Agent 运行入口 → 接收文字或图片，将原始图片先保存为当前用户的短期资产，再把不透明 `asset_id` 写入 Turn。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 将图片工具、资产仓储和可选视觉网关加入 Registry、Gateway 与版本 Manifest。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 要求图片必须先调用视觉工具，低清、冲突或不确定结果必须向用户确认而不是写入猜测值。
+- `src/slim_guard/services/harness_reply_agent.py` → 企业微信到 Harness 的渠道适配器 → 把下载后的图片字节和 MIME 类型传给 Runtime，不再走图片 fallback。
+- `src/slim_guard/main.py` → FastAPI 生产装配与生命周期入口 → 创建并关闭智谱视觉客户端，并把图片保留期和视觉输出预算注入 Runtime。
+- `src/slim_guard/config.py` → 环境配置契约 → 新增可配置的短期图片保留秒数。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 更新冻结工具集合，确认图片工具进入模型上下文。
+- `tests/unit/test_harness_reply_agent.py` → 企业微信渠道适配测试 → 验证图片字节和类型完整进入 Runtime。
+- `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证 Harness 版本包含图片工具。
+- `tests/integration/test_callback_flow.py` → 企业微信端到端测试 → 验证图片回调依次经过媒体下载、资产隔离、视觉检查、体重写入、趋势查询和最终回复。
+- `.env.example` → 部署配置模板 → 增加图片保留期配置示例。
+- `README.md` → 部署与运行说明 → 说明 Harness 已支持图片及默认七天保留策略。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

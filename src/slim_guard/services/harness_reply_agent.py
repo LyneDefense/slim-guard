@@ -34,12 +34,8 @@ class HarnessReplyAgent:
         self._clock = clock or self._utc_now
 
     async def generate_reply(self, request: ReplyRequest) -> str:
-        if request.image_bytes is not None:
-            raise HarnessReplyError(
-                "Harness image input is not supported until the asset pipeline is connected"
-            )
-        if request.text is None or not request.text.strip():
-            raise HarnessReplyError("Harness reply requires a text user message")
+        if request.text is None and request.image_bytes is None:
+            raise HarnessReplyError("Harness reply requires text or an image")
         now = self._clock()
         if now.utcoffset() is None:
             raise HarnessReplyError("Harness reply clock must be timezone-aware")
@@ -47,6 +43,8 @@ class HarnessReplyAgent:
             AgentRuntimeRequest(
                 user_id=request.user_id,
                 text=request.text,
+                image_bytes=request.image_bytes,
+                image_mime_type=request.image_mime_type,
                 source_message_id=request.source_message_id,
                 channel_id=request.channel_id,
                 occurred_at=request.occurred_at,

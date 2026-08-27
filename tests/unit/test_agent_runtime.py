@@ -155,6 +155,7 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         assert [tool.name for tool in model.requests[0].tools] == [
             RECORD_WEIGHT_TOOL_NAME,
             GET_RECENT_WEIGHT_TREND_TOOL_NAME,
+            "inspect_image",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")

@@ -44,8 +44,9 @@ WECOM_CALLBACK_AES_KEY=EncodingAESKey
 ZHIPU_API_KEY=智谱 API Key
 ```
 
-Agent Runtime 默认保持兼容模式。设置为 `harness` 后，企业微信文字消息会进入新版
-Harness，并可调用体重记录和趋势查询工具；图片暂时仍会安全降级到 fallback。
+Agent Runtime 默认保持兼容模式。设置为 `harness` 后，企业微信文字和图片消息会进入新版
+Harness，并可调用图片检查、体重记录和趋势查询工具。图片默认保留 7 天，可通过
+`AGENT_IMAGE_RETENTION_SECONDS` 调整。
 `shadow` 尚未开放，设置后会拒绝启动：
 
 ```dotenv

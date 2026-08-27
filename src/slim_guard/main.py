@@ -14,7 +14,9 @@ from slim_guard.agent.composition import (
 )
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
+from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
+from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
@@ -44,6 +46,7 @@ def create_app(
     client: WeComClientProtocol | None = None,
     reply_agent: ReplyAgentProtocol | None = None,
     model_gateway: ModelGateway | None = None,
+    vision_gateway: VisionModelGateway | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
     if app_settings.agent_runtime_mode == "shadow":
@@ -62,6 +65,8 @@ def create_app(
         vision_model=app_settings.zhipu_vision_model,
         model_parameters=model_parameters,
         code_revision=app_settings.agent_code_revision,
+        image_retention_seconds=app_settings.agent_image_retention_seconds,
+        vision_max_output_tokens=app_settings.zhipu_max_output_tokens,
     )
     agent_manifest = (
         build_agent_manifest(runtime_definition)
@@ -83,10 +88,11 @@ def create_app(
     owned_client: WeComClient | None = None
     owned_reply_agent: ZhipuReplyAgent | None = None
     owned_model_gateway: ZhipuModelGateway | None = None
+    owned_vision_gateway: ZhipuVisionModelGateway | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal owned_client, owned_model_gateway, owned_reply_agent
+        nonlocal owned_client, owned_model_gateway, owned_reply_agent, owned_vision_gateway
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
@@ -116,10 +122,19 @@ def create_app(
                     thinking_enabled=False,
                 )
                 active_model = owned_model_gateway
+            active_vision = vision_gateway
+            if active_vision is None and app_settings.zhipu_is_configured:
+                owned_vision_gateway = ZhipuVisionModelGateway(
+                    api_key=app_settings.zhipu_api_key,
+                    base_url=app_settings.zhipu_base_url,
+                    timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+                )
+                active_vision = owned_vision_gateway
             if active_model is not None:
                 active_runtime = build_agent_runtime(
                     database=database,
                     model=active_model,
+                    vision=active_vision,
                     definition=runtime_definition,
                     manifest=agent_manifest,
                 )
@@ -196,6 +211,8 @@ def create_app(
                 await owned_reply_agent.close()
             if owned_model_gateway is not None:
                 await owned_model_gateway.close()
+            if owned_vision_gateway is not None:
+                await owned_vision_gateway.close()
             await database.close()
 
     application = FastAPI(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -7,17 +9,75 @@ from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     NormalizedToolCall,
+)
+from slim_guard.agent_models.vision import (
+    VisionInspectionRequest,
+    VisionInspectionResponse,
 )
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.repository import AgentVersionRepository
+from slim_guard.integrations.wecom_kf.client import WeComMedia
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.integrations.wecom_kf.schemas import SyncMessage, SyncPage
 from slim_guard.main import create_app
 from tests.fakes import FakeReplyAgent, FakeWeComClient
+
+
+class ImageHarnessModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self.closed = False
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        step = len(self.requests)
+        if step == 1:
+            image_input = json.loads(request.messages[-1].content or "")
+            return _tool_response(
+                "call-inspect",
+                "inspect_image",
+                {"asset_id": image_input["asset_id"], "focus": "weight_scale"},
+            )
+        if step == 2:
+            return _tool_response(
+                "call-record",
+                "record_weight",
+                {"value": 77.6, "unit": "kg", "condition": "unspecified"},
+            )
+        if step == 3:
+            return _tool_response(
+                "call-trend",
+                "get_recent_weight_trend",
+                {"limit": 7},
+            )
+        return ModelResponse(
+            message=ModelMessage(
+                role=MessageRole.ASSISTANT,
+                content="体重秤显示 77.6kg，已记录为第一条体重基线。",
+            ),
+            finish_reason="stop",
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class ImageHarnessVision:
+    def __init__(self) -> None:
+        self.requests: list[VisionInspectionRequest] = []
+        self.closed = False
+
+    async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse:
+        self.requests.append(request)
+        return VisionInspectionResponse(description="体重秤显示 77.6 kg，单位清晰。")
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 def _tool_response(
@@ -230,3 +290,85 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
 
     assert model.closed is False
     await model.close()
+
+
+async def test_image_callback_runs_vision_then_records_weight(
+    test_settings: Settings,
+) -> None:
+    harness_settings = test_settings.model_copy(
+        update={"agent_runtime_mode": "harness"}
+    )
+    image = b"\x89PNG\r\n\x1a\nscale-image"
+    fake = FakeWeComClient(
+        {
+            None: SyncPage(
+                next_cursor="done",
+                has_more=False,
+                msg_list=[
+                    SyncMessage(
+                        msgid="scale-image-message-1",
+                        external_userid="external-user-1",
+                        send_time=1_700_000_000,
+                        origin=3,
+                        msgtype="image",
+                        image={"media_id": "scale-media-1"},
+                    )
+                ],
+            )
+        },
+        media={
+            "scale-media-1": WeComMedia(
+                content=image,
+                content_type="image/png",
+            )
+        },
+    )
+    model = ImageHarnessModel()
+    vision = ImageHarnessVision()
+    app = create_app(
+        harness_settings,
+        client=fake,
+        model_gateway=model,
+        vision_gateway=vision,
+    )
+    crypto = WeComCallbackCrypto(
+        harness_settings.wecom_callback_token,
+        harness_settings.wecom_callback_aes_key,
+        harness_settings.wecom_corp_id,
+    )
+    body, signature = _encrypted_callback(crypto, timestamp="123", nonce="nonce")
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as http:
+            response = await http.post(
+                "/callbacks/wecom/kf",
+                params={
+                    "msg_signature": signature,
+                    "timestamp": "123",
+                    "nonce": "nonce",
+                },
+                content=body,
+                headers={"content-type": "application/xml"},
+            )
+
+        users = await MessageRepository(app.state.database).list_users()
+        trend = await WeightRepository(app.state.database).recent_trend(users[0].id)
+
+        assert response.status_code == 200
+        assert [sent.content for sent in fake.sent] == [
+            "体重秤显示 77.6kg，已记录为第一条体重基线。"
+        ]
+        assert len(vision.requests) == 1
+        assert vision.requests[0].image_bytes == image
+        assert vision.requests[0].image_mime_type == "image/png"
+        assert len(trend.records) == 1
+        assert trend.records[0].weight_grams == 77_600
+        assert len(model.requests) == 4
+
+    assert model.closed is False
+    assert vision.closed is False
+    await model.close()
+    await vision.close()

@@ -72,7 +72,7 @@ async def test_adapter_maps_wecom_text_metadata_to_live_runtime_request() -> Non
     ]
 
 
-async def test_adapter_rejects_image_until_asset_pipeline_is_connected() -> None:
+async def test_adapter_maps_wecom_image_to_runtime_request() -> None:
     runtime = FakeAgentRuntime(runtime_result())
     adapter = HarnessReplyAgent(
         runtime=runtime,
@@ -80,17 +80,19 @@ async def test_adapter_rejects_image_until_asset_pipeline_is_connected() -> None
         clock=lambda: FIXED_NOW,
     )
 
-    with pytest.raises(HarnessReplyError, match="asset pipeline"):
-        await adapter.generate_reply(
-            ReplyRequest(
-                user_id="internal-user-1",
-                nickname=None,
-                image_bytes=b"image",
-                image_mime_type="image/png",
-            )
+    reply = await adapter.generate_reply(
+        ReplyRequest(
+            user_id="internal-user-1",
+            nickname=None,
+            image_bytes=b"image",
+            image_mime_type="image/png",
         )
+    )
 
-    assert runtime.requests == []
+    assert reply == "已记录 77.6kg。"
+    assert runtime.requests[0].text is None
+    assert runtime.requests[0].image_bytes == b"image"
+    assert runtime.requests[0].image_mime_type == "image/png"
 
 
 async def test_adapter_does_not_deliver_non_final_harness_result() -> None:

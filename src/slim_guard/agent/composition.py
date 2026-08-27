@@ -9,7 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
+from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.db.session import Database
+from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.initialization import TurnInitializer
@@ -23,6 +25,7 @@ from slim_guard.harness.tool_calls import ToolCallCoordinator
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.gateway import ToolGateway
+from slim_guard.tools.image import image_tool_definitions, image_tool_executors
 from slim_guard.tools.policy import DefaultToolPolicy
 from slim_guard.tools.registry import ToolRegistry
 from slim_guard.tools.weight import weight_tool_definitions, weight_tool_executors
@@ -41,19 +44,22 @@ class AgentRuntimeDefinition(BaseModel):
     limits: HarnessLimits = Field(default_factory=HarnessLimits)
     confirmation_ttl_seconds: int = Field(default=900, ge=1, le=86_400)
     review_ttl_seconds: int = Field(default=86_400, ge=1, le=604_800)
+    image_retention_seconds: int = Field(default=604_800, ge=3600, le=2_592_000)
+    vision_max_output_tokens: int = Field(default=1024, ge=64, le=32_768)
 
 
 def build_agent_runtime(
     *,
     database: Database,
     model: ModelGateway,
+    vision: VisionModelGateway | None = None,
     definition: AgentRuntimeDefinition,
     manifest: AgentManifest | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> AgentRuntime:
     """Compose production repositories and gateways without channel dependencies."""
 
-    tool_definitions = weight_tool_definitions()
+    tool_definitions = (*weight_tool_definitions(), *image_tool_definitions())
     registry = ToolRegistry(tool_definitions)
     expected_manifest = build_agent_manifest(definition)
     active_manifest = manifest or expected_manifest
@@ -61,12 +67,23 @@ def build_agent_runtime(
         raise ValueError("Agent Runtime manifest does not match its definition")
     state = HarnessStateRepository(database)
     pending_actions = PendingActionRepository(database)
-    gateway = ToolGateway(
-        registry=registry,
-        executors=weight_tool_executors(
+    assets = ImageAssetRepository(database)
+    executors = {
+        **weight_tool_executors(
             WeightRepository(database),
             clock=clock,
         ),
+        **image_tool_executors(
+            assets=assets,
+            vision=vision,
+            vision_model=definition.vision_model,
+            max_output_tokens=definition.vision_max_output_tokens,
+            clock=clock,
+        ),
+    }
+    gateway = ToolGateway(
+        registry=registry,
+        executors=executors,
         execution_store=ToolExecutionRepository(database),
         policy=DefaultToolPolicy(),
     )
@@ -95,11 +112,14 @@ def build_agent_runtime(
         manifest=active_manifest,
         versions=AgentVersionRepository(database),
         runner=runner,
+        assets=assets,
+        image_retention=timedelta(seconds=definition.image_retention_seconds),
+        clock=clock,
     )
 
 
 def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
-    registry = ToolRegistry(weight_tool_definitions())
+    registry = ToolRegistry((*weight_tool_definitions(), *image_tool_definitions()))
     return AgentManifest.build(
         model_provider=definition.model_provider,
         text_model=definition.text_model,
