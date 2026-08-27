@@ -148,3 +148,11 @@
 - `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 定义三类定时 Turn 的生成边界，要求依据权威事实判断缺卡、客观复盘且禁止编造和调用工具。
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证定时 Turn 无需伪造用户消息、没有可用 Tool、保留明确 Trigger 并正常持久化输出。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: guard proactive wecom delivery`
+
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 新增与日程 Job 一对一的主动消息账本，保存稳定平台消息 ID、路由、内容、发送状态、尝试次数和错误。
+- `src/slim_guard/domain/routine/status.py` → 当日打卡状态读取器 → 按用户配置时区确定本地自然日边界，并从权威记录统计体重、饮食和运动完成情况。
+- `src/slim_guard/services/proactive_delivery.py` → 微信主动发送策略与持久化边界 → 解析用户最新微信客服路由，检查 48 小时窗口，以默认三条主动消息上限预留平台额度，并提供内容防篡改、原子抢占和超时重试。
+- `tests/unit/test_proactive_delivery.py` → 主动发送策略测试 → 覆盖有效路由、额度阻断、同 Job 幂等、发送租约重试和内容碰撞保护。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

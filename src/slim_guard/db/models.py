@@ -477,6 +477,37 @@ class RoutineJobRecord(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ProactiveMessageRecord(Base):
+    __tablename__ = "proactive_messages"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('planned','sending','accepted','unknown','failed')",
+            name="ck_proactive_message_status",
+        ),
+        Index("ix_proactive_message_route_created", "open_kfid", "external_userid", "created_at"),
+        Index("ix_proactive_message_status", "status"),
+    )
+
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("routine_jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    platform_msgid: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    channel_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    open_kfid: Mapped[str] = mapped_column(String(128), nullable=False)
+    external_userid: Mapped[str] = mapped_column(String(256), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ChannelIdentity(Base):
     __tablename__ = "channel_identities"
     __table_args__ = (
