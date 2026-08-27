@@ -47,3 +47,17 @@ class ItemStatus(StrEnum):
     STARTED = "started"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class PendingActionType(StrEnum):
+    USER_CONFIRMATION = "user_confirmation"
+    HUMAN_REVIEW = "human_review"
+
+
+class PendingActionStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    CONSUMED = "consumed"

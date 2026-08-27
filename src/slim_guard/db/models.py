@@ -106,6 +106,48 @@ class AgentItemRecord(Base):
     )
 
 
+class PendingActionRecord(Base):
+    __tablename__ = "pending_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "execution_key",
+            "action_type",
+            name="uq_pending_action_execution_type",
+        ),
+        Index("ix_pending_action_thread_status", "thread_id", "status"),
+        Index("ix_pending_action_status_expiry", "status", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    thread_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    source_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_arguments_json: Mapped[str] = mapped_column(Text, nullable=False)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    reason: Mapped[str] = mapped_column(String(1024), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ToolExecutionRecord(Base):
     __tablename__ = "tool_executions"
     __table_args__ = (

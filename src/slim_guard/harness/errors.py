@@ -15,3 +15,15 @@ class TurnStateConflict(HarnessStateError):
 
 class TurnNotWritable(HarnessStateError):
     pass
+
+
+class PendingActionCollision(HarnessStateError):
+    pass
+
+
+class InvalidPendingActionTransition(HarnessStateError):
+    pass
+
+
+class PendingActionStateConflict(HarnessStateError):
+    pass
