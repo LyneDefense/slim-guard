@@ -162,6 +162,7 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "get_recent_exercise",
             "configure_checkin_schedule",
             "get_checkin_schedule",
+            "update_record_status",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")

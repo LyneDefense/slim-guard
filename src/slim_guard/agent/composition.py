@@ -14,6 +14,7 @@ from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.domain.records.service import UserRecordStatusService
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.domain.weight.repository import WeightRepository
@@ -35,6 +36,10 @@ from slim_guard.tools.gateway import ToolGateway
 from slim_guard.tools.image import image_tool_definitions, image_tool_executors
 from slim_guard.tools.meal import meal_tool_definitions, meal_tool_executors
 from slim_guard.tools.policy import DefaultToolPolicy
+from slim_guard.tools.records import (
+    record_status_tool_definitions,
+    record_status_tool_executors,
+)
 from slim_guard.tools.registry import ToolRegistry
 from slim_guard.tools.routine import routine_tool_definitions, routine_tool_executors
 from slim_guard.tools.weight import weight_tool_definitions, weight_tool_executors
@@ -74,6 +79,7 @@ def build_agent_runtime(
         *meal_tool_definitions(),
         *exercise_tool_definitions(),
         *routine_tool_definitions(),
+        *record_status_tool_definitions(),
     )
     registry = ToolRegistry(tool_definitions)
     expected_manifest = build_agent_manifest(definition)
@@ -103,6 +109,7 @@ def build_agent_runtime(
         **meal_tool_executors(meals, clock=clock),
         **exercise_tool_executors(exercise, clock=clock),
         **routine_tool_executors(routines),
+        **record_status_tool_executors(UserRecordStatusService(database)),
     }
     gateway = ToolGateway(
         registry=registry,
@@ -158,6 +165,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
             *meal_tool_definitions(),
             *exercise_tool_definitions(),
             *routine_tool_definitions(),
+            *record_status_tool_definitions(),
         )
     )
     return AgentManifest.build(

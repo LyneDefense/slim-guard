@@ -189,3 +189,16 @@
 - `tests/unit/test_safety_guard.py` → 安全策略单元测试 → 覆盖明确急症、未成年人、普通打卡以及诊断处方输出替换。
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证急症输入无法调用任何 Tool、错误模型回复被安全升级信息替换且 Guard 事件可追溯。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: support reversible record corrections`
+
+- `src/slim_guard/domain/records/service.py` → 跨记录类型的用户纠错服务 → 按当前用户所有权将体重、饮食或运动记录标记为 voided 或恢复为 active，保留历史且重复操作幂等。
+- `src/slim_guard/domain/records/__init__.py` → 记录纠错领域公共出口 → 暴露记录类型、动作、结果与服务。
+- `src/slim_guard/tools/records.py` → 记录状态 Tool → 允许 Agent 在先查询到确切 record_id 后撤销错误记录或恢复已撤销记录，拒绝跨用户访问和 superseded 状态冲突。
+- `src/slim_guard/tools/__init__.py` → Tool 模块公共出口 → 暴露记录纠错 Tool 的定义、参数和处理器。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 把记录纠错 Tool 加入固定 Registry、Gateway 与 Agent Manifest。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 要求纠错先查精确 ID、只做软撤销、正确新事实另行保存且逐步如实反馈。
+- `tests/unit/test_record_status_tools.py` → 记录纠错服务和 Tool 测试 → 覆盖撤销、重复撤销、恢复以及跨用户不可见。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证纠错 Tool 进入核心模型冻结工具列表。
+- `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定纠错 Tool 版本。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

@@ -79,6 +79,7 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "configure_checkin_schedule": "v1",
         "record_exercise": "v1",
         "record_weight": "v1",
+        "update_record_status": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
 
