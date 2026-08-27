@@ -1,5 +1,11 @@
 """Core contracts for the SlimGuard agent harness."""
 
+from slim_guard.harness.initialization import (
+    InitializedTurn,
+    TurnInitializationRequest,
+    TurnInitializer,
+    TurnInput,
+)
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.loop import (
     HarnessLoop,
@@ -25,6 +31,7 @@ __all__ = [
     "HarnessLoop",
     "HarnessLoopResult",
     "HarnessTurnContext",
+    "InitializedTurn",
     "PendingActionCreation",
     "PendingActionRef",
     "PendingActionRepository",
@@ -33,4 +40,7 @@ __all__ = [
     "PendingResumeOutcome",
     "ToolCallCoordinator",
     "ToolCallOutcome",
+    "TurnInitializationRequest",
+    "TurnInitializer",
+    "TurnInput",
 ]

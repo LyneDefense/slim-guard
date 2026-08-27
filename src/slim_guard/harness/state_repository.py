@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, cast
@@ -84,6 +84,20 @@ class ItemRef:
     payload: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class NewTurnItem:
+    item_type: ItemType
+    status: ItemStatus
+    payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredTurnStart:
+    thread: ThreadRef
+    turn: TurnRef
+    items: tuple[ItemRef, ...]
+
+
 class TurnStateStore(Protocol):
     async def get_thread(self, thread_id: str) -> ThreadRef | None: ...
 
@@ -117,6 +131,18 @@ class HarnessRunStore(TurnStateStore, Protocol):
     ) -> ItemRef: ...
 
 
+class TurnInitializationStore(Protocol):
+    async def start_turn_with_items(
+        self,
+        *,
+        user_id: str,
+        agent_version_id: str,
+        trigger: TurnTrigger,
+        items: Sequence[NewTurnItem],
+        deadline_at: datetime | None = None,
+    ) -> StoredTurnStart: ...
+
+
 class HarnessStateRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -140,21 +166,64 @@ class HarnessStateRepository:
         trigger: TurnTrigger,
         deadline_at: datetime | None = None,
     ) -> TurnRef:
-        thread = await self.get_or_create_thread(user_id)
+        started = await self.start_turn_with_items(
+            user_id=user_id,
+            agent_version_id=agent_version_id,
+            trigger=trigger,
+            items=(),
+            deadline_at=deadline_at,
+        )
+        return started.turn
+
+    async def start_turn_with_items(
+        self,
+        *,
+        user_id: str,
+        agent_version_id: str,
+        trigger: TurnTrigger,
+        items: Sequence[NewTurnItem],
+        deadline_at: datetime | None = None,
+    ) -> StoredTurnStart:
+        serialized_items = [(item, self._payload_json(item.payload)) for item in items]
         async with self.database.session() as session, session.begin():
-            row = AgentTurnRecord(
-                thread_id=thread.id,
+            thread_row = await session.scalar(
+                select(AgentThreadRecord).where(AgentThreadRecord.user_id == user_id)
+            )
+            if thread_row is None:
+                thread_row = AgentThreadRecord(
+                    user_id=user_id,
+                    status=ThreadStatus.ACTIVE.value,
+                )
+                session.add(thread_row)
+                await session.flush()
+            turn_row = AgentTurnRecord(
+                thread_id=thread_row.id,
                 agent_version_id=agent_version_id,
                 trigger_type=trigger.value,
                 status=TurnStatus.RUNNING.value,
                 deadline_at=deadline_at,
             )
-            session.add(row)
-            stored_thread = await session.get(AgentThreadRecord, thread.id)
-            assert stored_thread is not None
-            stored_thread.last_active_at = utc_now()
+            session.add(turn_row)
             await session.flush()
-            return self._turn_ref(row)
+            item_rows = [
+                AgentItemRecord(
+                    thread_id=thread_row.id,
+                    turn_id=turn_row.id,
+                    sequence=sequence,
+                    item_type=item.item_type.value,
+                    status=item.status.value,
+                    payload_json=payload_json,
+                )
+                for sequence, (item, payload_json) in enumerate(serialized_items, start=1)
+            ]
+            session.add_all(item_rows)
+            thread_row.last_active_at = utc_now()
+            await session.flush()
+            return StoredTurnStart(
+                thread=self._thread_ref(thread_row),
+                turn=self._turn_ref(turn_row),
+                items=tuple(self._item_ref(row) for row in item_rows),
+            )
 
     async def append_item(
         self,
