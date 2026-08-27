@@ -16,7 +16,12 @@ from slim_guard.db.models import (
     utc_now,
 )
 from slim_guard.db.session import Database
-from slim_guard.harness.errors import InvalidTurnTransition, TurnNotWritable, TurnStateConflict
+from slim_guard.harness.errors import (
+    InvalidTurnTransition,
+    ItemStateConflict,
+    TurnNotWritable,
+    TurnStateConflict,
+)
 from slim_guard.harness.events import ItemStatus, ItemType, ThreadStatus, TurnStatus, TurnTrigger
 
 _TERMINAL_TURN_STATUSES = frozenset(
@@ -91,6 +96,25 @@ class TurnStateStore(Protocol):
         target: TurnStatus,
         expected: TurnStatus | None = None,
     ) -> TurnRef: ...
+
+
+class HarnessRunStore(TurnStateStore, Protocol):
+    async def append_item(
+        self,
+        *,
+        turn_id: str,
+        item_type: ItemType,
+        status: ItemStatus,
+        payload: Mapping[str, Any],
+    ) -> ItemRef: ...
+
+    async def finish_item(
+        self,
+        *,
+        item_id: str,
+        status: ItemStatus,
+        payload: Mapping[str, Any],
+    ) -> ItemRef: ...
 
 
 class HarnessStateRepository:
@@ -170,6 +194,40 @@ class HarnessStateRepository:
         async with self.database.session() as session:
             row = await session.get(AgentTurnRecord, turn_id)
             return self._turn_ref(row) if row is not None else None
+
+    async def finish_item(
+        self,
+        *,
+        item_id: str,
+        status: ItemStatus,
+        payload: Mapping[str, Any],
+    ) -> ItemRef:
+        if status is ItemStatus.STARTED:
+            raise ValueError("A finished item must be completed or failed")
+        payload_json = self._payload_json(payload)
+        async with self.database.session() as session, session.begin():
+            row = await session.get(AgentItemRecord, item_id)
+            if row is None:
+                raise LookupError(f"Agent item not found: {item_id}")
+            current = ItemStatus(row.status)
+            if current is status and row.payload_json == payload_json:
+                return self._item_ref(row)
+            if current is not ItemStatus.STARTED:
+                raise ItemStateConflict(
+                    f"Cannot finish item {item_id} from state {current.value} as {status.value}"
+                )
+            result = await session.execute(
+                update(AgentItemRecord)
+                .where(
+                    AgentItemRecord.id == item_id,
+                    AgentItemRecord.status == ItemStatus.STARTED.value,
+                )
+                .values(status=status.value, payload_json=payload_json)
+            )
+            if cast(CursorResult[Any], result).rowcount != 1:
+                raise ItemStateConflict(f"Agent item {item_id} changed concurrently")
+            await session.refresh(row)
+            return self._item_ref(row)
 
     async def get_thread(self, thread_id: str) -> ThreadRef | None:
         async with self.database.session() as session:

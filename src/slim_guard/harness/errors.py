@@ -17,6 +17,10 @@ class TurnNotWritable(HarnessStateError):
     pass
 
 
+class ItemStateConflict(HarnessStateError):
+    pass
+
+
 class PendingActionCollision(HarnessStateError):
     pass
 

@@ -14,6 +14,7 @@ from slim_guard.harness.events import TurnStatus
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
+from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode
 from slim_guard.tools.policy import ToolAuthorization
 
@@ -63,10 +64,12 @@ class HarnessLoop:
         model: ModelGateway,
         tool_calls: ToolCallRunner,
         limits: HarnessLimits,
+        recorder: HarnessRunRecorder | None = None,
     ) -> None:
         self._model = model
         self._tool_calls = tool_calls
         self._limits = limits
+        self._recorder = recorder or NullHarnessRunRecorder()
 
     async def run(
         self,
@@ -83,24 +86,31 @@ class HarnessLoop:
 
         while True:
             if len(model_responses) >= self._limits.max_model_calls:
-                return self._result(
+                return await self._finish(
+                    context=context,
                     termination=HarnessTermination.MAX_MODEL_CALLS,
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
                 )
-            response = await self._model.complete(
-                request.model_copy(update={"messages": tuple(messages)})
-            )
+            current_request = request.model_copy(update={"messages": tuple(messages)})
+            response = await self._model.complete(current_request)
             model_responses.append(response)
             messages.append(response.message)
+            await self._recorder.record_model_response(
+                turn_id=context.turn_id,
+                request=current_request,
+                response=response,
+                call_index=len(model_responses),
+            )
 
             calls = response.message.tool_calls
             if not calls:
                 text = response.message.content
                 if text is None or not text.strip():
                     raise ValueError("Model returned neither tool calls nor final text")
-                return self._result(
+                return await self._finish(
+                    context=context,
                     termination=HarnessTermination.FINAL_RESPONSE,
                     final_text=text.strip(),
                     messages=messages,
@@ -109,7 +119,8 @@ class HarnessLoop:
                 )
 
             if len(tool_outcomes) + len(calls) > self._limits.max_tool_calls:
-                return self._result(
+                return await self._finish(
+                    context=context,
                     termination=HarnessTermination.MAX_TOOL_CALLS,
                     messages=messages,
                     model_responses=model_responses,
@@ -117,6 +128,11 @@ class HarnessLoop:
                 )
 
             for call in calls:
+                trace = await self._recorder.start_tool_call(
+                    turn_id=context.turn_id,
+                    call=call,
+                    call_index=len(tool_outcomes) + 1,
+                )
                 outcome = await self._tool_calls.execute(
                     call=call,
                     context=context.for_tool_call(call.id),
@@ -125,6 +141,7 @@ class HarnessLoop:
                     now=now,
                 )
                 tool_outcomes.append(outcome)
+                await self._recorder.finish_tool_call(trace=trace, outcome=outcome)
                 messages.append(
                     ModelMessage(
                         role=MessageRole.TOOL,
@@ -134,7 +151,8 @@ class HarnessLoop:
                 )
                 waiting = self._waiting_termination(outcome)
                 if waiting is not None:
-                    return self._result(
+                    return await self._finish(
+                        context=context,
                         termination=waiting,
                         messages=messages,
                         model_responses=model_responses,
@@ -149,15 +167,23 @@ class HarnessLoop:
             return HarnessTermination.WAITING_HUMAN_REVIEW
         return None
 
-    @staticmethod
-    def _result(
+    async def _finish(
+        self,
         *,
+        context: HarnessTurnContext,
         termination: HarnessTermination,
         messages: list[ModelMessage],
         model_responses: list[ModelResponse],
         tool_outcomes: list[ToolCallOutcome],
         final_text: str | None = None,
     ) -> HarnessLoopResult:
+        await self._recorder.finish_run(
+            turn_id=context.turn_id,
+            termination=termination,
+            final_text=final_text,
+            model_call_count=len(model_responses),
+            tool_call_count=len(tool_outcomes),
+        )
         return HarnessLoopResult(
             termination=termination,
             final_text=final_text,

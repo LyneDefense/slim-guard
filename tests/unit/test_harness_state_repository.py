@@ -6,7 +6,12 @@ import pytest
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.harness.errors import InvalidTurnTransition, TurnNotWritable, TurnStateConflict
+from slim_guard.harness.errors import (
+    InvalidTurnTransition,
+    ItemStateConflict,
+    TurnNotWritable,
+    TurnStateConflict,
+)
 from slim_guard.harness.events import ItemStatus, ItemType, ThreadStatus, TurnStatus, TurnTrigger
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
@@ -105,6 +110,49 @@ async def test_items_are_appended_in_turn_order(tmp_path) -> None:
             ItemType.MODEL_MESSAGE,
         ]
         assert items[0].payload == {"text": "今天77.6kg"}
+    finally:
+        await database.close()
+
+
+async def test_started_item_can_finish_after_turn_pauses(tmp_path) -> None:
+    database, user_id, agent_version_id = await prepare_state(tmp_path)
+    repository = HarnessStateRepository(database)
+    try:
+        turn = await repository.start_turn(
+            user_id=user_id,
+            agent_version_id=agent_version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+        )
+        item = await repository.append_item(
+            turn_id=turn.id,
+            item_type=ItemType.TOOL_RESULT,
+            status=ItemStatus.STARTED,
+            payload={"tool_call_id": "call-1"},
+        )
+        await repository.transition_turn(
+            turn_id=turn.id,
+            target=TurnStatus.WAITING_USER_CONFIRMATION,
+        )
+
+        finished = await repository.finish_item(
+            item_id=item.id,
+            status=ItemStatus.COMPLETED,
+            payload={"tool_call_id": "call-1", "result": "confirmation_required"},
+        )
+        repeated = await repository.finish_item(
+            item_id=item.id,
+            status=ItemStatus.COMPLETED,
+            payload={"tool_call_id": "call-1", "result": "confirmation_required"},
+        )
+
+        assert finished.status is ItemStatus.COMPLETED
+        assert repeated == finished
+        with pytest.raises(ItemStateConflict, match="from state completed"):
+            await repository.finish_item(
+                item_id=item.id,
+                status=ItemStatus.FAILED,
+                payload={"error": "late overwrite"},
+            )
     finally:
         await database.close()
 
