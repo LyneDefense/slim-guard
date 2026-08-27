@@ -6,6 +6,7 @@ from typing import Protocol
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
 from slim_guard.harness.errors import TurnStateConflict
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus
+from slim_guard.harness.failures import HarnessFailure
 from slim_guard.harness.state_repository import HarnessRunStore
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome
@@ -49,6 +50,8 @@ class HarnessRunRecorder(Protocol):
         final_text: str | None,
         model_call_count: int,
         tool_call_count: int,
+        total_token_count: int,
+        failure: HarnessFailure | None,
     ) -> None: ...
 
 
@@ -90,6 +93,8 @@ class NullHarnessRunRecorder:
         final_text: str | None,
         model_call_count: int,
         tool_call_count: int,
+        total_token_count: int,
+        failure: HarnessFailure | None,
     ) -> None:
         return None
 
@@ -182,6 +187,8 @@ class PersistentHarnessRunRecorder:
         final_text: str | None,
         model_call_count: int,
         tool_call_count: int,
+        total_token_count: int,
+        failure: HarnessFailure | None,
     ) -> None:
         if termination is HarnessTermination.FINAL_RESPONSE:
             if final_text is None:
@@ -217,6 +224,8 @@ class PersistentHarnessRunRecorder:
                 )
             return
 
+        if termination is HarnessTermination.FATAL_ERROR and failure is None:
+            raise ValueError("Fatal error termination requires failure details")
         await self._store.append_item(
             turn_id=turn_id,
             item_type=ItemType.ERROR,
@@ -225,10 +234,16 @@ class PersistentHarnessRunRecorder:
                 "code": termination.value,
                 "model_call_count": model_call_count,
                 "tool_call_count": tool_call_count,
+                "total_token_count": total_token_count,
+                "failure": failure.to_payload() if failure is not None else None,
             },
         )
         await self._store.transition_turn(
             turn_id=turn_id,
-            target=TurnStatus.SUSPENDED,
+            target=(
+                TurnStatus.SUSPENDED
+                if failure is None or failure.retryable
+                else TurnStatus.FAILED
+            ),
             expected=TurnStatus.RUNNING,
         )

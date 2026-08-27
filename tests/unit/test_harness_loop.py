@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
+from slim_guard.agent_models.errors import ModelTimeoutError
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -10,6 +12,7 @@ from slim_guard.agent_models.gateway import (
     ModelPurpose,
     ModelRequest,
     ModelResponse,
+    ModelUsage,
     NormalizedToolCall,
     ToolDefinition,
 )
@@ -105,13 +108,17 @@ def tool_call(call_id: str, *, name: str = "record_weight") -> NormalizedToolCal
     )
 
 
-def assistant_tool_calls(*calls: NormalizedToolCall) -> ModelResponse:
+def assistant_tool_calls(
+    *calls: NormalizedToolCall,
+    total_tokens: int = 0,
+) -> ModelResponse:
     return ModelResponse(
         message=ModelMessage(
             role=MessageRole.ASSISTANT,
             tool_calls=calls,
         ),
         finish_reason="tool_calls",
+        usage=ModelUsage(total_tokens=total_tokens),
     )
 
 
@@ -168,14 +175,17 @@ async def run_loop(
     tools: RecordingToolCallRunner,
     *,
     limits: HarnessLimits | None = None,
+    turn_context: HarnessTurnContext | None = None,
+    clock: Callable[[], datetime] | None = None,
 ):
     return await HarnessLoop(
         model=model,
         tool_calls=tools,
         limits=limits or HarnessLimits(),
+        clock=clock,
     ).run(
         request=request(),
-        context=context(),
+        context=turn_context or context(),
         authorization=authorization(),
         source_item_id="user-item-1",
         now=datetime.now(UTC),
@@ -307,3 +317,67 @@ async def test_tool_call_limit_rejects_the_whole_oversized_batch() -> None:
     assert result.model_call_count == 1
     assert result.tool_call_count == 0
     assert tools.calls == []
+
+
+async def test_total_token_limit_stops_before_executing_returned_tools() -> None:
+    model = ScriptedModelGateway(
+        (assistant_tool_calls(tool_call("call-1"), total_tokens=11),)
+    )
+    tools = RecordingToolCallRunner()
+
+    result = await run_loop(
+        model,
+        tools,
+        limits=HarnessLimits(
+            max_model_calls=2,
+            max_tool_calls=2,
+            max_total_tokens=10,
+        ),
+    )
+
+    assert result.termination is HarnessTermination.MAX_TOTAL_TOKENS
+    assert result.total_token_count == 11
+    assert result.tool_call_count == 0
+    assert tools.calls == []
+
+
+async def test_expired_deadline_stops_before_first_model_call() -> None:
+    current_time = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+    model = ScriptedModelGateway((assistant_text("不应被调用"),))
+    tools = RecordingToolCallRunner()
+    turn_context = context()
+    turn_context = HarnessTurnContext(
+        thread_id=turn_context.thread_id,
+        turn_id=turn_context.turn_id,
+        user_id=turn_context.user_id,
+        agent_version_id=turn_context.agent_version_id,
+        execution_mode=turn_context.execution_mode,
+        deadline_at=current_time - timedelta(seconds=1),
+    )
+
+    result = await run_loop(
+        model,
+        tools,
+        turn_context=turn_context,
+        clock=lambda: current_time,
+    )
+
+    assert result.termination is HarnessTermination.DEADLINE_EXCEEDED
+    assert result.model_call_count == 0
+    assert len(model.requests) == 0
+    assert model.remaining_steps == 1
+
+
+async def test_model_gateway_error_returns_sanitized_failure() -> None:
+    model = ScriptedModelGateway((ModelTimeoutError("secret provider response"),))
+    tools = RecordingToolCallRunner()
+
+    result = await run_loop(model, tools)
+
+    assert result.termination is HarnessTermination.FATAL_ERROR
+    assert result.final_text is None
+    assert result.failure is not None
+    assert result.failure.code == "model_timeout"
+    assert result.failure.error_type == "ModelTimeoutError"
+    assert result.failure.retryable is True
+    assert "secret" not in str(result.failure.to_payload())

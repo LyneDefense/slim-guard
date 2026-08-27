@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
+from slim_guard.agent_models.errors import ModelGatewayError
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelGateway,
@@ -11,6 +13,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
 )
 from slim_guard.harness.events import TurnStatus
+from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
@@ -26,6 +29,11 @@ class HarnessTurnContext:
     user_id: str
     agent_version_id: str
     execution_mode: ToolExecutionMode
+    deadline_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.deadline_at is not None and self.deadline_at.utcoffset() is None:
+            raise ValueError("Harness Turn deadline must be timezone-aware")
 
     def for_tool_call(self, tool_call_id: str) -> ToolContext:
         return ToolContext(
@@ -45,6 +53,7 @@ class HarnessLoopResult:
     messages: tuple[ModelMessage, ...]
     model_responses: tuple[ModelResponse, ...]
     tool_outcomes: tuple[ToolCallOutcome, ...]
+    failure: HarnessFailure | None = None
 
     @property
     def model_call_count(self) -> int:
@@ -53,6 +62,10 @@ class HarnessLoopResult:
     @property
     def tool_call_count(self) -> int:
         return len(self.tool_outcomes)
+
+    @property
+    def total_token_count(self) -> int:
+        return sum(response.usage.total_tokens for response in self.model_responses)
 
 
 class HarnessLoop:
@@ -65,11 +78,13 @@ class HarnessLoop:
         tool_calls: ToolCallRunner,
         limits: HarnessLimits,
         recorder: HarnessRunRecorder | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._model = model
         self._tool_calls = tool_calls
         self._limits = limits
         self._recorder = recorder or NullHarnessRunRecorder()
+        self._clock = clock or self._utc_now
 
     async def run(
         self,
@@ -85,6 +100,14 @@ class HarnessLoop:
         tool_outcomes: list[ToolCallOutcome] = []
 
         while True:
+            if self._deadline_exceeded(context):
+                return await self._finish(
+                    context=context,
+                    termination=HarnessTermination.DEADLINE_EXCEEDED,
+                    messages=messages,
+                    model_responses=model_responses,
+                    tool_outcomes=tool_outcomes,
+                )
             if len(model_responses) >= self._limits.max_model_calls:
                 return await self._finish(
                     context=context,
@@ -94,7 +117,25 @@ class HarnessLoop:
                     tool_outcomes=tool_outcomes,
                 )
             current_request = request.model_copy(update={"messages": tuple(messages)})
-            response = await self._model.complete(current_request)
+            if self._total_tokens(model_responses) >= self._limits.max_total_tokens:
+                return await self._finish(
+                    context=context,
+                    termination=HarnessTermination.MAX_TOTAL_TOKENS,
+                    messages=messages,
+                    model_responses=model_responses,
+                    tool_outcomes=tool_outcomes,
+                )
+            try:
+                response = await self._model.complete(current_request)
+            except ModelGatewayError as exc:
+                return await self._finish(
+                    context=context,
+                    termination=HarnessTermination.FATAL_ERROR,
+                    failure=model_gateway_failure(exc),
+                    messages=messages,
+                    model_responses=model_responses,
+                    tool_outcomes=tool_outcomes,
+                )
             model_responses.append(response)
             messages.append(response.message)
             await self._recorder.record_model_response(
@@ -103,6 +144,22 @@ class HarnessLoop:
                 response=response,
                 call_index=len(model_responses),
             )
+            if self._total_tokens(model_responses) > self._limits.max_total_tokens:
+                return await self._finish(
+                    context=context,
+                    termination=HarnessTermination.MAX_TOTAL_TOKENS,
+                    messages=messages,
+                    model_responses=model_responses,
+                    tool_outcomes=tool_outcomes,
+                )
+            if self._deadline_exceeded(context):
+                return await self._finish(
+                    context=context,
+                    termination=HarnessTermination.DEADLINE_EXCEEDED,
+                    messages=messages,
+                    model_responses=model_responses,
+                    tool_outcomes=tool_outcomes,
+                )
 
             calls = response.message.tool_calls
             if not calls:
@@ -128,6 +185,14 @@ class HarnessLoop:
                 )
 
             for call in calls:
+                if self._deadline_exceeded(context):
+                    return await self._finish(
+                        context=context,
+                        termination=HarnessTermination.DEADLINE_EXCEEDED,
+                        messages=messages,
+                        model_responses=model_responses,
+                        tool_outcomes=tool_outcomes,
+                    )
                 trace = await self._recorder.start_tool_call(
                     turn_id=context.turn_id,
                     call=call,
@@ -158,6 +223,14 @@ class HarnessLoop:
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
                     )
+                if self._deadline_exceeded(context):
+                    return await self._finish(
+                        context=context,
+                        termination=HarnessTermination.DEADLINE_EXCEEDED,
+                        messages=messages,
+                        model_responses=model_responses,
+                        tool_outcomes=tool_outcomes,
+                    )
 
     @staticmethod
     def _waiting_termination(outcome: ToolCallOutcome) -> HarnessTermination | None:
@@ -176,6 +249,7 @@ class HarnessLoop:
         model_responses: list[ModelResponse],
         tool_outcomes: list[ToolCallOutcome],
         final_text: str | None = None,
+        failure: HarnessFailure | None = None,
     ) -> HarnessLoopResult:
         await self._recorder.finish_run(
             turn_id=context.turn_id,
@@ -183,6 +257,8 @@ class HarnessLoop:
             final_text=final_text,
             model_call_count=len(model_responses),
             tool_call_count=len(tool_outcomes),
+            total_token_count=self._total_tokens(model_responses),
+            failure=failure,
         )
         return HarnessLoopResult(
             termination=termination,
@@ -190,4 +266,21 @@ class HarnessLoop:
             messages=tuple(messages),
             model_responses=tuple(model_responses),
             tool_outcomes=tuple(tool_outcomes),
+            failure=failure,
         )
+
+    def _deadline_exceeded(self, context: HarnessTurnContext) -> bool:
+        if context.deadline_at is None:
+            return False
+        now = self._clock()
+        if now.utcoffset() is None:
+            raise ValueError("Harness clock must return a timezone-aware datetime")
+        return now >= context.deadline_at
+
+    @staticmethod
+    def _total_tokens(model_responses: list[ModelResponse]) -> int:
+        return sum(response.usage.total_tokens for response in model_responses)
+
+    @staticmethod
+    def _utc_now() -> datetime:
+        return datetime.now(UTC)

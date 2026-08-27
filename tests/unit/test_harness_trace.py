@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelMessage,
@@ -14,6 +16,7 @@ from slim_guard.agent_models.gateway import (
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, TurnTrigger
+from slim_guard.harness.failures import HarnessFailure
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository, TurnRef
@@ -87,6 +90,8 @@ async def test_persistent_recorder_saves_final_response_and_completes_turn(tmp_p
             final_text="已记录。",
             model_call_count=1,
             tool_call_count=0,
+            total_token_count=13,
+            failure=None,
         )
 
         items = await repository.list_items(turn.id)
@@ -147,6 +152,8 @@ async def test_tool_result_reserved_before_wait_can_finish_after_pause(tmp_path)
             final_text=None,
             model_call_count=1,
             tool_call_count=1,
+            total_token_count=0,
+            failure=None,
         )
 
         items = await repository.list_items(turn.id)
@@ -177,6 +184,8 @@ async def test_budget_termination_is_audited_and_suspends_turn(tmp_path) -> None
             final_text=None,
             model_call_count=6,
             tool_call_count=5,
+            total_token_count=900,
+            failure=None,
         )
 
         items = await repository.list_items(turn.id)
@@ -189,8 +198,51 @@ async def test_budget_termination_is_audited_and_suspends_turn(tmp_path) -> None
             "code": "max_model_calls",
             "model_call_count": 6,
             "tool_call_count": 5,
+            "total_token_count": 900,
+            "failure": None,
         }
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.SUSPENDED
+    finally:
+        await database.close()
+
+
+@pytest.mark.parametrize(
+    ("retryable", "expected_status"),
+    (
+        (True, TurnStatus.SUSPENDED),
+        (False, TurnStatus.FAILED),
+    ),
+)
+async def test_fatal_error_status_depends_on_retryability(
+    tmp_path,
+    retryable: bool,
+    expected_status: TurnStatus,
+) -> None:
+    database, repository, turn = await prepare_turn(tmp_path)
+    recorder = PersistentHarnessRunRecorder(repository)
+    failure = HarnessFailure(
+        code="model_timeout" if retryable else "unsupported_model_feature",
+        error_type="TestModelError",
+        retryable=retryable,
+    )
+    try:
+        await recorder.finish_run(
+            turn_id=turn.id,
+            termination=HarnessTermination.FATAL_ERROR,
+            final_text=None,
+            model_call_count=0,
+            tool_call_count=0,
+            total_token_count=0,
+            failure=failure,
+        )
+
+        items = await repository.list_items(turn.id)
+        stored_turn = await repository.get_turn(turn.id)
+
+        assert items[0].payload["failure"] == failure.to_payload()
+        assert "message" not in items[0].payload["failure"]
+        assert stored_turn is not None
+        assert stored_turn.status is expected_status
     finally:
         await database.close()
