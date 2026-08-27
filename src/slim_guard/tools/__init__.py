@@ -31,6 +31,17 @@ from slim_guard.tools.image import (
     image_tool_definitions,
     image_tool_executors,
 )
+from slim_guard.tools.meal import (
+    GET_RECENT_MEALS_TOOL_NAME,
+    MEAL_TOOL_VERSION,
+    RECORD_MEAL_TOOL_NAME,
+    GetRecentMealsArguments,
+    MealFoodArguments,
+    MealToolHandlers,
+    RecordMealArguments,
+    meal_tool_definitions,
+    meal_tool_executors,
+)
 from slim_guard.tools.policy import (
     DefaultToolPolicy,
     ToolAuthorization,
@@ -52,12 +63,19 @@ from slim_guard.tools.weight import (
 __all__ = [
     "RegisteredTool",
     "GET_RECENT_WEIGHT_TREND_TOOL_NAME",
+    "GET_RECENT_MEALS_TOOL_NAME",
+    "GetRecentMealsArguments",
     "GetRecentWeightTrendArguments",
     "IMAGE_TOOL_VERSION",
     "INSPECT_IMAGE_TOOL_NAME",
     "ImageToolHandlers",
     "InspectImageArguments",
+    "MEAL_TOOL_VERSION",
+    "MealFoodArguments",
+    "MealToolHandlers",
     "RECORD_WEIGHT_TOOL_NAME",
+    "RECORD_MEAL_TOOL_NAME",
+    "RecordMealArguments",
     "RecordWeightArguments",
     "DefaultToolPolicy",
     "ToolArguments",
@@ -88,4 +106,6 @@ __all__ = [
     "weight_tool_executors",
     "image_tool_definitions",
     "image_tool_executors",
+    "meal_tool_definitions",
+    "meal_tool_executors",
 ]

@@ -74,3 +74,14 @@
 - `src/slim_guard/domain/meal/__init__.py` → 饮食领域公共出口 → 暴露领域契约和仓储。
 - `tests/unit/test_meal_repository.py` → 饮食仓储测试 → 覆盖幂等、时间排序、用户隔离和内容冲突保护。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: expose meal recording tools`
+
+- `src/slim_guard/tools/meal.py` → 饮食 Tool 定义和受控处理器 → 提供饮食写入与近期查询工具，解析可靠时间并把 Harness 身份、来源和幂等键注入领域命令。
+- `src/slim_guard/tools/__init__.py` → Tool 模块公共出口 → 暴露饮食工具常量、参数、处理器和构造函数。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 将饮食工具和仓储加入固定 Registry、执行 Gateway 与 Agent Manifest。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 规定文字和图片饮食的保存边界，禁止臆测食物、配料、精确热量或不可靠时间。
+- `tests/unit/test_meal_tools.py` → 饮食 Tool 测试 → 验证权威写入、近期读取、来源 ID 返回以及缺少 Gateway 执行身份时拒绝写入。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证饮食工具出现在核心模型的冻结工具列表。
+- `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定饮食工具版本。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

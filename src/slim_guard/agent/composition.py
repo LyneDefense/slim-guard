@@ -12,6 +12,7 @@ from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
+from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.initialization import TurnInitializer
@@ -26,6 +27,7 @@ from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.gateway import ToolGateway
 from slim_guard.tools.image import image_tool_definitions, image_tool_executors
+from slim_guard.tools.meal import meal_tool_definitions, meal_tool_executors
 from slim_guard.tools.policy import DefaultToolPolicy
 from slim_guard.tools.registry import ToolRegistry
 from slim_guard.tools.weight import weight_tool_definitions, weight_tool_executors
@@ -59,7 +61,11 @@ def build_agent_runtime(
 ) -> AgentRuntime:
     """Compose production repositories and gateways without channel dependencies."""
 
-    tool_definitions = (*weight_tool_definitions(), *image_tool_definitions())
+    tool_definitions = (
+        *weight_tool_definitions(),
+        *image_tool_definitions(),
+        *meal_tool_definitions(),
+    )
     registry = ToolRegistry(tool_definitions)
     expected_manifest = build_agent_manifest(definition)
     active_manifest = manifest or expected_manifest
@@ -80,6 +86,7 @@ def build_agent_runtime(
             max_output_tokens=definition.vision_max_output_tokens,
             clock=clock,
         ),
+        **meal_tool_executors(MealRepository(database), clock=clock),
     }
     gateway = ToolGateway(
         registry=registry,
@@ -119,7 +126,13 @@ def build_agent_runtime(
 
 
 def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
-    registry = ToolRegistry((*weight_tool_definitions(), *image_tool_definitions()))
+    registry = ToolRegistry(
+        (
+            *weight_tool_definitions(),
+            *image_tool_definitions(),
+            *meal_tool_definitions(),
+        )
+    )
     return AgentManifest.build(
         model_provider=definition.model_provider,
         text_model=definition.text_model,

@@ -61,6 +61,8 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     assert dict(app.state.agent_manifest.tool_versions) == {
         "get_recent_weight_trend": "v1",
         "inspect_image": "v1",
+        "get_recent_meals": "v1",
+        "record_meal": "v1",
         "record_weight": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
