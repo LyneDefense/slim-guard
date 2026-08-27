@@ -16,6 +16,7 @@ from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.context import ContextCompiler
+from slim_guard.harness.context_data import AuthoritativeContextDataProvider
 from slim_guard.harness.initialization import TurnInitializer
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.manifest import AgentManifest
@@ -77,9 +78,12 @@ def build_agent_runtime(
     state = HarnessStateRepository(database)
     pending_actions = PendingActionRepository(database)
     assets = ImageAssetRepository(database)
+    weights = WeightRepository(database)
+    meals = MealRepository(database)
+    exercise = ExerciseRepository(database)
     executors = {
         **weight_tool_executors(
-            WeightRepository(database),
+            weights,
             clock=clock,
         ),
         **image_tool_executors(
@@ -89,8 +93,8 @@ def build_agent_runtime(
             max_output_tokens=definition.vision_max_output_tokens,
             clock=clock,
         ),
-        **meal_tool_executors(MealRepository(database), clock=clock),
-        **exercise_tool_executors(ExerciseRepository(database), clock=clock),
+        **meal_tool_executors(meals, clock=clock),
+        **exercise_tool_executors(exercise, clock=clock),
     }
     gateway = ToolGateway(
         registry=registry,
@@ -117,6 +121,12 @@ def build_agent_runtime(
         tool_calls=tool_calls,
         recorder=recorder,
         limits=definition.limits,
+        context_data=AuthoritativeContextDataProvider(
+            database=database,
+            weights=weights,
+            meals=meals,
+            exercise=exercise,
+        ),
         clock=clock,
     )
     return AgentRuntime(
@@ -146,8 +156,8 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
         system_prompt=SLIM_GUARD_HARNESS_PROMPT,
         tool_versions=registry.versions,
-        context_policy_version="single-turn-tools-v1",
-        memory_policy_version="none-v1",
+        context_policy_version="authoritative-records-v1",
+        memory_policy_version="domain-records-v1",
         compaction_policy_version="none-v1",
         safety_policy_version="weight-coach-v1",
         code_revision=definition.code_revision,

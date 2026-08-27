@@ -106,3 +106,13 @@
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证运动工具出现在核心模型的冻结工具列表。
 - `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定运动工具版本。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: compile authoritative cross-turn context`
+
+- `src/slim_guard/harness/context_data.py` → 跨轮次权威事实提供器 → 并行读取用户资料以及近期体重、饮食和运动记录，裁剪内部 ID 与来源字段后生成有界、可序列化的模型上下文。
+- `src/slim_guard/harness/context.py` → Harness 上下文编译器 → 将权威用户事实作为独立系统消息放在本轮不可信输入之前，并拒绝不可序列化的上下文。
+- `src/slim_guard/harness/runner.py` → 单轮 Agent 编排入口 → 在初始化 Turn 后加载用户事实，将其注入编译器，并把无效上下文转成可审计的终止状态。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 复用体重、饮食和运动仓储组装生产上下文提供器，并升级冻结的 Context/Memory 策略版本。
+- `tests/unit/test_context_data.py` → 权威上下文提供器测试 → 验证用户昵称、体重、饮食和运动能跨 Turn 汇总成紧凑事实。
+- `tests/unit/test_context_compiler.py` → 上下文编译器测试 → 验证权威事实位于用户输入之前且保持结构化 JSON。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

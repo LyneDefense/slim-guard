@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.harness.context import CompiledContext, ContextCompiler
+from slim_guard.harness.context_data import ContextDataProvider, EmptyContextDataProvider
 from slim_guard.harness.errors import ContextCompilationError
 from slim_guard.harness.failures import context_compilation_failure
 from slim_guard.harness.initialization import (
@@ -57,11 +58,13 @@ class HarnessTurnRunner:
         tool_calls: ToolCallRunner,
         recorder: HarnessRunRecorder,
         limits: HarnessLimits,
+        context_data: ContextDataProvider | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._initializer = initializer
         self._compiler = compiler
         self._recorder = recorder
+        self._context_data = context_data or EmptyContextDataProvider()
         self._clock = clock or self._utc_now
         self._loop = HarnessLoop(
             model=model,
@@ -83,13 +86,23 @@ class HarnessTurnRunner:
         initialized = await self._initializer.initialize(request)
         active_grants = grants or HarnessTurnGrants()
         try:
+            authoritative_context = await self._context_data.load(
+                user_id=initialized.context.user_id,
+                current_time=current_time,
+            )
             compiled = self._compiler.compile(
                 initialized=initialized,
                 current_time=current_time,
                 allowed_tool_names=active_grants.allowed_tool_names,
+                authoritative_context=authoritative_context,
             )
-        except ContextCompilationError as exc:
-            failure = context_compilation_failure(exc)
+        except (ContextCompilationError, ValueError, TypeError) as exc:
+            compilation_error = (
+                exc
+                if isinstance(exc, ContextCompilationError)
+                else ContextCompilationError("Trusted context data is invalid")
+            )
+            failure = context_compilation_failure(compilation_error)
             await self._recorder.finish_run(
                 turn_id=initialized.turn.id,
                 termination=HarnessTermination.FATAL_ERROR,

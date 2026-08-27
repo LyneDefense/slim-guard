@@ -192,6 +192,38 @@ def test_compiler_can_expose_a_versioned_tool_subset() -> None:
     assert [tool.name for tool in compiled.request.tools] == ["inspect_image"]
 
 
+def test_compiler_places_authoritative_facts_before_untrusted_input() -> None:
+    agent_manifest = manifest()
+    compiler = ContextCompiler(
+        manifest=agent_manifest,
+        system_prompt=SYSTEM_PROMPT,
+        tools=registry(),
+    )
+
+    compiled = compiler.compile(
+        initialized=initialized_turn(agent_manifest),
+        current_time=datetime.now(UTC),
+        authoritative_context={
+            "profile": {"nickname": "小明"},
+            "recent_weights": [{"weight_kg": "77.6"}],
+        },
+    )
+
+    messages = compiled.request.messages
+    assert [message.role for message in messages] == [
+        MessageRole.SYSTEM,
+        MessageRole.SYSTEM,
+        MessageRole.SYSTEM,
+        MessageRole.USER,
+        MessageRole.USER,
+    ]
+    assert "权威用户事实" in (messages[2].content or "")
+    assert json.loads((messages[2].content or "").split("：", maxsplit=1)[1]) == {
+        "profile": {"nickname": "小明"},
+        "recent_weights": [{"weight_kg": "77.6"}],
+    }
+
+
 def test_scheduled_turn_needs_no_fake_user_message() -> None:
     agent_manifest = manifest()
     compiler = ContextCompiler(

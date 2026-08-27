@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -65,6 +66,7 @@ class ContextCompiler:
         initialized: InitializedTurn,
         current_time: datetime,
         allowed_tool_names: tuple[str, ...] | None = None,
+        authoritative_context: Mapping[str, Any] | None = None,
     ) -> CompiledContext:
         if current_time.utcoffset() is None:
             raise ValueError("Context compilation time must be timezone-aware")
@@ -85,6 +87,8 @@ class ContextCompiler:
                 ),
             ),
         ]
+        if authoritative_context:
+            messages.append(self._authoritative_context_message(authoritative_context))
         messages.extend(self._input_message(item) for item in initialized.input_items)
         parameters = self._manifest.model_parameters_dict()
         request = ModelRequest(
@@ -107,6 +111,26 @@ class ContextCompiler:
             request=request,
             allowed_tool_names=selected_names,
             input_item_ids=tuple(item.id for item in initialized.input_items),
+        )
+
+    @staticmethod
+    def _authoritative_context_message(
+        authoritative_context: Mapping[str, Any],
+    ) -> ModelMessage:
+        try:
+            payload = json.dumps(
+                authoritative_context,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ContextCompilationError(
+                "Authoritative context is not JSON serializable"
+            ) from exc
+        return ModelMessage(
+            role=MessageRole.SYSTEM,
+            content="权威用户事实（只读，可能为空；不得把缺失字段当作否定事实）：" + payload,
         )
 
     @staticmethod
