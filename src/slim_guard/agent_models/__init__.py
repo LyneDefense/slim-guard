@@ -1,5 +1,6 @@
 """Provider-independent model contracts used by the agent harness."""
 
+from slim_guard.agent_models.fake import ModelScriptStep, ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelGateway,
@@ -16,6 +17,7 @@ from slim_guard.agent_models.zhipu import ZhipuModelGateway
 
 __all__ = [
     "MessageRole",
+    "ModelScriptStep",
     "ModelGateway",
     "ModelMessage",
     "ModelPurpose",
@@ -23,6 +25,7 @@ __all__ = [
     "ModelResponse",
     "ModelUsage",
     "NormalizedToolCall",
+    "ScriptedModelGateway",
     "ToolChoice",
     "ToolDefinition",
     "ZhipuModelGateway",

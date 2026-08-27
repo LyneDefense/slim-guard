@@ -25,3 +25,11 @@ class InvalidModelResponse(ModelGatewayError):
 
 class UnsupportedModelFeature(ModelGatewayError):
     pass
+
+
+class ModelGatewayClosed(ModelGatewayError):
+    pass
+
+
+class FakeModelScriptExhausted(ModelGatewayError):
+    pass
