@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Protocol
 
 from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.harness.errors import PendingActionConfigurationError, TurnNotWritable
@@ -22,6 +23,18 @@ class ToolCallOutcome:
     execution: ToolExecution
     turn: TurnRef
     pending_action: PendingActionRef | None
+
+
+class ToolCallRunner(Protocol):
+    async def execute(
+        self,
+        *,
+        call: NormalizedToolCall,
+        context: ToolContext,
+        authorization: ToolAuthorization,
+        source_item_id: str | None,
+        now: datetime,
+    ) -> ToolCallOutcome: ...
 
 
 class ToolCallCoordinator:
