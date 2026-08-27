@@ -2,6 +2,7 @@
 
 from slim_guard.agent.composition import (
     AgentRuntimeDefinition,
+    build_agent_manifest,
     build_agent_runtime,
 )
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
@@ -20,5 +21,6 @@ __all__ = [
     "AgentRuntimeResult",
     "SLIM_GUARD_HARNESS_PROMPT",
     "SLIM_GUARD_PROMPT_VERSION",
+    "build_agent_manifest",
     "build_agent_runtime",
 ]

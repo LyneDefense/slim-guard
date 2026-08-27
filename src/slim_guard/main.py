@@ -7,6 +7,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from slim_guard.agent.composition import (
+    AgentRuntimeDefinition,
+    build_agent_manifest,
+    build_agent_runtime,
+)
+from slim_guard.agent.runtime import AgentRuntime
+from slim_guard.agent_models.gateway import ModelGateway
+from slim_guard.agent_models.zhipu import ZhipuModelGateway
 from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
@@ -18,6 +26,7 @@ from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
+from slim_guard.services.harness_reply_agent import HarnessReplyAgent
 from slim_guard.services.reply_agent import (
     SLIM_GUARD_INSTRUCTIONS,
     SLIM_GUARD_PROMPT_VERSION,
@@ -34,36 +43,50 @@ def create_app(
     *,
     client: WeComClientProtocol | None = None,
     reply_agent: ReplyAgentProtocol | None = None,
+    model_gateway: ModelGateway | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
-    if app_settings.agent_runtime_mode != "legacy":
+    if app_settings.agent_runtime_mode == "shadow":
         raise ValueError(
             f"AGENT_RUNTIME_MODE={app_settings.agent_runtime_mode!r} is not implemented yet"
         )
-    agent_manifest = AgentManifest.build(
+    model_parameters = {
+        "thinking": {"type": "disabled"},
+        "do_sample": False,
+        "max_output_tokens": app_settings.zhipu_max_output_tokens,
+        "max_reply_chars": app_settings.agent_reply_max_chars,
+    }
+    runtime_definition = AgentRuntimeDefinition(
         model_provider="zhipu",
         text_model=app_settings.zhipu_text_model,
         vision_model=app_settings.zhipu_vision_model,
-        model_parameters={
-            "thinking": {"type": "disabled"},
-            "do_sample": False,
-            "max_output_tokens": app_settings.zhipu_max_output_tokens,
-            "max_reply_chars": app_settings.agent_reply_max_chars,
-        },
-        system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
-        system_prompt=SLIM_GUARD_INSTRUCTIONS,
-        context_policy_version="legacy-single-turn-v1",
-        memory_policy_version="none-v1",
-        compaction_policy_version="none-v1",
-        safety_policy_version="legacy-prompt-v1",
+        model_parameters=model_parameters,
         code_revision=app_settings.agent_code_revision,
+    )
+    agent_manifest = (
+        build_agent_manifest(runtime_definition)
+        if app_settings.agent_runtime_mode == "harness"
+        else AgentManifest.build(
+            model_provider="zhipu",
+            text_model=app_settings.zhipu_text_model,
+            vision_model=app_settings.zhipu_vision_model,
+            model_parameters=model_parameters,
+            system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
+            system_prompt=SLIM_GUARD_INSTRUCTIONS,
+            context_policy_version="legacy-single-turn-v1",
+            memory_policy_version="none-v1",
+            compaction_policy_version="none-v1",
+            safety_policy_version="legacy-prompt-v1",
+            code_revision=app_settings.agent_code_revision,
+        )
     )
     owned_client: WeComClient | None = None
     owned_reply_agent: ZhipuReplyAgent | None = None
+    owned_model_gateway: ZhipuModelGateway | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal owned_client, owned_reply_agent
+        nonlocal owned_client, owned_model_gateway, owned_reply_agent
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
@@ -81,8 +104,30 @@ def create_app(
             )
             active_client = owned_client
 
+        active_runtime: AgentRuntime | None = None
         active_reply_agent = reply_agent
-        if active_reply_agent is None and app_settings.zhipu_is_configured:
+        if active_reply_agent is None and app_settings.agent_runtime_mode == "harness":
+            active_model = model_gateway
+            if active_model is None and app_settings.zhipu_is_configured:
+                owned_model_gateway = ZhipuModelGateway(
+                    api_key=app_settings.zhipu_api_key,
+                    base_url=app_settings.zhipu_base_url,
+                    timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+                    thinking_enabled=False,
+                )
+                active_model = owned_model_gateway
+            if active_model is not None:
+                active_runtime = build_agent_runtime(
+                    database=database,
+                    model=active_model,
+                    definition=runtime_definition,
+                    manifest=agent_manifest,
+                )
+                active_reply_agent = HarnessReplyAgent(
+                    runtime=active_runtime,
+                    max_reply_chars=app_settings.agent_reply_max_chars,
+                )
+        elif active_reply_agent is None and app_settings.zhipu_is_configured:
             owned_reply_agent = ZhipuReplyAgent(
                 api_key=app_settings.zhipu_api_key,
                 text_model=app_settings.zhipu_text_model,
@@ -135,6 +180,7 @@ def create_app(
 
         app.state.settings = app_settings
         app.state.database = database
+        app.state.agent_runtime = active_runtime
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
         try:
@@ -148,6 +194,8 @@ def create_app(
                 await owned_client.close()
             if owned_reply_agent is not None:
                 await owned_reply_agent.close()
+            if owned_model_gateway is not None:
+                await owned_model_gateway.close()
             await database.close()
 
     application = FastAPI(
@@ -159,6 +207,7 @@ def create_app(
     )
     application.include_router(router)
     application.state.agent_manifest = agent_manifest
+    application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
     return application
 

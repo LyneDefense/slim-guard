@@ -42,11 +42,27 @@ def test_agent_runtime_rejects_unknown_mode() -> None:
         Settings(agent_runtime_mode="unknown")  # type: ignore[arg-type]
 
 
-def test_unimplemented_agent_runtime_mode_fails_fast() -> None:
-    settings = Settings(agent_runtime_mode="harness")
+def test_unimplemented_shadow_runtime_mode_fails_fast() -> None:
+    settings = Settings(agent_runtime_mode="shadow")
 
     with pytest.raises(ValueError, match="not implemented yet"):
         create_app(settings)
+
+
+def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
+    settings = Settings(
+        agent_runtime_mode="harness",
+        agent_code_revision="test-harness-commit",
+    )
+
+    app = create_app(settings)
+
+    assert app.state.agent_runtime_mode == "harness"
+    assert dict(app.state.agent_manifest.tool_versions) == {
+        "get_recent_weight_trend": "v1",
+        "record_weight": "v1",
+    }
+    assert app.state.agent_manifest.code_revision == "test-harness-commit"
 
 
 def test_create_app_exposes_current_agent_manifest() -> None:

@@ -3,11 +3,37 @@ from __future__ import annotations
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from slim_guard.agent_models.fake import ScriptedModelGateway
+from slim_guard.agent_models.gateway import (
+    MessageRole,
+    ModelMessage,
+    ModelResponse,
+    NormalizedToolCall,
+)
 from slim_guard.config import Settings
+from slim_guard.db.repositories import MessageRepository
+from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.integrations.wecom_kf.schemas import SyncMessage, SyncPage
 from slim_guard.main import create_app
 from tests.fakes import FakeReplyAgent, FakeWeComClient
+
+
+def _tool_response(
+    call_id: str,
+    name: str,
+    arguments: dict[str, object],
+) -> ModelResponse:
+    return ModelResponse(
+        message=ModelMessage(
+            role=MessageRole.ASSISTANT,
+            tool_calls=(
+                NormalizedToolCall(id=call_id, name=name, arguments=arguments),
+            ),
+        ),
+        finish_reason="tool_calls",
+    )
 
 
 def _encrypted_callback(
@@ -117,3 +143,90 @@ async def test_callback_url_verification(test_settings: Settings) -> None:
 
     assert response.status_code == 200
     assert response.text == "verified"
+
+
+async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> None:
+    harness_settings = test_settings.model_copy(
+        update={"agent_runtime_mode": "harness"}
+    )
+    fake = FakeWeComClient(
+        {
+            None: SyncPage(
+                next_cursor="done",
+                has_more=False,
+                msg_list=[
+                    SyncMessage(
+                        msgid="weight-message-1",
+                        external_userid="external-user-1",
+                        send_time=1_700_000_000,
+                        origin=3,
+                        msgtype="text",
+                        text={"content": "今天空腹 77.6kg"},
+                    )
+                ],
+            )
+        }
+    )
+    model = ScriptedModelGateway(
+        (
+            _tool_response(
+                "call-record",
+                "record_weight",
+                {"value": 77.6, "unit": "kg", "condition": "fasting"},
+            ),
+            _tool_response(
+                "call-trend",
+                "get_recent_weight_trend",
+                {"limit": 7},
+            ),
+            ModelResponse(
+                message=ModelMessage(
+                    role=MessageRole.ASSISTANT,
+                    content="已记录空腹体重 77.6kg，这是你的第一条体重基线。",
+                ),
+                finish_reason="stop",
+            ),
+        )
+    )
+    app = create_app(harness_settings, client=fake, model_gateway=model)
+    crypto = WeComCallbackCrypto(
+        harness_settings.wecom_callback_token,
+        harness_settings.wecom_callback_aes_key,
+        harness_settings.wecom_corp_id,
+    )
+    body, signature = _encrypted_callback(crypto, timestamp="123", nonce="nonce")
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as http:
+            response = await http.post(
+                "/callbacks/wecom/kf",
+                params={
+                    "msg_signature": signature,
+                    "timestamp": "123",
+                    "nonce": "nonce",
+                },
+                content=body,
+                headers={"content-type": "application/xml"},
+            )
+
+        users = await MessageRepository(app.state.database).list_users()
+        trend = await WeightRepository(app.state.database).recent_trend(users[0].id)
+        stored_manifest = await AgentVersionRepository(app.state.database).get(
+            app.state.agent_manifest.version_id
+        )
+
+        assert response.status_code == 200
+        assert [sent.content for sent in fake.sent] == [
+            "已记录空腹体重 77.6kg，这是你的第一条体重基线。"
+        ]
+        assert app.state.agent_runtime is not None
+        assert stored_manifest is not None
+        assert len(trend.records) == 1
+        assert trend.records[0].weight_grams == 77_600
+        model.assert_exhausted()
+
+    assert model.closed is False
+    await model.close()

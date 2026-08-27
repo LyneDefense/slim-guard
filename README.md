@@ -44,11 +44,13 @@ WECOM_CALLBACK_AES_KEY=EncodingAESKey
 ZHIPU_API_KEY=智谱 API Key
 ```
 
-Agent Runtime 当前保持兼容模式。`harness` 和 `shadow` 会在对应运行时实现后逐步开放，
-现阶段设置其他值会拒绝启动，避免配置看似生效但实际仍走旧路径：
+Agent Runtime 默认保持兼容模式。设置为 `harness` 后，企业微信文字消息会进入新版
+Harness，并可调用体重记录和趋势查询工具；图片暂时仍会安全降级到 fallback。
+`shadow` 尚未开放，设置后会拒绝启动：
 
 ```dotenv
-AGENT_RUNTIME_MODE=legacy
+# legacy：旧版单次回复；harness：新版 Agent Harness
+AGENT_RUNTIME_MODE=harness
 # 部署流水线可以写入 Git commit；未设置时为 development
 AGENT_CODE_REVISION=development
 ```

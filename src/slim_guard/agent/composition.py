@@ -48,26 +48,17 @@ def build_agent_runtime(
     database: Database,
     model: ModelGateway,
     definition: AgentRuntimeDefinition,
+    manifest: AgentManifest | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> AgentRuntime:
     """Compose production repositories and gateways without channel dependencies."""
 
     tool_definitions = weight_tool_definitions()
     registry = ToolRegistry(tool_definitions)
-    manifest = AgentManifest.build(
-        model_provider=definition.model_provider,
-        text_model=definition.text_model,
-        vision_model=definition.vision_model,
-        model_parameters=definition.model_parameters,
-        system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
-        system_prompt=SLIM_GUARD_HARNESS_PROMPT,
-        tool_versions=registry.versions,
-        context_policy_version="single-turn-tools-v1",
-        memory_policy_version="none-v1",
-        compaction_policy_version="none-v1",
-        safety_policy_version="weight-coach-v1",
-        code_revision=definition.code_revision,
-    )
+    expected_manifest = build_agent_manifest(definition)
+    active_manifest = manifest or expected_manifest
+    if active_manifest != expected_manifest:
+        raise ValueError("Agent Runtime manifest does not match its definition")
     state = HarnessStateRepository(database)
     pending_actions = PendingActionRepository(database)
     gateway = ToolGateway(
@@ -90,7 +81,7 @@ def build_agent_runtime(
     runner = HarnessTurnRunner(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
-            manifest=manifest,
+            manifest=active_manifest,
             system_prompt=SLIM_GUARD_HARNESS_PROMPT,
             tools=registry,
         ),
@@ -101,7 +92,25 @@ def build_agent_runtime(
         clock=clock,
     )
     return AgentRuntime(
-        manifest=manifest,
+        manifest=active_manifest,
         versions=AgentVersionRepository(database),
         runner=runner,
+    )
+
+
+def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
+    registry = ToolRegistry(weight_tool_definitions())
+    return AgentManifest.build(
+        model_provider=definition.model_provider,
+        text_model=definition.text_model,
+        vision_model=definition.vision_model,
+        model_parameters=definition.model_parameters,
+        system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
+        system_prompt=SLIM_GUARD_HARNESS_PROMPT,
+        tool_versions=registry.versions,
+        context_policy_version="single-turn-tools-v1",
+        memory_policy_version="none-v1",
+        compaction_policy_version="none-v1",
+        safety_policy_version="weight-coach-v1",
+        code_revision=definition.code_revision,
     )
