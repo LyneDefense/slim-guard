@@ -20,6 +20,32 @@
 - H5 页面和完整运营后台 UI；
 - Redis、Celery 和对象存储的分布式部署替换。
 
+## 最终交付状态（2026-08-27）
+
+本文件定义的 MVP 范围已经完成。最终验证结果：
+
+- Ruff 全仓检查通过；
+- Mypy strict 检查通过（96 个源码文件）；
+- Pytest 185 个测试全部通过；
+- Python `compileall` 通过；
+- sdist 与 wheel 构建成功，并在全新 Python 3.11 虚拟环境安装、导入成功；
+- Git 对象检查通过，工作树干净；
+- 本机 Docker daemon 未启动，因此没有在本机执行最终 `docker build`。Dockerfile 的 Python
+  包构建路径已由 wheel 冷安装验证；服务器部署时仍应执行 README 中的 Compose 构建与健康检查。
+
+服务器更新时执行：
+
+```bash
+git pull
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=200 app
+curl -i https://enceladus.online/health/ready
+```
+
+`.env` 至少确认 `AGENT_RUNTIME_MODE=harness`、企业微信五项配置和 `ZHIPU_API_KEY` 存在。新增
+调度、Outbox 恢复、图片清理与主动消息额度配置均有代码默认值，不补写也可启动。
+
 ## 提交日志
 
 ### `docs: establish continuous implementation log`
@@ -225,3 +251,7 @@
 - `.env.example` → 部署配置模板 → 给出 Outbox 恢复和过期抢占的安全默认值。
 - `README.md` → 部署与运维说明 → 说明 Outbox 恢复配置和关键日志。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `docs: finalize MVP implementation handoff`
+
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的最终交接记录 → 标记 MVP 完成，汇总静态检查、185 个测试、包冷安装和 Git 审计结果，记录 Docker daemon 未启动这一环境限制，并给出服务器更新与健康检查命令。
