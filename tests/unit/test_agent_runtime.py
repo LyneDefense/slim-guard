@@ -158,6 +158,8 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "inspect_image",
             "record_meal",
             "get_recent_meals",
+            "record_exercise",
+            "get_recent_exercise",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")

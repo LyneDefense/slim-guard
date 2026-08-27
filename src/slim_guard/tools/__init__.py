@@ -17,6 +17,16 @@ from slim_guard.tools.execution_repository import (
     ToolExecutionRepository,
     ToolExecutionStore,
 )
+from slim_guard.tools.exercise import (
+    EXERCISE_TOOL_VERSION,
+    GET_RECENT_EXERCISE_TOOL_NAME,
+    RECORD_EXERCISE_TOOL_NAME,
+    ExerciseToolHandlers,
+    GetRecentExerciseArguments,
+    RecordExerciseArguments,
+    exercise_tool_definitions,
+    exercise_tool_executors,
+)
 from slim_guard.tools.gateway import (
     ToolExecutor,
     ToolGateway,
@@ -62,9 +72,13 @@ from slim_guard.tools.weight import (
 
 __all__ = [
     "RegisteredTool",
+    "EXERCISE_TOOL_VERSION",
+    "ExerciseToolHandlers",
+    "GET_RECENT_EXERCISE_TOOL_NAME",
     "GET_RECENT_WEIGHT_TREND_TOOL_NAME",
     "GET_RECENT_MEALS_TOOL_NAME",
     "GetRecentMealsArguments",
+    "GetRecentExerciseArguments",
     "GetRecentWeightTrendArguments",
     "IMAGE_TOOL_VERSION",
     "INSPECT_IMAGE_TOOL_NAME",
@@ -75,6 +89,8 @@ __all__ = [
     "MealToolHandlers",
     "RECORD_WEIGHT_TOOL_NAME",
     "RECORD_MEAL_TOOL_NAME",
+    "RECORD_EXERCISE_TOOL_NAME",
+    "RecordExerciseArguments",
     "RecordMealArguments",
     "RecordWeightArguments",
     "DefaultToolPolicy",
@@ -108,4 +124,6 @@ __all__ = [
     "image_tool_executors",
     "meal_tool_definitions",
     "meal_tool_executors",
+    "exercise_tool_definitions",
+    "exercise_tool_executors",
 ]

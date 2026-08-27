@@ -95,3 +95,14 @@
 - `src/slim_guard/domain/exercise/__init__.py` → 运动领域公共出口 → 暴露领域契约和仓储。
 - `tests/unit/test_exercise_repository.py` → 运动仓储测试 → 覆盖幂等、时间排序、用户隔离和内容冲突保护。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: expose exercise recording tools`
+
+- `src/slim_guard/tools/exercise.py` → 运动 Tool 定义和受控处理器 → 提供运动写入与近期查询工具，确定性换算米/公里/英里并注入可信来源和执行身份。
+- `src/slim_guard/tools/__init__.py` → Tool 模块公共出口 → 暴露运动工具常量、参数、处理器和构造函数。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 将运动工具和仓储加入固定 Registry、执行 Gateway 与 Agent Manifest。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 保持开放活动名称，只允许保存用户或设备明确报告的量化指标，禁止模型估算运动消耗。
+- `tests/unit/test_exercise_tools.py` → 运动 Tool 测试 → 验证权威写入、近期读取、确定性距离换算和领域范围保护。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证运动工具出现在核心模型的冻结工具列表。
+- `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定运动工具版本。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
