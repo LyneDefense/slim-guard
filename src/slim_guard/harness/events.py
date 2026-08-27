@@ -14,6 +14,8 @@ class TurnTrigger(StrEnum):
     USER_MESSAGE = "user_message"
     USER_CONFIRMATION = "user_confirmation"
     DAILY_REMINDER = "daily_reminder"
+    WEIGHT_REMINDER = "weight_reminder"
+    MEAL_REMINDER = "meal_reminder"
     DAILY_REVIEW = "daily_review"
     WEEKLY_REVIEW = "weekly_review"
     HUMAN_REVIEW_COMPLETED = "human_review_completed"

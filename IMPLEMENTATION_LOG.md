@@ -140,3 +140,11 @@
 - `src/slim_guard/domain/routine/__init__.py` → 日程领域公共出口 → 暴露 Job 状态、引用、仓储和规划器。
 - `tests/unit/test_routine_jobs.py` → 日程 Job 状态机测试 → 验证未到时间不规划、同日规划幂等、租约期内不重复、租约过期可恢复以及只能完成一次。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: run scheduled agent turns`
+
+- `src/slim_guard/harness/events.py` → Harness 事件类型定义 → 新增体重提醒和饮食提醒的明确 Trigger，使定时任务不再依赖含糊意图分类。
+- `src/slim_guard/agent/runtime.py` → 渠道无关的 Agent 运行入口 → 新增无用户输入的定时 Turn 命令，只允许体重提醒、饮食提醒和每日复盘，并在运行时禁用全部 Tool 写入。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 定义三类定时 Turn 的生成边界，要求依据权威事实判断缺卡、客观复盘且禁止编造和调用工具。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证定时 Turn 无需伪造用户消息、没有可用 Tool、保留明确 Trigger 并正常持久化输出。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

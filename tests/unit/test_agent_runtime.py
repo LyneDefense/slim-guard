@@ -6,7 +6,7 @@ from pathlib import Path
 
 from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_runtime
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT
-from slim_guard.agent.runtime import AgentRuntimeRequest
+from slim_guard.agent.runtime import AgentRuntimeRequest, AgentScheduledRequest
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -17,7 +17,7 @@ from slim_guard.agent_models.gateway import (
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.domain.weight.repository import WeightRepository
-from slim_guard.harness.events import ItemType, TurnStatus
+from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
@@ -170,6 +170,46 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         assert second_observation["status"] == "succeeded"
         assert second_observation["output"]["direction"] == "unknown"
         model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Path) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway((final_reply("早上好，记得空腹称一下体重哦。"),))
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            model_parameters={"max_output_tokens": 512},
+            code_revision="test-scheduled",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        result = await runtime.run_scheduled(
+            AgentScheduledRequest(
+                user_id="user-1",
+                trigger=TurnTrigger.WEIGHT_REMINDER,
+                execution_mode=ToolExecutionMode.EVALUATION,
+            )
+        )
+
+        items = await HarnessStateRepository(database).list_items(result.turn_id)
+        assert result.final_text == "早上好，记得空腹称一下体重哦。"
+        assert [item.item_type for item in items] == [
+            ItemType.CONTEXT_SNAPSHOT,
+            ItemType.MODEL_MESSAGE,
+            ItemType.AGENT_MESSAGE,
+        ]
+        assert model.requests[0].tools == ()
+        assert '"trigger":"weight_reminder"' in (
+            model.requests[0].messages[1].content or ""
+        )
     finally:
         await model.close()
         await database.close()

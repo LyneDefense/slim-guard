@@ -67,10 +67,38 @@ class AgentRuntimeResult:
     failure_code: str | None
 
 
+class AgentScheduledRequest(BaseModel):
+    """Trusted command for a timer-triggered, input-free Agent Turn."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    user_id: str = Field(min_length=1, max_length=128)
+    trigger: TurnTrigger
+    deadline_at: datetime | None = None
+    execution_mode: ToolExecutionMode = ToolExecutionMode.LIVE
+
+    @model_validator(mode="after")
+    def validate_trigger(self) -> AgentScheduledRequest:
+        if self.trigger not in {
+            TurnTrigger.WEIGHT_REMINDER,
+            TurnTrigger.MEAL_REMINDER,
+            TurnTrigger.DAILY_REVIEW,
+        }:
+            raise ValueError("Scheduled Agent request has an unsupported trigger")
+        if self.deadline_at is not None and self.deadline_at.utcoffset() is None:
+            raise ValueError("Scheduled Agent deadline must be timezone-aware")
+        return self
+
+
 class AgentRuntimeProtocol(Protocol):
     async def run_user_message(
         self,
         request: AgentRuntimeRequest,
+    ) -> AgentRuntimeResult: ...
+
+    async def run_scheduled(
+        self,
+        request: AgentScheduledRequest,
     ) -> AgentRuntimeResult: ...
 
 
@@ -146,6 +174,31 @@ class AgentRuntime:
             grants=HarnessTurnGrants(
                 isolated_write_environment=request.isolated_write_environment,
             ),
+        )
+        return AgentRuntimeResult(
+            thread_id=run.initialized.thread.id,
+            turn_id=run.initialized.turn.id,
+            agent_version_id=run.initialized.turn.agent_version_id,
+            termination=run.loop.termination,
+            final_text=run.final_text,
+            failure_code=run.loop.failure.code if run.loop.failure is not None else None,
+        )
+
+    async def run_scheduled(
+        self,
+        request: AgentScheduledRequest,
+    ) -> AgentRuntimeResult:
+        await self._versions.register(self.manifest)
+        run = await self._runner.run(
+            request=TurnInitializationRequest(
+                user_id=request.user_id,
+                agent_version_id=self.manifest.version_id,
+                trigger=request.trigger,
+                execution_mode=request.execution_mode,
+                deadline_at=request.deadline_at,
+                inputs=(),
+            ),
+            grants=HarnessTurnGrants(allowed_tool_names=()),
         )
         return AgentRuntimeResult(
             thread_id=run.initialized.thread.id,
