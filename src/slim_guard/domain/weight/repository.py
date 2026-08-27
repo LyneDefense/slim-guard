@@ -4,15 +4,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from slim_guard.db.models import (
-    AgentItemRecord,
-    AgentThreadRecord,
-    AgentTurnRecord,
-    WeightRecord,
-)
+from slim_guard.db.models import WeightRecord
 from slim_guard.db.session import Database
+from slim_guard.domain.source import validate_record_source
 from slim_guard.domain.weight.contracts import (
     WeightMeasurementCommand,
     WeightMeasurementCondition,
@@ -46,7 +41,14 @@ class WeightRepository:
             source_tool_call_id=command.source_tool_call_id,
         )
         async with self.database.session() as session:
-            await self._validate_source(session, command)
+            mismatch = await validate_record_source(
+                session,
+                user_id=command.user_id,
+                source_turn_id=command.source_turn_id,
+                source_item_id=command.source_item_id,
+            )
+            if mismatch is not None:
+                raise WeightSourceMismatch(f"Weight {mismatch}")
             session.add(row)
             try:
                 await session.commit()
@@ -88,32 +90,6 @@ class WeightRepository:
                 .limit(limit)
             )
             return WeightTrend.from_records(tuple(self._ref(row) for row in rows))
-
-    @staticmethod
-    async def _validate_source(
-        session: AsyncSession,
-        command: WeightMeasurementCommand,
-    ) -> None:
-        source_user_id = await session.scalar(
-            select(AgentThreadRecord.user_id)
-            .join(AgentTurnRecord, AgentTurnRecord.thread_id == AgentThreadRecord.id)
-            .where(AgentTurnRecord.id == command.source_turn_id)
-        )
-        if source_user_id is None:
-            raise WeightSourceMismatch(
-                f"Weight source Turn does not exist: {command.source_turn_id}"
-            )
-        if source_user_id != command.user_id:
-            raise WeightSourceMismatch("Weight source Turn belongs to another user")
-        if command.source_item_id is None:
-            return
-        source_item_turn_id = await session.scalar(
-            select(AgentItemRecord.turn_id).where(
-                AgentItemRecord.id == command.source_item_id
-            )
-        )
-        if source_item_turn_id != command.source_turn_id:
-            raise WeightSourceMismatch("Weight source Item does not belong to its Turn")
 
     @classmethod
     def _assert_same_record(

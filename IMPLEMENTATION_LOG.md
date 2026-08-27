@@ -62,3 +62,15 @@
 - `.env.example` → 部署配置模板 → 增加图片保留期配置示例。
 - `README.md` → 部署与运行说明 → 说明 Harness 已支持图片及默认七天保留策略。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: persist authoritative meal records`
+
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 新增餐次、食物清单、份量描述、时间、状态和来源链完整的饮食记录表。
+- `src/slim_guard/domain/source.py` → 业务记录共用来源校验器 → 统一验证 Turn 属于当前用户且 Item 属于该 Turn，供体重、饮食和后续运动记录复用。
+- `src/slim_guard/domain/weight/repository.py` → 体重权威仓储 → 改用共用来源校验器，保持原有隔离语义并消除重复实现。
+- `src/slim_guard/domain/meal/contracts.py` → 饮食领域契约 → 定义餐次、食物与份量、发生时间、状态和可审计写入命令，不保存伪精确热量。
+- `src/slim_guard/domain/meal/errors.py` → 饮食领域错误 → 区分来源不可信和幂等冲突。
+- `src/slim_guard/domain/meal/repository.py` → 饮食权威持久化边界 → 实现来源验证、幂等写入、冲突保护和近期记录查询。
+- `src/slim_guard/domain/meal/__init__.py` → 饮食领域公共出口 → 暴露领域契约和仓储。
+- `tests/unit/test_meal_repository.py` → 饮食仓储测试 → 覆盖幂等、时间排序、用户隔离和内容冲突保护。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

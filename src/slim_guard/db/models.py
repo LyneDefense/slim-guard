@@ -196,6 +196,44 @@ class ImageAssetRecord(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class MealRecord(Base):
+    __tablename__ = "meal_records"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_meal_record_idempotency_key"),
+        CheckConstraint(
+            "meal_type IN ('breakfast','lunch','dinner','snack','unspecified')",
+            name="ck_meal_record_type",
+        ),
+        CheckConstraint(
+            "status IN ('active','superseded','voided')",
+            name="ck_meal_record_status",
+        ),
+        Index("ix_meal_record_user_occurred", "user_id", "occurred_at"),
+        Index("ix_meal_record_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    meal_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    foods_json: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class PendingActionRecord(Base):
     __tablename__ = "pending_actions"
     __table_args__ = (
