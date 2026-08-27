@@ -59,6 +59,16 @@ from slim_guard.tools.policy import (
     ToolPolicyResult,
 )
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
+from slim_guard.tools.routine import (
+    CONFIGURE_ROUTINE_TOOL_NAME,
+    GET_ROUTINE_TOOL_NAME,
+    ROUTINE_TOOL_VERSION,
+    ConfigureRoutineArguments,
+    GetRoutineArguments,
+    RoutineToolHandlers,
+    routine_tool_definitions,
+    routine_tool_executors,
+)
 from slim_guard.tools.weight import (
     GET_RECENT_WEIGHT_TREND_TOOL_NAME,
     RECORD_WEIGHT_TOOL_NAME,
@@ -72,13 +82,17 @@ from slim_guard.tools.weight import (
 
 __all__ = [
     "RegisteredTool",
+    "CONFIGURE_ROUTINE_TOOL_NAME",
+    "ConfigureRoutineArguments",
     "EXERCISE_TOOL_VERSION",
     "ExerciseToolHandlers",
     "GET_RECENT_EXERCISE_TOOL_NAME",
     "GET_RECENT_WEIGHT_TREND_TOOL_NAME",
     "GET_RECENT_MEALS_TOOL_NAME",
+    "GET_ROUTINE_TOOL_NAME",
     "GetRecentMealsArguments",
     "GetRecentExerciseArguments",
+    "GetRoutineArguments",
     "GetRecentWeightTrendArguments",
     "IMAGE_TOOL_VERSION",
     "INSPECT_IMAGE_TOOL_NAME",
@@ -93,6 +107,8 @@ __all__ = [
     "RecordExerciseArguments",
     "RecordMealArguments",
     "RecordWeightArguments",
+    "ROUTINE_TOOL_VERSION",
+    "RoutineToolHandlers",
     "DefaultToolPolicy",
     "ToolArguments",
     "ToolAuthorization",
@@ -126,4 +142,6 @@ __all__ = [
     "meal_tool_executors",
     "exercise_tool_definitions",
     "exercise_tool_executors",
+    "routine_tool_definitions",
+    "routine_tool_executors",
 ]

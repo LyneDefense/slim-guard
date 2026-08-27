@@ -64,6 +64,8 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "get_recent_meals": "v1",
         "record_meal": "v1",
         "get_recent_exercise": "v1",
+        "get_checkin_schedule": "v1",
+        "configure_checkin_schedule": "v1",
         "record_exercise": "v1",
         "record_weight": "v1",
     }

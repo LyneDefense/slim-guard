@@ -413,6 +413,24 @@ class SlimGuardUser(Base):
     )
 
 
+class UserRoutinePreference(Base):
+    __tablename__ = "user_routine_preferences"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Shanghai")
+    weight_reminder_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    meal_reminder_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    daily_review_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
 class ChannelIdentity(Base):
     __tablename__ = "channel_identities"
     __table_args__ = (

@@ -116,3 +116,19 @@
 - `tests/unit/test_context_data.py` → 权威上下文提供器测试 → 验证用户昵称、体重、饮食和运动能跨 Turn 汇总成紧凑事实。
 - `tests/unit/test_context_compiler.py` → 上下文编译器测试 → 验证权威事实位于用户输入之前且保持结构化 JSON。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: persist configurable checkin routines`
+
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 新增用户级时区、体重提醒、饮食提醒和晚间复盘时间配置表。
+- `src/slim_guard/domain/routine/contracts.py` → 日程偏好领域契约 → 校验 IANA 时区、分钟精度时间、启停语义和非空修改命令。
+- `src/slim_guard/domain/routine/repository.py` → 用户日程持久化边界 → 实现按用户读取、部分更新、单项关闭和启用日程扫描。
+- `src/slim_guard/domain/routine/__init__.py` → 日程领域公共出口 → 统一暴露提醒类型、配置契约和仓储。
+- `src/slim_guard/tools/routine.py` → 日程配置 Tool → 允许 Agent 在用户明确要求后分别设置、查询或关闭体重、饮食和每日复盘日程。
+- `src/slim_guard/tools/__init__.py` → Tool 模块公共出口 → 暴露日程 Tool 的定义、参数和处理器。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 把日程 Tool 和用户日程仓储加入固定 Registry、Gateway 与 Agent Manifest。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 约束提醒必须由用户主动开启、按本地时区配置且不得保证微信平台一定送达。
+- `src/slim_guard/harness/context_data.py` → 跨轮次权威事实提供器 → 将当前用户已经配置的日程加入后续 Turn 上下文。
+- `tests/unit/test_routine_preferences.py` → 日程领域和 Tool 测试 → 覆盖非法时区、缺失时间、部分更新、关闭单项和用户隔离。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证日程 Tool 出现在核心模型的冻结工具列表。
+- `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定日程 Tool 版本。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

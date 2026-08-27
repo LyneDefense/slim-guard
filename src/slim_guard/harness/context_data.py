@@ -12,6 +12,7 @@ from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.weight.repository import WeightRepository
 
 
@@ -46,6 +47,7 @@ class AuthoritativeContextDataProvider:
         weights: WeightRepository,
         meals: MealRepository,
         exercise: ExerciseRepository,
+        routines: RoutinePreferenceRepository | None = None,
         weight_limit: int = 7,
         meal_limit: int = 10,
         exercise_limit: int = 10,
@@ -54,6 +56,7 @@ class AuthoritativeContextDataProvider:
         self._weights = weights
         self._meals = meals
         self._exercise = exercise
+        self._routines = routines
         self._weight_limit = weight_limit
         self._meal_limit = meal_limit
         self._exercise_limit = exercise_limit
@@ -123,6 +126,15 @@ class AuthoritativeContextDataProvider:
         }
         if profile is not None:
             context["profile"] = profile
+        if self._routines is not None:
+            routine = await self._routines.get(user_id)
+            if routine is not None:
+                context["checkin_schedule"] = {
+                    "timezone": routine.timezone,
+                    "weight_reminder_time": routine.weight_reminder_time,
+                    "meal_reminder_time": routine.meal_reminder_time,
+                    "daily_review_time": routine.daily_review_time,
+                }
         return context
 
     async def _profile(self, user_id: str) -> dict[str, Any] | None:
