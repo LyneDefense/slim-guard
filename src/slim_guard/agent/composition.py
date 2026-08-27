@@ -25,6 +25,7 @@ from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.runner import HarnessTurnRunner
+from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.tool_calls import ToolCallCoordinator
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
@@ -136,6 +137,7 @@ def build_agent_runtime(
             routines=routines,
             checkins=checkins,
         ),
+        output_guard=SlimGuardOutputGuard(),
         clock=clock,
     )
     return AgentRuntime(
@@ -169,6 +171,6 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         context_policy_version="authoritative-records-v1",
         memory_policy_version="domain-records-v1",
         compaction_policy_version="none-v1",
-        safety_policy_version="weight-coach-v1",
+        safety_policy_version="health-output-guard-v2",
         code_revision=definition.code_revision,
     )

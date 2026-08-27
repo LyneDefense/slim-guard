@@ -15,6 +15,12 @@ from slim_guard.agent_models.gateway import (
 from slim_guard.harness.events import TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
 from slim_guard.harness.limits import HarnessLimits
+from slim_guard.harness.safety import (
+    HealthRiskLevel,
+    OutputGuard,
+    PermissiveOutputGuard,
+    SafetyAssessment,
+)
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
@@ -84,12 +90,14 @@ class HarnessLoop:
         tool_calls: ToolCallRunner,
         limits: HarnessLimits,
         recorder: HarnessRunRecorder | None = None,
+        output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._model = model
         self._tool_calls = tool_calls
         self._limits = limits
         self._recorder = recorder or NullHarnessRunRecorder()
+        self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
 
     async def run(
@@ -100,10 +108,16 @@ class HarnessLoop:
         authorization: ToolAuthorization,
         source_item_id: str | None,
         now: datetime,
+        safety_assessment: SafetyAssessment | None = None,
     ) -> HarnessLoopResult:
         messages = list(request.messages)
         model_responses: list[ModelResponse] = []
         tool_outcomes: list[ToolCallOutcome] = []
+        active_assessment = safety_assessment or SafetyAssessment(
+            level=HealthRiskLevel.NORMAL,
+            code="none",
+            blocks_tools=False,
+        )
 
         while True:
             if self._deadline_exceeded(context):
@@ -172,10 +186,20 @@ class HarnessLoop:
                 text = response.message.content
                 if text is None or not text.strip():
                     raise ValueError("Model returned neither tool calls nor final text")
+                guarded = self._output_guard.review(
+                    text=text,
+                    assessment=active_assessment,
+                    tool_outcomes=tuple(tool_outcomes),
+                )
+                if guarded.modified:
+                    await self._recorder.record_output_guard(
+                        turn_id=context.turn_id,
+                        code=guarded.code,
+                    )
                 return await self._finish(
                     context=context,
                     termination=HarnessTermination.FINAL_RESPONSE,
-                    final_text=text.strip(),
+                    final_text=guarded.text,
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,

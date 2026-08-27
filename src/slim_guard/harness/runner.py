@@ -18,6 +18,11 @@ from slim_guard.harness.initialization import (
 )
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.loop import HarnessLoop, HarnessLoopResult
+from slim_guard.harness.safety import (
+    DefaultInputSafetyPolicy,
+    InputSafetyPolicy,
+    OutputGuard,
+)
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
@@ -59,18 +64,22 @@ class HarnessTurnRunner:
         recorder: HarnessRunRecorder,
         limits: HarnessLimits,
         context_data: ContextDataProvider | None = None,
+        input_safety: InputSafetyPolicy | None = None,
+        output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._initializer = initializer
         self._compiler = compiler
         self._recorder = recorder
         self._context_data = context_data or EmptyContextDataProvider()
+        self._input_safety = input_safety or DefaultInputSafetyPolicy()
         self._clock = clock or self._utc_now
         self._loop = HarnessLoop(
             model=model,
             tool_calls=tool_calls,
             recorder=recorder,
             limits=limits,
+            output_guard=output_guard,
             clock=self._clock,
         )
 
@@ -85,15 +94,23 @@ class HarnessTurnRunner:
             raise ValueError("Harness Turn Runner clock must be timezone-aware")
         initialized = await self._initializer.initialize(request)
         active_grants = grants or HarnessTurnGrants()
+        safety_assessment = self._input_safety.assess(initialized.input_items)
         try:
-            authoritative_context = await self._context_data.load(
-                user_id=initialized.context.user_id,
-                current_time=current_time,
+            authoritative_context = dict(
+                await self._context_data.load(
+                    user_id=initialized.context.user_id,
+                    current_time=current_time,
+                )
+            )
+            if safety_assessment.blocks_tools:
+                authoritative_context["health_safety"] = safety_assessment.to_context()
+            allowed_tool_names = (
+                () if safety_assessment.blocks_tools else active_grants.allowed_tool_names
             )
             compiled = self._compiler.compile(
                 initialized=initialized,
                 current_time=current_time,
-                allowed_tool_names=active_grants.allowed_tool_names,
+                allowed_tool_names=allowed_tool_names,
                 authoritative_context=authoritative_context,
             )
         except (ContextCompilationError, ValueError, TypeError) as exc:
@@ -158,6 +175,7 @@ class HarnessTurnRunner:
             authorization=authorization,
             source_item_id=initialized.source_item_id,
             now=current_time,
+            safety_assessment=safety_assessment,
         )
         return HarnessTurnRunResult(
             initialized=initialized,

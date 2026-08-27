@@ -213,3 +213,42 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
     finally:
         await model.close()
         await database.close()
+
+
+async def test_runtime_blocks_tools_and_replaces_emergency_model_output(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway((final_reply("没关系，继续运动观察一下。"),))
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-safety",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="我运动后胸痛而且呼吸困难",
+                execution_mode=ToolExecutionMode.EVALUATION,
+            )
+        )
+        items = await HarnessStateRepository(database).list_items(result.turn_id)
+
+        assert result.termination is HarnessTermination.FINAL_RESPONSE
+        assert "尽快联系当地急救服务或前往急诊" in (result.final_text or "")
+        assert model.requests[0].tools == ()
+        assert any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
+        guard_item = next(
+            item for item in items if item.item_type is ItemType.OUTPUT_GUARD
+        )
+        assert guard_item.payload["code"] == "medical_emergency_escalation"
+    finally:
+        await model.close()
+        await database.close()

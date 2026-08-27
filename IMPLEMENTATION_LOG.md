@@ -177,3 +177,15 @@
 - `.env.example` → 部署配置模板 → 给出调度与主动发送策略的安全默认值。
 - `README.md` → 部署与运维说明 → 更新当前 Harness 能力、数据保留事实、用户开启提醒方式、平台限制、配置项与关键日志。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: enforce health safety output guard`
+
+- `src/slim_guard/harness/safety.py` → 健康安全硬门禁与最终回复校验器 → 确定性识别明确急症、自伤、高风险减重和未成年人信号，禁止此类 Turn 调用 Tool，并替换诊断、处方、危险建议或失败写入却声称成功的输出。
+- `src/slim_guard/harness/runner.py` → 单轮 Agent 编排入口 → 在上下文编译前评估本轮风险，高风险时清空可用 Tool 并把不可覆盖的安全状态加入系统上下文。
+- `src/slim_guard/harness/loop.py` → 有界 Model-Tool 内循环 → 在最终回复落库前执行 Output Guard，并将实际交付文本作为 Turn 结果。
+- `src/slim_guard/harness/trace.py` → Harness 可重建运行轨迹 → 仅在门禁修改回复时追加不含敏感正文的 Guard 事件和原因码。
+- `src/slim_guard/harness/events.py` → Harness 事件类型定义 → 新增 `output_guard` 审计事件。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 在生产 Runtime 启用 SlimGuard Output Guard 并升级冻结安全策略版本。
+- `tests/unit/test_safety_guard.py` → 安全策略单元测试 → 覆盖明确急症、未成年人、普通打卡以及诊断处方输出替换。
+- `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证急症输入无法调用任何 Tool、错误模型回复被安全升级信息替换且 Guard 事件可追溯。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

@@ -19,6 +19,13 @@ class ToolTrace:
 
 
 class HarnessRunRecorder(Protocol):
+    async def record_output_guard(
+        self,
+        *,
+        turn_id: str,
+        code: str,
+    ) -> None: ...
+
     async def record_context_snapshot(
         self,
         *,
@@ -114,6 +121,14 @@ class NullHarnessRunRecorder:
     ) -> None:
         return None
 
+    async def record_output_guard(
+        self,
+        *,
+        turn_id: str,
+        code: str,
+    ) -> None:
+        return None
+
 
 class PersistentHarnessRunRecorder:
     """Persists a reconstructable trace and owns normal Turn termination."""
@@ -132,6 +147,19 @@ class PersistentHarnessRunRecorder:
             item_type=ItemType.CONTEXT_SNAPSHOT,
             status=ItemStatus.COMPLETED,
             payload=payload,
+        )
+
+    async def record_output_guard(
+        self,
+        *,
+        turn_id: str,
+        code: str,
+    ) -> None:
+        await self._store.append_item(
+            turn_id=turn_id,
+            item_type=ItemType.OUTPUT_GUARD,
+            status=ItemStatus.COMPLETED,
+            payload={"code": code, "modified": True},
         )
 
     async def record_model_response(
