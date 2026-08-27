@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -13,6 +14,7 @@ from slim_guard.db.session import Database
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
+from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.domain.weight.repository import WeightRepository
 
 
@@ -48,6 +50,7 @@ class AuthoritativeContextDataProvider:
         meals: MealRepository,
         exercise: ExerciseRepository,
         routines: RoutinePreferenceRepository | None = None,
+        checkins: DailyCheckinStatusRepository | None = None,
         weight_limit: int = 7,
         meal_limit: int = 10,
         exercise_limit: int = 10,
@@ -57,6 +60,7 @@ class AuthoritativeContextDataProvider:
         self._meals = meals
         self._exercise = exercise
         self._routines = routines
+        self._checkins = checkins
         self._weight_limit = weight_limit
         self._meal_limit = meal_limit
         self._exercise_limit = exercise_limit
@@ -135,6 +139,22 @@ class AuthoritativeContextDataProvider:
                     "meal_reminder_time": routine.meal_reminder_time,
                     "daily_review_time": routine.daily_review_time,
                 }
+                if self._checkins is not None:
+                    local_date = current_time.astimezone(
+                        ZoneInfo(routine.timezone)
+                    ).date()
+                    status = await self._checkins.get(
+                        user_id=user_id,
+                        local_date=local_date,
+                        timezone=routine.timezone,
+                    )
+                    context["today_checkin_status"] = {
+                        "local_date": local_date.isoformat(),
+                        "timezone": routine.timezone,
+                        "weight_count": status.weight_count,
+                        "meal_count": status.meal_count,
+                        "exercise_count": status.exercise_count,
+                    }
         return context
 
     async def _profile(self, user_id: str) -> dict[str, Any] | None:

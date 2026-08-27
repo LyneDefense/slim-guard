@@ -15,6 +15,7 @@ from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
+from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.context_data import AuthoritativeContextDataProvider
@@ -85,6 +86,7 @@ def build_agent_runtime(
     meals = MealRepository(database)
     exercise = ExerciseRepository(database)
     routines = RoutinePreferenceRepository(database)
+    checkins = DailyCheckinStatusRepository(database)
     executors = {
         **weight_tool_executors(
             weights,
@@ -132,6 +134,7 @@ def build_agent_runtime(
             meals=meals,
             exercise=exercise,
             routines=routines,
+            checkins=checkins,
         ),
         clock=clock,
     )

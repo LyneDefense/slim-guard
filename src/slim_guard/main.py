@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 
@@ -21,6 +22,9 @@ from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
+from slim_guard.domain.routine.jobs import RoutineJobPlanner, RoutineJobRepository
+from slim_guard.domain.routine.repository import RoutinePreferenceRepository
+from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
@@ -29,6 +33,10 @@ from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
 from slim_guard.services.harness_reply_agent import HarnessReplyAgent
+from slim_guard.services.proactive_delivery import (
+    ProactiveDeliveryPolicy,
+    ProactiveDeliveryRepository,
+)
 from slim_guard.services.reply_agent import (
     SLIM_GUARD_INSTRUCTIONS,
     SLIM_GUARD_PROMPT_VERSION,
@@ -36,6 +44,7 @@ from slim_guard.services.reply_agent import (
     StaticReplyAgent,
     ZhipuReplyAgent,
 )
+from slim_guard.services.routine_scheduler import RoutineSchedulerService
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +170,8 @@ def create_app(
         sync_service: AgentReplySyncService | None = None
         watchdog_stop: asyncio.Event | None = None
         watchdog_task: asyncio.Task[None] | None = None
+        routine_stop: asyncio.Event | None = None
+        routine_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -192,6 +203,50 @@ def create_app(
                 state_machine.run_watchdog(watchdog_stop),
                 name="wecom-human-timeout-watchdog",
             )
+            if app_settings.routine_scheduler_enabled and active_runtime is not None:
+                preferences = RoutinePreferenceRepository(database)
+                jobs = RoutineJobRepository(database)
+                deliveries = ProactiveDeliveryRepository(database)
+                routine_scheduler = RoutineSchedulerService(
+                    planner=RoutineJobPlanner(preferences=preferences, jobs=jobs),
+                    jobs=jobs,
+                    preferences=preferences,
+                    checkins=DailyCheckinStatusRepository(database),
+                    policy=ProactiveDeliveryPolicy(
+                        repository=deliveries,
+                        open_kfid=app_settings.wecom_open_kf_id,
+                        active_window=timedelta(
+                            hours=app_settings.wecom_proactive_active_window_hours
+                        ),
+                        max_messages_per_window=(
+                            app_settings.wecom_proactive_max_messages
+                        ),
+                    ),
+                    deliveries=deliveries,
+                    runtime=active_runtime,
+                    client=active_client,
+                    conversation_control=state_machine,
+                    interval_seconds=app_settings.routine_scheduler_interval_seconds,
+                    job_lease=timedelta(
+                        seconds=app_settings.routine_job_lease_seconds
+                    ),
+                    send_retry_after=timedelta(
+                        seconds=app_settings.routine_send_retry_seconds
+                    ),
+                    max_lateness=timedelta(
+                        seconds=app_settings.routine_max_lateness_seconds
+                    ),
+                    agent_timeout=timedelta(
+                        seconds=app_settings.routine_agent_timeout_seconds
+                    ),
+                    max_attempts=app_settings.routine_max_attempts,
+                    max_message_chars=app_settings.agent_reply_max_chars,
+                )
+                routine_stop = asyncio.Event()
+                routine_task = asyncio.create_task(
+                    routine_scheduler.run_forever(routine_stop),
+                    name="slim-guard-routine-scheduler",
+                )
 
         app.state.settings = app_settings
         app.state.database = database
@@ -203,8 +258,12 @@ def create_app(
         finally:
             if watchdog_stop is not None:
                 watchdog_stop.set()
+            if routine_stop is not None:
+                routine_stop.set()
             if watchdog_task is not None:
                 await watchdog_task
+            if routine_task is not None:
+                await routine_task
             if owned_client is not None:
                 await owned_client.close()
             if owned_reply_agent is not None:

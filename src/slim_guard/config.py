@@ -52,6 +52,15 @@ class Settings(BaseSettings):
         ge=3600,
         le=2_592_000,
     )
+    routine_scheduler_enabled: bool = True
+    routine_scheduler_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    routine_job_lease_seconds: int = Field(default=120, ge=30, le=3600)
+    routine_send_retry_seconds: int = Field(default=120, ge=30, le=3600)
+    routine_max_lateness_seconds: int = Field(default=7200, ge=60, le=43_200)
+    routine_agent_timeout_seconds: int = Field(default=45, ge=5, le=120)
+    routine_max_attempts: int = Field(default=3, ge=1, le=10)
+    wecom_proactive_active_window_hours: int = Field(default=48, ge=1, le=48)
+    wecom_proactive_max_messages: int = Field(default=3, ge=1, le=5)
 
     @cached_property
     def wecom_callback_is_configured(self) -> bool:

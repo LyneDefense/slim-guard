@@ -37,6 +37,17 @@ def test_agent_runtime_defaults_to_legacy() -> None:
     assert settings.agent_runtime_mode == "legacy"
 
 
+def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
+    settings = Settings()
+
+    assert settings.routine_scheduler_enabled is True
+    assert settings.wecom_proactive_active_window_hours == 48
+    assert settings.wecom_proactive_max_messages == 3
+
+    with pytest.raises(ValidationError):
+        Settings(wecom_proactive_max_messages=6)
+
+
 def test_agent_runtime_rejects_unknown_mode() -> None:
     with pytest.raises(ValidationError):
         Settings(agent_runtime_mode="unknown")  # type: ignore[arg-type]

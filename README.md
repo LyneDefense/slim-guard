@@ -2,9 +2,9 @@
 
 SlimGuard 是一个 Python 编写的企业微信“微信客服”减脂助手。
 
-当前版本支持单轮 AI 回复：普通微信用户发送文字或图片后，SlimGuard
-会调用智谱 GLM API 进行减脂相关的识别和点评。图片可以是体重秤、食物或
-运动截图。这一版不传历史消息，不使用 memory、工具调用或复杂 Agent 框架。
+当前 Harness 版本支持普通微信用户用自然语言或图片记录体重、饮食和运动，调用智谱
+GLM 完成理解与回复，并把业务事实按用户隔离、幂等地保存。Agent 每轮只读取紧凑的用户
+资料、近期权威记录和当天打卡状态，不依赖无限增长的原始聊天历史。
 
 通道已经包含企业微信会话状态管理：新会话会从“未处理”自动认领为“智能助手
 接待”，避免误入人工接待后 API 无法回复。若历史或误操作导致会话处于人工接待状态，
@@ -45,8 +45,8 @@ ZHIPU_API_KEY=智谱 API Key
 ```
 
 Agent Runtime 默认保持兼容模式。设置为 `harness` 后，企业微信文字和图片消息会进入新版
-Harness，并可调用图片检查、体重记录和趋势查询工具。图片默认保留 7 天，可通过
-`AGENT_IMAGE_RETENTION_SECONDS` 调整。
+Harness，并可调用图片检查、体重、饮食、运动和提醒日程工具。图片作为用户隔离的短期
+资产默认保留 7 天，可通过 `AGENT_IMAGE_RETENTION_SECONDS` 调整。
 `shadow` 尚未开放，设置后会拒绝启动：
 
 ```dotenv
@@ -95,6 +95,26 @@ WECOM_MEDIA_MAX_BYTES=10485760
 WECOM_HUMAN_TIMEOUT_MESSAGE=人工服务暂时没有响应，已结束人工接待。请再发送一次刚才的内容，SlimGuard 减脂助手会继续为你服务。
 ```
 
+提醒和晚间复盘只会在用户明确设置后启用。例如用户可以直接说“每天早上 8 点提醒我称重，
+晚上 9 点复盘”。后台调度器使用持久化 Job 和发送账本，服务重启不会重复生成或发送同一条
+日程消息。微信客服主动消息仍受平台窗口和额度约束；默认只使用最多 3 条主动消息，为正常
+对话保留余量：
+
+```dotenv
+ROUTINE_SCHEDULER_ENABLED=true
+ROUTINE_SCHEDULER_INTERVAL_SECONDS=30
+ROUTINE_JOB_LEASE_SECONDS=120
+ROUTINE_SEND_RETRY_SECONDS=120
+ROUTINE_MAX_LATENESS_SECONDS=7200
+ROUTINE_AGENT_TIMEOUT_SECONDS=45
+ROUTINE_MAX_ATTEMPTS=3
+WECOM_PROACTIVE_ACTIVE_WINDOW_HOURS=48
+WECOM_PROACTIVE_MAX_MESSAGES=3
+```
+
+超过客户最后发言后的配置窗口、额度不足、当天已经完成对应打卡、任务迟到超过两小时或
+企业微信会话不在智能助手接待状态时，任务会记录明确的跳过原因，不会强行发送。
+
 `REPLY_DELIVERY_MODE` 默认为 `automatic`。代码已经预留 `internal_review` 模式：回复草稿
 进入 SlimGuard 自己的 `pending_review` 队列，批准后仍通过微信客服 API 发出，全程不把
 企业微信会话切换到状态 3。当前尚未提供审核管理页面，因此部署环境请保持
@@ -129,10 +149,10 @@ https://你的公网域名/callbacks/wecom/kf
 data/slim_guard.sqlite3
 ```
 
-只保存同步 cursor、消息 ID、消息类型、用户身份与客户资料、会话状态和出站回复，不保存
-入站文本正文或下载的图片。图片仅在当次识别的内存中使用。新增表会在启动时自动创建，
-已有 SQLite 文件无需删除。删除 SQLite 文件会
-丢失用户、去重和会话状态，真机环境不要随意删除。
+保存同步 cursor、消息 ID、消息类型、用户身份与客户资料、会话状态、权威打卡记录、Agent
+运行轨迹、日程 Job 和出站回复；不保存入站文本正文。下载图片会加密链路传输并作为用户隔离
+的短期数据库资产保存，默认七天后不可读取并可清理。新增表会在启动时自动创建，已有 SQLite
+文件无需删除。删除 SQLite 文件会丢失用户、记录、日程、去重和会话状态，真机环境不要随意删除。
 
 ## 用户与客户资料
 
@@ -164,6 +184,9 @@ wecom_reply_deferred_by_service_state
 wecom_human_session_ended_after_timeout
 wecom_customer_profiles_synced
 slim_guard_reply_pending_internal_review
+routine_message_accepted
+routine_job_skipped
+routine_job_attempt_failed
 ```
 
 ## 测试与检查

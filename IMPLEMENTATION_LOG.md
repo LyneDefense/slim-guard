@@ -165,3 +165,15 @@
 - `tests/unit/test_routine_scheduler.py` → 日程执行闭环测试 → 验证缺卡时生成并发送一次、已打卡时不调用模型、同日不重复，以及进程在准备发送后崩溃仍能复用冻结消息恢复。
 - `tests/unit/test_proactive_delivery.py` → 主动发送策略测试 → 更新来源 Turn 契约并继续验证内容碰撞保护。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: activate production routine scheduler`
+
+- `src/slim_guard/main.py` → FastAPI 生产装配与生命周期入口 → 在 Harness、企业微信和模型均可用时启动日程后台任务，注入持久化 Job、当日状态、主动发送策略与会话状态机，并在停机时有序收束。
+- `src/slim_guard/config.py` → 环境配置契约 → 增加调度间隔、Job 租约、发送重试、最大迟到、模型超时、最大尝试以及微信主动窗口和额度上限配置。
+- `src/slim_guard/harness/context_data.py` → 跨轮次权威事实提供器 → 按用户时区把当天体重、饮食和运动计数注入定时复盘上下文。
+- `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 为生产 Runtime 注入当日打卡状态读取器。
+- `tests/unit/test_daily_checkin_status.py` → 当日状态测试 → 验证 Asia/Shanghai 本地日边界、有效状态过滤以及三类记录计数。
+- `tests/unit/test_settings.py` → 应用配置测试 → 验证默认 48 小时窗口、主动消息额度预留和非法上限拒绝。
+- `.env.example` → 部署配置模板 → 给出调度与主动发送策略的安全默认值。
+- `README.md` → 部署与运维说明 → 更新当前 Harness 能力、数据保留事实、用户开启提醒方式、平台限制、配置项与关键日志。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
