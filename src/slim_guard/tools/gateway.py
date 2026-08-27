@@ -23,6 +23,11 @@ from slim_guard.tools.errors import (
     UnknownToolError,
 )
 from slim_guard.tools.execution_repository import ToolExecutionRef, ToolExecutionStore
+from slim_guard.tools.policy import (
+    ToolAuthorization,
+    ToolPolicy,
+    ToolPolicyDecision,
+)
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -63,10 +68,12 @@ class ToolGateway:
         registry: ToolRegistry,
         executors: Mapping[str, ToolExecutor[Any]],
         execution_store: ToolExecutionStore,
+        policy: ToolPolicy,
     ) -> None:
         self._registry = registry
         self._executors = dict(executors)
         self._execution_store = execution_store
+        self._policy = policy
         self._validate_configuration()
 
     def _validate_configuration(self) -> None:
@@ -93,6 +100,7 @@ class ToolGateway:
         *,
         call: NormalizedToolCall,
         context: ToolContext,
+        authorization: ToolAuthorization,
     ) -> ToolExecution:
         if call.id != context.tool_call_id:
             raise ToolContextMismatchError(
@@ -124,6 +132,21 @@ class ToolGateway:
             tool=tool,
             arguments=canonical_arguments,
         )
+        policy_result = self._policy.evaluate(
+            tool=tool,
+            context=context,
+            execution_key=idempotency_key,
+            authorization=authorization,
+        )
+        if policy_result.decision is not ToolPolicyDecision.ALLOW:
+            return self._failure(
+                call=call,
+                tool=tool,
+                code=policy_result.code,
+                message=policy_result.reason,
+                canonical_arguments=canonical_arguments,
+                idempotency_key=idempotency_key,
+            )
         claim = await self._execution_store.claim(
             idempotency_key=idempotency_key,
             turn_id=context.turn_id,
@@ -234,11 +257,15 @@ class ToolGateway:
         message: str,
         tool: RegisteredTool | None = None,
         retryable: bool = False,
+        canonical_arguments: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> ToolExecution:
         return ToolExecution(
             tool_call_id=call.id,
             tool_name=call.name,
             tool_version=tool.version if tool is not None else None,
+            canonical_arguments=canonical_arguments,
+            idempotency_key=idempotency_key,
             result=ToolResult.failed(
                 code=code,
                 message=message,

@@ -17,11 +17,20 @@ from slim_guard.tools.execution_repository import (
     ToolExecutionStore,
 )
 from slim_guard.tools.gateway import ToolExecutor, ToolGateway, ToolHandler
+from slim_guard.tools.policy import (
+    DefaultToolPolicy,
+    ToolAuthorization,
+    ToolPolicy,
+    ToolPolicyDecision,
+    ToolPolicyResult,
+)
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
 
 __all__ = [
     "RegisteredTool",
+    "DefaultToolPolicy",
     "ToolArguments",
+    "ToolAuthorization",
     "ToolContext",
     "ToolEffectLevel",
     "ToolExecution",
@@ -35,6 +44,9 @@ __all__ = [
     "ToolFailure",
     "ToolGateway",
     "ToolHandler",
+    "ToolPolicy",
+    "ToolPolicyDecision",
+    "ToolPolicyResult",
     "ToolRegistry",
     "ToolResult",
     "ToolResultStatus",
