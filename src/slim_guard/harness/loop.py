@@ -35,7 +35,12 @@ class HarnessTurnContext:
         if self.deadline_at is not None and self.deadline_at.utcoffset() is None:
             raise ValueError("Harness Turn deadline must be timezone-aware")
 
-    def for_tool_call(self, tool_call_id: str) -> ToolContext:
+    def for_tool_call(
+        self,
+        tool_call_id: str,
+        *,
+        source_item_id: str | None = None,
+    ) -> ToolContext:
         return ToolContext(
             thread_id=self.thread_id,
             turn_id=self.turn_id,
@@ -43,6 +48,7 @@ class HarnessTurnContext:
             user_id=self.user_id,
             agent_version_id=self.agent_version_id,
             execution_mode=self.execution_mode,
+            source_item_id=source_item_id,
         )
 
 
@@ -200,7 +206,10 @@ class HarnessLoop:
                 )
                 outcome = await self._tool_calls.execute(
                     call=call,
-                    context=context.for_tool_call(call.id),
+                    context=context.for_tool_call(
+                        call.id,
+                        source_item_id=source_item_id,
+                    ),
                     authorization=authorization,
                     source_item_id=source_item_id,
                     now=now,

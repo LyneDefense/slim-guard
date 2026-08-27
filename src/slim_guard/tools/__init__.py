@@ -30,9 +30,23 @@ from slim_guard.tools.policy import (
     ToolPolicyResult,
 )
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
+from slim_guard.tools.weight import (
+    GET_RECENT_WEIGHT_TREND_TOOL_NAME,
+    RECORD_WEIGHT_TOOL_NAME,
+    WEIGHT_TOOL_VERSION,
+    GetRecentWeightTrendArguments,
+    RecordWeightArguments,
+    WeightToolHandlers,
+    weight_tool_definitions,
+    weight_tool_executors,
+)
 
 __all__ = [
     "RegisteredTool",
+    "GET_RECENT_WEIGHT_TREND_TOOL_NAME",
+    "GetRecentWeightTrendArguments",
+    "RECORD_WEIGHT_TOOL_NAME",
+    "RecordWeightArguments",
     "DefaultToolPolicy",
     "ToolArguments",
     "ToolAuthorization",
@@ -56,4 +70,8 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "ToolResultStatus",
+    "WEIGHT_TOOL_VERSION",
+    "WeightToolHandlers",
+    "weight_tool_definitions",
+    "weight_tool_executors",
 ]

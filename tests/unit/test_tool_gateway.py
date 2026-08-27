@@ -111,6 +111,7 @@ def tool_context(*, tool_call_id: str = "call-1") -> ToolContext:
         user_id="user-1",
         agent_version_id="agent-version-1",
         execution_mode=ToolExecutionMode.EVALUATION,
+        source_item_id="item-1",
     )
 
 
@@ -166,6 +167,8 @@ async def test_gateway_validates_arguments_executes_handler_and_returns_audit_da
     )
 
     assert received[0][1] == WeightArguments(weight_kg=77.6)
+    assert received[0][0].source_item_id == "item-1"
+    assert received[0][0].execution_idempotency_key == execution.idempotency_key
     assert execution.result.status is ToolResultStatus.SUCCEEDED
     assert execution.policy_decision is ToolPolicyDecision.ALLOW
     assert execution.result.source_ids == ("weight-1",)

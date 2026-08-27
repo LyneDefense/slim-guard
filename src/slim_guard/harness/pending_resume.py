@@ -124,6 +124,7 @@ class PendingActionResumeCoordinator:
                 user_id=thread.user_id,
                 agent_version_id=running_turn.agent_version_id,
                 execution_mode=resolved.execution_mode,
+                source_item_id=resolved.source_item_id,
             ),
             authorization=authorization,
             source_item_id=resolved.source_item_id,

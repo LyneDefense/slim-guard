@@ -169,9 +169,12 @@ class ToolGateway:
         if not claim.created:
             return self._replayed_execution(claim.execution)
 
+        execution_context = context.model_copy(
+            update={"execution_idempotency_key": idempotency_key}
+        )
         try:
             async with asyncio.timeout(tool.timeout_seconds):
-                result = await executor.invoke(context, arguments)
+                result = await executor.invoke(execution_context, arguments)
         except TimeoutError:
             result = ToolResult.failed(
                 code="tool_timeout",
