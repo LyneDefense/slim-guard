@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
 from slim_guard.harness.errors import TurnStateConflict
@@ -18,6 +19,13 @@ class ToolTrace:
 
 
 class HarnessRunRecorder(Protocol):
+    async def record_context_snapshot(
+        self,
+        *,
+        turn_id: str,
+        payload: Mapping[str, Any],
+    ) -> None: ...
+
     async def record_model_response(
         self,
         *,
@@ -57,6 +65,14 @@ class HarnessRunRecorder(Protocol):
 
 class NullHarnessRunRecorder:
     """Keeps the core loop usable in deterministic unit tests without persistence."""
+
+    async def record_context_snapshot(
+        self,
+        *,
+        turn_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        return None
 
     async def record_model_response(
         self,
@@ -104,6 +120,19 @@ class PersistentHarnessRunRecorder:
 
     def __init__(self, store: HarnessRunStore) -> None:
         self._store = store
+
+    async def record_context_snapshot(
+        self,
+        *,
+        turn_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        await self._store.append_item(
+            turn_id=turn_id,
+            item_type=ItemType.CONTEXT_SNAPSHOT,
+            status=ItemStatus.COMPLETED,
+            payload=payload,
+        )
 
     async def record_model_response(
         self,

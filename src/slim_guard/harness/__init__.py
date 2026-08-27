@@ -24,6 +24,11 @@ from slim_guard.harness.pending_resume import (
     PendingActionResumeCoordinator,
     PendingResumeOutcome,
 )
+from slim_guard.harness.runner import (
+    HarnessTurnGrants,
+    HarnessTurnRunner,
+    HarnessTurnRunResult,
+)
 from slim_guard.harness.tool_calls import ToolCallCoordinator, ToolCallOutcome
 
 __all__ = [
@@ -34,6 +39,9 @@ __all__ = [
     "HarnessLoop",
     "HarnessLoopResult",
     "HarnessTurnContext",
+    "HarnessTurnGrants",
+    "HarnessTurnRunner",
+    "HarnessTurnRunResult",
     "InitializedTurn",
     "PendingActionCreation",
     "PendingActionRef",

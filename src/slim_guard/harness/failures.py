@@ -12,6 +12,7 @@ from slim_guard.agent_models.errors import (
     ModelTransportError,
     UnsupportedModelFeature,
 )
+from slim_guard.harness.errors import ContextCompilationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,14 @@ def model_gateway_failure(error: ModelGatewayError) -> HarnessFailure:
     if isinstance(error, FakeModelScriptExhausted):
         return _failure("fake_model_script_exhausted", error, retryable=False)
     return _failure("model_gateway_error", error, retryable=False)
+
+
+def context_compilation_failure(error: ContextCompilationError) -> HarnessFailure:
+    return HarnessFailure(
+        code="context_compilation_error",
+        error_type=type(error).__name__,
+        retryable=False,
+    )
 
 
 def _failure(
