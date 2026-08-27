@@ -156,3 +156,12 @@
 - `src/slim_guard/services/proactive_delivery.py` → 微信主动发送策略与持久化边界 → 解析用户最新微信客服路由，检查 48 小时窗口，以默认三条主动消息上限预留平台额度，并提供内容防篡改、原子抢占和超时重试。
 - `tests/unit/test_proactive_delivery.py` → 主动发送策略测试 → 覆盖有效路由、额度阻断、同 Job 幂等、发送租约重试和内容碰撞保护。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: execute reminder and review jobs`
+
+- `src/slim_guard/services/routine_scheduler.py` → 日程任务执行服务 → 周期规划并抢占到期 Job，确定性跳过已打卡或过期任务，在微信窗口与客服状态允许时运行定时 Agent、发送消息并落终态；异常尝试由租约恢复且次数受限。
+- `src/slim_guard/services/proactive_delivery.py` → 微信主动发送策略与持久化边界 → 持久化首次生成内容、来源 Turn 和当时会话窗口，支持重启后复用同一内容与消息 ID，不重复调用模型。
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 为主动消息增加来源 Turn 与客户最近发言时间，形成从 Job、Agent Turn 到平台发送的完整审计链。
+- `tests/unit/test_routine_scheduler.py` → 日程执行闭环测试 → 验证缺卡时生成并发送一次、已打卡时不调用模型、同日不重复，以及进程在准备发送后崩溃仍能复用冻结消息恢复。
+- `tests/unit/test_proactive_delivery.py` → 主动发送策略测试 → 更新来源 Turn 契约并继续验证内容碰撞保护。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

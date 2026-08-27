@@ -40,6 +40,7 @@ class ProactiveDeliveryRef:
     platform_msgid: str
     route: ProactiveRoute
     content: str
+    source_turn_id: str
     status: ProactiveDeliveryStatus
     attempt_count: int
 
@@ -120,6 +121,7 @@ class ProactiveDeliveryRepository:
         job_id: str,
         route: ProactiveRoute,
         content: str,
+        source_turn_id: str,
     ) -> ProactiveDeliveryRef:
         normalized = content.strip()
         if not normalized:
@@ -131,13 +133,15 @@ class ProactiveDeliveryRepository:
             channel_id=route.channel_id,
             open_kfid=route.open_kfid,
             external_userid=route.external_userid,
+            last_customer_message_at=route.last_customer_message_at,
             content=normalized,
+            source_turn_id=source_turn_id,
         )
         async with self._database.session() as session:
             session.add(row)
             try:
                 await session.commit()
-                return self._ref(row, last_customer_message_at=route.last_customer_message_at)
+                return self._ref(row)
             except IntegrityError:
                 await session.rollback()
                 existing = await session.get(ProactiveMessageRecord, job_id)
@@ -148,17 +152,21 @@ class ProactiveDeliveryRepository:
                     existing.open_kfid,
                     existing.external_userid,
                     existing.content,
+                    existing.source_turn_id,
                 ) != (
                     route.channel_id,
                     route.open_kfid,
                     route.external_userid,
                     normalized,
+                    source_turn_id,
                 ):
                     raise ValueError("Proactive delivery idempotency collision") from None
-                return self._ref(
-                    existing,
-                    last_customer_message_at=route.last_customer_message_at,
-                )
+                return self._ref(existing)
+
+    async def get(self, job_id: str) -> ProactiveDeliveryRef | None:
+        async with self._database.session() as session:
+            row = await session.get(ProactiveMessageRecord, job_id)
+            return self._ref(row) if row is not None else None
 
     async def claim(
         self,
@@ -221,8 +229,6 @@ class ProactiveDeliveryRepository:
     def _ref(
         cls,
         row: ProactiveMessageRecord,
-        *,
-        last_customer_message_at: datetime,
     ) -> ProactiveDeliveryRef:
         return ProactiveDeliveryRef(
             job_id=row.job_id,
@@ -231,9 +237,10 @@ class ProactiveDeliveryRepository:
                 channel_id=row.channel_id,
                 open_kfid=row.open_kfid,
                 external_userid=row.external_userid,
-                last_customer_message_at=last_customer_message_at,
+                last_customer_message_at=cls._as_utc(row.last_customer_message_at),
             ),
             content=row.content,
+            source_turn_id=row.source_turn_id,
             status=ProactiveDeliveryStatus(row.status),
             attempt_count=row.attempt_count,
         )

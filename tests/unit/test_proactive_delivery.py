@@ -71,6 +71,7 @@ async def test_policy_requires_recent_route_and_reserves_platform_quota(tmp_path
             job_id="job-1",
             route=eligible.route,
             content="记得称体重哦。",
+            source_turn_id="turn-1",
         )
         assert await repository.claim(
             job_id=delivery.job_id,
@@ -95,11 +96,13 @@ async def test_delivery_is_idempotent_and_stale_send_can_retry(tmp_path) -> None
             job_id="job-1",
             route=eligibility.route,
             content="记得称体重哦。",
+            source_turn_id="turn-1",
         )
         repeated = await repository.prepare(
             job_id="job-1",
             route=eligibility.route,
             content="记得称体重哦。",
+            source_turn_id="turn-1",
         )
         first_claim = await repository.claim(
             job_id="job-1",
@@ -140,12 +143,14 @@ async def test_delivery_rejects_changed_content_for_same_job(tmp_path) -> None:
             job_id="job-1",
             route=eligibility.route,
             content="第一版",
+            source_turn_id="turn-1",
         )
         with pytest.raises(ValueError, match="idempotency collision"):
             await repository.prepare(
                 job_id="job-1",
                 route=eligibility.route,
                 content="被修改的第二版",
+                source_turn_id="turn-2",
             )
     finally:
         await database.close()

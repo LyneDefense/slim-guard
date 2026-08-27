@@ -495,7 +495,13 @@ class ProactiveMessageRecord(Base):
     channel_id: Mapped[str] = mapped_column(String(64), nullable=False)
     open_kfid: Mapped[str] = mapped_column(String(128), nullable=False)
     external_userid: Mapped[str] = mapped_column(String(256), nullable=False)
+    last_customer_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt_started_at: Mapped[datetime | None] = mapped_column(
