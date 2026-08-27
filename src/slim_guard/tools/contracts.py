@@ -104,3 +104,16 @@ class ToolResult(BaseModel):
             separators=(",", ":"),
             sort_keys=True,
         )
+
+
+class ToolExecution(BaseModel):
+    """Auditable outcome of routing and attempting one model tool call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tool_call_id: str = Field(min_length=1, max_length=256)
+    tool_name: str = Field(min_length=1, max_length=128)
+    tool_version: str | None = Field(default=None, min_length=1, max_length=128)
+    canonical_arguments: dict[str, Any] | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    result: ToolResult

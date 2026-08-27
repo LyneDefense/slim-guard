@@ -8,3 +8,11 @@ class DuplicateToolError(ToolRegistryError):
 
 class UnknownToolError(ToolRegistryError):
     pass
+
+
+class ToolGatewayConfigurationError(RuntimeError):
+    pass
+
+
+class ToolContextMismatchError(RuntimeError):
+    pass
