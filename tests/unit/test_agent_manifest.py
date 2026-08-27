@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -64,6 +65,16 @@ def test_manifest_keeps_component_versions_human_readable() -> None:
 
     assert manifest.skill_versions == (("weight_checkin", "v2"),)
     assert manifest.tool_versions == (("record_weight", "v3"),)
+
+
+def test_manifest_canonical_json_contains_the_versioned_configuration() -> None:
+    manifest = build_manifest()
+
+    payload = json.loads(manifest.to_json())
+
+    assert payload["text_model"] == "glm-5.2"
+    assert payload["system_prompt_version"] == "legacy-v1"
+    assert payload["code_revision"] == "test-revision"
 
 
 def test_manifest_is_immutable() -> None:

@@ -74,11 +74,15 @@ class AgentManifest:
 
     @property
     def version_id(self) -> str:
-        canonical = json.dumps(
+        digest = hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+        return f"agent-{digest[:24]}"
+
+    def to_json(self) -> str:
+        """Return the canonical representation used for persistence and hashing."""
+
+        return json.dumps(
             asdict(self),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
         )
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return f"agent-{digest[:24]}"

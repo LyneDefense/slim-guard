@@ -12,6 +12,7 @@ from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
 from slim_guard.harness.manifest import AgentManifest
+from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.observability.logging import configure_logging
@@ -66,6 +67,7 @@ def create_app(
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
+        await AgentVersionRepository(database).register(agent_manifest)
         repository = MessageRepository(database)
         await repository.backfill_users_from_messages()
 

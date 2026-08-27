@@ -28,6 +28,17 @@ class Base(DeclarativeBase):
     pass
 
 
+class AgentVersionRecord(Base):
+    __tablename__ = "agent_versions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    manifest_json: Mapped[str] = mapped_column(Text, nullable=False)
+    code_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class WeComSyncState(Base):
     __tablename__ = "wecom_sync_states"
 
