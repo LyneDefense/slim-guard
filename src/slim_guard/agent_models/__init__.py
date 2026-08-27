@@ -12,6 +12,7 @@ from slim_guard.agent_models.gateway import (
     ToolChoice,
     ToolDefinition,
 )
+from slim_guard.agent_models.zhipu import ZhipuModelGateway
 
 __all__ = [
     "MessageRole",
@@ -24,4 +25,5 @@ __all__ = [
     "NormalizedToolCall",
     "ToolChoice",
     "ToolDefinition",
+    "ZhipuModelGateway",
 ]

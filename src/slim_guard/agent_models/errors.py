@@ -21,3 +21,7 @@ class ModelProviderError(ModelGatewayError):
 
 class InvalidModelResponse(ModelGatewayError):
     pass
+
+
+class UnsupportedModelFeature(ModelGatewayError):
+    pass
