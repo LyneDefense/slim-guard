@@ -86,3 +86,6 @@ class AgentManifest:
             separators=(",", ":"),
             sort_keys=True,
         )
+
+    def model_parameters_dict(self) -> dict[str, Any]:
+        return {key: json.loads(value) for key, value in self.model_parameters}

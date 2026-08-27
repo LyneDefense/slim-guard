@@ -21,6 +21,10 @@ class ItemStateConflict(HarnessStateError):
     pass
 
 
+class ContextCompilationError(HarnessStateError):
+    pass
+
+
 class PendingActionCollision(HarnessStateError):
     pass
 

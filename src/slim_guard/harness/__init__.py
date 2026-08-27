@@ -1,5 +1,6 @@
 """Core contracts for the SlimGuard agent harness."""
 
+from slim_guard.harness.context import CompiledContext, ContextCompiler
 from slim_guard.harness.initialization import (
     InitializedTurn,
     TurnInitializationRequest,
@@ -27,6 +28,8 @@ from slim_guard.harness.tool_calls import ToolCallCoordinator, ToolCallOutcome
 
 __all__ = [
     "AgentManifest",
+    "CompiledContext",
+    "ContextCompiler",
     "HarnessLimits",
     "HarnessLoop",
     "HarnessLoopResult",
