@@ -22,6 +22,7 @@ from slim_guard.tools.errors import (
     ToolGatewayConfigurationError,
     UnknownToolError,
 )
+from slim_guard.tools.execution_repository import ToolExecutionRef, ToolExecutionStore
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -43,14 +44,14 @@ class ToolExecutor(Generic[ArgumentsT]):
     arguments_model: type[ArgumentsT]
     handler: ToolHandler[ArgumentsT]
 
-    async def invoke(
-        self,
-        context: ToolContext,
-        raw_arguments: dict[str, Any],
-    ) -> tuple[ArgumentsT, ToolResult]:
-        arguments = self.arguments_model.model_validate(raw_arguments)
+    def validate(self, raw_arguments: dict[str, Any]) -> ArgumentsT:
+        return self.arguments_model.model_validate(raw_arguments)
+
+    async def invoke(self, context: ToolContext, arguments: ArgumentsT) -> ToolResult:
         result = await self.handler(context, arguments)
-        return arguments, result
+        if not isinstance(result, ToolResult):
+            raise TypeError("Tool handlers must return ToolResult")
+        return result
 
 
 class ToolGateway:
@@ -61,9 +62,11 @@ class ToolGateway:
         *,
         registry: ToolRegistry,
         executors: Mapping[str, ToolExecutor[Any]],
+        execution_store: ToolExecutionStore,
     ) -> None:
         self._registry = registry
         self._executors = dict(executors)
+        self._execution_store = execution_store
         self._validate_configuration()
 
     def _validate_configuration(self) -> None:
@@ -106,8 +109,7 @@ class ToolGateway:
 
         executor = self._executors[tool.name]
         try:
-            async with asyncio.timeout(tool.timeout_seconds):
-                arguments, result = await executor.invoke(context, call.arguments)
+            arguments = executor.validate(call.arguments)
         except ValidationError as exc:
             return self._failure(
                 call=call,
@@ -115,10 +117,29 @@ class ToolGateway:
                 code="invalid_arguments",
                 message=self._validation_message(exc),
             )
+
+        canonical_arguments = arguments.model_dump(mode="json")
+        idempotency_key = self._idempotency_key(
+            context=context,
+            tool=tool,
+            arguments=canonical_arguments,
+        )
+        claim = await self._execution_store.claim(
+            idempotency_key=idempotency_key,
+            turn_id=context.turn_id,
+            tool_call_id=call.id,
+            tool_name=tool.name,
+            tool_version=tool.version,
+            canonical_arguments=canonical_arguments,
+        )
+        if not claim.created:
+            return self._replayed_execution(claim.execution)
+
+        try:
+            async with asyncio.timeout(tool.timeout_seconds):
+                result = await executor.invoke(context, arguments)
         except TimeoutError:
-            return self._failure(
-                call=call,
-                tool=tool,
+            result = ToolResult.failed(
                 code="tool_timeout",
                 message=f"The tool '{tool.name}' timed out.",
                 retryable=True,
@@ -134,25 +155,45 @@ class ToolGateway:
                     "turn_id": context.turn_id,
                 },
             )
-            return self._failure(
-                call=call,
-                tool=tool,
+            result = ToolResult.failed(
                 code="tool_execution_failed",
                 message=f"The tool '{tool.name}' could not complete.",
                 retryable=False,
             )
 
-        canonical_arguments = arguments.model_dump(mode="json")
+        completed = await self._execution_store.complete(
+            idempotency_key=idempotency_key,
+            result=result,
+        )
+        if completed.result is None:
+            raise ToolGatewayConfigurationError(
+                f"Completed tool execution has no result: {idempotency_key}"
+            )
         return ToolExecution(
-            tool_call_id=call.id,
-            tool_name=tool.name,
-            tool_version=tool.version,
-            canonical_arguments=canonical_arguments,
-            idempotency_key=self._idempotency_key(
-                context=context,
-                tool=tool,
-                arguments=canonical_arguments,
-            ),
+            tool_call_id=completed.tool_call_id,
+            tool_name=completed.tool_name,
+            tool_version=completed.tool_version,
+            canonical_arguments=completed.canonical_arguments,
+            idempotency_key=completed.idempotency_key,
+            result=completed.result,
+        )
+
+    @staticmethod
+    def _replayed_execution(execution: ToolExecutionRef) -> ToolExecution:
+        if execution.result is None:
+            result = ToolResult.failed(
+                code="tool_execution_in_progress",
+                message=f"The tool '{execution.tool_name}' is already running.",
+                retryable=True,
+            )
+        else:
+            result = execution.result
+        return ToolExecution(
+            tool_call_id=execution.tool_call_id,
+            tool_name=execution.tool_name,
+            tool_version=execution.tool_version,
+            canonical_arguments=execution.canonical_arguments,
+            idempotency_key=execution.idempotency_key,
             result=result,
         )
 

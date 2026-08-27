@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
@@ -38,6 +38,26 @@ class ToolExecutionRef:
 class ToolExecutionClaim:
     execution: ToolExecutionRef
     created: bool
+
+
+class ToolExecutionStore(Protocol):
+    async def claim(
+        self,
+        *,
+        idempotency_key: str,
+        turn_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        tool_version: str,
+        canonical_arguments: Mapping[str, Any],
+    ) -> ToolExecutionClaim: ...
+
+    async def complete(
+        self,
+        *,
+        idempotency_key: str,
+        result: ToolResult,
+    ) -> ToolExecutionRef: ...
 
 
 class ToolExecutionRepository:

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+from dataclasses import replace
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -10,6 +14,7 @@ from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectLevel,
     ToolExecutionMode,
+    ToolExecutionStatus,
     ToolResult,
     ToolResultStatus,
 )
@@ -17,6 +22,7 @@ from slim_guard.tools.errors import (
     ToolContextMismatchError,
     ToolGatewayConfigurationError,
 )
+from slim_guard.tools.execution_repository import ToolExecutionClaim, ToolExecutionRef
 from slim_guard.tools.gateway import ToolExecutor, ToolGateway
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
 
@@ -27,6 +33,55 @@ class WeightArguments(ToolArguments):
 
 class EmptyArguments(ToolArguments):
     pass
+
+
+class MemoryToolExecutionStore:
+    def __init__(self) -> None:
+        self.executions: dict[str, ToolExecutionRef] = {}
+
+    async def claim(
+        self,
+        *,
+        idempotency_key: str,
+        turn_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        tool_version: str,
+        canonical_arguments: Mapping[str, Any],
+    ) -> ToolExecutionClaim:
+        existing = self.executions.get(idempotency_key)
+        if existing is not None:
+            return ToolExecutionClaim(execution=existing, created=False)
+        created = ToolExecutionRef(
+            idempotency_key=idempotency_key,
+            turn_id=turn_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            tool_version=tool_version,
+            canonical_arguments=dict(canonical_arguments),
+            status=ToolExecutionStatus.RUNNING,
+            result=None,
+            created_at=datetime.now(UTC),
+            completed_at=None,
+        )
+        self.executions[idempotency_key] = created
+        return ToolExecutionClaim(execution=created, created=True)
+
+    async def complete(
+        self,
+        *,
+        idempotency_key: str,
+        result: ToolResult,
+    ) -> ToolExecutionRef:
+        current = self.executions[idempotency_key]
+        completed = replace(
+            current,
+            status=ToolExecutionStatus(result.status.value),
+            result=result,
+            completed_at=datetime.now(UTC),
+        )
+        self.executions[idempotency_key] = completed
+        return completed
 
 
 def registered_tool(
@@ -85,6 +140,7 @@ async def test_gateway_validates_arguments_executes_handler_and_returns_audit_da
     tool = registered_tool()
     gateway = ToolGateway(
         registry=ToolRegistry((tool,)),
+        execution_store=MemoryToolExecutionStore(),
         executors={
             tool.name: ToolExecutor(
                 arguments_model=WeightArguments,
@@ -104,12 +160,17 @@ async def test_gateway_validates_arguments_executes_handler_and_returns_audit_da
 
 
 async def test_idempotency_key_is_stable_for_canonically_equal_arguments() -> None:
+    call_count = 0
+
     async def record_weight(_: ToolContext, arguments: WeightArguments) -> ToolResult:
+        nonlocal call_count
+        call_count += 1
         return ToolResult.success(output={"weight_kg": arguments.weight_kg})
 
     tool = registered_tool()
     gateway = ToolGateway(
         registry=ToolRegistry((tool,)),
+        execution_store=MemoryToolExecutionStore(),
         executors={
             tool.name: ToolExecutor(
                 arguments_model=WeightArguments,
@@ -122,6 +183,47 @@ async def test_idempotency_key_is_stable_for_canonically_equal_arguments() -> No
     second = await gateway.execute(call=tool_call(), context=tool_context())
 
     assert first.idempotency_key == second.idempotency_key
+    assert first.result == second.result
+    assert call_count == 1
+
+
+async def test_concurrent_duplicate_does_not_execute_and_reports_in_progress() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    call_count = 0
+
+    async def record_weight(_: ToolContext, arguments: WeightArguments) -> ToolResult:
+        nonlocal call_count
+        call_count += 1
+        started.set()
+        await release.wait()
+        return ToolResult.success(output={"weight_kg": arguments.weight_kg})
+
+    tool = registered_tool()
+    gateway = ToolGateway(
+        registry=ToolRegistry((tool,)),
+        execution_store=MemoryToolExecutionStore(),
+        executors={
+            tool.name: ToolExecutor(
+                arguments_model=WeightArguments,
+                handler=record_weight,
+            )
+        },
+    )
+
+    first_task = asyncio.create_task(
+        gateway.execute(call=tool_call(), context=tool_context())
+    )
+    await started.wait()
+    duplicate = await gateway.execute(call=tool_call(), context=tool_context())
+    release.set()
+    first = await first_task
+
+    assert duplicate.result.failure is not None
+    assert duplicate.result.failure.code == "tool_execution_in_progress"
+    assert duplicate.result.failure.retryable is True
+    assert first.result.status is ToolResultStatus.SUCCEEDED
+    assert call_count == 1
 
 
 async def test_gateway_returns_structured_unknown_tool_and_validation_failures() -> None:
@@ -129,8 +231,10 @@ async def test_gateway_returns_structured_unknown_tool_and_validation_failures()
         return ToolResult.success(output={"weight_kg": arguments.weight_kg})
 
     tool = registered_tool()
+    execution_store = MemoryToolExecutionStore()
     gateway = ToolGateway(
         registry=ToolRegistry((tool,)),
+        execution_store=execution_store,
         executors={
             tool.name: ToolExecutor(
                 arguments_model=WeightArguments,
@@ -155,6 +259,7 @@ async def test_gateway_returns_structured_unknown_tool_and_validation_failures()
     assert invalid.result.failure.code == "invalid_arguments"
     assert "weight_kg" in invalid.result.failure.message
     assert "user_id" in invalid.result.failure.message
+    assert execution_store.executions == {}
 
 
 async def test_gateway_converts_timeout_and_handler_exception_to_safe_results(
@@ -170,6 +275,7 @@ async def test_gateway_converts_timeout_and_handler_exception_to_safe_results(
     tool = registered_tool(timeout_seconds=0.001)
     timeout_gateway = ToolGateway(
         registry=ToolRegistry((tool,)),
+        execution_store=MemoryToolExecutionStore(),
         executors={
             tool.name: ToolExecutor(arguments_model=WeightArguments, handler=slow)
         },
@@ -179,6 +285,7 @@ async def test_gateway_converts_timeout_and_handler_exception_to_safe_results(
     broken_tool = registered_tool()
     broken_gateway = ToolGateway(
         registry=ToolRegistry((broken_tool,)),
+        execution_store=MemoryToolExecutionStore(),
         executors={
             broken_tool.name: ToolExecutor(
                 arguments_model=WeightArguments,
@@ -200,7 +307,11 @@ async def test_gateway_converts_timeout_and_handler_exception_to_safe_results(
 def test_gateway_rejects_missing_and_mismatched_executors() -> None:
     tool = registered_tool()
     with pytest.raises(ToolGatewayConfigurationError, match="missing executors"):
-        ToolGateway(registry=ToolRegistry((tool,)), executors={})
+        ToolGateway(
+            registry=ToolRegistry((tool,)),
+            executors={},
+            execution_store=MemoryToolExecutionStore(),
+        )
 
     async def wrong_handler(_: ToolContext, __: EmptyArguments) -> ToolResult:
         return ToolResult.success(output={})
@@ -208,6 +319,7 @@ def test_gateway_rejects_missing_and_mismatched_executors() -> None:
     with pytest.raises(ToolGatewayConfigurationError, match="does not match"):
         ToolGateway(
             registry=ToolRegistry((tool,)),
+            execution_store=MemoryToolExecutionStore(),
             executors={
                 tool.name: ToolExecutor(
                     arguments_model=EmptyArguments,
@@ -224,6 +336,7 @@ async def test_gateway_rejects_mismatched_call_context() -> None:
     tool = registered_tool()
     gateway = ToolGateway(
         registry=ToolRegistry((tool,)),
+        execution_store=MemoryToolExecutionStore(),
         executors={
             tool.name: ToolExecutor(
                 arguments_model=WeightArguments,

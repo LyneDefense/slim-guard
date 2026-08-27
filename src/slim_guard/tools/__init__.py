@@ -14,6 +14,7 @@ from slim_guard.tools.execution_repository import (
     ToolExecutionClaim,
     ToolExecutionRef,
     ToolExecutionRepository,
+    ToolExecutionStore,
 )
 from slim_guard.tools.gateway import ToolExecutor, ToolGateway, ToolHandler
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
@@ -28,6 +29,7 @@ __all__ = [
     "ToolExecutionMode",
     "ToolExecutionRef",
     "ToolExecutionRepository",
+    "ToolExecutionStore",
     "ToolExecutionStatus",
     "ToolExecutor",
     "ToolFailure",
