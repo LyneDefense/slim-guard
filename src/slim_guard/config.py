@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     wecom_open_kf_id: str = ""
     wecom_callback_token: str = ""
     wecom_callback_aes_key: str = ""
-    agent_runtime_mode: Literal["legacy", "harness", "shadow"] = "legacy"
+    agent_runtime_mode: Literal["legacy", "harness", "shadow"] = "harness"
     agent_code_revision: str = "development"
     agent_fallback_reply_text: str = "抱歉，我刚才没有成功分析这条记录，请稍后再发一次。"
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
@@ -52,6 +52,7 @@ class Settings(BaseSettings):
         ge=3600,
         le=2_592_000,
     )
+    asset_maintenance_interval_seconds: int = Field(default=21_600, ge=60, le=86_400)
     routine_scheduler_enabled: bool = True
     routine_scheduler_interval_seconds: int = Field(default=30, ge=5, le=3600)
     routine_job_lease_seconds: int = Field(default=120, ge=30, le=3600)

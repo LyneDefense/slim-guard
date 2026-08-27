@@ -202,3 +202,15 @@
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证纠错 Tool 进入核心模型冻结工具列表。
 - `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 验证生产 Harness Manifest 固定纠错 Tool 版本。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
+
+### `feat: harden production lifecycle defaults`
+
+- `src/slim_guard/services/maintenance.py` → 短期资产维护任务 → 启动后立即并周期性物理删除过期图片字节，单次失败记录日志但不终止服务。
+- `src/slim_guard/main.py` → FastAPI 生产装配与生命周期入口 → 在 Harness 可用时启动图片维护任务，并在应用关闭前有序停止。
+- `src/slim_guard/config.py` → 环境配置契约 → 将完成后的 Harness 设为默认 Runtime，并增加图片清理周期配置。
+- `src/slim_guard/api/routes.py` → HTTP 健康与企业微信回调入口 → Harness 模式缺少智谱 Key 时 readiness 返回 503，避免静态降级服务被误判为生产就绪。
+- `tests/unit/test_maintenance.py` → 图片维护任务测试 → 验证到期图片会从数据库物理删除且不可再次读取。
+- `tests/unit/test_settings.py` → 应用配置和 Manifest 测试 → 更新默认 Runtime 为 Harness，同时保留显式 legacy 回滚测试。
+- `.env.example` → 部署配置模板 → 默认启用 Harness 并给出六小时图片清理周期。
+- `README.md` → 部署与运维说明 → 说明 Harness 默认值、legacy 回滚用途和短期图片自动清理行为。
+- `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。

@@ -31,10 +31,10 @@ def test_zhipu_models_are_configured_separately_by_modality() -> None:
     assert settings.zhipu_vision_model == "glm-5v-turbo"
 
 
-def test_agent_runtime_defaults_to_legacy() -> None:
+def test_agent_runtime_defaults_to_harness() -> None:
     settings = Settings()
 
-    assert settings.agent_runtime_mode == "legacy"
+    assert settings.agent_runtime_mode == "harness"
 
 
 def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
@@ -85,7 +85,7 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
 
 
 def test_create_app_exposes_current_agent_manifest() -> None:
-    settings = Settings(agent_code_revision="test-commit")
+    settings = Settings(agent_runtime_mode="legacy", agent_code_revision="test-commit")
 
     app = create_app(settings)
 

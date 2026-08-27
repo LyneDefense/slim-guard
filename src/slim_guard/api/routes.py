@@ -42,6 +42,11 @@ async def ready(request: Request) -> dict[str, str]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="WeCom is not configured",
         )
+    if settings.agent_runtime_mode == "harness" and not settings.zhipu_is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Harness model is not configured",
+        )
     database = cast(Database, request.app.state.database)
     try:
         async with database.session() as session:

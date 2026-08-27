@@ -22,6 +22,7 @@ from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
+from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.routine.jobs import RoutineJobPlanner, RoutineJobRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.routine.status import DailyCheckinStatusRepository
@@ -33,6 +34,7 @@ from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
 from slim_guard.services.harness_reply_agent import HarnessReplyAgent
+from slim_guard.services.maintenance import AssetMaintenanceService
 from slim_guard.services.proactive_delivery import (
     ProactiveDeliveryPolicy,
     ProactiveDeliveryRepository,
@@ -172,6 +174,8 @@ def create_app(
         watchdog_task: asyncio.Task[None] | None = None
         routine_stop: asyncio.Event | None = None
         routine_task: asyncio.Task[None] | None = None
+        maintenance_stop: asyncio.Event | None = None
+        maintenance_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -247,6 +251,16 @@ def create_app(
                     routine_scheduler.run_forever(routine_stop),
                     name="slim-guard-routine-scheduler",
                 )
+        if active_runtime is not None:
+            maintenance = AssetMaintenanceService(
+                assets=ImageAssetRepository(database),
+                interval_seconds=app_settings.asset_maintenance_interval_seconds,
+            )
+            maintenance_stop = asyncio.Event()
+            maintenance_task = asyncio.create_task(
+                maintenance.run_forever(maintenance_stop),
+                name="slim-guard-asset-maintenance",
+            )
 
         app.state.settings = app_settings
         app.state.database = database
@@ -260,10 +274,14 @@ def create_app(
                 watchdog_stop.set()
             if routine_stop is not None:
                 routine_stop.set()
+            if maintenance_stop is not None:
+                maintenance_stop.set()
             if watchdog_task is not None:
                 await watchdog_task
             if routine_task is not None:
                 await routine_task
+            if maintenance_task is not None:
+                await maintenance_task
             if owned_client is not None:
                 await owned_client.close()
             if owned_reply_agent is not None:

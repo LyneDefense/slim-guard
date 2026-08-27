@@ -44,16 +44,17 @@ WECOM_CALLBACK_AES_KEY=EncodingAESKey
 ZHIPU_API_KEY=智谱 API Key
 ```
 
-Agent Runtime 默认保持兼容模式。设置为 `harness` 后，企业微信文字和图片消息会进入新版
-Harness，并可调用图片检查、体重、饮食、运动和提醒日程工具。图片作为用户隔离的短期
-资产默认保留 7 天，可通过 `AGENT_IMAGE_RETENTION_SECONDS` 调整。
+Agent Runtime 默认使用 `harness`：企业微信文字和图片消息会进入新版 Harness，并可调用
+图片检查、体重、饮食、运动、纠错和提醒日程工具。图片作为用户隔离的短期资产默认保留
+7 天，可通过 `AGENT_IMAGE_RETENTION_SECONDS` 调整；后台默认每 6 小时物理清理过期图片。
 `shadow` 尚未开放，设置后会拒绝启动：
 
 ```dotenv
-# legacy：旧版单次回复；harness：新版 Agent Harness
+# harness：新版 Agent Harness；legacy：仅供回滚的旧版单次回复
 AGENT_RUNTIME_MODE=harness
 # 部署流水线可以写入 Git commit；未设置时为 development
 AGENT_CODE_REVISION=development
+ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
 
 智谱可选配置：
