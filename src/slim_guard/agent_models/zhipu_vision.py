@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any
 
 import httpx
@@ -100,15 +101,40 @@ class ZhipuVisionModelGateway:
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise ValueError("response does not contain description text")
+        structured = ZhipuVisionModelGateway._structured_content(content)
         request_id = body.get("id")
         if request_id is not None and not isinstance(request_id, str):
             raise ValueError("response id is not text")
         usage = body.get("usage")
         return VisionInspectionResponse(
-            description=content.strip(),
+            category=structured["category"],
+            description=structured["summary"],
+            observations=structured["observations"],
+            requires_user_confirmation=structured["requires_user_confirmation"],
             usage=ZhipuVisionModelGateway._usage(usage),
             provider_request_id=request_id,
         )
+
+    @staticmethod
+    def _structured_content(content: str) -> dict[str, Any]:
+        normalized = content.strip()
+        if normalized.startswith("```") and normalized.endswith("```"):
+            lines = normalized.splitlines()
+            if len(lines) < 3:
+                raise ValueError("structured vision response is incomplete")
+            normalized = "\n".join(lines[1:-1]).strip()
+        parsed = json.loads(normalized)
+        if not isinstance(parsed, dict):
+            raise ValueError("structured vision response is not an object")
+        required = {
+            "category",
+            "summary",
+            "observations",
+            "requires_user_confirmation",
+        }
+        if set(parsed) != required:
+            raise ValueError("structured vision response has unexpected fields")
+        return parsed
 
     @staticmethod
     def _usage(raw: Any) -> ModelUsage:

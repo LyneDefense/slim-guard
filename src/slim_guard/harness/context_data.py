@@ -72,6 +72,7 @@ class AuthoritativeContextDataProvider:
         memory_limit: int = 30,
         dialogue_turn_limit: int = 3,
         dialogue_char_limit: int = 1500,
+        recent_image_limit: int = 3,
     ) -> None:
         self._database = database
         self._weights = weights
@@ -89,6 +90,7 @@ class AuthoritativeContextDataProvider:
         self._memory_limit = memory_limit
         self._dialogue_turn_limit = dialogue_turn_limit
         self._dialogue_char_limit = dialogue_char_limit
+        self._recent_image_limit = recent_image_limit
 
     async def load(
         self,
@@ -185,10 +187,17 @@ class AuthoritativeContextDataProvider:
                 ]
         working_memory: dict[str, Any] = {}
         if self._conversation is not None:
-            dialogue = await self._conversation.recent(
-                user_id,
-                turn_limit=self._dialogue_turn_limit,
-                char_limit=self._dialogue_char_limit,
+            dialogue, recent_images = await asyncio.gather(
+                self._conversation.recent(
+                    user_id,
+                    turn_limit=self._dialogue_turn_limit,
+                    char_limit=self._dialogue_char_limit,
+                ),
+                self._conversation.recent_images(
+                    user_id,
+                    at=current_time,
+                    limit=self._recent_image_limit,
+                ),
             )
             if dialogue:
                 working_memory["recent_dialogue"] = [
@@ -199,6 +208,30 @@ class AuthoritativeContextDataProvider:
                         ],
                     }
                     for turn in dialogue
+                ]
+            if recent_images:
+                working_memory["recent_images"] = [
+                    {
+                        "asset_id": image.asset_id,
+                        "mime_type": image.mime_type,
+                        "created_at": image.created_at.isoformat(),
+                        "expires_at": image.expires_at.isoformat(),
+                        **(
+                            {"observation": image.observation}
+                            if image.observation is not None
+                            else {}
+                        ),
+                        **(
+                            {
+                                "requires_user_confirmation": (
+                                    image.requires_user_confirmation
+                                )
+                            }
+                            if image.requires_user_confirmation is not None
+                            else {}
+                        ),
+                    }
+                    for image in recent_images
                 ]
         if self._handoffs is not None:
             handoff = await self._handoffs.active(user_id, at=current_time)

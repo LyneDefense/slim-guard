@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from sqlalchemy import select
 
+from slim_guard.db.models import AgentItemRecord
 from slim_guard.domain.meal.contracts import MealFood, MealRecordCommand, MealRecordRef, MealType
 from slim_guard.domain.meal.errors import MealRecordCollision, MealSourceMismatch
 from slim_guard.domain.meal.repository import MealRepository
@@ -20,7 +23,7 @@ from slim_guard.tools.registry import RegisteredTool
 
 RECORD_MEAL_TOOL_NAME = "record_meal"
 GET_RECENT_MEALS_TOOL_NAME = "get_recent_meals"
-MEAL_TOOL_VERSION = "v1"
+MEAL_TOOL_VERSION = "v2"
 
 
 class MealFoodArguments(BaseModel):
@@ -44,9 +47,15 @@ class RecordMealArguments(ToolArguments):
     meal_type: Literal["breakfast", "lunch", "dinner", "snack", "unspecified"] = (
         "unspecified"
     )
-    foods: tuple[MealFoodArguments, ...] = Field(min_length=1, max_length=20)
+    # Model tool calls arrive as JSON, whose collection type is an array/list.
+    # Keep the boundary JSON-native and normalize to immutable tuples only in
+    # the trusted domain command below.
+    foods: list[MealFoodArguments] = Field(min_length=1, max_length=20)
     note: str | None = Field(default=None, min_length=1, max_length=1000)
     occurred_at: str | None = None
+    visual_confirmation: Literal[
+        "not_confirmed", "confirmed_by_current_user"
+    ] = "not_confirmed"
 
 
 class GetRecentMealsArguments(ToolArguments):
@@ -73,6 +82,9 @@ class MealToolHandlers:
                 code="missing_execution_identity",
                 message="The meal record is missing its trusted execution identity.",
             )
+        visual_failure = await self._visual_confirmation_failure(context, arguments)
+        if visual_failure is not None:
+            return visual_failure
         try:
             command = MealRecordCommand(
                 user_id=context.user_id,
@@ -131,6 +143,70 @@ class MealToolHandlers:
             raise ValueError("Meal time must be timezone-aware")
         return value
 
+    async def _visual_confirmation_failure(
+        self,
+        context: ToolContext,
+        arguments: RecordMealArguments,
+    ) -> ToolResult | None:
+        """Enforce model-authored uncertainty without interpreting user language."""
+        async with self._repository.database.session() as session:
+            result_items = tuple(
+                await session.scalars(
+                    select(AgentItemRecord).where(
+                        AgentItemRecord.turn_id == context.turn_id,
+                        AgentItemRecord.item_type == "tool_result",
+                        AgentItemRecord.status == "completed",
+                    )
+                )
+            )
+            requires_confirmation = any(
+                self._inspection_requires_confirmation(item) for item in result_items
+            )
+            if not requires_confirmation:
+                return None
+            if arguments.visual_confirmation != "confirmed_by_current_user":
+                return ToolResult.failed(
+                    code="visual_confirmation_required",
+                    message=(
+                        "The vision model found unresolved ambiguity. Ask the user to "
+                        "confirm it before recording this meal."
+                    ),
+                )
+            source = (
+                await session.get(AgentItemRecord, context.source_item_id)
+                if context.source_item_id is not None
+                else None
+            )
+            if (
+                source is None
+                or source.turn_id != context.turn_id
+                or source.item_type != "user_message"
+                or source.status != "completed"
+            ):
+                return ToolResult.failed(
+                    code="visual_confirmation_source_missing",
+                    message=(
+                        "A model decision to treat visual ambiguity as confirmed requires "
+                        "a current user message as evidence."
+                    ),
+                )
+        return None
+
+    @staticmethod
+    def _inspection_requires_confirmation(item: AgentItemRecord) -> bool:
+        try:
+            payload = json.loads(item.payload_json)
+            execution = payload.get("execution", {})
+            result = execution.get("result", {})
+            output = result.get("output", {})
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            return False
+        return (
+            execution.get("tool_name") == "inspect_image"
+            and result.get("status") == "succeeded"
+            and output.get("requires_user_confirmation") is True
+        )
+
     @staticmethod
     def _parse_datetime(raw: str) -> datetime:
         normalized = f"{raw[:-1]}+00:00" if raw.endswith(("Z", "z")) else raw
@@ -157,8 +233,10 @@ def meal_tool_definitions() -> tuple[RegisteredTool, ...]:
             name=RECORD_MEAL_TOOL_NAME,
             description=(
                 "Persist foods explicitly reported by the current user or clearly observed "
-                "through inspect_image. Preserve uncertain portions as descriptive text. "
-                "Never invent calories or foods that were not reported or visible."
+                "through inspect_image. If inspect_image requires user confirmation, do not "
+                "call this tool until the current user message semantically resolves the "
+                "ambiguity; then set visual_confirmation=confirmed_by_current_user. "
+                "Never invent calories or foods that were not reported or clearly visible."
             ),
             version=MEAL_TOOL_VERSION,
             arguments_model=RecordMealArguments,

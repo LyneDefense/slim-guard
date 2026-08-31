@@ -307,3 +307,13 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/config.py`、`.env.example`、`main.py` → 生命周期配置与生产任务 → 增加 Transcript、revoked value 保留期和维护间隔；隐私任务不依赖模型是否在线，服务每次启动都会立即补做过期维护。
 - `tests/unit/test_memory_maintenance.py`、`test_agent_runtime.py`、`tests/integration/test_callback_flow.py` → 完整验收 → 验证正文不可恢复、哈希审计与 Tool 幂等仍有效、领域记录不受影响、维护重复执行安全，以及企业微信确认提示和跨 Turn 批量清空闭环。
 - 最终验证 → Ruff 全仓、Mypy strict（107 个源码文件）、Pytest 206 项和 Python compileall 全部通过。
+
+### `fix: harden multimodal meal recording`
+
+- `src/slim_guard/tools/meal.py` → 饮食工具真实 JSON 边界 → 把模型 JSON array 参数改为原生 list、领域层再转 tuple；视觉模型要求澄清时，确认状态由核心模型基于当前用户消息给出，代码只验证当前 Turn 来源，不解析用户措辞。
+- `src/slim_guard/harness/loop.py` → 模型工具循环可靠性 → 同一工具连续两次返回相同不可重试错误后移除工具能力，由模型生成最终说明；可重试错误不受影响，并增加无参数、无正文的结构化失败日志。
+- `src/slim_guard/agent_models/vision.py`、`zhipu_vision.py`、`tools/image.py` → model-first 视觉证据 → 视觉模型输出 category、summary、逐项 clear/uncertain 和 requires_user_confirmation，代码只严格解析结构，不按食物关键词判断确定性。
+- `src/slim_guard/memory/working.py`、`harness/context_data.py` → 跨轮图片 Working Memory → 注入当前用户最近未过期图片的真实 asset_id、期限和非权威观察，让核心模型理解自然语言指代；不加载图片字节、不跨用户、不做关键词匹配。
+- `src/slim_guard/harness/state_repository.py`、`trace.py` → 运行可观测性 → Turn step_count 写入实际模型调用数与工具调用数之和，等待、完成和异常终止均可审计。
+- `tests/unit/test_meal_tools.py`、`test_agent_runtime.py`、`test_working_memory.py`、`test_harness_loop.py` → 生产故障回归 → 覆盖真实 JSON Gateway、不可重试熔断、图片用户隔离与过期、餐图跨三轮确认后唯一写入，以及脱敏失败日志。
+- 最终验证 → Ruff 全仓、Mypy strict（107 个源码文件）、Pytest 213 项、Python compileall 与 Git diff check 全部通过。

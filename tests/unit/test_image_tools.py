@@ -4,8 +4,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from slim_guard.agent_models.vision import (
+    VisionCertainty,
     VisionInspectionRequest,
     VisionInspectionResponse,
+    VisionObservation,
 )
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
@@ -23,7 +25,18 @@ class FakeVisionGateway:
 
     async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse:
         self.requests.append(request)
-        return VisionInspectionResponse(description="体重秤显示 77.6 kg。")
+        return VisionInspectionResponse(
+            category="weight_scale",
+            description="体重秤显示 77.6 kg。",
+            observations=(
+                VisionObservation(
+                    label="体重",
+                    detail="屏幕显示 77.6 kg",
+                    certainty=VisionCertainty.CLEAR,
+                ),
+            ),
+            requires_user_confirmation=False,
+        )
 
     async def close(self) -> None:
         return None
@@ -83,6 +96,9 @@ async def test_inspect_image_reads_owned_asset_and_returns_observation(tmp_path:
 
         assert result.status is ToolResultStatus.SUCCEEDED
         assert result.output["description"] == "体重秤显示 77.6 kg。"
+        assert result.output["category"] == "weight_scale"
+        assert result.output["observations"][0]["certainty"] == "clear"
+        assert result.output["requires_user_confirmation"] is False
         assert result.source_ids == (asset_id,)
         assert vision.requests[0].model == "glm-5v-turbo"
         assert vision.requests[0].image_mime_type == "image/png"

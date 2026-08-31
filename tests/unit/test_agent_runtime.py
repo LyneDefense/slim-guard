@@ -16,8 +16,15 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     NormalizedToolCall,
 )
+from slim_guard.agent_models.vision import (
+    VisionCertainty,
+    VisionInspectionRequest,
+    VisionInspectionResponse,
+    VisionObservation,
+)
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
+from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.repository import AgentVersionRepository
@@ -25,6 +32,7 @@ from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
+from slim_guard.tools.meal import RECORD_MEAL_TOOL_NAME
 from slim_guard.tools.memory import (
     CLEAR_USER_MEMORIES_TOOL_NAME,
     SET_COACHING_PROFILE_TOOL_NAME,
@@ -116,6 +124,89 @@ class MemoryClearModelGateway:
 
     def assert_exhausted(self) -> None:
         assert self._step == 5
+
+
+class MealImageFollowupModelGateway:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self.asset_id: str | None = None
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        step = len(self.requests)
+        if step == 1:
+            image_input = json.loads(request.messages[-1].content or "")
+            self.asset_id = image_input["asset_id"]
+            return tool_call(
+                "call-inspect-first",
+                "inspect_image",
+                {"asset_id": self.asset_id, "focus": "meal"},
+            )
+        if step == 2:
+            return final_reply("图片里有几样食物不确定，请告诉我具体是什么。")
+        if step == 3:
+            assert self.asset_id is not None
+            working = next(
+                message.content or ""
+                for message in request.messages
+                if "近期对话工作记忆" in (message.content or "")
+            )
+            assert self.asset_id in working
+            assert '"requires_user_confirmation":true' in working
+            return tool_call(
+                "call-inspect-recent",
+                "inspect_image",
+                {"asset_id": self.asset_id, "focus": "meal"},
+            )
+        if step == 4:
+            return final_reply("明白是午餐；请确认方形块、红色条状物和黑色食物。")
+        if step == 5:
+            return tool_call(
+                "call-record-confirmed-meal",
+                RECORD_MEAL_TOOL_NAME,
+                {
+                    "meal_type": "lunch",
+                    "foods": [
+                        {"name": "白米饭"},
+                        {"name": "炒白菜"},
+                        {"name": "蒸蛋"},
+                        {"name": "火腿肠"},
+                        {"name": "油豆腐"},
+                        {"name": "木耳"},
+                    ],
+                    "visual_confirmation": "confirmed_by_current_user",
+                },
+            )
+        if step == 6:
+            return final_reply("午餐已经记录。")
+        raise AssertionError(f"Unexpected model call: {step}")
+
+    async def close(self) -> None:
+        return None
+
+
+class UncertainMealVisionGateway:
+    async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse:
+        return VisionInspectionResponse(
+            category="meal",
+            description="白米饭、炒白菜和几样需要确认的配菜。",
+            observations=(
+                VisionObservation(
+                    label="主食",
+                    detail="清晰可见白米饭",
+                    certainty=VisionCertainty.CLEAR,
+                ),
+                VisionObservation(
+                    label="方形配菜",
+                    detail="可能是蒸蛋或豆腐",
+                    certainty=VisionCertainty.UNCERTAIN,
+                ),
+            ),
+            requires_user_confirmation=True,
+        )
+
+    async def close(self) -> None:
+        return None
 
 
 async def prepare_database(tmp_path: Path) -> Database:
@@ -477,6 +568,82 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
         model.assert_exhausted()
     finally:
         await model.close()
+        await database.close()
+
+
+async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = MealImageFollowupModelGateway()
+    vision = UncertainMealVisionGateway()
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        vision=vision,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-recent-image-meal",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        first = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                image_bytes=b"\x89PNG\r\n\x1a\nmeal",
+                image_mime_type="image/png",
+                source_message_id="meal-image-1",
+                channel_id="wecom-kf",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        second = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="这个是我中午吃的",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        before_confirmation = await MealRepository(database).recent("user-1")
+        third = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="方形块是蒸蛋，红色条状物是火腿肠，黑色的是木耳",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        meals = await MealRepository(database).recent("user-1")
+
+        assert first.final_text == "图片里有几样食物不确定，请告诉我具体是什么。"
+        assert second.final_text == (
+            "明白是午餐；请确认方形块、红色条状物和黑色食物。"
+        )
+        assert before_confirmation == ()
+        assert third.final_text == "午餐已经记录。"
+        assert len(meals) == 1
+        assert meals[0].meal_type.value == "lunch"
+        assert [food.name for food in meals[0].foods] == [
+            "白米饭",
+            "炒白菜",
+            "蒸蛋",
+            "火腿肠",
+            "油豆腐",
+            "木耳",
+        ]
+        assert model.asset_id is not None
+        assert "meal_photo" not in json.dumps(
+            [request.model_dump(mode="json") for request in model.requests],
+            ensure_ascii=False,
+        )
+    finally:
+        await model.close()
+        await vision.close()
         await database.close()
 
 

@@ -14,6 +14,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     ModelUsage,
     NormalizedToolCall,
+    ToolChoice,
     ToolDefinition,
 )
 from slim_guard.harness.events import TurnStatus, TurnTrigger
@@ -38,9 +39,11 @@ class RecordingToolCallRunner:
         *,
         turn_status: TurnStatus = TurnStatus.RUNNING,
         failure_code: str | None = None,
+        failure_retryable: bool = False,
     ) -> None:
         self.turn_status = turn_status
         self.failure_code = failure_code
+        self.failure_retryable = failure_retryable
         self.calls: list[NormalizedToolCall] = []
         self.contexts: list[ToolContext] = []
 
@@ -78,6 +81,7 @@ class RecordingToolCallRunner:
                             if self.failure_code is not None
                             else "Please confirm this action."
                         ),
+                        retryable=self.failure_retryable,
                     )
                     if self.turn_status is TurnStatus.WAITING_USER_CONFIRMATION
                     or self.failure_code is not None
@@ -273,6 +277,69 @@ async def test_tool_failure_is_returned_to_model_as_an_observation() -> None:
     assert observation["failure"]["code"] == "database_unavailable"
     assert result.termination is HarnessTermination.FINAL_RESPONSE
     assert result.final_text == "这次没有记录成功，请稍后重试。"
+
+
+async def test_tool_failure_emits_structured_warning_without_arguments(caplog) -> None:
+    caplog.set_level("WARNING")
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(tool_call("call-1")),
+            assistant_text("这次没有记录成功。"),
+        )
+    )
+    tools = RecordingToolCallRunner(failure_code="database_unavailable")
+
+    await run_loop(model, tools)
+
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "slim_guard_tool_call_failed"
+    )
+    assert record.tool_name == "record_weight"
+    assert record.failure_code == "database_unavailable"
+    assert record.retryable is False
+    assert "77.6" not in record.getMessage()
+
+
+async def test_repeated_nonretryable_failure_forces_model_authored_text_response() -> None:
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(tool_call("call-1")),
+            assistant_tool_calls(tool_call("call-2")),
+            assistant_text("这次没有保存成功，我不会继续重复尝试。"),
+        )
+    )
+    tools = RecordingToolCallRunner(failure_code="invalid_arguments")
+
+    result = await run_loop(model, tools)
+
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert result.final_text == "这次没有保存成功，我不会继续重复尝试。"
+    assert result.model_call_count == 3
+    assert result.tool_call_count == 2
+    assert model.requests[2].tools == ()
+    assert model.requests[2].tool_choice is ToolChoice.NONE
+
+
+async def test_retryable_failures_do_not_remove_model_tools() -> None:
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(tool_call("call-1")),
+            assistant_tool_calls(tool_call("call-2")),
+            assistant_text("服务暂时不可用。"),
+        )
+    )
+    tools = RecordingToolCallRunner(
+        failure_code="database_unavailable",
+        failure_retryable=True,
+    )
+
+    result = await run_loop(model, tools)
+
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert model.requests[2].tools == request().tools
+    assert model.requests[2].tool_choice is ToolChoice.AUTO
 
 
 async def test_model_call_limit_stops_an_infinite_tool_loop() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Protocol
+from enum import StrEnum
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,10 +22,26 @@ class VisionInspectionRequest(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
+class VisionCertainty(StrEnum):
+    CLEAR = "clear"
+    UNCERTAIN = "uncertain"
+
+
+class VisionObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str = Field(min_length=1, max_length=200)
+    detail: str = Field(min_length=1, max_length=1000)
+    certainty: VisionCertainty
+
+
 class VisionInspectionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    category: Literal["weight_scale", "meal", "exercise", "other"] = "other"
     description: str = Field(min_length=1, max_length=20_000)
+    observations: tuple[VisionObservation, ...] = Field(default=(), max_length=50)
+    requires_user_confirmation: bool = False
     usage: ModelUsage = Field(default_factory=ModelUsage)
     provider_request_id: str | None = None
 

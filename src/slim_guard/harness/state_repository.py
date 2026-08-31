@@ -72,6 +72,7 @@ class TurnRef:
     status: TurnStatus
     deadline_at: datetime | None
     completed_at: datetime | None
+    step_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,7 @@ class TurnStateStore(Protocol):
         turn_id: str,
         target: TurnStatus,
         expected: TurnStatus | None = None,
+        step_count: int | None = None,
     ) -> TurnRef: ...
 
 
@@ -309,13 +311,20 @@ class HarnessStateRepository:
         turn_id: str,
         target: TurnStatus,
         expected: TurnStatus | None = None,
+        step_count: int | None = None,
     ) -> TurnRef:
+        if step_count is not None and step_count < 0:
+            raise ValueError("Turn step count cannot be negative")
         async with self.database.session() as session, session.begin():
             row = await session.get(AgentTurnRecord, turn_id)
             if row is None:
                 raise LookupError(f"Agent turn not found: {turn_id}")
             current = TurnStatus(row.status)
             if current is target:
+                if step_count is not None and row.step_count != step_count:
+                    row.step_count = step_count
+                    row.updated_at = utc_now()
+                    await session.flush()
                 return self._turn_ref(row)
             if expected is not None and current is not expected:
                 raise TurnStateConflict(
@@ -332,6 +341,7 @@ class HarnessStateRepository:
                 .where(AgentTurnRecord.id == turn_id, AgentTurnRecord.status == current.value)
                 .values(
                     status=target.value,
+                    **({"step_count": step_count} if step_count is not None else {}),
                     updated_at=transitioned_at,
                     completed_at=(
                         transitioned_at if target in _TERMINAL_TURN_STATUSES else None
@@ -378,6 +388,7 @@ class HarnessStateRepository:
             status=TurnStatus(row.status),
             deadline_at=row.deadline_at,
             completed_at=row.completed_at,
+            step_count=row.step_count,
         )
 
     @staticmethod

@@ -106,6 +106,7 @@ async def test_persistent_recorder_saves_final_response_and_completes_turn(tmp_p
         assert items[1].payload == {"text": "已记录。"}
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
+        assert stored_turn.step_count == 1
     finally:
         await database.close()
 
@@ -169,7 +170,10 @@ async def test_tool_result_reserved_before_wait_can_finish_after_pause(tmp_path)
         assert items[1].payload["execution"]["result"]["failure"]["code"] == (
             "tool_confirmation_required"
         )
-        assert (await repository.get_turn(turn.id)) == waiting_turn
+        stored_turn = await repository.get_turn(turn.id)
+        assert stored_turn is not None
+        assert stored_turn.status is waiting_turn.status
+        assert stored_turn.step_count == 2
     finally:
         await database.close()
 
@@ -203,6 +207,7 @@ async def test_budget_termination_is_audited_and_suspends_turn(tmp_path) -> None
         }
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.SUSPENDED
+        assert stored_turn.step_count == 11
     finally:
         await database.close()
 

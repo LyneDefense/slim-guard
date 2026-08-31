@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     memory_health_review_days: int = Field(default=180, ge=30, le=730)
     memory_recent_turn_count: int = Field(default=3, ge=1, le=10)
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
+    memory_recent_image_count: int = Field(default=3, ge=1, le=10)
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
     agent_transcript_body_retention_days: int = Field(default=30, ge=1, le=3650)
     memory_revoked_value_retention_days: int = Field(default=30, ge=0, le=3650)

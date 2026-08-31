@@ -5,6 +5,8 @@ from pathlib import Path
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
+from slim_guard.domain.assets.contracts import SaveImageAssetCommand
+from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
@@ -164,5 +166,102 @@ async def test_recent_dialogue_keeps_the_newest_text_within_character_budget(
         assert sum(len(message.content) for message in messages) == 100
         assert messages[-1].content == "答" * 80
         assert messages[0].content == "问" * 20
+    finally:
+        await database.close()
+
+
+async def test_recent_images_are_user_scoped_unexpired_and_include_observation(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'recent-images.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add_all(
+            (
+                SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW),
+                SlimGuardUser(id="user-2", first_seen_at=NOW, last_seen_at=NOW),
+            )
+        )
+    active_manifest = manifest()
+    await AgentVersionRepository(database).register(active_manifest)
+    assets = ImageAssetRepository(database)
+    active = await assets.save(
+        SaveImageAssetCommand(
+            user_id="user-1",
+            content=b"\x89PNG\r\n\x1a\nactive",
+            declared_mime_type="image/png",
+            channel_id="default",
+            source_message_id="image-active",
+            expires_at=NOW.replace(hour=9),
+        )
+    )
+    await assets.save(
+        SaveImageAssetCommand(
+            user_id="user-1",
+            content=b"\x89PNG\r\n\x1a\nexpired",
+            declared_mime_type="image/png",
+            channel_id="default",
+            source_message_id="image-expired",
+            expires_at=NOW.replace(hour=7),
+        )
+    )
+    await assets.save(
+        SaveImageAssetCommand(
+            user_id="user-2",
+            content=b"\x89PNG\r\n\x1a\nother-user",
+            declared_mime_type="image/png",
+            channel_id="default",
+            source_message_id="image-other-user",
+            expires_at=NOW.replace(hour=9),
+        )
+    )
+    state = HarnessStateRepository(database)
+    started = await state.start_turn_with_items(
+        user_id="user-1",
+        agent_version_id=active_manifest.version_id,
+        trigger=TurnTrigger.USER_MESSAGE,
+        items=(
+            NewTurnItem(
+                item_type=ItemType.IMAGE_ATTACHMENT,
+                status=ItemStatus.COMPLETED,
+                payload={"asset_id": active.asset.id, "mime_type": "image/png"},
+            ),
+            NewTurnItem(
+                item_type=ItemType.TOOL_RESULT,
+                status=ItemStatus.COMPLETED,
+                payload={
+                    "tool_name": "inspect_image",
+                    "execution": {
+                        "tool_name": "inspect_image",
+                        "result": {
+                            "status": "succeeded",
+                            "output": {
+                                "asset_id": active.asset.id,
+                                "description": "一盘白米饭和蔬菜，部分食材不确定。",
+                                "requires_user_confirmation": True,
+                            },
+                        },
+                    },
+                },
+            ),
+        ),
+    )
+    await state.transition_turn(
+        turn_id=started.turn.id,
+        target=TurnStatus.SUSPENDED,
+        expected=TurnStatus.RUNNING,
+    )
+    try:
+        recent = await ConversationWindowRepository(database).recent_images(
+            "user-1",
+            at=NOW,
+            limit=3,
+        )
+
+        assert len(recent) == 1
+        assert recent[0].asset_id == active.asset.id
+        assert recent[0].mime_type == "image/png"
+        assert recent[0].observation == "一盘白米饭和蔬菜，部分食材不确定。"
+        assert recent[0].requires_user_confirmation is True
     finally:
         await database.close()

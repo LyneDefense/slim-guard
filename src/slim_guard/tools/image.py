@@ -27,7 +27,7 @@ from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
 INSPECT_IMAGE_TOOL_NAME = "inspect_image"
-IMAGE_TOOL_VERSION = "v1"
+IMAGE_TOOL_VERSION = "v2"
 
 _FOCUS_PROMPTS = {
     "auto": (
@@ -47,6 +47,20 @@ _FOCUS_PROMPTS = {
         "以及设备显示的能量数据，并区分明确数据与不确定观察。"
     ),
 }
+
+_STRUCTURED_OUTPUT_PROMPT = """
+只输出一个 JSON 对象，不要 Markdown 或额外解释，严格使用以下结构：
+{
+  "category": "weight_scale|meal|exercise|other",
+  "summary": "对图片的简洁整体描述",
+  "observations": [
+    {"label": "观察项名称", "detail": "视觉证据", "certainty": "clear|uncertain"}
+  ],
+  "requires_user_confirmation": true
+}
+certainty 由你根据图片证据进行语义判断；无法唯一识别、被遮挡、模糊或存在合理多种解释时使用
+uncertain。只要保存业务事实前仍需要用户澄清，requires_user_confirmation 就设为 true；否则为 false。
+""".strip()
 
 
 class InspectImageArguments(ToolArguments):
@@ -95,7 +109,7 @@ class ImageToolHandlers:
             response = await self._vision.inspect(
                 VisionInspectionRequest(
                     model=self._vision_model,
-                    prompt=_FOCUS_PROMPTS[arguments.focus],
+                    prompt=f"{_FOCUS_PROMPTS[arguments.focus]}\n\n{_STRUCTURED_OUTPUT_PROMPT}",
                     image_bytes=asset.content,
                     image_mime_type=asset.ref.mime_type,
                     max_output_tokens=self._max_output_tokens,
@@ -132,6 +146,12 @@ class ImageToolHandlers:
                 "asset_id": asset.ref.id,
                 "focus": arguments.focus,
                 "description": response.description,
+                "category": response.category,
+                "observations": [
+                    observation.model_dump(mode="json")
+                    for observation in response.observations
+                ],
+                "requires_user_confirmation": response.requires_user_confirmation,
             },
             source_ids=(asset.ref.id,),
         )
@@ -147,8 +167,9 @@ def image_tool_definitions() -> tuple[RegisteredTool, ...]:
             name=INSPECT_IMAGE_TOOL_NAME,
             description=(
                 "Inspect an image attachment owned by the current user. Pass the exact "
-                "asset_id from the image_attachment input. The result contains visual "
-                "observations, not an authoritative health record."
+                "asset_id from the current image_attachment or working_memory.recent_images. "
+                "Never invent an asset ID. The result contains model-authored visual "
+                "observations and explicit uncertainty, not an authoritative health record."
             ),
             version=IMAGE_TOOL_VERSION,
             arguments_model=InspectImageArguments,

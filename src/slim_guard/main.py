@@ -86,6 +86,7 @@ def create_app(
         memory_recent_dialogue_max_chars=(
             app_settings.memory_recent_dialogue_max_chars
         ),
+        memory_recent_image_count=app_settings.memory_recent_image_count,
         memory_handoff_ttl_days=app_settings.memory_handoff_ttl_days,
     )
     agent_manifest = (

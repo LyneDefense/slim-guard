@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from slim_guard.agent_models.gateway import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ToolChoice,
 )
 from slim_guard.harness.events import TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
@@ -26,6 +28,8 @@ from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode
 from slim_guard.tools.policy import ToolAuthorization
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +117,8 @@ class HarnessLoop:
         messages = list(request.messages)
         model_responses: list[ModelResponse] = []
         tool_outcomes: list[ToolCallOutcome] = []
+        nonretryable_failures: dict[tuple[str, str], int] = {}
+        force_text_response = False
         active_assessment = safety_assessment or SafetyAssessment(
             level=HealthRiskLevel.NORMAL,
             code="none",
@@ -136,7 +142,13 @@ class HarnessLoop:
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
                 )
-            current_request = request.model_copy(update={"messages": tuple(messages)})
+            request_update: dict[str, object] = {"messages": tuple(messages)}
+            if force_text_response:
+                # Give the model one correction attempt, then remove executable
+                # capabilities after the same non-retryable failure happens twice.
+                # The final explanation still comes from the model.
+                request_update.update({"tools": (), "tool_choice": ToolChoice.NONE})
+            current_request = request.model_copy(update=request_update)
             if self._total_tokens(model_responses) >= self._limits.max_total_tokens:
                 return await self._finish(
                     context=context,
@@ -247,6 +259,33 @@ class HarnessLoop:
                         content=outcome.execution.result.to_model_content(),
                     )
                 )
+                failure = outcome.execution.result.failure
+                if failure is not None:
+                    logger.warning(
+                        "slim_guard_tool_call_failed",
+                        extra={
+                            "turn_id": context.turn_id,
+                            "tool_name": outcome.execution.tool_name,
+                            "failure_code": failure.code,
+                            "retryable": failure.retryable,
+                            "tool_call_index": len(tool_outcomes),
+                        },
+                    )
+                if failure is not None and not failure.retryable:
+                    failure_key = (outcome.execution.tool_name, failure.code)
+                    failure_count = nonretryable_failures.get(failure_key, 0) + 1
+                    nonretryable_failures[failure_key] = failure_count
+                    if failure_count >= 2:
+                        force_text_response = True
+                        logger.warning(
+                            "slim_guard_tool_failure_circuit_opened",
+                            extra={
+                                "turn_id": context.turn_id,
+                                "tool_name": outcome.execution.tool_name,
+                                "failure_code": failure.code,
+                                "failure_count": failure_count,
+                            },
+                        )
                 waiting = self._waiting_termination(outcome)
                 if waiting is not None:
                     return await self._finish(

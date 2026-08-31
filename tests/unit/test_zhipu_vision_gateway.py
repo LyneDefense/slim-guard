@@ -32,7 +32,25 @@ async def test_zhipu_vision_serializes_image_and_normalizes_response() -> None:
             json={
                 "id": "vision-response-1",
                 "choices": [
-                    {"message": {"content": "  体重秤显示 77.6 kg，单位清晰。  "}}
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "category": "weight_scale",
+                                    "summary": "体重秤显示 77.6 kg，单位清晰。",
+                                    "observations": [
+                                        {
+                                            "label": "体重",
+                                            "detail": "屏幕显示 77.6 kg",
+                                            "certainty": "clear",
+                                        }
+                                    ],
+                                    "requires_user_confirmation": False,
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
                 ],
                 "usage": {
                     "prompt_tokens": 30,
@@ -61,6 +79,9 @@ async def test_zhipu_vision_serializes_image_and_normalizes_response() -> None:
         "image_url": {"url": f"data:image/png;base64,{encoded}"},
     }
     assert response.description == "体重秤显示 77.6 kg，单位清晰。"
+    assert response.category == "weight_scale"
+    assert response.observations[0].certainty == "clear"
+    assert response.requires_user_confirmation is False
     assert response.usage.total_tokens == 40
     assert response.provider_request_id == "vision-response-1"
 
@@ -78,12 +99,28 @@ async def test_zhipu_vision_normalizes_provider_and_invalid_response_errors() ->
         timeout_seconds=1,
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={})),
     )
+    unstructured = ZhipuVisionModelGateway(
+        api_key="secret",
+        base_url="https://example.com",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "看起来像一顿饭"}}]
+                },
+            )
+        ),
+    )
     try:
         with pytest.raises(ModelProviderError) as caught:
             await provider.inspect(request())
         assert caught.value.status_code == 429
         with pytest.raises(InvalidModelResponse):
             await invalid.inspect(request())
+        with pytest.raises(InvalidModelResponse):
+            await unstructured.inspect(request())
     finally:
         await provider.close()
         await invalid.close()
+        await unstructured.close()

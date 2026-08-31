@@ -38,6 +38,7 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.memory_health_review_days == 180
     assert settings.memory_recent_turn_count == 3
     assert settings.memory_recent_dialogue_max_chars == 1500
+    assert settings.memory_recent_image_count == 3
     assert settings.memory_handoff_ttl_days == 14
     assert settings.agent_transcript_body_retention_days == 30
     assert settings.memory_revoked_value_retention_days == 30
@@ -78,9 +79,9 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     assert app.state.agent_runtime_mode == "harness"
     assert dict(app.state.agent_manifest.tool_versions) == {
         "get_recent_weight_trend": "v1",
-        "inspect_image": "v1",
-        "get_recent_meals": "v1",
-        "record_meal": "v1",
+        "inspect_image": "v2",
+        "get_recent_meals": "v2",
+        "record_meal": "v2",
         "get_recent_exercise": "v1",
         "get_checkin_schedule": "v1",
         "configure_checkin_schedule": "v1",

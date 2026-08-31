@@ -172,7 +172,9 @@ data/slim_guard.sqlite3
 也不表示系统认可其医学安全性；健康约束始终标记为用户自述，180 天后提示复核而不会变成诊断。
 用户可以直接问“你记得我什么”，也可以要求忘记某一条明确记忆。每轮还会加载最近最多 3 个
 已完成 Turn 的用户和最终助手可见文本，合计默认不超过 1500 字；不会把工具参数、模型草稿或
-内部 Context Snapshot 当成对话。用户明确说“下次接着做”时，Agent 可以保存一个临时 Handoff，
+内部 Context Snapshot 当成对话。最近最多 3 张仍在保留期内的用户图片会以用户隔离的真实
+`asset_id` 和非权威视觉观察进入 Working Memory，供核心模型理解“刚才那张”；代码不按关键词
+匹配指代，也不允许模型编造图片 ID。用户明确说“下次接着做”时，Agent 可以保存一个临时 Handoff，
 用于之后理解“上次那个继续”；任务完成、用户取消或默认 14 天到期后不再召回。
 用户要求清空全部个性化记忆时，系统会先冻结清空范围并要求再次确认；确认后只批量撤销
 Profile、Goal 和 Constraint，不删除体重、饮食、运动或消息幂等记录。被撤销值立即停止召回，
@@ -185,6 +187,7 @@ MEMORY_PRELOAD_MAX_FACTS=30
 MEMORY_HEALTH_REVIEW_DAYS=180
 MEMORY_RECENT_TURN_COUNT=3
 MEMORY_RECENT_DIALOGUE_MAX_CHARS=1500
+MEMORY_RECENT_IMAGE_COUNT=3
 MEMORY_HANDOFF_TTL_DAYS=14
 AGENT_TRANSCRIPT_BODY_RETENTION_DAYS=30
 MEMORY_REVOKED_VALUE_RETENTION_DAYS=30
@@ -193,7 +196,9 @@ MEMORY_MAINTENANCE_INTERVAL_SECONDS=21600
 
 Working Memory 和 Handoff 是非权威承接上下文，当前消息始终优先；语义由核心模型判断，代码只
 负责来源、用户隔离、幂等、容量和期限约束，不通过关键词规则决定“刚才那个”或确认回复的
-含义。后台维护任务在启动后立即执行一次并周期运行，服务重启不会重置保留期。完整边界见
+含义。视觉模型会结构化标记 clear/uncertain 和是否需要用户澄清；存在未解决歧义时，核心模型
+必须基于当前用户原话确认后才能写入饮食记录。后台维护任务在启动后立即执行一次并周期运行，
+服务重启不会重置保留期。完整边界见
 [用户记忆模块设计](./MEMORY_DESIGN.md)。
 
 ## 用户与客户资料
@@ -231,6 +236,8 @@ routine_job_skipped
 routine_job_attempt_failed
 wecom_outbox_recovered
 wecom_outbox_recovery_failed
+slim_guard_tool_call_failed
+slim_guard_tool_failure_circuit_opened
 ```
 
 ## 测试与检查

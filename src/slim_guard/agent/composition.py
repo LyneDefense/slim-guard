@@ -75,6 +75,7 @@ class AgentRuntimeDefinition(BaseModel):
     memory_health_review_days: int = Field(default=180, ge=30, le=730)
     memory_recent_turn_count: int = Field(default=3, ge=1, le=10)
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
+    memory_recent_image_count: int = Field(default=3, ge=1, le=10)
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
 
 
@@ -195,6 +196,7 @@ def build_agent_runtime(
             memory_limit=definition.memory_preload_max_facts,
             dialogue_turn_limit=definition.memory_recent_turn_count,
             dialogue_char_limit=definition.memory_recent_dialogue_max_chars,
+            recent_image_limit=definition.memory_recent_image_count,
         ),
         output_guard=SlimGuardOutputGuard(),
         clock=clock,
@@ -230,9 +232,9 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
         system_prompt=SLIM_GUARD_HARNESS_PROMPT,
         tool_versions=registry.versions,
-        context_policy_version="authoritative-working-memory-privacy-v5",
+        context_policy_version="authoritative-working-memory-privacy-v6",
         memory_policy_version=MEMORY_POLICY_VERSION,
-        compaction_policy_version="bounded-working-handoff-redaction-v2",
+        compaction_policy_version="bounded-working-images-handoff-redaction-v3",
         safety_policy_version="health-output-guard-v2",
         code_revision=definition.code_revision,
     )

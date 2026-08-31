@@ -260,6 +260,7 @@ class PersistentHarnessRunRecorder:
                 turn_id=turn_id,
                 target=TurnStatus.COMPLETED,
                 expected=TurnStatus.RUNNING,
+                step_count=model_call_count + tool_call_count,
             )
             return
 
@@ -279,6 +280,11 @@ class PersistentHarnessRunRecorder:
                 raise TurnStateConflict(
                     f"Turn {turn_id} should be {expected.value}, found {turn.status.value}"
                 )
+            await self._store.transition_turn(
+                turn_id=turn_id,
+                target=expected,
+                step_count=model_call_count + tool_call_count,
+            )
             return
 
         if termination is HarnessTermination.FATAL_ERROR and failure is None:
@@ -303,4 +309,5 @@ class PersistentHarnessRunRecorder:
                 else TurnStatus.FAILED
             ),
             expected=TurnStatus.RUNNING,
+            step_count=model_call_count + tool_call_count,
         )
