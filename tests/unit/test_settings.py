@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from slim_guard.config import Settings
+from slim_guard.config import DatabaseSettings, Settings
 from slim_guard.main import create_app
 
 
@@ -56,14 +56,24 @@ def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
         Settings(wecom_proactive_max_messages=6)
 
 
-def test_admin_credentials_are_complete_and_long_enough() -> None:
-    settings = Settings(admin_username="admin", admin_password="a-secure-password")
+def test_admin_credentials_must_be_complete_but_may_use_a_test_password() -> None:
+    settings = Settings(admin_username="admin", admin_password="short")
     assert settings.admin_is_configured is True
 
     with pytest.raises(ValidationError, match="configured together"):
         Settings(admin_username="admin")
-    with pytest.raises(ValidationError, match="at least 12"):
-        Settings(admin_username="admin", admin_password="short")
+
+
+def test_database_settings_ignore_unrelated_invalid_app_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./data/migration.sqlite3")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "short")
+
+    settings = DatabaseSettings(_env_file=None)
+
+    assert settings.database_url.endswith("migration.sqlite3")
 
 
 def test_agent_runtime_rejects_unknown_mode() -> None:

@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class DatabaseSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -15,10 +15,13 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    database_url: str = "sqlite+aiosqlite:///./data/slim_guard.sqlite3"
+
+
+class Settings(DatabaseSettings):
     app_env: str = "development"
     http_host: str = "0.0.0.0"
     http_port: int = Field(default=8000, ge=1, le=65535)
-    database_url: str = "sqlite+aiosqlite:///./data/slim_guard.sqlite3"
     wecom_api_base_url: str = "https://qyapi.weixin.qq.com"
     wecom_corp_id: str = ""
     wecom_kf_secret: str = ""
@@ -95,8 +98,6 @@ class Settings(BaseSettings):
     def validate_admin_credentials(self) -> Settings:
         if bool(self.admin_username) != bool(self.admin_password):
             raise ValueError("Admin username and password must be configured together")
-        if self.admin_password and len(self.admin_password) < 12:
-            raise ValueError("Admin password must contain at least 12 characters")
         return self
 
     @cached_property
