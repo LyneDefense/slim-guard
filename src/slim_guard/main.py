@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 
 from slim_guard.agent.composition import (
     AgentRuntimeDefinition,
@@ -18,6 +18,7 @@ from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
 from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
+from slim_guard.api.admin_routes import router as admin_router
 from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
@@ -32,6 +33,7 @@ from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProt
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
 from slim_guard.observability.logging import configure_logging
+from slim_guard.observability.tracing import InteractionTraceRepository
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
 from slim_guard.services.harness_reply_agent import HarnessReplyAgent
@@ -119,7 +121,14 @@ def create_app(
         await database.create_schema()
         await AgentVersionRepository(database).register(agent_manifest)
         repository = MessageRepository(database)
+        traces = InteractionTraceRepository(database)
         await repository.backfill_users_from_messages()
+        backfilled_trace_count = await traces.backfill_existing()
+        if backfilled_trace_count:
+            logger.info(
+                "interaction_traces_backfilled",
+                extra={"trace_count": backfilled_trace_count},
+            )
 
         active_client = client
         if active_client is None and app_settings.wecom_api_is_configured:
@@ -162,6 +171,7 @@ def create_app(
                 active_reply_agent = HarnessReplyAgent(
                     runtime=active_runtime,
                     max_reply_chars=app_settings.agent_reply_max_chars,
+                    traces=traces,
                 )
         elif active_reply_agent is None and app_settings.zhipu_is_configured:
             owned_reply_agent = ZhipuReplyAgent(
@@ -219,6 +229,7 @@ def create_app(
                     app_settings.wecom_outbox_recovery_interval_seconds
                 ),
                 outbox_send_stale_seconds=app_settings.wecom_outbox_send_stale_seconds,
+                traces=traces,
             )
             watchdog_stop = asyncio.Event()
             watchdog_task = asyncio.create_task(
@@ -268,6 +279,7 @@ def create_app(
                     ),
                     max_attempts=app_settings.routine_max_attempts,
                     max_message_chars=app_settings.agent_reply_max_chars,
+                    traces=traces,
                 )
                 routine_stop = asyncio.Event()
                 routine_task = asyncio.create_task(
@@ -302,6 +314,7 @@ def create_app(
 
         app.state.settings = app_settings
         app.state.database = database
+        app.state.traces = traces
         app.state.agent_runtime = active_runtime
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
@@ -345,7 +358,20 @@ def create_app(
         docs_url=None if app_settings.app_env == "production" else "/docs",
         redoc_url=None,
     )
+
+    @application.middleware("http")
+    async def disable_admin_response_cache(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        response = await call_next(request)
+        if request.url.path.startswith("/api/admin"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
     application.include_router(router)
+    application.include_router(admin_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode

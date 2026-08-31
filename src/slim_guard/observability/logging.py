@@ -5,6 +5,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from slim_guard.observability.tracing import current_trace_id
+
 _STANDARD_FIELDS = {
     "args",
     "asctime",
@@ -39,6 +41,9 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        trace_id = current_trace_id()
+        if trace_id is not None:
+            payload["trace_id"] = trace_id
         payload.update(
             {
                 key: value

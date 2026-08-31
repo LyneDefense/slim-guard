@@ -5,12 +5,15 @@ from datetime import UTC, datetime, timedelta
 
 from slim_guard.agent.runtime import AgentRuntimeProtocol, AgentRuntimeRequest
 from slim_guard.harness.termination import HarnessTermination
+from slim_guard.observability.tracing import InteractionTraceRepository
 from slim_guard.services.reply_agent import ReplyRequest
 from slim_guard.tools.contracts import ToolExecutionMode
 
 
 class HarnessReplyError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
 
 
 class HarnessReplyAgent:
@@ -23,6 +26,7 @@ class HarnessReplyAgent:
         max_reply_chars: int,
         turn_timeout_seconds: float = 120,
         clock: Callable[[], datetime] | None = None,
+        traces: InteractionTraceRepository | None = None,
     ) -> None:
         if max_reply_chars < 1:
             raise ValueError("Harness reply length must be positive")
@@ -32,6 +36,7 @@ class HarnessReplyAgent:
         self._max_reply_chars = max_reply_chars
         self._turn_timeout = timedelta(seconds=turn_timeout_seconds)
         self._clock = clock or self._utc_now
+        self._traces = traces
 
     async def generate_reply(self, request: ReplyRequest) -> str:
         if request.text is None and request.image_bytes is None:
@@ -52,6 +57,54 @@ class HarnessReplyAgent:
                 execution_mode=ToolExecutionMode.LIVE,
             )
         )
+        if request.trace_id is not None and self._traces is not None:
+            await self._traces.attach_agent_turn(
+                trace_id=request.trace_id,
+                turn_id=result.turn_id,
+                agent_version_id=result.agent_version_id,
+            )
+            await self._traces.record_event(
+                trace_id=request.trace_id,
+                component="agent",
+                operation="turn_finished",
+                status=(
+                    "completed"
+                    if result.termination is HarnessTermination.FINAL_RESPONSE
+                    else "waiting"
+                    if result.termination
+                    in {
+                        HarnessTermination.WAITING_USER_CONFIRMATION,
+                        HarnessTermination.WAITING_HUMAN_REVIEW,
+                    }
+                    else "failed"
+                ),
+                attributes={
+                    "turn_id": result.turn_id,
+                    "termination": result.termination.value,
+                    "agent_version_id": result.agent_version_id,
+                    "failure_code": result.failure_code,
+                },
+                error_code=result.failure_code,
+            )
+            if result.termination is HarnessTermination.FINAL_RESPONSE:
+                await self._traces.mark_generation(
+                    trace_id=request.trace_id,
+                    status="succeeded",
+                    reply_kind="agent",
+                )
+            elif result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
+                await self._traces.mark_generation(
+                    trace_id=request.trace_id,
+                    status="waiting",
+                    reply_kind="confirmation",
+                )
+            else:
+                await self._traces.mark_generation(
+                    trace_id=request.trace_id,
+                    status="failed",
+                    reply_kind="agent",
+                    failure_code=result.failure_code or result.termination.value,
+                )
         if result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
             return (
                 "这项操作会更改或清空已保存的数据，需要你再次明确确认。"
@@ -63,7 +116,8 @@ class HarnessReplyAgent:
             or not result.final_text.strip()
         ):
             raise HarnessReplyError(
-                f"Harness Turn ended without a reply: {result.termination.value}"
+                f"Harness Turn ended without a reply: {result.termination.value}",
+                failure_code=result.failure_code or result.termination.value,
             )
         return result.final_text.strip()[: self._max_reply_chars]
 

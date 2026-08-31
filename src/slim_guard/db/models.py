@@ -32,6 +32,17 @@ class Base(DeclarativeBase):
     pass
 
 
+class SchemaMigrationRecord(Base):
+    """Records application-owned schema migrations applied to a deployed database."""
+
+    __tablename__ = "schema_migrations"
+
+    version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class AgentVersionRecord(Base):
     __tablename__ = "agent_versions"
 
@@ -773,3 +784,110 @@ class OutboundMessage(Base):
         DateTime(timezone=True), nullable=True
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InteractionTraceRecord(Base):
+    """One user-scoped causal chain that may produce a user-visible message."""
+
+    __tablename__ = "interaction_traces"
+    __table_args__ = (
+        UniqueConstraint(
+            "outbound_idempotency_key",
+            name="uq_interaction_trace_outbound",
+        ),
+        UniqueConstraint("routine_job_id", name="uq_interaction_trace_routine_job"),
+        Index("ix_interaction_trace_user_created", "user_id", "created_at"),
+        Index("ix_interaction_trace_generation", "generation_status"),
+        Index("ix_interaction_trace_delivery", "delivery_status"),
+        Index("ix_interaction_trace_turn", "agent_turn_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    trigger_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    inbound_msgid: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    outbound_idempotency_key: Mapped[str | None] = mapped_column(
+        ForeignKey("outbound_messages.idempotency_key", ondelete="SET NULL"), nullable=True
+    )
+    routine_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("routine_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_version_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    reply_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    generation_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending"
+    )
+    delivery_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="planned"
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TraceSpanRecord(Base):
+    """A timed, observable component operation within an interaction trace."""
+
+    __tablename__ = "trace_spans"
+    __table_args__ = (
+        UniqueConstraint("trace_id", "sequence", name="uq_trace_span_sequence"),
+        Index("ix_trace_span_trace_started", "trace_id", "started_at"),
+        Index("ix_trace_span_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    trace_id: Mapped[str] = mapped_column(
+        ForeignKey("interaction_traces.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_span_id: Mapped[str | None] = mapped_column(
+        ForeignKey("trace_spans.id", ondelete="SET NULL"), nullable=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    component: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    attributes_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdminAuditEventRecord(Base):
+    """Append-only audit record for access to sensitive admin resources."""
+
+    __tablename__ = "admin_audit_events"
+    __table_args__ = (
+        Index("ix_admin_audit_created", "created_at"),
+        Index("ix_admin_audit_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        ForeignKey("interaction_traces.id", ondelete="SET NULL"), nullable=True
+    )
+    remote_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )

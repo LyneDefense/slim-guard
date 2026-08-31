@@ -11,6 +11,11 @@ from slim_guard.db.repositories import ConversationRef, MessageRepository, Outbo
 from slim_guard.integrations.wecom_kf.client import WeComClientProtocol
 from slim_guard.integrations.wecom_kf.errors import WeComAPIError, WeComTransportError
 from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
+from slim_guard.observability.tracing import (
+    InteractionTraceRepository,
+    TraceSpanRef,
+    bind_trace,
+)
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.reply_agent import ReplyAgentProtocol, ReplyRequest
 
@@ -33,6 +38,7 @@ class AgentReplySyncService:
         media_max_bytes: int = 10_485_760,
         outbox_recovery_interval_seconds: int = 30,
         outbox_send_stale_seconds: int = 120,
+        traces: InteractionTraceRepository | None = None,
     ) -> None:
         self.client = client
         self.repository = repository
@@ -46,6 +52,7 @@ class AgentReplySyncService:
         self.media_max_bytes = media_max_bytes
         self.outbox_recovery_interval_seconds = outbox_recovery_interval_seconds
         self.outbox_send_stale = timedelta(seconds=outbox_send_stale_seconds)
+        self.traces = traces or InteractionTraceRepository(repository.database)
         self._locks: defaultdict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
         self._allowed_message_types = frozenset({"text", "image"})
 
@@ -225,7 +232,19 @@ class AgentReplySyncService:
             )
 
     async def _dispatch(self, plan: OutboundPlan) -> None:
+        trace_id = plan.trace_id or await self.traces.find_by_outbound(plan.idempotency_key)
+        if trace_id != plan.trace_id:
+            plan = replace(plan, trace_id=trace_id)
+        with bind_trace(trace_id):
+            await self._dispatch_traced(plan)
+
+    async def _dispatch_traced(self, plan: OutboundPlan) -> None:
         user_ref = hashlib.sha256(plan.external_userid.encode()).hexdigest()[:12]
+        state_span = await self._start_span(
+            plan,
+            component="wecom",
+            operation="ensure_agent_control",
+        )
         try:
             state = await self.state_machine.ensure_agent_control(
                 ConversationRef(
@@ -235,10 +254,22 @@ class AgentReplySyncService:
                 )
             )
         except WeComTransportError as exc:
+            await self._finish_span(
+                state_span,
+                status="failed",
+                error_code="wecom_transport_error",
+                error_detail=type(exc).__name__,
+            )
             await self.repository.complete(
                 plan.idempotency_key,
                 status="unknown",
                 last_error=type(exc).__name__,
+            )
+            await self._mark_delivery(
+                plan,
+                "unknown",
+                failure_code="service_state_unknown",
+                error_detail=type(exc).__name__,
             )
             logger.warning(
                 "wecom_service_state_result_unknown",
@@ -246,10 +277,22 @@ class AgentReplySyncService:
             )
             return
         except WeComAPIError as exc:
+            await self._finish_span(
+                state_span,
+                status="failed",
+                error_code=f"wecom_api_error:{exc.errcode}",
+                error_detail=exc.errmsg,
+            )
             await self.repository.complete(
                 plan.idempotency_key,
                 status="failed",
                 last_error=f"{exc.errcode}:{exc.errmsg}",
+            )
+            await self._mark_delivery(
+                plan,
+                "failed",
+                failure_code=f"wecom_api_error:{exc.errcode}",
+                error_detail=exc.errmsg,
             )
             logger.warning(
                 "wecom_service_state_failed",
@@ -261,11 +304,21 @@ class AgentReplySyncService:
             )
             return
 
+        await self._finish_span(
+            state_span,
+            attributes={"service_state": int(state) if state is not None else None},
+        )
+
         if state is not WeComServiceState.SMART_ASSISTANT:
             await self.repository.complete(
                 plan.idempotency_key,
                 status="deferred_external_session",
                 last_error=f"service_state:{int(state) if state is not None else 'unknown'}",
+            )
+            await self._mark_delivery(
+                plan,
+                "deferred_external_session",
+                failure_code="external_session_not_agent",
             )
             logger.warning(
                 "wecom_reply_deferred_by_service_state",
@@ -279,6 +332,7 @@ class AgentReplySyncService:
 
         if plan.requires_review:
             plan = await self._prepare_reply(plan, user_ref=user_ref)
+            await self._mark_delivery(plan, "pending_review")
             logger.info(
                 "slim_guard_reply_pending_internal_review",
                 extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
@@ -290,7 +344,16 @@ class AgentReplySyncService:
 
     async def _prepare_reply(self, plan: OutboundPlan, *, user_ref: str) -> OutboundPlan:
         if plan.input_text is None and plan.image_media_id is None:
+            if plan.trace_id is not None:
+                await self.traces.mark_generation_unknown_if_pending(trace_id=plan.trace_id)
             return plan
+        generation_span = await self._start_span(
+            plan,
+            component="agent",
+            operation="generate_reply",
+        )
+        if plan.trace_id is not None:
+            await self.traces.mark_generation(trace_id=plan.trace_id, status="running")
         try:
             user = await self.repository.get_user_context(
                 channel_id=plan.channel_id,
@@ -301,9 +364,29 @@ class AgentReplySyncService:
             image_bytes: bytes | None = None
             image_mime_type: str | None = None
             if plan.image_media_id is not None:
-                media = await self.client.download_media(
-                    media_id=plan.image_media_id,
-                    max_bytes=self.media_max_bytes,
+                media_span = await self._start_span(
+                    plan,
+                    component="wecom",
+                    operation="download_media",
+                )
+                try:
+                    media = await self.client.download_media(
+                        media_id=plan.image_media_id,
+                        max_bytes=self.media_max_bytes,
+                    )
+                except Exception as exc:
+                    await self._finish_span(
+                        media_span,
+                        status="failed",
+                        error_code=type(exc).__name__,
+                    )
+                    raise
+                await self._finish_span(
+                    media_span,
+                    attributes={
+                        "mime_type": media.content_type,
+                        "size_bytes": len(media.content),
+                    },
                 )
                 image_bytes = media.content
                 image_mime_type = media.content_type
@@ -317,22 +400,50 @@ class AgentReplySyncService:
                     source_message_id=plan.inbound_msgid,
                     channel_id=plan.channel_id,
                     occurred_at=plan.occurred_at,
+                    trace_id=plan.trace_id,
                 )
             )
             if not content.strip():
                 raise RuntimeError("Reply agent returned empty content")
-        except Exception:
+        except Exception as exc:
             content = self.fallback_reply_text
+            failure_code = str(getattr(exc, "failure_code", None) or type(exc).__name__)
+            await self._finish_span(
+                generation_span,
+                status="failed",
+                error_code=failure_code,
+            )
+            if plan.trace_id is not None:
+                await self.traces.mark_generation(
+                    trace_id=plan.trace_id,
+                    status="degraded",
+                    reply_kind="fallback",
+                    failure_code=failure_code,
+                    error_detail="Agent reply generation failed; fallback selected.",
+                )
             logger.exception(
                 "slim_guard_agent_reply_failed",
                 extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
             )
+        else:
+            await self._finish_span(generation_span)
+            if plan.trace_id is not None:
+                await self.traces.mark_generation_succeeded_if_running(
+                    trace_id=plan.trace_id,
+                )
         await self.repository.update_outbound_content(plan.idempotency_key, content)
         return replace(plan, content=content, input_text=None, image_media_id=None)
 
     async def _send(self, plan: OutboundPlan, *, user_ref: str) -> None:
         if not await self.repository.claim(plan):
             return
+        await self._mark_delivery(plan, "sending")
+        send_span = await self._start_span(
+            plan,
+            component="wecom",
+            operation="send_text",
+            attributes={"platform_msgid": plan.platform_msgid},
+        )
         try:
             await self.client.send_text(
                 external_userid=plan.external_userid,
@@ -341,20 +452,44 @@ class AgentReplySyncService:
                 msgid=plan.platform_msgid,
             )
         except WeComTransportError as exc:
+            await self._finish_span(
+                send_span,
+                status="failed",
+                error_code="wecom_transport_error",
+                error_detail=type(exc).__name__,
+            )
             await self.repository.complete(
                 plan.idempotency_key,
                 status="unknown",
                 last_error=type(exc).__name__,
+            )
+            await self._mark_delivery(
+                plan,
+                "unknown",
+                failure_code="wecom_transport_error",
+                error_detail=type(exc).__name__,
             )
             logger.warning(
                 "wecom_send_result_unknown",
                 extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
             )
         except WeComAPIError as exc:
+            await self._finish_span(
+                send_span,
+                status="failed",
+                error_code=f"wecom_api_error:{exc.errcode}",
+                error_detail=exc.errmsg,
+            )
             await self.repository.complete(
                 plan.idempotency_key,
                 status="failed",
                 last_error=f"{exc.errcode}:{exc.errmsg}",
+            )
+            await self._mark_delivery(
+                plan,
+                "failed",
+                failure_code=f"wecom_api_error:{exc.errcode}",
+                error_detail=exc.errmsg,
             )
             logger.warning(
                 "wecom_send_failed",
@@ -365,11 +500,66 @@ class AgentReplySyncService:
                 },
             )
         else:
+            await self._finish_span(send_span)
             await self.repository.complete(plan.idempotency_key, status="accepted")
+            await self._mark_delivery(plan, "accepted")
             logger.info(
                 "wecom_agent_reply_accepted",
                 extra={"message_id": plan.platform_msgid, "user_ref": user_ref},
             )
+
+    async def _start_span(
+        self,
+        plan: OutboundPlan,
+        *,
+        component: str,
+        operation: str,
+        attributes: dict[str, object] | None = None,
+    ) -> TraceSpanRef | None:
+        if plan.trace_id is None:
+            return None
+        return await self.traces.start_span(
+            trace_id=plan.trace_id,
+            component=component,
+            operation=operation,
+            attributes=attributes,
+        )
+
+    async def _finish_span(
+        self,
+        span: TraceSpanRef | None,
+        *,
+        status: str = "completed",
+        attributes: dict[str, object] | None = None,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        if span is None:
+            return
+        await self.traces.finish_span(
+            span,
+            status=status,
+            attributes=attributes,
+            error_code=error_code,
+            error_detail=error_detail,
+        )
+
+    async def _mark_delivery(
+        self,
+        plan: OutboundPlan,
+        status: str,
+        *,
+        failure_code: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        if plan.trace_id is None:
+            return
+        await self.traces.mark_delivery(
+            trace_id=plan.trace_id,
+            status=status,
+            failure_code=failure_code,
+            error_detail=error_detail,
+        )
 
 
 # Temporary compatibility alias for callers that still import the Phase 1 name.

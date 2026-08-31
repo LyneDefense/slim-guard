@@ -14,7 +14,9 @@ from slim_guard.db.models import (
     AgentItemRedactionRecord,
     AgentTurnRecord,
     MemoryHandoffRecord,
+    OutboundMessage,
     PendingActionRecord,
+    ProactiveMessageRecord,
     ToolExecutionRecord,
     UserMemoryFactRecord,
 )
@@ -41,6 +43,8 @@ class TranscriptScrubResult:
     item_count: int
     tool_execution_count: int
     pending_action_count: int
+    outbound_message_count: int
+    proactive_message_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,11 +139,43 @@ class MemoryLifecycleRepository:
                 action.canonical_arguments_json = self.redacted_json(
                     action.canonical_arguments_json
                 )
+            outbound_messages = tuple(
+                await session.scalars(
+                    select(OutboundMessage)
+                    .where(
+                        OutboundMessage.completed_at <= cutoff,
+                        OutboundMessage.status.in_(
+                            ("accepted", "failed", "unknown", "deferred_external_session")
+                        ),
+                        ~OutboundMessage.content.like("[redacted:sha256=%"),
+                    )
+                    .order_by(OutboundMessage.completed_at, OutboundMessage.idempotency_key)
+                    .limit(limit)
+                )
+            )
+            for message in outbound_messages:
+                message.content = self.redacted_text(message.content)
+            proactive_messages = tuple(
+                await session.scalars(
+                    select(ProactiveMessageRecord)
+                    .where(
+                        ProactiveMessageRecord.completed_at <= cutoff,
+                        ProactiveMessageRecord.status.in_(("accepted", "failed", "unknown")),
+                        ~ProactiveMessageRecord.content.like("[redacted:sha256=%"),
+                    )
+                    .order_by(ProactiveMessageRecord.completed_at, ProactiveMessageRecord.job_id)
+                    .limit(limit)
+                )
+            )
+            for proactive_message in proactive_messages:
+                proactive_message.content = self.redacted_text(proactive_message.content)
             await session.flush()
             return TranscriptScrubResult(
                 item_count=len(items),
                 tool_execution_count=len(executions),
                 pending_action_count=len(actions),
+                outbound_message_count=len(outbound_messages),
+                proactive_message_count=len(proactive_messages),
             )
 
     async def purge_revoked_values(self, *, before: datetime) -> int:
@@ -307,6 +343,10 @@ class MemoryLifecycleRepository:
             separators=(",", ":"),
             sort_keys=True,
         )
+
+    @classmethod
+    def redacted_text(cls, value: str) -> str:
+        return f"[redacted:sha256={cls._sha256(value)}]"
 
     @classmethod
     def matches_redacted_json(cls, stored_json: str, expected_json: str) -> bool:

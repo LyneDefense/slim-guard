@@ -4,6 +4,7 @@ import json
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
@@ -18,6 +19,7 @@ from slim_guard.agent_models.vision import (
     VisionInspectionResponse,
 )
 from slim_guard.config import Settings
+from slim_guard.db.models import InteractionTraceRecord, TraceSpanRecord
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.repository import AgentVersionRepository
@@ -277,6 +279,16 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
         stored_manifest = await AgentVersionRepository(app.state.database).get(
             app.state.agent_manifest.version_id
         )
+        async with app.state.database.session() as session:
+            trace = await session.scalar(select(InteractionTraceRecord))
+            assert trace is not None
+            spans = tuple(
+                await session.scalars(
+                    select(TraceSpanRecord)
+                    .where(TraceSpanRecord.trace_id == trace.id)
+                    .order_by(TraceSpanRecord.sequence)
+                )
+            )
 
         assert response.status_code == 200
         assert [sent.content for sent in fake.sent] == [
@@ -286,6 +298,16 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
         assert stored_manifest is not None
         assert len(trend.records) == 1
         assert trend.records[0].weight_grams == 77_600
+        assert trace.agent_turn_id == trend.records[0].source_turn_id
+        assert trace.generation_status == "succeeded"
+        assert trace.delivery_status == "accepted"
+        assert {span.operation for span in spans} >= {
+            "message_ingested",
+            "ensure_agent_control",
+            "generate_reply",
+            "turn_finished",
+            "send_text",
+        }
         model.assert_exhausted()
 
     assert model.closed is False

@@ -56,6 +56,16 @@ def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
         Settings(wecom_proactive_max_messages=6)
 
 
+def test_admin_credentials_are_complete_and_long_enough() -> None:
+    settings = Settings(admin_username="admin", admin_password="a-secure-password")
+    assert settings.admin_is_configured is True
+
+    with pytest.raises(ValidationError, match="configured together"):
+        Settings(admin_username="admin")
+    with pytest.raises(ValidationError, match="at least 12"):
+        Settings(admin_username="admin", admin_password="short")
+
+
 def test_agent_runtime_rejects_unknown_mode() -> None:
     with pytest.raises(ValidationError):
         Settings(agent_runtime_mode="unknown")

@@ -25,6 +25,10 @@ from slim_guard.harness.termination import HarnessTermination
 from slim_guard.integrations.wecom_kf.client import WeComClientProtocol
 from slim_guard.integrations.wecom_kf.errors import WeComAPIError, WeComTransportError
 from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
+from slim_guard.observability.tracing import (
+    InteractionTraceRepository,
+    bind_trace,
+)
 from slim_guard.services.proactive_delivery import (
     ProactiveDeliveryPolicy,
     ProactiveDeliveryRepository,
@@ -63,6 +67,7 @@ class RoutineSchedulerService:
         agent_timeout: timedelta = timedelta(seconds=45),
         max_attempts: int = 3,
         max_message_chars: int = 1500,
+        traces: InteractionTraceRepository | None = None,
     ) -> None:
         if interval_seconds < 1:
             raise ValueError("Routine scheduler interval must be positive")
@@ -84,6 +89,7 @@ class RoutineSchedulerService:
         self._agent_timeout = agent_timeout
         self._max_attempts = max_attempts
         self._max_message_chars = max_message_chars
+        self._traces = traces
 
     async def run_forever(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -131,12 +137,46 @@ class RoutineSchedulerService:
         return completed
 
     async def _handle(self, job: RoutineJobRef, *, now: datetime) -> None:
+        trace_id = (
+            await self._traces.ensure_routine_trace(
+                user_id=job.user_id,
+                routine_job_id=job.id,
+                trigger_type=self._trigger(job.kind).value,
+            )
+            if self._traces is not None
+            else None
+        )
+        with bind_trace(trace_id):
+            try:
+                await self._handle_traced(job, now=now, trace_id=trace_id)
+            except Exception as exc:
+                if self._traces is not None and trace_id is not None:
+                    await self._traces.mark_generation(
+                        trace_id=trace_id,
+                        status="failed",
+                        failure_code=type(exc).__name__,
+                        error_detail="Routine processing failed.",
+                    )
+                    await self._traces.mark_delivery(
+                        trace_id=trace_id,
+                        status="failed",
+                        failure_code=type(exc).__name__,
+                    )
+                raise
+
+    async def _handle_traced(
+        self,
+        job: RoutineJobRef,
+        *,
+        now: datetime,
+        trace_id: str | None,
+    ) -> None:
         if now - job.scheduled_for > self._max_lateness:
-            await self._finish_skipped(job, "stale_schedule", now)
+            await self._finish_skipped(job, "stale_schedule", now, trace_id=trace_id)
             return
         preference = await self._preferences.get(job.user_id)
         if preference is None or preference.time_for(job.kind) is None:
-            await self._finish_skipped(job, "routine_disabled", now)
+            await self._finish_skipped(job, "routine_disabled", now, trace_id=trace_id)
             return
         checkins = await self._checkins.get(
             user_id=job.user_id,
@@ -144,17 +184,19 @@ class RoutineSchedulerService:
             timezone=preference.timezone,
         )
         if job.kind is ReminderKind.WEIGHT and checkins.has_weight:
-            await self._finish_skipped(job, "weight_already_recorded", now)
+            await self._finish_skipped(
+                job, "weight_already_recorded", now, trace_id=trace_id
+            )
             return
         if job.kind is ReminderKind.MEAL and checkins.has_meal:
-            await self._finish_skipped(job, "meal_already_recorded", now)
+            await self._finish_skipped(job, "meal_already_recorded", now, trace_id=trace_id)
             return
 
         delivery = await self._deliveries.get(job.id)
         if delivery is None:
             eligibility = await self._policy.evaluate(user_id=job.user_id, now=now)
             if not eligibility.allowed or eligibility.route is None:
-                await self._finish_skipped(job, eligibility.code, now)
+                await self._finish_skipped(job, eligibility.code, now, trace_id=trace_id)
                 return
             route = eligibility.route
         else:
@@ -167,11 +209,25 @@ class RoutineSchedulerService:
             )
         )
         if service_state is not WeComServiceState.SMART_ASSISTANT:
-            await self._finish_skipped(job, "external_session_not_agent", now)
+            await self._finish_skipped(
+                job, "external_session_not_agent", now, trace_id=trace_id
+            )
             return
 
         result_turn_id: str
         if delivery is None:
+            agent_span = (
+                await self._traces.start_span(
+                    trace_id=trace_id,
+                    component="agent",
+                    operation="generate_scheduled_reply",
+                    attributes={"job_kind": job.kind.value},
+                )
+                if self._traces is not None and trace_id is not None
+                else None
+            )
+            if self._traces is not None and trace_id is not None:
+                await self._traces.mark_generation(trace_id=trace_id, status="running")
             result = await self._runtime.run_scheduled(
                 AgentScheduledRequest(
                     user_id=job.user_id,
@@ -179,11 +235,32 @@ class RoutineSchedulerService:
                     deadline_at=now + self._agent_timeout,
                 )
             )
+            if self._traces is not None and trace_id is not None:
+                await self._traces.attach_agent_turn(
+                    trace_id=trace_id,
+                    turn_id=result.turn_id,
+                    agent_version_id=result.agent_version_id,
+                )
             if (
                 result.termination is not HarnessTermination.FINAL_RESPONSE
                 or result.final_text is None
                 or not result.final_text.strip()
             ):
+                if self._traces is not None and trace_id is not None:
+                    if agent_span is not None:
+                        await self._traces.finish_span(
+                            agent_span,
+                            status="failed",
+                            error_code=result.failure_code or result.termination.value,
+                            attributes={"termination": result.termination.value},
+                        )
+                    await self._traces.mark_generation(
+                        trace_id=trace_id,
+                        status="failed",
+                        reply_kind="agent",
+                        failure_code=result.failure_code or result.termination.value,
+                    )
+                    await self._traces.mark_delivery(trace_id=trace_id, status="skipped")
                 await self._jobs.finish(
                     job_id=job.id,
                     status=RoutineJobStatus.FAILED,
@@ -192,6 +269,17 @@ class RoutineSchedulerService:
                     completed_at=now,
                 )
                 return
+            if self._traces is not None and trace_id is not None:
+                if agent_span is not None:
+                    await self._traces.finish_span(
+                        agent_span,
+                        attributes={"termination": result.termination.value},
+                    )
+                await self._traces.mark_generation(
+                    trace_id=trace_id,
+                    status="succeeded",
+                    reply_kind="proactive",
+                )
             delivery = await self._deliveries.prepare(
                 job_id=job.id,
                 route=route,
@@ -203,6 +291,8 @@ class RoutineSchedulerService:
             result_turn_id = delivery.source_turn_id
 
         if delivery.status is ProactiveDeliveryStatus.ACCEPTED:
+            if self._traces is not None and trace_id is not None:
+                await self._traces.mark_delivery(trace_id=trace_id, status="accepted")
             await self._jobs.finish(
                 job_id=job.id,
                 status=RoutineJobStatus.COMPLETED,
@@ -215,6 +305,12 @@ class RoutineSchedulerService:
             ProactiveDeliveryStatus.UNKNOWN,
             ProactiveDeliveryStatus.FAILED,
         }:
+            if self._traces is not None and trace_id is not None:
+                await self._traces.mark_delivery(
+                    trace_id=trace_id,
+                    status=delivery.status.value,
+                    failure_code=f"delivery_{delivery.status.value}",
+                )
             await self._jobs.finish(
                 job_id=job.id,
                 status=RoutineJobStatus.FAILED,
@@ -229,6 +325,18 @@ class RoutineSchedulerService:
             retry_after=self._send_retry_after,
         ):
             raise RuntimeError(f"Delivery is not claimable: {delivery.status.value}")
+        if self._traces is not None and trace_id is not None:
+            await self._traces.mark_delivery(trace_id=trace_id, status="sending")
+        send_span = (
+            await self._traces.start_span(
+                trace_id=trace_id,
+                component="wecom",
+                operation="send_proactive_text",
+                attributes={"platform_msgid": delivery.platform_msgid},
+            )
+            if self._traces is not None and trace_id is not None
+            else None
+        )
         try:
             await self._client.send_text(
                 external_userid=route.external_userid,
@@ -237,6 +345,18 @@ class RoutineSchedulerService:
                 msgid=delivery.platform_msgid,
             )
         except WeComTransportError as exc:
+            if self._traces is not None and trace_id is not None:
+                if send_span is not None:
+                    await self._traces.finish_span(
+                        send_span,
+                        status="failed",
+                        error_code="wecom_transport_error",
+                    )
+                await self._traces.mark_delivery(
+                    trace_id=trace_id,
+                    status="unknown",
+                    failure_code="wecom_transport_error",
+                )
             await self._deliveries.complete(
                 job_id=job.id,
                 status=ProactiveDeliveryStatus.UNKNOWN,
@@ -251,6 +371,18 @@ class RoutineSchedulerService:
                 completed_at=now,
             )
         except WeComAPIError as exc:
+            if self._traces is not None and trace_id is not None:
+                if send_span is not None:
+                    await self._traces.finish_span(
+                        send_span,
+                        status="failed",
+                        error_code=f"wecom_api_error:{exc.errcode}",
+                    )
+                await self._traces.mark_delivery(
+                    trace_id=trace_id,
+                    status="failed",
+                    failure_code=f"wecom_api_error:{exc.errcode}",
+                )
             await self._deliveries.complete(
                 job_id=job.id,
                 status=ProactiveDeliveryStatus.FAILED,
@@ -265,6 +397,10 @@ class RoutineSchedulerService:
                 completed_at=now,
             )
         else:
+            if self._traces is not None and trace_id is not None:
+                if send_span is not None:
+                    await self._traces.finish_span(send_span)
+                await self._traces.mark_delivery(trace_id=trace_id, status="accepted")
             await self._deliveries.complete(
                 job_id=job.id,
                 status=ProactiveDeliveryStatus.ACCEPTED,
@@ -291,7 +427,29 @@ class RoutineSchedulerService:
         job: RoutineJobRef,
         code: str,
         now: datetime,
+        *,
+        trace_id: str | None = None,
     ) -> None:
+        if self._traces is not None and trace_id is not None:
+            await self._traces.mark_generation(
+                trace_id=trace_id,
+                status="skipped",
+                reply_kind="none",
+                failure_code=code,
+            )
+            await self._traces.mark_delivery(
+                trace_id=trace_id,
+                status="skipped",
+                failure_code=code,
+            )
+            await self._traces.record_event(
+                trace_id=trace_id,
+                component="routine",
+                operation="job_skipped",
+                status="skipped",
+                attributes={"reason": code},
+                error_code=code,
+            )
         await self._jobs.finish(
             job_id=job.id,
             status=RoutineJobStatus.SKIPPED,

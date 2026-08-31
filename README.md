@@ -259,6 +259,24 @@ docker compose up --build
 Compose 会读取当前目录的 `.env`，并把 SQLite 数据保存在 Docker 命名卷 `slim_guard_data`。
 默认只把服务绑定到宿主机的 `127.0.0.1:18083`，供同机 Nginx 反向代理，不直接暴露公网端口。
 
+## 用户级 Trace 管理后台
+
+项目包含一个独立的 React + TypeScript 前端。默认入口 `/admin/users` 先展示用户列表，进入
+用户后可以查看该用户独立的输出 Trace、模型和工具时间线、最终投递、记忆、健康记录及提醒。
+无法归属用户的运行故障仍保留在结构化服务日志中，不会错误关联给某个用户。
+
+后台认证统一由 FastAPI 负责：登录页提交 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 后，后端签发
+短时、签名的 `HttpOnly` Session Cookie；Nginx 不保存密码，也不需要 htpasswd。React 容器
+默认绑定 `127.0.0.1:18084`，API 继续使用 `127.0.0.1:18083`。完整的首次部署、SQLite 备份、
+迁移、Nginx 配置和验证步骤见 [管理后台部署说明](./ADMIN_WEB_DEPLOYMENT.md)，可合并的配置示例
+见 [`deploy/nginx/slim-guard.conf.example`](./deploy/nginx/slim-guard.conf.example)。
+
+数据库升级由版本化迁移账本管理，也可以在启动前显式执行：
+
+```bash
+docker compose run --rm app python -m slim_guard.db.migrate
+```
+
 ## 设计文档
 
 - [Phase 1 实现设计](./PHASE1_PYTHON_CHANNEL_SPIKE.md)

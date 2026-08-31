@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from slim_guard.db.models import Base
+from slim_guard.db.migrations import migrate
 
 
 class Database:
@@ -32,8 +32,11 @@ class Database:
         Path(path_text).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
     async def create_schema(self) -> None:
+        await self.migrate()
+
+    async def migrate(self) -> tuple[str, ...]:
         async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+            return await migrate(connection)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +39,9 @@ class Settings(BaseSettings):
         "SlimGuard 减脂助手会继续为你服务。"
     )
     log_level: str = "INFO"
+    admin_username: str = ""
+    admin_password: str = ""
+    admin_session_ttl_hours: int = Field(default=12, ge=1, le=168)
     callback_body_limit_bytes: int = Field(default=1_048_576, ge=1024)
     wecom_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     wecom_media_max_bytes: int = Field(default=10_485_760, ge=1024, le=20_971_520)
@@ -88,6 +91,14 @@ class Settings(BaseSettings):
     def wecom_api_is_configured(self) -> bool:
         return all((self.wecom_corp_id, self.wecom_kf_secret, self.wecom_open_kf_id))
 
+    @model_validator(mode="after")
+    def validate_admin_credentials(self) -> Settings:
+        if bool(self.admin_username) != bool(self.admin_password):
+            raise ValueError("Admin username and password must be configured together")
+        if self.admin_password and len(self.admin_password) < 12:
+            raise ValueError("Admin password must contain at least 12 characters")
+        return self
+
     @cached_property
     def wecom_is_configured(self) -> bool:
         return self.wecom_callback_is_configured and self.wecom_api_is_configured
@@ -95,3 +106,7 @@ class Settings(BaseSettings):
     @cached_property
     def zhipu_is_configured(self) -> bool:
         return bool(self.zhipu_api_key)
+
+    @cached_property
+    def admin_is_configured(self) -> bool:
+        return bool(self.admin_username and self.admin_password)

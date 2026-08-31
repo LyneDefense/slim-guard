@@ -50,6 +50,8 @@ class MemoryMaintenanceService:
         item_count = 0
         execution_count = 0
         action_count = 0
+        outbound_count = 0
+        proactive_count = 0
         for _ in range(self._max_batches_per_run):
             batch = await self._lifecycle.scrub_transcript_bodies(
                 before=reference_time - self._transcript_retention,
@@ -59,11 +61,15 @@ class MemoryMaintenanceService:
             item_count += batch.item_count
             execution_count += batch.tool_execution_count
             action_count += batch.pending_action_count
+            outbound_count += batch.outbound_message_count
+            proactive_count += batch.proactive_message_count
             if (
                 max(
                     batch.item_count,
                     batch.tool_execution_count,
                     batch.pending_action_count,
+                    batch.outbound_message_count,
+                    batch.proactive_message_count,
                 )
                 < self._batch_size
             ):
@@ -77,6 +83,8 @@ class MemoryMaintenanceService:
                 item_count=item_count,
                 tool_execution_count=execution_count,
                 pending_action_count=action_count,
+                outbound_message_count=outbound_count,
+                proactive_message_count=proactive_count,
             ),
             revoked_value_count=revoked_count,
             expired_fact_count=expired_facts,
@@ -87,6 +95,8 @@ class MemoryMaintenanceService:
                 item_count,
                 execution_count,
                 action_count,
+                outbound_count,
+                proactive_count,
                 revoked_count,
                 expired_facts,
                 expired_handoffs,
@@ -98,6 +108,8 @@ class MemoryMaintenanceService:
                     "transcript_item_count": item_count,
                     "tool_execution_count": execution_count,
                     "pending_action_count": action_count,
+                    "outbound_message_count": outbound_count,
+                    "proactive_message_count": proactive_count,
                     "revoked_value_count": revoked_count,
                     "expired_fact_count": expired_facts,
                     "expired_handoff_count": expired_handoffs,

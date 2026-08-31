@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -11,8 +12,10 @@ from sqlalchemy.engine import CursorResult
 from slim_guard.db.models import (
     ChannelIdentity,
     InboundMessage,
+    InteractionTraceRecord,
     OutboundMessage,
     SlimGuardUser,
+    TraceSpanRecord,
     WeComConversation,
     WeComSyncState,
     new_uuid,
@@ -32,6 +35,7 @@ class OutboundPlan:
     open_kfid: str
     external_userid: str
     content: str
+    trace_id: str | None = None
     occurred_at: datetime | None = None
     requires_review: bool = False
     input_text: str | None = None
@@ -265,6 +269,7 @@ class MessageRepository:
                 ):
                     continue
                 assert message.external_userid is not None
+                assert identity is not None
                 idempotency_key = sha256(
                     f"{channel_id}:{message.msgid}:agent-reply-v1".encode()
                 ).hexdigest()
@@ -277,6 +282,7 @@ class MessageRepository:
                     open_kfid=open_kfid,
                     external_userid=message.external_userid,
                     content=fallback_reply_text,
+                    trace_id=new_uuid(),
                     occurred_at=datetime.fromtimestamp(message.send_time, tz=UTC),
                     requires_review=reply_delivery_mode == "internal_review",
                     input_text=input_text,
@@ -292,6 +298,35 @@ class MessageRepository:
                         external_userid=plan.external_userid,
                         content=plan.content,
                         status=("pending_review" if plan.requires_review else "planned"),
+                    )
+                )
+                session.add(
+                    InteractionTraceRecord(
+                        id=plan.trace_id,
+                        user_id=identity.user_id,
+                        trigger_type="user_message",
+                        channel_id=channel_id,
+                        inbound_msgid=message.msgid,
+                        outbound_idempotency_key=plan.idempotency_key,
+                        generation_status="pending",
+                        delivery_status=(
+                            "pending_review" if plan.requires_review else "planned"
+                        ),
+                    )
+                )
+                session.add(
+                    TraceSpanRecord(
+                        trace_id=plan.trace_id,
+                        sequence=1,
+                        component="wecom",
+                        operation="message_ingested",
+                        status="completed",
+                        attributes_json=json.dumps(
+                            {"message_type": message.msgtype},
+                            separators=(",", ":"),
+                        ),
+                        started_at=datetime.now(UTC),
+                        completed_at=datetime.now(UTC),
                     )
                 )
                 plans.append(plan)
@@ -390,8 +425,13 @@ class MessageRepository:
         if stale_before.utcoffset() is None:
             raise ValueError("Outbound recovery cutoff must be timezone-aware")
         async with self.database.session() as session:
-            rows = await session.scalars(
-                select(OutboundMessage)
+            rows = await session.execute(
+                select(OutboundMessage, InteractionTraceRecord.id)
+                .outerjoin(
+                    InteractionTraceRecord,
+                    InteractionTraceRecord.outbound_idempotency_key
+                    == OutboundMessage.idempotency_key,
+                )
                 .where(
                     or_(
                         (OutboundMessage.status == "planned")
@@ -414,8 +454,9 @@ class MessageRepository:
                     open_kfid=row.open_kfid,
                     external_userid=row.external_userid,
                     content=row.content,
+                    trace_id=trace_id,
                 )
-                for row in rows
+                for row, trace_id in rows
             ]
 
     async def complete(
@@ -577,6 +618,11 @@ class MessageRepository:
                 return None
             row = await session.get(OutboundMessage, idempotency_key)
             assert row is not None
+            trace_id = await session.scalar(
+                select(InteractionTraceRecord.id).where(
+                    InteractionTraceRecord.outbound_idempotency_key == idempotency_key
+                )
+            )
             return OutboundPlan(
                 idempotency_key=row.idempotency_key,
                 platform_msgid=row.platform_msgid,
@@ -585,12 +631,18 @@ class MessageRepository:
                 open_kfid=row.open_kfid,
                 external_userid=row.external_userid,
                 content=row.content,
+                trace_id=trace_id,
             )
 
     async def list_pending_reviews(self, *, limit: int = 100) -> list[OutboundPlan]:
         async with self.database.session() as session:
-            rows = await session.scalars(
-                select(OutboundMessage)
+            rows = await session.execute(
+                select(OutboundMessage, InteractionTraceRecord.id)
+                .outerjoin(
+                    InteractionTraceRecord,
+                    InteractionTraceRecord.outbound_idempotency_key
+                    == OutboundMessage.idempotency_key,
+                )
                 .where(OutboundMessage.status == "pending_review")
                 .order_by(OutboundMessage.created_at)
                 .limit(limit)
@@ -604,9 +656,10 @@ class MessageRepository:
                     open_kfid=row.open_kfid,
                     external_userid=row.external_userid,
                     content=row.content,
+                    trace_id=trace_id,
                     requires_review=True,
                 )
-                for row in rows
+                for row, trace_id in rows
             ]
 
     async def list_users(self, *, limit: int = 100) -> list[UserSummary]:

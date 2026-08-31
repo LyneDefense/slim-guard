@@ -40,6 +40,7 @@ class ReplyRequest:
     source_message_id: str | None = None
     channel_id: str | None = None
     occurred_at: datetime | None = None
+    trace_id: str | None = None
 
 
 class ReplyAgentProtocol(Protocol):
