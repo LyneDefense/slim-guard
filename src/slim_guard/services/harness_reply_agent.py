@@ -52,6 +52,11 @@ class HarnessReplyAgent:
                 execution_mode=ToolExecutionMode.LIVE,
             )
         )
+        if result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
+            return (
+                "这项操作会更改或清空已保存的数据，需要你再次明确确认。"
+                "请回复确认执行，或回复取消。"
+            )[: self._max_reply_chars]
         if (
             result.termination is not HarnessTermination.FINAL_RESPONSE
             or result.final_text is None

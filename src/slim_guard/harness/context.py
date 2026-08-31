@@ -87,8 +87,17 @@ class ContextCompiler:
                 ),
             ),
         ]
-        if authoritative_context:
-            messages.append(self._authoritative_context_message(authoritative_context))
+        trusted_context = authoritative_context or {}
+        working_memory = trusted_context.get("working_memory")
+        authoritative_facts = {
+            key: value
+            for key, value in trusted_context.items()
+            if key != "working_memory"
+        }
+        if authoritative_facts:
+            messages.append(self._authoritative_context_message(authoritative_facts))
+        if working_memory:
+            messages.append(self._working_memory_message(working_memory))
         messages.extend(self._input_message(item) for item in initialized.input_items)
         parameters = self._manifest.model_parameters_dict()
         request = ModelRequest(
@@ -131,6 +140,25 @@ class ContextCompiler:
         return ModelMessage(
             role=MessageRole.SYSTEM,
             content="权威用户事实（只读，可能为空；不得把缺失字段当作否定事实）：" + payload,
+        )
+
+    @staticmethod
+    def _working_memory_message(working_memory: Any) -> ModelMessage:
+        try:
+            payload = json.dumps(
+                working_memory,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ContextCompilationError("Working memory is not JSON serializable") from exc
+        return ModelMessage(
+            role=MessageRole.SYSTEM,
+            content=(
+                "近期对话工作记忆（非权威摘要，只用于承接指代；当前消息优先，"
+                "有歧义时必须询问）：" + payload
+            ),
         )
 
     @staticmethod

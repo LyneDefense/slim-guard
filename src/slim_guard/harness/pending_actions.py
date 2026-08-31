@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from slim_guard.db.models import PendingActionRecord, utc_now
+from slim_guard.db.models import AgentThreadRecord, PendingActionRecord, utc_now
 from slim_guard.db.session import Database
 from slim_guard.harness.errors import (
     InvalidPendingActionTransition,
@@ -206,6 +207,30 @@ class PendingActionRepository:
             )
             return [self._ref(row) for row in rows]
 
+    async def list_open_for_user(
+        self,
+        *,
+        user_id: str,
+        at: datetime,
+    ) -> list[PendingActionRef]:
+        normalized_at = self._as_utc(at)
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(PendingActionRecord)
+                .join(
+                    AgentThreadRecord,
+                    AgentThreadRecord.id == PendingActionRecord.thread_id,
+                )
+                .where(
+                    AgentThreadRecord.user_id == user_id,
+                    PendingActionRecord.status == PendingActionStatus.PENDING.value,
+                    PendingActionRecord.action_type == PendingActionType.USER_CONFIRMATION.value,
+                    PendingActionRecord.expires_at > normalized_at,
+                )
+                .order_by(PendingActionRecord.created_at, PendingActionRecord.id)
+            )
+            return [self._ref(row) for row in rows]
+
     async def resolve(
         self,
         *,
@@ -387,7 +412,15 @@ class PendingActionRepository:
             row.reason,
             PendingActionRepository._as_utc(row.expires_at),
         )
-        if actual != expected:
+        same_identity = actual[:7] == expected[:7]
+        same_arguments = actual[7] == expected[7] or (
+            PendingActionRepository._matches_redacted_json(
+                row.canonical_arguments_json,
+                arguments_json,
+            )
+        )
+        same_tail = actual[8:] == expected[8:]
+        if not same_identity or not same_arguments or not same_tail:
             raise PendingActionCollision(
                 f"Pending action identity collision for execution {execution_key}"
             )
@@ -441,3 +474,16 @@ class PendingActionRepository:
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+    @staticmethod
+    def _matches_redacted_json(stored_json: str, expected_json: str) -> bool:
+        try:
+            payload = json.loads(stored_json)
+        except (TypeError, json.JSONDecodeError):
+            return False
+        return (
+            isinstance(payload, dict)
+            and payload.get("_redacted") is True
+            and payload.get("_redacted_sha256")
+            == hashlib.sha256(expected_json.encode("utf-8")).hexdigest()
+        )

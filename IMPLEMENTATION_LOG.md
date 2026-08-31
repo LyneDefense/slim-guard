@@ -255,3 +255,55 @@ curl -i https://enceladus.online/health/ready
 ### `docs: finalize MVP implementation handoff`
 
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的最终交接记录 → 标记 MVP 完成，汇总静态检查、185 个测试、包冷安装和 Git 审计结果，记录 Docker daemon 未启动这一环境限制，并给出服务器更新与健康检查命令。
+
+### `feat: add durable profile memory`
+
+- `MEMORY_DESIGN.md` → 用户记忆模块实施设计 → 定义 Profile、Goal、Constraint、Working、Domain 与 Episodic 分层，给出来源、召回、遗忘、隐私和四阶段实施边界。
+- `src/slim_guard/db/models.py` → SQLAlchemy 权威数据模型 → 新增用户记忆 Fact 与 Event 表，通过 active slot 唯一约束、来源链和版本引用保证同一记忆槽只有一个生效值。
+- `src/slim_guard/memory/` → 记忆领域与持久化边界 → 实现版本化 Schema Registry、规范化值、用户隔离、精确来源证据、幂等写入、替换、查询和撤销。
+- `src/slim_guard/tools/memory.py` → 受控记忆 Tool → 提供称呼/回复风格、饮食偏好、运动偏好写入，以及当前记忆查询和单条遗忘；不暴露通用自由写入接口。
+- `src/slim_guard/agent/composition.py` → 生产 Agent 装配 → 注册五个记忆 Tool、Repository 和 Context Provider，并升级冻结的 Context/Memory 策略版本。
+- `src/slim_guard/harness/context_data.py` → 跨轮权威上下文 → 在确定性数量预算内注入当前用户 active Profile Memory，排除已替换和已撤销值。
+- `src/slim_guard/agent/prompt.py` → 版本化 Agent 行为说明 → 规定只记忆当前用户明确表达、证据必须逐字来自当前消息、不得从打卡或图片推断，并支持查看和遗忘。
+- `src/slim_guard/harness/safety.py` → 最终回复真实性门禁 → 记忆写入或撤销失败时阻止模型错误声称已经记住或忘记。
+- `src/slim_guard/config.py`、`.env.example` → 配置契约与模板 → 增加每轮 Profile Memory 最大预加载数量。
+- `tests/unit/test_memory_repository.py` → 记忆仓储测试 → 覆盖版本替换、幂等、集合记忆、来源证据、跨用户隔离、撤销和并发单槽写入。
+- `tests/unit/test_memory_tools.py` → 记忆工具测试 → 验证 Harness 身份注入、结构化输出和缺少可信来源时拒绝写入。
+- `tests/unit/test_agent_runtime.py` → 跨轮运行测试 → 验证第一轮保存的称呼和回复风格在下一轮进入模型上下文，并验证失败写入真实性门禁。
+- `README.md`、`AGENT_HARNESS_IMPLEMENTATION_PLAN.md` → 使用与设计索引 → 说明当前 Profile Memory 能力、数据保存事实、后续增量和详细设计入口。
+- 最终验证 → Ruff 全仓、Mypy strict（102 个源码文件）、Pytest 194 项和 Python compileall 全部通过。
+
+### `feat: remember user goals and constraints`
+
+- `src/slim_guard/memory/contracts.py`、`registry.py` → 记忆类型与版本化 Schema → 新增目标体重、行为目标、饮食约束、运动约束和健康背景，约束带 180 天复核时间及 health/restricted 敏感级别。
+- `src/slim_guard/memory/repository.py` → 记忆持久化边界 → 支持可注入时钟和 `review_after`，延续单槽版本替换、来源证据、幂等与用户隔离语义。
+- `src/slim_guard/tools/memory.py` → Goal/Constraint 语义工具 → 新增目标体重、有限行为目标和用户自述约束写入；数字、单位、主体和 statement 必须来自当前消息证据。
+- `src/slim_guard/harness/context_data.py` → 记忆召回上下文 → 注入 kind、sensitivity 和确定性 stale 标记，使待复核约束只能用于保守提醒。
+- `src/slim_guard/agent/prompt.py` → Agent 记忆规则 → 明确目标不是测量或医学认可、约束不是诊断，禁止模型替用户制定后擅自保存。
+- `src/slim_guard/harness/safety.py` → 记忆写入真实性门禁 → 把三个新增写工具纳入失败后不得声称成功的硬校验。
+- `tests/unit/test_memory_tools.py` → Goal/Constraint 工具测试 → 覆盖克单位规范化、行为目标、饮食约束、复核时间及统一查询/遗忘。
+- `tests/unit/test_context_data.py` → stale 召回测试 → 验证超过 180 天的健康约束仍带用户自述来源且被标记为待复核。
+- `tests/unit/test_agent_runtime.py` → 跨轮目标闭环 → 验证目标体重进入下一轮上下文但不会生成权威体重测量记录。
+- `README.md`、`MEMORY_DESIGN.md` → 能力与进度说明 → 标记 Increment 2 完成并说明目标、约束和剩余实施边界。
+- 最终验证 → Ruff 全仓、Mypy strict（102 个源码文件）、Pytest 196 项和 Python compileall 全部通过。
+
+### `feat: add bounded working memory and handoff`
+
+- `src/slim_guard/memory/working.py` → 最近对话窗口 → 只读取当前用户最近已完成 Turn 的用户消息和最终助手消息，按 Turn 数及字符数确定性截断，排除工具、模型草稿和内部快照。
+- `src/slim_guard/db/models.py`、`memory/handoff.py` → 临时交接持久化 → 实现单用户唯一 active Handoff、当前消息来源校验、幂等替换、跨用户隔离、解决和 14 天到期。
+- `src/slim_guard/tools/memory.py` → Handoff 语义工具 → 新增显式留待下次和完成/取消两个受控操作；模型负责语义理解，执行器只校验证据、身份与状态。
+- `src/slim_guard/harness/context_data.py`、`context.py` → 跨轮上下文 → 把 Working Memory 与权威领域事实分开注入，明确其只用于指代承接且当前消息优先。
+- `src/slim_guard/agent/composition.py`、`config.py`、`.env.example` → 生产装配与配置 → 接入最近 Turn 数、对话字符预算和 Handoff TTL，并升级冻结的 Prompt、Context、Memory 与 Compaction 策略版本。
+- `tests/unit/test_working_memory.py`、`test_handoff_repository.py`、`test_agent_runtime.py` → Increment 3 验证 → 覆盖可见文本筛选、确定性预算、跨用户隔离、幂等、替换、解决、过期，以及“刚才那个继续”和“下次接着做”的跨轮 Runtime 上下文。
+- 最终验证 → Ruff 全仓、Mypy strict（104 个源码文件）、Pytest 202 项和 Python compileall 全部通过。
+
+### `feat: complete memory privacy lifecycle`
+
+- `src/slim_guard/db/models.py` → 增量兼容的隐私审计模型 → 新增 Agent Item 擦除账本和批量记忆操作账本，不给已有表强加迁移列，现有 SQLite 可由 `create_all` 安全补表。
+- `src/slim_guard/memory/lifecycle.py`、`services/memory_maintenance.py` → 隐私保留执行器 → 到期后擦除用户/助手正文、Context、模型轨迹、Tool 参数和结果，保留哈希、引用与 reason code；同时清空 revoked value、标记到期 Fact/Handoff，并在启动及周期任务中幂等执行。
+- `src/slim_guard/memory/repository.py`、`tools/memory.py` → 批量遗忘 → 事务性撤销当前用户全部 Profile/Goal/Constraint，使用持久化操作账本保证零条结果也可幂等重放，明确排除领域记录和消息幂等数据。
+- `src/slim_guard/tools/pending.py`、`harness/pending_actions.py` → 跨 Turn 用户确认 → 把待确认操作作为非权威 Working Memory 注入，由模型理解当前确认/拒绝语义，再以当前消息证据解决冻结操作；不使用确认关键词解析器。
+- `src/slim_guard/services/harness_reply_agent.py` → 微信确认提示 → Harness 暂停等待用户确认时交付明确提示，不再误走生成失败降级回复。
+- `src/slim_guard/config.py`、`.env.example`、`main.py` → 生命周期配置与生产任务 → 增加 Transcript、revoked value 保留期和维护间隔；隐私任务不依赖模型是否在线，服务每次启动都会立即补做过期维护。
+- `tests/unit/test_memory_maintenance.py`、`test_agent_runtime.py`、`tests/integration/test_callback_flow.py` → 完整验收 → 验证正文不可恢复、哈希审计与 Tool 幂等仍有效、领域记录不受影响、维护重复执行安全，以及企业微信确认提示和跨 Turn 批量清空闭环。
+- 最终验证 → Ruff 全仓、Mypy strict（107 个源码文件）、Pytest 206 项和 Python compileall 全部通过。

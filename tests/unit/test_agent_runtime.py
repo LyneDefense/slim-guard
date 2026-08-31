@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     NormalizedToolCall,
 )
@@ -21,7 +23,15 @@ from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
+from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
+from slim_guard.tools.memory import (
+    CLEAR_USER_MEMORIES_TOOL_NAME,
+    SET_COACHING_PROFILE_TOOL_NAME,
+    SET_CONVERSATION_HANDOFF_TOOL_NAME,
+    SET_WEIGHT_GOAL_TOOL_NAME,
+)
+from slim_guard.tools.pending import RESOLVE_PENDING_USER_ACTION_TOOL_NAME
 from slim_guard.tools.weight import (
     GET_RECENT_WEIGHT_TREND_TOOL_NAME,
     RECORD_WEIGHT_TOOL_NAME,
@@ -51,6 +61,61 @@ def final_reply(text: str) -> ModelResponse:
         message=ModelMessage(role=MessageRole.ASSISTANT, content=text),
         finish_reason="stop",
     )
+
+
+class MemoryClearModelGateway:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self._step = 0
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        step = self._step
+        self._step += 1
+        if step == 0:
+            return tool_call(
+                "call-profile",
+                SET_COACHING_PROFILE_TOOL_NAME,
+                {"preferred_name": "阿杰", "evidence_excerpt": "以后叫我阿杰"},
+            )
+        if step == 1:
+            return final_reply("记住了，以后叫你阿杰。")
+        if step == 2:
+            return tool_call(
+                "call-clear",
+                CLEAR_USER_MEMORIES_TOOL_NAME,
+                {
+                    "scope": "profile_goal_constraint",
+                    "evidence_excerpt": "清空我的个性化记忆",
+                },
+            )
+        if step == 3:
+            context = next(
+                message.content or ""
+                for message in request.messages
+                if "近期对话工作记忆" in (message.content or "")
+                and "pending_user_confirmations" in (message.content or "")
+            )
+            match = re.search(r'"action_id":"([^"]+)"', context)
+            assert match is not None
+            return tool_call(
+                "call-resolve-clear",
+                RESOLVE_PENDING_USER_ACTION_TOOL_NAME,
+                {
+                    "action_id": match.group(1),
+                    "decision": "approve",
+                    "evidence_excerpt": "确认执行",
+                },
+            )
+        if step == 4:
+            return final_reply("个性化记忆已经清空；体重、饮食和运动记录未删除。")
+        raise AssertionError(f"Unexpected model call: {step}")
+
+    async def close(self) -> None:
+        return None
+
+    def assert_exhausted(self) -> None:
+        assert self._step == 5
 
 
 async def prepare_database(tmp_path: Path) -> Database:
@@ -163,6 +228,18 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "configure_checkin_schedule",
             "get_checkin_schedule",
             "update_record_status",
+            "set_coaching_profile",
+            "upsert_food_preference",
+            "upsert_exercise_preference",
+            "set_weight_goal",
+            "set_behavior_goal",
+            "record_user_constraint",
+            "list_user_memories",
+            "forget_user_memory",
+            "set_conversation_handoff",
+            "resolve_conversation_handoff",
+            "clear_user_memories",
+            "resolve_pending_user_action",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")
@@ -170,6 +247,349 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         assert first_observation["output"]["weight_kg"] == "77.6"
         assert second_observation["status"] == "succeeded"
         assert second_observation["output"]["direction"] == "unknown"
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_persists_and_recalls_profile_memory_across_turns(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            tool_call(
+                "call-profile",
+                SET_COACHING_PROFILE_TOOL_NAME,
+                {
+                    "preferred_name": "阿杰",
+                    "response_style": "concise",
+                    "evidence_excerpt": "以后叫我阿杰，回复简短点",
+                },
+            ),
+            final_reply("记住了，阿杰。之后我会简短回复。"),
+            final_reply("状态不错，继续按计划记录。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            model_parameters={"max_output_tokens": 512},
+            code_revision="test-memory",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        first = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="以后叫我阿杰，回复简短点",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        second = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="今天状态怎么样？",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        memory_context = next(
+            message.content or ""
+            for message in model.requests[2].messages
+            if "权威用户事实" in (message.content or "")
+        )
+
+        assert first.final_text == "记住了，阿杰。之后我会简短回复。"
+        assert second.final_text == "状态不错，继续按计划记录。"
+        assert '"key":"identity.preferred_name"' in memory_context
+        assert '"name":"阿杰"' in memory_context
+        assert '"style":"concise"' in memory_context
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Path) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            tool_call(
+                "call-profile",
+                SET_COACHING_PROFILE_TOOL_NAME,
+                {
+                    "preferred_name": "阿杰",
+                    "evidence_excerpt": "用户没有说过的证据",
+                },
+            ),
+            final_reply("记住了，以后叫你阿杰。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-memory-guard",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="以后叫我阿杰",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        items = await HarnessStateRepository(database).list_items(result.turn_id)
+
+        assert result.final_text == (
+            "这项记忆没有确认保存或撤销成功，请把你的要求再说一次，我会重新处理。"
+        )
+        guard = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
+        assert guard.payload["code"] == "failed_memory_write_success_claim"
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_recalls_weight_goal_without_creating_measurement(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            tool_call(
+                "call-weight-goal",
+                SET_WEIGHT_GOAL_TOOL_NAME,
+                {
+                    "value": 65.0,
+                    "unit": "kg",
+                    "evidence_excerpt": "我的目标是65kg",
+                },
+            ),
+            final_reply("已记下你的自述目标：65kg。"),
+            final_reply("目标仍是65kg，我们按实际趋势稳步观察。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-weight-goal",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="我的目标是65kg",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="我的目标还记得吗？",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        memory_context = next(
+            message.content or ""
+            for message in model.requests[2].messages
+            if "权威用户事实" in (message.content or "")
+        )
+        trend = await WeightRepository(database).recent_trend("user-1")
+
+        assert '"key":"goal.target_weight"' in memory_context
+        assert '"grams":65000' in memory_context
+        assert trend.records == ()
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            final_reply("先从一周三次快走开始，每次二十分钟。"),
+            final_reply("可以，刚才那个计划的下一步是安排具体日期。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-working-memory",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="帮我定个容易开始的运动计划",
+                execution_mode=ToolExecutionMode.EVALUATION,
+            )
+        )
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="刚才那个继续",
+                execution_mode=ToolExecutionMode.EVALUATION,
+            )
+        )
+        working_context = next(
+            message.content or ""
+            for message in model.requests[1].messages
+            if "近期对话工作记忆" in (message.content or "")
+        )
+
+        assert '"role":"user"' in working_context
+        assert "帮我定个容易开始的运动计划" in working_context
+        assert "先从一周三次快走开始，每次二十分钟。" in working_context
+        assert "刚才那个继续" not in working_context
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_persists_explicit_handoff_for_a_later_turn(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            tool_call(
+                "call-handoff",
+                SET_CONVERSATION_HANDOFF_TOOL_NAME,
+                {
+                    "objective": "制定一周饮食计划",
+                    "unresolved": ["确认工作日午餐安排"],
+                    "evidence_excerpt": "下次接着制定饮食计划",
+                },
+            ),
+            final_reply("好，下次从工作日午餐安排接着做。"),
+            final_reply("好，我们继续安排工作日午餐。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-handoff",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="今天先到这，下次接着制定饮食计划",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="上次那个继续",
+                execution_mode=ToolExecutionMode.EVALUATION,
+            )
+        )
+        working_context = next(
+            message.content or ""
+            for message in model.requests[2].messages
+            if "近期对话工作记忆" in (message.content or "")
+        )
+
+        assert '"objective":"制定一周饮食计划"' in working_context
+        assert '"unresolved":["确认工作日午餐安排"]' in working_context
+        assert '"handoff_id":' in working_context
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_requires_and_applies_bulk_memory_clear_confirmation(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = MemoryClearModelGateway()
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-memory-clear",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="以后叫我阿杰",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        requested = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="清空我的个性化记忆",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        before_confirmation = await MemoryRepository(database).active("user-1")
+        confirmed = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="确认执行",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+
+        assert requested.termination is HarnessTermination.WAITING_USER_CONFIRMATION
+        assert len(before_confirmation) == 1
+        assert confirmed.final_text == (
+            "个性化记忆已经清空；体重、饮食和运动记录未删除。"
+        )
+        assert await MemoryRepository(database).active("user-1") == ()
         model.assert_exhausted()
     finally:
         await model.close()

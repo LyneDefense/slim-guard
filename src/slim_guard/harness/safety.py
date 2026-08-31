@@ -114,6 +114,15 @@ class SlimGuardOutputGuard:
         "停止进食来减肥",
     )
     _SUCCESS_CLAIMS = ("已记录", "记录成功", "已保存", "保存成功")
+    _MEMORY_SUCCESS_CLAIMS = (
+        "记住了",
+        "已记住",
+        "已记下",
+        "已忘记",
+        "不再记得",
+        "已清空",
+        "清空成功",
+    )
 
     def review(
         self,
@@ -153,10 +162,15 @@ class SlimGuardOutputGuard:
                 "和运动；涉及症状或用药请咨询医生。",
                 "prohibited_medical_advice",
             )
-        if self._failed_write_claimed_success(normalized, tool_outcomes):
+        if self._failed_record_write_claimed_success(normalized, tool_outcomes):
             return self._replacement(
                 "这次记录没有确认成功，请把刚才的数据再发一次，我会重新尝试保存。",
                 "failed_write_success_claim",
+            )
+        if self._failed_memory_write_claimed_success(normalized, tool_outcomes):
+            return self._replacement(
+                "这项记忆没有确认保存或撤销成功，请把你的要求再说一次，我会重新处理。",
+                "failed_memory_write_success_claim",
             )
         return OutputGuardResult(text=normalized, modified=False, code="passed")
 
@@ -166,17 +180,47 @@ class SlimGuardOutputGuard:
         )
 
     @classmethod
-    def _failed_write_claimed_success(
+    def _failed_record_write_claimed_success(
         cls,
         text: str,
         outcomes: tuple[ToolCallOutcome, ...],
     ) -> bool:
-        has_failed_write = any(
+        has_failed_record_write = any(
             outcome.execution.result.status is ToolResultStatus.FAILED
             and outcome.execution.tool_name.startswith(("record_", "configure_"))
             for outcome in outcomes
         )
-        return has_failed_write and any(claim in text for claim in cls._SUCCESS_CLAIMS)
+        return has_failed_record_write and any(
+            claim in text for claim in cls._SUCCESS_CLAIMS
+        )
+
+    @classmethod
+    def _failed_memory_write_claimed_success(
+        cls,
+        text: str,
+        outcomes: tuple[ToolCallOutcome, ...],
+    ) -> bool:
+        has_failed_memory_write = any(
+            outcome.execution.result.status is ToolResultStatus.FAILED
+            and outcome.execution.tool_name
+            in {
+                "set_coaching_profile",
+                "upsert_food_preference",
+                "upsert_exercise_preference",
+                "set_weight_goal",
+                "set_behavior_goal",
+                "record_user_constraint",
+                "forget_user_memory",
+                "set_conversation_handoff",
+                "resolve_conversation_handoff",
+                "clear_user_memories",
+                "resolve_pending_user_action",
+            }
+            for outcome in outcomes
+        )
+        return has_failed_memory_write and any(
+            claim in text for claim in cls._MEMORY_SUCCESS_CLAIMS
+        )
 
     @staticmethod
     def _replacement(text: str, code: str) -> OutputGuardResult:

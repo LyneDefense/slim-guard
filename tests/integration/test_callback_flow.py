@@ -292,6 +292,75 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
     await model.close()
 
 
+async def test_callback_delivers_bulk_memory_clear_confirmation(
+    test_settings: Settings,
+) -> None:
+    harness_settings = test_settings.model_copy(
+        update={"agent_runtime_mode": "harness"}
+    )
+    fake = FakeWeComClient(
+        {
+            None: SyncPage(
+                next_cursor="done",
+                has_more=False,
+                msg_list=[
+                    SyncMessage(
+                        msgid="clear-memory-message-1",
+                        external_userid="external-user-1",
+                        send_time=1_700_000_000,
+                        origin=3,
+                        msgtype="text",
+                        text={"content": "清空我的个性化记忆"},
+                    )
+                ],
+            )
+        }
+    )
+    model = ScriptedModelGateway(
+        (
+            _tool_response(
+                "call-clear",
+                "clear_user_memories",
+                {
+                    "scope": "profile_goal_constraint",
+                    "evidence_excerpt": "清空我的个性化记忆",
+                },
+            ),
+        )
+    )
+    app = create_app(harness_settings, client=fake, model_gateway=model)
+    crypto = WeComCallbackCrypto(
+        harness_settings.wecom_callback_token,
+        harness_settings.wecom_callback_aes_key,
+        harness_settings.wecom_corp_id,
+    )
+    body, signature = _encrypted_callback(crypto, timestamp="123", nonce="nonce")
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as http:
+            response = await http.post(
+                "/callbacks/wecom/kf",
+                params={
+                    "msg_signature": signature,
+                    "timestamp": "123",
+                    "nonce": "nonce",
+                },
+                content=body,
+                headers={"content-type": "application/xml"},
+            )
+
+        assert response.status_code == 200
+        assert len(fake.sent) == 1
+        assert "需要你再次明确确认" in fake.sent[0].content
+        assert "确认执行" in fake.sent[0].content
+        model.assert_exhausted()
+
+    await model.close()
+
+
 async def test_image_callback_runs_vision_then_records_weight(
     test_settings: Settings,
 ) -> None:

@@ -55,6 +55,14 @@ class Settings(BaseSettings):
         le=2_592_000,
     )
     asset_maintenance_interval_seconds: int = Field(default=21_600, ge=60, le=86_400)
+    memory_preload_max_facts: int = Field(default=30, ge=1, le=100)
+    memory_health_review_days: int = Field(default=180, ge=30, le=730)
+    memory_recent_turn_count: int = Field(default=3, ge=1, le=10)
+    memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
+    memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
+    agent_transcript_body_retention_days: int = Field(default=30, ge=1, le=3650)
+    memory_revoked_value_retention_days: int = Field(default=30, ge=0, le=3650)
+    memory_maintenance_interval_seconds: int = Field(default=21_600, ge=60, le=86_400)
     routine_scheduler_enabled: bool = True
     routine_scheduler_interval_seconds: int = Field(default=30, ge=5, le=3600)
     routine_job_lease_seconds: int = Field(default=120, ge=30, le=3600)

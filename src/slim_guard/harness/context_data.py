@@ -16,6 +16,13 @@ from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.harness.events import ItemType, TurnTrigger
+from slim_guard.harness.pending_actions import PendingActionRepository
+from slim_guard.harness.state_repository import ItemRef
+from slim_guard.memory.contracts import MemoryFactRef, MemoryKey
+from slim_guard.memory.handoff import HandoffRepository
+from slim_guard.memory.repository import MemoryRepository
+from slim_guard.memory.working import ConversationWindowRepository
 
 
 class ContextDataProvider(Protocol):
@@ -26,6 +33,8 @@ class ContextDataProvider(Protocol):
         *,
         user_id: str,
         current_time: datetime,
+        trigger: TurnTrigger | None = None,
+        input_items: tuple[ItemRef, ...] = (),
     ) -> Mapping[str, Any]: ...
 
 
@@ -35,6 +44,8 @@ class EmptyContextDataProvider:
         *,
         user_id: str,
         current_time: datetime,
+        trigger: TurnTrigger | None = None,
+        input_items: tuple[ItemRef, ...] = (),
     ) -> Mapping[str, Any]:
         return {}
 
@@ -51,9 +62,16 @@ class AuthoritativeContextDataProvider:
         exercise: ExerciseRepository,
         routines: RoutinePreferenceRepository | None = None,
         checkins: DailyCheckinStatusRepository | None = None,
+        memories: MemoryRepository | None = None,
+        conversation: ConversationWindowRepository | None = None,
+        handoffs: HandoffRepository | None = None,
+        pending_actions: PendingActionRepository | None = None,
         weight_limit: int = 7,
         meal_limit: int = 10,
         exercise_limit: int = 10,
+        memory_limit: int = 30,
+        dialogue_turn_limit: int = 3,
+        dialogue_char_limit: int = 1500,
     ) -> None:
         self._database = database
         self._weights = weights
@@ -61,15 +79,24 @@ class AuthoritativeContextDataProvider:
         self._exercise = exercise
         self._routines = routines
         self._checkins = checkins
+        self._memories = memories
+        self._conversation = conversation
+        self._handoffs = handoffs
+        self._pending_actions = pending_actions
         self._weight_limit = weight_limit
         self._meal_limit = meal_limit
         self._exercise_limit = exercise_limit
+        self._memory_limit = memory_limit
+        self._dialogue_turn_limit = dialogue_turn_limit
+        self._dialogue_char_limit = dialogue_char_limit
 
     async def load(
         self,
         *,
         user_id: str,
         current_time: datetime,
+        trigger: TurnTrigger | None = None,
+        input_items: tuple[ItemRef, ...] = (),
     ) -> Mapping[str, Any]:
         if current_time.utcoffset() is None:
             raise ValueError("Context data time must be timezone-aware")
@@ -130,6 +157,76 @@ class AuthoritativeContextDataProvider:
         }
         if profile is not None:
             context["profile"] = profile
+        if self._memories is not None:
+            memories = await self._memories.active(
+                user_id,
+                limit=self._memory_limit,
+            )
+            memories = self._relevant_memories(
+                memories,
+                trigger=trigger,
+                input_items=input_items,
+            )
+            if memories:
+                context["profile_memory"] = [
+                    {
+                        "memory_id": memory.id,
+                        "kind": memory.kind.value,
+                        "key": memory.key.value,
+                        "value": memory.value,
+                        "assertion": memory.assertion.value,
+                        "sensitivity": memory.sensitivity.value,
+                        "stale": (
+                            memory.review_after is not None
+                            and memory.review_after <= current_time
+                        ),
+                    }
+                    for memory in memories
+                ]
+        working_memory: dict[str, Any] = {}
+        if self._conversation is not None:
+            dialogue = await self._conversation.recent(
+                user_id,
+                turn_limit=self._dialogue_turn_limit,
+                char_limit=self._dialogue_char_limit,
+            )
+            if dialogue:
+                working_memory["recent_dialogue"] = [
+                    {
+                        "messages": [
+                            {"role": message.role, "content": message.content}
+                            for message in turn.messages
+                        ],
+                    }
+                    for turn in dialogue
+                ]
+        if self._handoffs is not None:
+            handoff = await self._handoffs.active(user_id, at=current_time)
+            if handoff is not None:
+                working_memory["active_handoff"] = {
+                    "handoff_id": handoff.id,
+                    "objective": handoff.objective,
+                    "unresolved": list(handoff.unresolved),
+                    "created_at": handoff.created_at.isoformat(),
+                    "expires_at": handoff.expires_at.isoformat(),
+                }
+        if self._pending_actions is not None:
+            pending = await self._pending_actions.list_open_for_user(
+                user_id=user_id,
+                at=current_time,
+            )
+            if pending:
+                working_memory["pending_user_confirmations"] = [
+                    {
+                        "action_id": action.id,
+                        "tool_name": action.tool_name,
+                        "reason": action.reason,
+                        "expires_at": action.expires_at.isoformat(),
+                    }
+                    for action in pending
+                ]
+        if working_memory:
+            context["working_memory"] = working_memory
         if self._routines is not None:
             routine = await self._routines.get(user_id)
             if routine is not None:
@@ -156,6 +253,59 @@ class AuthoritativeContextDataProvider:
                         "exercise_count": status.exercise_count,
                     }
         return context
+
+    @staticmethod
+    def _relevant_memories(
+        memories: tuple[MemoryFactRef, ...],
+        *,
+        trigger: TurnTrigger | None,
+        input_items: tuple[ItemRef, ...],
+    ) -> tuple[MemoryFactRef, ...]:
+        if trigger is None or trigger is TurnTrigger.DAILY_REVIEW:
+            return memories
+        selected = {
+            MemoryKey.PREFERRED_NAME,
+            MemoryKey.RESPONSE_STYLE,
+        }
+        if trigger is TurnTrigger.WEIGHT_REMINDER:
+            selected.update({MemoryKey.TARGET_WEIGHT, MemoryKey.HEALTH_CONTEXT})
+        elif trigger is TurnTrigger.MEAL_REMINDER:
+            selected.update(
+                {
+                    MemoryKey.FOOD_PREFERENCE,
+                    MemoryKey.DIETARY_CONSTRAINT,
+                    MemoryKey.HEALTH_CONTEXT,
+                }
+            )
+        text = "\n".join(
+            str(item.payload.get("text", ""))
+            for item in input_items
+            if item.item_type is ItemType.USER_MESSAGE
+        )
+        if any(word in text for word in ("记得什么", "记住什么", "哪些记忆")):
+            return memories
+        if any(word in text.lower() for word in ("体重", "称重", "目标", "kg", "公斤", "斤", "磅")):
+            selected.update({MemoryKey.TARGET_WEIGHT, MemoryKey.HEALTH_CONTEXT})
+        if any(word in text for word in ("吃", "饮食", "餐", "饭", "食物", "过敏", "忌口")):
+            selected.update(
+                {
+                    MemoryKey.FOOD_PREFERENCE,
+                    MemoryKey.DIETARY_CONSTRAINT,
+                    MemoryKey.HEALTH_CONTEXT,
+                }
+            )
+        if any(word in text for word in ("运动", "锻炼", "步数", "跑步", "游泳", "健身", "膝")):
+            selected.update(
+                {
+                    MemoryKey.EXERCISE_PREFERENCE,
+                    MemoryKey.EXERCISE_CONSTRAINT,
+                    MemoryKey.BEHAVIOR_GOAL,
+                    MemoryKey.HEALTH_CONTEXT,
+                }
+            )
+        if any(word in text for word in ("打卡", "习惯", "计划")):
+            selected.add(MemoryKey.BEHAVIOR_GOAL)
+        return tuple(memory for memory in memories if memory.key in selected)
 
     async def _profile(self, user_id: str) -> dict[str, Any] | None:
         async with self._database.session() as session:

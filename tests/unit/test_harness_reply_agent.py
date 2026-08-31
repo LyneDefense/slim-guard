@@ -116,3 +116,28 @@ async def test_adapter_does_not_deliver_non_final_harness_result() -> None:
                 text="今天空腹 77.6kg",
             )
         )
+
+
+async def test_adapter_delivers_user_confirmation_prompt() -> None:
+    runtime = FakeAgentRuntime(
+        runtime_result(
+            termination=HarnessTermination.WAITING_USER_CONFIRMATION,
+            final_text=None,
+        )
+    )
+    adapter = HarnessReplyAgent(
+        runtime=runtime,
+        max_reply_chars=1500,
+        clock=lambda: FIXED_NOW,
+    )
+
+    reply = await adapter.generate_reply(
+        ReplyRequest(
+            user_id="internal-user-1",
+            nickname=None,
+            text="清空我的个性化记忆",
+        )
+    )
+
+    assert "需要你再次明确确认" in reply
+    assert "确认执行" in reply

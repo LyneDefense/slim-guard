@@ -100,6 +100,8 @@ class HarnessTurnRunner:
                 await self._context_data.load(
                     user_id=initialized.context.user_id,
                     current_time=current_time,
+                    trigger=initialized.turn.trigger,
+                    input_items=initialized.input_items,
                 )
             )
             if safety_assessment.blocks_tools:

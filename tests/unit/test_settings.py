@@ -35,6 +35,13 @@ def test_agent_runtime_defaults_to_harness() -> None:
     settings = Settings()
 
     assert settings.agent_runtime_mode == "harness"
+    assert settings.memory_health_review_days == 180
+    assert settings.memory_recent_turn_count == 3
+    assert settings.memory_recent_dialogue_max_chars == 1500
+    assert settings.memory_handoff_ttl_days == 14
+    assert settings.agent_transcript_body_retention_days == 30
+    assert settings.memory_revoked_value_retention_days == 30
+    assert settings.memory_maintenance_interval_seconds == 21_600
 
 
 def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
@@ -50,7 +57,7 @@ def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
 
 def test_agent_runtime_rejects_unknown_mode() -> None:
     with pytest.raises(ValidationError):
-        Settings(agent_runtime_mode="unknown")  # type: ignore[arg-type]
+        Settings(agent_runtime_mode="unknown")
 
 
 def test_unimplemented_shadow_runtime_mode_fails_fast() -> None:
@@ -80,6 +87,18 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "record_exercise": "v1",
         "record_weight": "v1",
         "update_record_status": "v1",
+        "set_coaching_profile": "v4",
+        "upsert_food_preference": "v4",
+        "upsert_exercise_preference": "v4",
+        "set_weight_goal": "v4",
+        "set_behavior_goal": "v4",
+        "record_user_constraint": "v4",
+        "list_user_memories": "v4",
+        "forget_user_memory": "v4",
+        "set_conversation_handoff": "v4",
+        "resolve_conversation_handoff": "v4",
+        "clear_user_memories": "v4",
+        "resolve_pending_user_action": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
 

@@ -30,11 +30,13 @@ from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
+from slim_guard.memory.lifecycle import MemoryLifecycleRepository
 from slim_guard.observability.logging import configure_logging
 from slim_guard.services.conversation_state import ConversationStateMachine
 from slim_guard.services.fixed_reply import AgentReplySyncService
 from slim_guard.services.harness_reply_agent import HarnessReplyAgent
 from slim_guard.services.maintenance import AssetMaintenanceService
+from slim_guard.services.memory_maintenance import MemoryMaintenanceService
 from slim_guard.services.proactive_delivery import (
     ProactiveDeliveryPolicy,
     ProactiveDeliveryRepository,
@@ -78,6 +80,13 @@ def create_app(
         code_revision=app_settings.agent_code_revision,
         image_retention_seconds=app_settings.agent_image_retention_seconds,
         vision_max_output_tokens=app_settings.zhipu_max_output_tokens,
+        memory_preload_max_facts=app_settings.memory_preload_max_facts,
+        memory_health_review_days=app_settings.memory_health_review_days,
+        memory_recent_turn_count=app_settings.memory_recent_turn_count,
+        memory_recent_dialogue_max_chars=(
+            app_settings.memory_recent_dialogue_max_chars
+        ),
+        memory_handoff_ttl_days=app_settings.memory_handoff_ttl_days,
     )
     agent_manifest = (
         build_agent_manifest(runtime_definition)
@@ -176,6 +185,8 @@ def create_app(
         routine_task: asyncio.Task[None] | None = None
         maintenance_stop: asyncio.Event | None = None
         maintenance_task: asyncio.Task[None] | None = None
+        memory_maintenance_stop: asyncio.Event | None = None
+        memory_maintenance_task: asyncio.Task[None] | None = None
         outbox_stop: asyncio.Event | None = None
         outbox_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
@@ -272,6 +283,21 @@ def create_app(
                 maintenance.run_forever(maintenance_stop),
                 name="slim-guard-asset-maintenance",
             )
+        memory_maintenance = MemoryMaintenanceService(
+            lifecycle=MemoryLifecycleRepository(database),
+            transcript_retention=timedelta(
+                days=app_settings.agent_transcript_body_retention_days
+            ),
+            revoked_value_retention=timedelta(
+                days=app_settings.memory_revoked_value_retention_days
+            ),
+            interval_seconds=app_settings.memory_maintenance_interval_seconds,
+        )
+        memory_maintenance_stop = asyncio.Event()
+        memory_maintenance_task = asyncio.create_task(
+            memory_maintenance.run_forever(memory_maintenance_stop),
+            name="slim-guard-memory-maintenance",
+        )
 
         app.state.settings = app_settings
         app.state.database = database
@@ -287,6 +313,8 @@ def create_app(
                 routine_stop.set()
             if maintenance_stop is not None:
                 maintenance_stop.set()
+            if memory_maintenance_stop is not None:
+                memory_maintenance_stop.set()
             if outbox_stop is not None:
                 outbox_stop.set()
             if watchdog_task is not None:
@@ -295,6 +323,8 @@ def create_app(
                 await routine_task
             if maintenance_task is not None:
                 await maintenance_task
+            if memory_maintenance_task is not None:
+                await memory_maintenance_task
             if outbox_task is not None:
                 await outbox_task
             if owned_client is not None:

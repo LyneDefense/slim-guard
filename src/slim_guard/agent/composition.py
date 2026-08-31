@@ -24,17 +24,28 @@ from slim_guard.harness.initialization import TurnInitializer
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.pending_actions import PendingActionRepository
+from slim_guard.harness.pending_resume import PendingActionResumeCoordinator
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.runner import HarnessTurnRunner
 from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.tool_calls import ToolCallCoordinator
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
+from slim_guard.memory.handoff import HandoffRepository
+from slim_guard.memory.registry import MemorySchemaRegistry
+from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
+from slim_guard.memory.working import ConversationWindowRepository
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
 from slim_guard.tools.gateway import ToolGateway
 from slim_guard.tools.image import image_tool_definitions, image_tool_executors
 from slim_guard.tools.meal import meal_tool_definitions, meal_tool_executors
+from slim_guard.tools.memory import memory_tool_definitions, memory_tool_executors
+from slim_guard.tools.pending import (
+    PendingActionToolHandlers,
+    pending_action_tool_definitions,
+    pending_action_tool_executors,
+)
 from slim_guard.tools.policy import DefaultToolPolicy
 from slim_guard.tools.records import (
     record_status_tool_definitions,
@@ -60,6 +71,11 @@ class AgentRuntimeDefinition(BaseModel):
     review_ttl_seconds: int = Field(default=86_400, ge=1, le=604_800)
     image_retention_seconds: int = Field(default=604_800, ge=3600, le=2_592_000)
     vision_max_output_tokens: int = Field(default=1024, ge=64, le=32_768)
+    memory_preload_max_facts: int = Field(default=30, ge=1, le=100)
+    memory_health_review_days: int = Field(default=180, ge=30, le=730)
+    memory_recent_turn_count: int = Field(default=3, ge=1, le=10)
+    memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
+    memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
 
 
 def build_agent_runtime(
@@ -80,6 +96,8 @@ def build_agent_runtime(
         *exercise_tool_definitions(),
         *routine_tool_definitions(),
         *record_status_tool_definitions(),
+        *memory_tool_definitions(),
+        *pending_action_tool_definitions(),
     )
     registry = ToolRegistry(tool_definitions)
     expected_manifest = build_agent_manifest(definition)
@@ -88,12 +106,30 @@ def build_agent_runtime(
         raise ValueError("Agent Runtime manifest does not match its definition")
     state = HarnessStateRepository(database)
     pending_actions = PendingActionRepository(database)
+    pending_handlers = PendingActionToolHandlers(
+        pending_actions=pending_actions,
+        state=state,
+        clock=clock,
+    )
     assets = ImageAssetRepository(database)
     weights = WeightRepository(database)
     meals = MealRepository(database)
     exercise = ExerciseRepository(database)
     routines = RoutinePreferenceRepository(database)
     checkins = DailyCheckinStatusRepository(database)
+    memories = MemoryRepository(
+        database,
+        registry=MemorySchemaRegistry(
+            health_review_days=definition.memory_health_review_days,
+        ),
+        clock=clock,
+    )
+    conversation = ConversationWindowRepository(database)
+    handoffs = HandoffRepository(
+        database,
+        ttl=timedelta(days=definition.memory_handoff_ttl_days),
+        clock=clock,
+    )
     executors = {
         **weight_tool_executors(
             weights,
@@ -110,6 +146,8 @@ def build_agent_runtime(
         **exercise_tool_executors(exercise, clock=clock),
         **routine_tool_executors(routines),
         **record_status_tool_executors(UserRecordStatusService(database)),
+        **memory_tool_executors(memories, handoffs),
+        **pending_action_tool_executors(pending_handlers),
     }
     gateway = ToolGateway(
         registry=registry,
@@ -123,6 +161,13 @@ def build_agent_runtime(
         turn_state=state,
         confirmation_ttl=timedelta(seconds=definition.confirmation_ttl_seconds),
         review_ttl=timedelta(seconds=definition.review_ttl_seconds),
+    )
+    pending_handlers.bind(
+        PendingActionResumeCoordinator(
+            pending_actions=pending_actions,
+            turn_state=state,
+            tool_calls=tool_calls,
+        )
     )
     recorder = PersistentHarnessRunRecorder(state)
     runner = HarnessTurnRunner(
@@ -143,6 +188,13 @@ def build_agent_runtime(
             exercise=exercise,
             routines=routines,
             checkins=checkins,
+            memories=memories,
+            conversation=conversation,
+            handoffs=handoffs,
+            pending_actions=pending_actions,
+            memory_limit=definition.memory_preload_max_facts,
+            dialogue_turn_limit=definition.memory_recent_turn_count,
+            dialogue_char_limit=definition.memory_recent_dialogue_max_chars,
         ),
         output_guard=SlimGuardOutputGuard(),
         clock=clock,
@@ -166,6 +218,8 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
             *exercise_tool_definitions(),
             *routine_tool_definitions(),
             *record_status_tool_definitions(),
+            *memory_tool_definitions(),
+            *pending_action_tool_definitions(),
         )
     )
     return AgentManifest.build(
@@ -176,9 +230,9 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
         system_prompt=SLIM_GUARD_HARNESS_PROMPT,
         tool_versions=registry.versions,
-        context_policy_version="authoritative-records-v1",
-        memory_policy_version="domain-records-v1",
-        compaction_policy_version="none-v1",
+        context_policy_version="authoritative-working-memory-privacy-v5",
+        memory_policy_version=MEMORY_POLICY_VERSION,
+        compaction_policy_version="bounded-working-handoff-redaction-v2",
         safety_policy_version="health-output-guard-v2",
         code_revision=definition.code_revision,
     )

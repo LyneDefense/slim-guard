@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -201,7 +202,14 @@ class ToolExecutionRepository:
             row.tool_version,
             row.canonical_arguments_json,
         )
-        if actual != expected:
+        same_identity = actual[:-1] == expected[:-1]
+        same_arguments = actual[-1] == expected[-1] or (
+            ToolExecutionRepository._matches_redacted_json(
+                row.canonical_arguments_json,
+                arguments_json,
+            )
+        )
+        if not same_identity or not same_arguments:
             raise ToolExecutionCollision(
                 f"Tool execution identity collision for turn {turn_id}, call {tool_call_id}"
             )
@@ -213,7 +221,14 @@ class ToolExecutionRepository:
         target: ToolExecutionStatus,
         result_json: str,
     ) -> None:
-        if row.status != target.value or row.result_json != result_json:
+        same_result = row.result_json == result_json or (
+            row.result_json is not None
+            and ToolExecutionRepository._matches_redacted_result(
+                row.result_json,
+                result_json,
+            )
+        )
+        if row.status != target.value or not same_result:
             raise ToolExecutionStateConflict(
                 f"Tool execution {row.idempotency_key} already completed differently"
             )
@@ -252,3 +267,28 @@ class ToolExecutionRepository:
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+    @staticmethod
+    def _matches_redacted_json(stored_json: str, expected_json: str) -> bool:
+        try:
+            payload = json.loads(stored_json)
+        except (TypeError, json.JSONDecodeError):
+            return False
+        return (
+            isinstance(payload, dict)
+            and payload.get("_redacted") is True
+            and payload.get("_redacted_sha256")
+            == hashlib.sha256(expected_json.encode("utf-8")).hexdigest()
+        )
+
+    @staticmethod
+    def _matches_redacted_result(stored_json: str, expected_json: str) -> bool:
+        try:
+            stored = ToolResult.model_validate_json(stored_json)
+        except ValueError:
+            return False
+        return (
+            stored.output.get("_redacted") is True
+            and stored.output.get("_redacted_sha256")
+            == hashlib.sha256(expected_json.encode("utf-8")).hexdigest()
+        )

@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -105,6 +106,20 @@ class AgentItemRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class AgentItemRedactionRecord(Base):
+    __tablename__ = "agent_item_redactions"
+    __table_args__ = (Index("ix_agent_item_redaction_created", "redacted_at"),)
+
+    item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    original_payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    redacted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
 
@@ -411,6 +426,180 @@ class SlimGuardUser(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
+
+
+class UserMemoryFactRecord(Base):
+    __tablename__ = "user_memory_facts"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "operation_id",
+            "slot_key",
+            name="uq_user_memory_operation_slot",
+        ),
+        UniqueConstraint("supersedes_id", name="uq_user_memory_supersedes"),
+        CheckConstraint(
+            "kind IN ('profile','goal','constraint')",
+            name="ck_user_memory_kind",
+        ),
+        CheckConstraint(
+            "status IN ('active','superseded','revoked','expired')",
+            name="ck_user_memory_status",
+        ),
+        CheckConstraint(
+            "assertion IN ('user_explicit','user_confirmed','imported')",
+            name="ck_user_memory_assertion",
+        ),
+        CheckConstraint(
+            "sensitivity IN ('normal','health','restricted')",
+            name="ck_user_memory_sensitivity",
+        ),
+        CheckConstraint(
+            "status != 'active' OR value_json IS NOT NULL",
+            name="ck_user_memory_active_value",
+        ),
+        Index("ix_user_memory_user_status", "user_id", "status"),
+        Index("ix_user_memory_user_key", "user_id", "memory_key"),
+        Index(
+            "uq_user_memory_active_slot",
+            "user_id",
+            "slot_key",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    memory_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    slot_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    value_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    value_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    assertion: Mapped[str] = mapped_column(String(32), nullable=False)
+    sensitivity: Mapped[str] = mapped_column(String(32), nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        ForeignKey("user_memory_facts.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    valid_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserMemoryEventRecord(Base):
+    __tablename__ = "user_memory_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created','superseded','revoked','expired','reviewed')",
+            name="ck_user_memory_event_type",
+        ),
+        Index("ix_user_memory_event_memory_created", "memory_id", "created_at"),
+        Index("ix_user_memory_event_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    memory_id: Mapped[str] = mapped_column(
+        ForeignKey("user_memory_facts.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    detail_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class MemoryBulkOperationRecord(Base):
+    __tablename__ = "memory_bulk_operations"
+    __table_args__ = (Index("ix_memory_bulk_user_created", "user_id", "created_at"),)
+
+    operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    memory_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    revoked_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class MemoryHandoffRecord(Base):
+    __tablename__ = "memory_handoffs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active','resolved','expired')",
+            name="ck_memory_handoff_status",
+        ),
+        Index("ix_memory_handoff_user_status", "user_id", "status"),
+        Index("ix_memory_handoff_expiry", "status", "expires_at"),
+        Index(
+            "uq_memory_handoff_active_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    objective: Mapped[str] = mapped_column(String(300), nullable=False)
+    unresolved_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserRoutinePreference(Base):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from slim_guard.db.models import SlimGuardUser
@@ -25,6 +25,8 @@ from slim_guard.harness.initialization import (
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
+from slim_guard.memory.contracts import MemoryFactInput, MemoryKey, MemoryWriteCommand
+from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
@@ -62,7 +64,7 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
             agent_version_id=manifest.version_id,
             trigger=TurnTrigger.USER_MESSAGE,
             execution_mode=ToolExecutionMode.EVALUATION,
-            inputs=(TurnInput.user_message(text="今天打卡"),),
+            inputs=(TurnInput.user_message(text="今天打卡，我对花生过敏"),),
         )
     )
     assert initialized.source_item_id is not None
@@ -73,6 +75,7 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
     weights = WeightRepository(database)
     meals = MealRepository(database)
     exercise = ExerciseRepository(database)
+    memories = MemoryRepository(database, clock=lambda: NOW)
     await weights.record(
         WeightMeasurementCommand(
             user_id="user-1",
@@ -107,14 +110,35 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
             **source,
         )
     )
+    await memories.write(
+        MemoryWriteCommand(
+            user_id="user-1",
+            facts=(
+                MemoryFactInput(
+                    key=MemoryKey.DIETARY_CONSTRAINT,
+                    value={"subject": "花生", "statement": "我对花生过敏"},
+                ),
+            ),
+            evidence_excerpt="我对花生过敏",
+            operation_id="memory-1",
+            source_turn_id=initialized.turn.id,
+            source_item_id=initialized.source_item_id,
+            source_tool_call_id="memory-call",
+        )
+    )
     provider = AuthoritativeContextDataProvider(
         database=database,
         weights=weights,
         meals=meals,
         exercise=exercise,
+        memories=memories,
     )
     try:
-        context = await provider.load(user_id="user-1", current_time=NOW)
+        context = await provider.load(
+            user_id="user-1",
+            current_time=NOW + timedelta(days=181),
+            trigger=TurnTrigger.DAILY_REVIEW,
+        )
 
         assert context["profile"] == {
             "nickname": "小明",
@@ -131,5 +155,8 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
             {"name": "鸡胸肉", "portion": "一份"}
         ]
         assert context["recent_exercise"][0]["duration_minutes"] == 30
+        assert context["profile_memory"][0]["key"] == "constraint.dietary"
+        assert context["profile_memory"][0]["sensitivity"] == "health"
+        assert context["profile_memory"][0]["stale"] is True
     finally:
         await database.close()
