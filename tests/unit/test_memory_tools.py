@@ -18,6 +18,7 @@ from slim_guard.tools.memory import (
     MemoryToolHandlers,
     RecordUserConstraintArguments,
     SetBehaviorGoalArguments,
+    SetBodyProfileArguments,
     SetCoachingProfileArguments,
     SetWeightGoalArguments,
     UpsertExercisePreferenceArguments,
@@ -55,7 +56,7 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
             inputs=(
                 TurnInput.user_message(
                     text=(
-                        "以后叫我阿杰，我不喜欢香菜，也喜欢游泳，目标65kg，"
+                        "以后叫我阿杰，身高179cm，我不喜欢香菜，也喜欢游泳，目标65kg，"
                         "每周运动3次，我对花生过敏"
                         "，清空我的个性化记忆"
                     )
@@ -83,6 +84,32 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
                 preferred_name="阿杰",
                 response_style="concise",
                 evidence_excerpt="以后叫我阿杰",
+            ),
+        )
+        body_profile = await handlers.set_body_profile(
+            context.model_copy(
+                update={
+                    "tool_call_id": "call-body-profile",
+                    "execution_idempotency_key": "execution-body-profile",
+                }
+            ),
+            SetBodyProfileArguments(
+                height_value=179,
+                height_unit="cm",
+                evidence_excerpt="身高179cm",
+            ),
+        )
+        mismatched_height_unit = await handlers.set_body_profile(
+            context.model_copy(
+                update={
+                    "tool_call_id": "call-body-profile-wrong-unit",
+                    "execution_idempotency_key": "execution-body-profile-wrong-unit",
+                }
+            ),
+            SetBodyProfileArguments(
+                height_value=1.79,
+                height_unit="m",
+                evidence_excerpt="身高1.79cm",
             ),
         )
         food = await handlers.upsert_food_preference(
@@ -158,14 +185,19 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
 
         assert profile.status is ToolResultStatus.SUCCEEDED
         assert profile.output["created_count"] == 2
+        assert body_profile.status is ToolResultStatus.SUCCEEDED
+        assert mismatched_height_unit.status is ToolResultStatus.FAILED
+        assert mismatched_height_unit.failure is not None
+        assert mismatched_height_unit.failure.code == "memory_value_not_in_evidence"
         assert food.status is ToolResultStatus.SUCCEEDED
         assert exercise.status is ToolResultStatus.SUCCEEDED
         assert weight_goal.status is ToolResultStatus.SUCCEEDED
         assert behavior_goal.status is ToolResultStatus.SUCCEEDED
         assert constraint.status is ToolResultStatus.SUCCEEDED
-        assert len(listed.output["memories"]) == 7
+        assert len(listed.output["memories"]) == 8
         assert {item["key"] for item in listed.output["memories"]} == {
             "identity.preferred_name",
+            "profile.height",
             "coaching.response_style",
             "food.preference",
             "exercise.preference",
@@ -193,11 +225,13 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
         )
         assert forgotten.status is ToolResultStatus.SUCCEEDED
         assert forgotten.output["changed"] is True
-        assert len(remaining.output["memories"]) == 6
+        assert len(remaining.output["memories"]) == 7
         active = await repository.active("user-1")
         target = next(item for item in active if item.key.value == "goal.target_weight")
+        height = next(item for item in active if item.key.value == "profile.height")
         dietary = next(item for item in active if item.key.value == "constraint.dietary")
         assert target.value == {"grams": 65_000, "target_date": None}
+        assert height.value == {"millimeters": 1790}
         assert dietary.value["statement"] == "我对花生过敏"
         assert dietary.review_after is not None
         cleared = await handlers.clear_user_memories(
@@ -225,8 +259,8 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
             ),
         )
         assert cleared.status is ToolResultStatus.SUCCEEDED
-        assert cleared.output["revoked_count"] == 6
-        assert replayed_clear.output["revoked_count"] == 6
+        assert cleared.output["revoked_count"] == 7
+        assert replayed_clear.output["revoked_count"] == 7
         assert await repository.active("user-1") == ()
     finally:
         await database.close()

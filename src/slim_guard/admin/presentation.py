@@ -21,6 +21,7 @@ TOOL_LABELS = {
     "resolve_conversation_handoff": "完成跨轮待办",
     "resolve_pending_user_action": "处理待确认操作",
     "set_behavior_goal": "设置行为目标",
+    "set_body_profile": "保存身高档案",
     "set_coaching_profile": "更新陪伴偏好",
     "set_conversation_handoff": "保存跨轮待办",
     "set_weight_goal": "设置目标体重",
@@ -51,6 +52,8 @@ FIELD_LABELS = {
     "status": "状态",
     "steps": "步数",
     "target_weight_kg": "目标体重（kg）",
+    "height_value": "身高",
+    "height_unit": "身高单位",
     "time": "时间",
     "timezone": "时区",
     "weight_kg": "体重（kg）",
@@ -101,6 +104,71 @@ def execution_summary(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def context_sources(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Explain the frozen context by retention and authority, not by JSON shape."""
+    snapshot = next(
+        (event for event in events if event.get("operation") == "context_snapshot"),
+        None,
+    )
+    if snapshot is None:
+        return []
+    details = _mapping(snapshot.get("details"))
+    request = _mapping(details.get("request"))
+    messages = request.get("messages")
+    rows = messages if isinstance(messages, list) else []
+    authoritative: Mapping[str, Any] = {}
+    working: Mapping[str, Any] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        content = row.get("content")
+        if not isinstance(content, str):
+            continue
+        if content.startswith("权威用户事实"):
+            authoritative = _embedded_json(content)
+        elif content.startswith("近期对话工作记忆"):
+            working = _embedded_json(content)
+
+    memories = authoritative.get("profile_memory")
+    memory_rows = memories if isinstance(memories, list) else []
+    health_items: list[dict[str, str]] = []
+    health_items.extend(_weight_source_items(authoritative.get("recent_weights")))
+    health_items.extend(_meal_source_items(authoritative.get("recent_meals")))
+    health_items.extend(_exercise_source_items(authoritative.get("recent_exercise")))
+    other_authoritative_items = _other_authoritative_source_items(authoritative)
+    working_items = _working_source_items(working)
+    return [
+        {
+            "kind": "durable_memory",
+            "title": "长期记忆",
+            "retention": "跨对话持久保存",
+            "description": "只包含用户明确表达且已通过记忆工具保存的资料。",
+            "items": [_memory_source_item(row) for row in memory_rows if isinstance(row, dict)],
+        },
+        {
+            "kind": "health_records",
+            "title": "权威健康记录",
+            "retention": "独立业务记录",
+            "description": "体重、饮食和运动记录；它们不是长期记忆。",
+            "items": health_items,
+        },
+        {
+            "kind": "working_memory",
+            "title": "最近对话 Working Memory",
+            "retention": "有限窗口，自动淘汰",
+            "description": "仅用于理解“刚才那个”等指代，不代表已经正式记住。",
+            "items": working_items,
+        },
+        {
+            "kind": "authoritative_context",
+            "title": "其他权威上下文",
+            "retention": "账户资料与当前设置",
+            "description": "昵称、提醒计划和今日打卡状态等本轮只读资料。",
+            "items": other_authoritative_items,
+        },
+    ]
+
+
 def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str, Any]:
     if operation == "user_message":
         text = details.get("text")
@@ -133,11 +201,10 @@ def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str,
     if operation == "tool_result":
         return _tool_result_presentation(details)
     if operation == "agent_message":
-        text = details.get("text")
         return _presentation(
             "output",
             "Agent 确定最终回复",
-            _quote(text) if isinstance(text, str) else "Agent 已生成最终回复。",
+            "Harness 已确定本轮最终回复；正文已在页面顶部展示，随后进入发送流程。",
         )
     if operation == "output_guard":
         return _presentation(
@@ -322,3 +389,174 @@ def _display(value: Any) -> str:
 
 def _humanize_identifier(value: str) -> str:
     return value.replace("_", " ")
+
+
+def _embedded_json(content: str) -> Mapping[str, Any]:
+    _, separator, payload = content.partition("：")
+    if not separator:
+        return {}
+    try:
+        value = json.loads(payload)
+    except json.JSONDecodeError:
+        return {}
+    return _mapping(value)
+
+
+def _memory_source_item(row: Mapping[str, Any]) -> dict[str, str]:
+    key = str(row.get("key") or "unknown")
+    value = _mapping(row.get("value"))
+    labels = {
+        "identity.preferred_name": "常用称呼",
+        "profile.height": "身高",
+        "coaching.response_style": "回复风格",
+        "food.preference": "饮食偏好",
+        "exercise.preference": "运动偏好",
+        "goal.target_weight": "目标体重",
+        "goal.behavior": "行为目标",
+        "constraint.dietary": "饮食限制",
+        "constraint.exercise": "运动限制",
+        "constraint.health_context": "健康背景",
+    }
+    if key == "profile.height" and isinstance(value.get("millimeters"), (int, float)):
+        display = f"{float(value['millimeters']) / 10:g} cm"
+    elif key == "goal.target_weight" and isinstance(value.get("grams"), (int, float)):
+        display = f"{float(value['grams']) / 1000:g} kg"
+    else:
+        display = _display(value)
+    return {
+        "label": labels.get(key, _humanize_identifier(key)),
+        "value": display,
+        "detail": "已保存" + (" · 待复核" if row.get("stale") else ""),
+    }
+
+
+def _weight_source_items(value: Any) -> list[dict[str, str]]:
+    rows = value if isinstance(value, list) else []
+    return [
+        {
+            "label": "体重记录",
+            "value": f"{row.get('weight_kg')} kg",
+            "detail": str(row.get("measured_at") or ""),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _meal_source_items(value: Any) -> list[dict[str, str]]:
+    rows = value if isinstance(value, list) else []
+    return [
+        {
+            "label": "饮食记录",
+            "value": _display(row.get("foods")),
+            "detail": str(row.get("occurred_at") or ""),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _exercise_source_items(value: Any) -> list[dict[str, str]]:
+    rows = value if isinstance(value, list) else []
+    return [
+        {
+            "label": "运动记录",
+            "value": str(row.get("activity_name") or "未命名运动"),
+            "detail": str(row.get("occurred_at") or ""),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _working_source_items(working: Mapping[str, Any]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    dialogue = working.get("recent_dialogue")
+    dialogue_rows = dialogue if isinstance(dialogue, list) else []
+    for turn_number, turn in enumerate(dialogue_rows, start=1):
+        if not isinstance(turn, dict):
+            continue
+        messages = turn.get("messages")
+        message_rows = messages if isinstance(messages, list) else []
+        for message in message_rows:
+            if not isinstance(message, dict):
+                continue
+            role = "用户" if message.get("role") == "user" else "助手"
+            items.append(
+                {
+                    "label": f"近期对话 {turn_number} · {role}",
+                    "value": str(message.get("content") or ""),
+                    "detail": "对话原文，不是长期记忆",
+                }
+            )
+    handoff = working.get("active_handoff")
+    if isinstance(handoff, dict):
+        items.append(
+            {
+                "label": "跨轮待办",
+                "value": str(handoff.get("objective") or ""),
+                "detail": "完成或过期后失效",
+            }
+        )
+    images = working.get("recent_images")
+    if isinstance(images, list):
+        items.append(
+            {
+                "label": "近期图片",
+                "value": f"{len(images)} 张",
+                "detail": "短期图片引用",
+            }
+        )
+    pending = working.get("pending_user_confirmations")
+    if isinstance(pending, list):
+        items.append(
+            {
+                "label": "待确认操作",
+                "value": f"{len(pending)} 项",
+                "detail": "等待用户确认",
+            }
+        )
+    return items
+
+
+def _other_authoritative_source_items(
+    authoritative: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    profile = authoritative.get("profile")
+    if isinstance(profile, dict):
+        if profile.get("nickname"):
+            items.append(
+                {
+                    "label": "账户昵称",
+                    "value": str(profile["nickname"]),
+                    "detail": "用户账户资料",
+                }
+            )
+        if profile.get("first_seen_at"):
+            items.append(
+                {
+                    "label": "首次出现时间",
+                    "value": str(profile["first_seen_at"]),
+                    "detail": "用户账户资料",
+                }
+            )
+    schedule = authoritative.get("checkin_schedule")
+    if isinstance(schedule, dict):
+        items.append(
+            {
+                "label": "提醒计划",
+                "value": _display(schedule),
+                "detail": "当前生效的提醒设置",
+            }
+        )
+    checkin = authoritative.get("today_checkin_status")
+    if isinstance(checkin, dict):
+        items.append(
+            {
+                "label": "今日打卡状态",
+                "value": _display(checkin),
+                "detail": "根据当天记录计算",
+            }
+        )
+    return items

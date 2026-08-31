@@ -83,6 +83,8 @@ async def test_persistent_recorder_saves_final_response_and_completes_turn(tmp_p
             request=model_request(),
             response=response,
             call_index=1,
+            started_at=datetime(2026, 8, 31, 8, 0, tzinfo=UTC),
+            completed_at=datetime(2026, 8, 31, 8, 0, 1, 250000, tzinfo=UTC),
         )
         await recorder.finish_run(
             turn_id=turn.id,
@@ -103,6 +105,8 @@ async def test_persistent_recorder_saves_final_response_and_completes_turn(tmp_p
         ]
         assert items[0].payload["usage"]["total_tokens"] == 13
         assert items[0].payload["provider_request_id"] == "provider-1"
+        assert items[0].payload["started_at"] == "2026-08-31T08:00:00+00:00"
+        assert items[0].payload["completed_at"] == "2026-08-31T08:00:01.250000+00:00"
         assert items[1].payload == {"text": "已记录。"}
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
@@ -146,7 +150,12 @@ async def test_tool_result_reserved_before_wait_can_finish_after_pause(tmp_path)
             pending_action=None,
         )
 
-        await recorder.finish_tool_call(trace=trace, outcome=outcome)
+        await recorder.finish_tool_call(
+            trace=trace,
+            outcome=outcome,
+            started_at=datetime(2026, 8, 31, 8, 0, tzinfo=UTC),
+            completed_at=datetime(2026, 8, 31, 8, 0, 2, tzinfo=UTC),
+        )
         await recorder.finish_run(
             turn_id=turn.id,
             termination=HarnessTermination.WAITING_USER_CONFIRMATION,
@@ -170,6 +179,8 @@ async def test_tool_result_reserved_before_wait_can_finish_after_pause(tmp_path)
         assert items[1].payload["execution"]["result"]["failure"]["code"] == (
             "tool_confirmation_required"
         )
+        assert items[1].payload["started_at"] == "2026-08-31T08:00:00+00:00"
+        assert items[1].payload["completed_at"] == "2026-08-31T08:00:02+00:00"
         stored_turn = await repository.get_turn(turn.id)
         assert stored_turn is not None
         assert stored_turn.status is waiting_turn.status

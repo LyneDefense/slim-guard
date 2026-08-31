@@ -37,7 +37,7 @@ from slim_guard.memory.errors import (
 )
 from slim_guard.memory.registry import CanonicalMemory, MemorySchemaRegistry
 
-MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v4"
+MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v5"
 
 
 class MemoryRepository:

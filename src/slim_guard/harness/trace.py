@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
@@ -40,6 +41,8 @@ class HarnessRunRecorder(Protocol):
         request: ModelRequest,
         response: ModelResponse,
         call_index: int,
+        started_at: datetime,
+        completed_at: datetime,
     ) -> None: ...
 
     async def start_tool_call(
@@ -55,6 +58,8 @@ class HarnessRunRecorder(Protocol):
         *,
         trace: ToolTrace,
         outcome: ToolCallOutcome,
+        started_at: datetime,
+        completed_at: datetime,
     ) -> None: ...
 
     async def finish_run(
@@ -88,6 +93,8 @@ class NullHarnessRunRecorder:
         request: ModelRequest,
         response: ModelResponse,
         call_index: int,
+        started_at: datetime,
+        completed_at: datetime,
     ) -> None:
         return None
 
@@ -105,6 +112,8 @@ class NullHarnessRunRecorder:
         *,
         trace: ToolTrace,
         outcome: ToolCallOutcome,
+        started_at: datetime,
+        completed_at: datetime,
     ) -> None:
         return None
 
@@ -169,6 +178,8 @@ class PersistentHarnessRunRecorder:
         request: ModelRequest,
         response: ModelResponse,
         call_index: int,
+        started_at: datetime,
+        completed_at: datetime,
     ) -> None:
         await self._store.append_item(
             turn_id=turn_id,
@@ -182,6 +193,8 @@ class PersistentHarnessRunRecorder:
                 "finish_reason": response.finish_reason,
                 "usage": response.usage.model_dump(mode="json"),
                 "provider_request_id": response.provider_request_id,
+                "started_at": started_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
             },
         )
 
@@ -220,6 +233,8 @@ class PersistentHarnessRunRecorder:
         *,
         trace: ToolTrace,
         outcome: ToolCallOutcome,
+        started_at: datetime,
+        completed_at: datetime,
     ) -> None:
         if trace.result_item_id is None:
             return
@@ -233,6 +248,8 @@ class PersistentHarnessRunRecorder:
                 "pending_action_id": (
                     outcome.pending_action.id if outcome.pending_action is not None else None
                 ),
+                "started_at": started_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
             },
         )
 

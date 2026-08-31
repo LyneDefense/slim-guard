@@ -15,6 +15,7 @@ class MemoryKind(StrEnum):
 
 class MemoryKey(StrEnum):
     PREFERRED_NAME = "identity.preferred_name"
+    HEIGHT = "profile.height"
     RESPONSE_STYLE = "coaching.response_style"
     FOOD_PREFERENCE = "food.preference"
     EXERCISE_PREFERENCE = "exercise.preference"

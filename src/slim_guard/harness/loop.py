@@ -158,7 +158,9 @@ class HarnessLoop:
                     tool_outcomes=tool_outcomes,
                 )
             try:
+                model_started_at = self._clock()
                 response = await self._model.complete(current_request)
+                model_completed_at = self._clock()
             except ModelGatewayError as exc:
                 return await self._finish(
                     context=context,
@@ -175,6 +177,8 @@ class HarnessLoop:
                 request=current_request,
                 response=response,
                 call_index=len(model_responses),
+                started_at=model_started_at,
+                completed_at=model_completed_at,
             )
             if self._total_tokens(model_responses) > self._limits.max_total_tokens:
                 return await self._finish(
@@ -240,6 +244,7 @@ class HarnessLoop:
                     call=call,
                     call_index=len(tool_outcomes) + 1,
                 )
+                tool_started_at = self._clock()
                 outcome = await self._tool_calls.execute(
                     call=call,
                     context=context.for_tool_call(
@@ -250,8 +255,14 @@ class HarnessLoop:
                     source_item_id=source_item_id,
                     now=now,
                 )
+                tool_completed_at = self._clock()
                 tool_outcomes.append(outcome)
-                await self._recorder.finish_tool_call(trace=trace, outcome=outcome)
+                await self._recorder.finish_tool_call(
+                    trace=trace,
+                    outcome=outcome,
+                    started_at=tool_started_at,
+                    completed_at=tool_completed_at,
+                )
                 messages.append(
                     ModelMessage(
                         role=MessageRole.TOOL,

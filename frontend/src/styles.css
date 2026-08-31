@@ -134,6 +134,23 @@ button:disabled { cursor: default; }
 .agent-manifest > div { min-width: 0; padding: 9px 11px; background: rgba(255,255,255,.72); }
 .agent-manifest dt { color: var(--muted); font-size: 9px; }
 .agent-manifest dd { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.context-sources { margin: 0 0 34px; }
+.source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.source-card { min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 15px; background: white; }
+.source-card > header { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid #e7ece9; }
+.source-card h3 { margin: 0 0 5px; font-size: 15px; }
+.source-card header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.source-card header > span { height: fit-content; padding: 4px 7px; border-radius: 7px; color: #53635b; background: #edf2ef; font-size: 9px; white-space: nowrap; }
+.source-card dl { display: grid; gap: 8px; margin: 12px 0 0; }
+.source-card dl > div { min-width: 0; padding: 10px; border-radius: 9px; background: #f7f9f7; }
+.source-card dt { color: var(--muted); font-size: 9px; }
+.source-card dd { margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.source-card small { color: #89938e; font-size: 9px; }
+.source-working_memory { border-color: #ded6ef; }
+.source-working_memory header > span { color: #674f92; background: #eee9f7; }
+.source-durable_memory { border-color: #c9dfd2; }
+.source-durable_memory header > span { color: #216146; background: #e3f1e8; }
+.source-empty { margin-top: 12px; padding: 15px 10px; border: 1px dashed #d9dfdb; border-radius: 9px; color: var(--muted); text-align: center; font-size: 11px; }
 .trace-boundary { display: flex; gap: 9px; margin: -2px 0 18px 42px; padding: 11px 14px; border-left: 3px solid #d1a85e; color: #71613f; background: #fff8e7; font-size: 12px; line-height: 1.55; }
 .trace-boundary strong { white-space: nowrap; }
 .alert { display: flex; gap: 12px; margin: 18px 0; padding: 13px 16px; border-radius: 12px; color: #8e3636; background: #fce9e7; }
@@ -191,6 +208,7 @@ button:disabled { cursor: default; }
   .trace-heading { align-items: start; flex-direction: column; gap: 12px; }
   .execution-overview { grid-template-columns: 1fr; }
   .agent-manifest { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .source-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 560px) {

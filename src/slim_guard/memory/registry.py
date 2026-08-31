@@ -45,6 +45,12 @@ class ResponseStyleValue(BaseModel):
     style: ResponseStyle
 
 
+class HeightValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    millimeters: int = Field(ge=500, le=2500)
+
+
 class FoodPreferenceValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -136,7 +142,7 @@ class CanonicalMemory:
 class MemorySchemaRegistry:
     """Versioned allowlist and canonicalizer for durable memory facts."""
 
-    version = "profile-goal-constraint-schema-v2"
+    version = "profile-goal-constraint-schema-v3"
 
     def __init__(self, *, health_review_days: int = 180) -> None:
         if not 30 <= health_review_days <= 730:
@@ -155,6 +161,13 @@ class MemorySchemaRegistry:
                 cardinality=MemoryCardinality.SINGLE,
                 sensitivity=MemorySensitivity.NORMAL,
                 value_model=ResponseStyleValue,
+            ),
+            MemorySpec(
+                key=MemoryKey.HEIGHT,
+                kind=MemoryKind.PROFILE,
+                cardinality=MemoryCardinality.SINGLE,
+                sensitivity=MemorySensitivity.HEALTH,
+                value_model=HeightValue,
             ),
             MemorySpec(
                 key=MemoryKey.FOOD_PREFERENCE,

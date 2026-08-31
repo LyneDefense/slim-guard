@@ -108,6 +108,13 @@ export interface TraceDetail {
     observation_count: number;
     context_snapshot_count: number;
   };
+  context_sources: Array<{
+    kind: string;
+    title: string;
+    retention: string;
+    description: string;
+    items: Array<{ label: string; value: string; detail: string }>;
+  }>;
   tool_executions: Array<Record<string, unknown>>;
   output: {
     kind: string;

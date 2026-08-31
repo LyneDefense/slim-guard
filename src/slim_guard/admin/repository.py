@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import case, func, or_, select
 
-from slim_guard.admin.presentation import execution_summary, present_event
+from slim_guard.admin.presentation import context_sources, execution_summary, present_event
 from slim_guard.db.models import (
     AdminAuditEventRecord,
     AgentItemRecord,
@@ -342,6 +342,7 @@ class AdminQueryRepository:
                 "agent": self._agent_version_view(agent_version),
                 "timeline": timeline,
                 "execution_summary": execution_summary(timeline),
+                "context_sources": context_sources(timeline),
                 "tool_executions": [self._tool_view(tool) for tool in tool_rows],
                 "output": (
                     {
@@ -592,6 +593,24 @@ class AdminQueryRepository:
         item: AgentItemRecord,
         redaction: AgentItemRedactionRecord | None,
     ) -> dict[str, Any]:
+        details = cls._json_load(item.payload_json)
+        started_at = item.created_at
+        completed_at = None
+        if isinstance(details, dict):
+            payload_started_at = cls._parse_datetime(details.get("started_at"))
+            payload_completed_at = cls._parse_datetime(details.get("completed_at"))
+            if payload_started_at is not None and payload_completed_at is not None:
+                started_at = payload_started_at
+                completed_at = payload_completed_at
+        duration_ms = None
+        if completed_at is not None:
+            duration_ms = max(
+                0,
+                int(
+                    (cls._aware(completed_at) - cls._aware(started_at)).total_seconds()
+                    * 1000
+                ),
+            )
         return {
             "event_type": "agent_item",
             "id": item.id,
@@ -599,12 +618,12 @@ class AdminQueryRepository:
             "component": "agent",
             "operation": item.item_type,
             "status": item.status,
-            "details": cls._json_load(item.payload_json),
+            "details": details,
             "redacted": redaction is not None,
             "redaction_policy": redaction.policy_version if redaction is not None else None,
-            "started_at": item.created_at,
-            "completed_at": item.created_at,
-            "duration_ms": 0,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": duration_ms,
         }
 
     @classmethod
@@ -650,6 +669,15 @@ class AdminQueryRepository:
             return json.loads(value)
         except (TypeError, json.JSONDecodeError):
             return {"unparsed": True}
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     @staticmethod
     def _ref(value: str) -> str:

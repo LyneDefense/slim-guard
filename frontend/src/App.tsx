@@ -337,12 +337,34 @@ function TracePage() {
       {data.trace.failure_code && <div className="alert"><strong>{data.trace.failure_code}</strong><span>{data.trace.error_detail}</span></div>}
       {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
       <ExecutionOverview data={data} />
+      <ContextSources data={data} />
       <div className="section-heading"><div><h2>Agent 是怎么完成这次回复的</h2><p>按 Harness 的真实事件解释上下文、模型动作、工具观察和投递过程。</p></div><span>{data.timeline.length} 个步骤</span></div>
       <div className="trace-boundary"><strong>关于“思考”</strong><span>这里展示模型明确输出的工具选择和可验证观察，不展示、补写或猜测模型隐藏的逐字思维。</span></div>
       <div className="timeline">{data.timeline.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
       {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
       {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
       <p className="privacy-footnote">敏感健康数据 · 已脱敏事件 {data.privacy.redacted_item_count} 条 · 本次查看已写入审计记录</p>
+    </section>
+  );
+}
+
+function ContextSources({ data }: { data: TraceDetail }) {
+  if (data.context_sources.length === 0) return null;
+  return (
+    <section className="context-sources">
+      <div className="section-heading">
+        <div><h2>本轮实际使用的记忆与数据来源</h2><p>按保存方式分开显示，避免把最近聊天误认为长期记忆或健康记录。</p></div>
+      </div>
+      <div className="source-grid">
+        {data.context_sources.map((source) => (
+          <article className={`source-card source-${source.kind}`} key={source.kind}>
+            <header><div><h3>{source.title}</h3><p>{source.description}</p></div><span>{source.retention}</span></header>
+            {source.items.length === 0
+              ? <div className="source-empty">本轮没有带入这一类数据</div>
+              : <dl>{source.items.map((item, index) => <div key={`${item.label}-${index}`}><dt>{item.label}</dt><dd>{item.value}</dd><small>{item.detail}</small></div>)}</dl>}
+          </article>
+        ))}
+      </div>
     </section>
   );
 }

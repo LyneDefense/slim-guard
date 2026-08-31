@@ -298,6 +298,7 @@ class AuthoritativeContextDataProvider:
             return memories
         selected = {
             MemoryKey.PREFERRED_NAME,
+            MemoryKey.HEIGHT,
             MemoryKey.RESPONSE_STYLE,
         }
         if trigger is TurnTrigger.WEIGHT_REMINDER:

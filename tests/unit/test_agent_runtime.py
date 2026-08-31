@@ -35,6 +35,7 @@ from slim_guard.tools.contracts import ToolExecutionMode
 from slim_guard.tools.meal import RECORD_MEAL_TOOL_NAME
 from slim_guard.tools.memory import (
     CLEAR_USER_MEMORIES_TOOL_NAME,
+    SET_BODY_PROFILE_TOOL_NAME,
     SET_COACHING_PROFILE_TOOL_NAME,
     SET_CONVERSATION_HANDOFF_TOOL_NAME,
     SET_WEIGHT_GOAL_TOOL_NAME,
@@ -320,6 +321,7 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "get_checkin_schedule",
             "update_record_status",
             "set_coaching_profile",
+            "set_body_profile",
             "upsert_food_preference",
             "upsert_exercise_preference",
             "set_weight_goal",
@@ -403,6 +405,73 @@ async def test_runtime_persists_and_recalls_profile_memory_across_turns(
         assert '"key":"identity.preferred_name"' in memory_context
         assert '"name":"阿杰"' in memory_context
         assert '"style":"concise"' in memory_context
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_saves_height_as_profile_memory_not_weight_record(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            tool_call(
+                "call-height",
+                SET_BODY_PROFILE_TOOL_NAME,
+                {
+                    "height_value": 179,
+                    "height_unit": "cm",
+                    "evidence_excerpt": "我身高179cm",
+                },
+            ),
+            final_reply("记住了，你的身高是 179cm。"),
+            final_reply("你保存的身高是 179cm。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-height-memory",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="我身高179cm",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="我的身高是多少？",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        memory_context = next(
+            message.content or ""
+            for message in model.requests[2].messages
+            if "权威用户事实" in (message.content or "")
+        )
+        memories = await MemoryRepository(database).active("user-1")
+        weights = await WeightRepository(database).recent_trend("user-1")
+
+        assert '"key":"profile.height"' in memory_context
+        assert '"millimeters":1790' in memory_context
+        assert [memory.value for memory in memories if memory.key.value == "profile.height"] == [
+            {"millimeters": 1790}
+        ]
+        assert weights.records == ()
         model.assert_exhausted()
     finally:
         await model.close()

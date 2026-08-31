@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any, Literal
@@ -32,6 +33,7 @@ from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
 SET_COACHING_PROFILE_TOOL_NAME = "set_coaching_profile"
+SET_BODY_PROFILE_TOOL_NAME = "set_body_profile"
 UPSERT_FOOD_PREFERENCE_TOOL_NAME = "upsert_food_preference"
 UPSERT_EXERCISE_PREFERENCE_TOOL_NAME = "upsert_exercise_preference"
 LIST_USER_MEMORIES_TOOL_NAME = "list_user_memories"
@@ -42,7 +44,7 @@ RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
 SET_CONVERSATION_HANDOFF_TOOL_NAME = "set_conversation_handoff"
 RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME = "resolve_conversation_handoff"
 CLEAR_USER_MEMORIES_TOOL_NAME = "clear_user_memories"
-MEMORY_TOOL_VERSION = "v4"
+MEMORY_TOOL_VERSION = "v5"
 
 _GRAMS_PER_UNIT = {
     "kg": Decimal("1000"),
@@ -54,6 +56,31 @@ _UNIT_EVIDENCE = {
     "jin": ("斤",),
     "lb": ("lb", "磅"),
 }
+_MILLIMETERS_PER_HEIGHT_UNIT = {
+    "cm": Decimal("10"),
+    "m": Decimal("1000"),
+    "in": Decimal("25.4"),
+}
+_HEIGHT_UNIT_EVIDENCE = {
+    "cm": ("cm", "厘米", "公分"),
+    "m": ("m", "米"),
+    "in": ("in", "英寸", "inch", "inches"),
+}
+
+
+def _height_measurement_in_evidence(*, value: str, unit: str, evidence: str) -> bool:
+    value_pattern = rf"(?<![\d.]){re.escape(value)}(?![\d.])"
+    if re.search(value_pattern, evidence) is None:
+        return False
+    lowered = evidence.lower()
+    for alias in _HEIGHT_UNIT_EVIDENCE[unit]:
+        normalized = alias.lower()
+        if normalized.isascii():
+            if re.search(rf"(?<![a-z]){re.escape(normalized)}(?![a-z])", lowered):
+                return True
+        elif normalized in lowered:
+            return True
+    return False
 
 
 class SetCoachingProfileArguments(ToolArguments):
@@ -66,6 +93,12 @@ class SetCoachingProfileArguments(ToolArguments):
         if self.preferred_name is None and self.response_style is None:
             raise ValueError("Coaching profile update contains no changes")
         return self
+
+
+class SetBodyProfileArguments(ToolArguments):
+    height_value: float = Field(gt=0)
+    height_unit: Literal["cm", "m", "in"] = "cm"
+    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
 class UpsertFoodPreferenceArguments(ToolArguments):
@@ -83,6 +116,7 @@ class UpsertExercisePreferenceArguments(ToolArguments):
 class ListUserMemoriesArguments(ToolArguments):
     key: Literal[
         "identity.preferred_name",
+        "profile.height",
         "coaching.response_style",
         "food.preference",
         "exercise.preference",
@@ -191,6 +225,35 @@ class MemoryToolHandlers:
                 MemoryFactInput(
                     key=MemoryKey.FOOD_PREFERENCE,
                     value={"item": arguments.item, "stance": arguments.stance},
+                ),
+            ),
+            evidence_excerpt=arguments.evidence_excerpt,
+        )
+
+    async def set_body_profile(
+        self,
+        context: ToolContext,
+        arguments: SetBodyProfileArguments,
+    ) -> ToolResult:
+        value_text = format(Decimal(str(arguments.height_value)).normalize(), "f")
+        if not _height_measurement_in_evidence(
+            value=value_text,
+            unit=arguments.height_unit,
+            evidence=arguments.evidence_excerpt,
+        ):
+            return self._value_not_in_evidence()
+        millimeters = int(
+            (
+                Decimal(str(arguments.height_value))
+                * _MILLIMETERS_PER_HEIGHT_UNIT[arguments.height_unit]
+            ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+        return await self._write(
+            context,
+            facts=(
+                MemoryFactInput(
+                    key=MemoryKey.HEIGHT,
+                    value={"millimeters": millimeters},
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
@@ -590,6 +653,21 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             timeout_seconds=3,
         ),
         RegisteredTool(
+            name=SET_BODY_PROFILE_TOOL_NAME,
+            description=(
+                "Save the current user's explicitly stated height as durable profile data. "
+                "The model decides from the current message whether the statement is the "
+                "user's own height. height_value, height_unit, and evidence_excerpt must be "
+                "faithful to that message; never infer height from old dialogue or images."
+            ),
+            version=MEMORY_TOOL_VERSION,
+            arguments_model=SetBodyProfileArguments,
+            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            idempotent=True,
+            requires_confirmation=False,
+            timeout_seconds=3,
+        ),
+        RegisteredTool(
             name=UPSERT_FOOD_PREFERENCE_TOOL_NAME,
             description=(
                 "Save one food preference explicitly stated by the current user. Use avoid "
@@ -742,6 +820,10 @@ def memory_tool_executors(
         SET_COACHING_PROFILE_TOOL_NAME: ToolExecutor(
             arguments_model=SetCoachingProfileArguments,
             handler=handlers.set_coaching_profile,
+        ),
+        SET_BODY_PROFILE_TOOL_NAME: ToolExecutor(
+            arguments_model=SetBodyProfileArguments,
+            handler=handlers.set_body_profile,
         ),
         UPSERT_FOOD_PREFERENCE_TOOL_NAME: ToolExecutor(
             arguments_model=UpsertFoodPreferenceArguments,

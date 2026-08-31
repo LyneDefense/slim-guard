@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from slim_guard.admin.presentation import execution_summary, present_event
+import json
+from datetime import UTC, datetime
+
+from slim_guard.admin.presentation import context_sources, execution_summary, present_event
+from slim_guard.admin.repository import AdminQueryRepository
+from slim_guard.db.models import AgentItemRecord
 
 
 def test_model_tool_choice_is_presented_as_an_explicit_decision() -> None:
@@ -93,3 +98,96 @@ def test_execution_summary_counts_harness_actions() -> None:
         "observation_count": 1,
         "context_snapshot_count": 1,
     }
+
+
+def test_context_sources_distinguish_durable_memory_records_and_dialogue() -> None:
+    sources = context_sources(
+        [
+            {
+                "operation": "context_snapshot",
+                "details": {
+                    "request": {
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "权威用户事实（只读）："
+                                    '{"profile_memory":[{"key":"goal.target_weight",'
+                                    '"value":{"grams":65000},"stale":false}],'
+                                    '"recent_weights":[{"weight_kg":"77",'
+                                    '"measured_at":"2026-08-31T08:00:00+00:00"}]}'
+                                ),
+                            },
+                            {
+                                "role": "system",
+                                "content": (
+                                    "近期对话工作记忆（非权威）："
+                                    '{"recent_dialogue":[{"messages":['
+                                    '{"role":"user","content":"我身高179cm"},'
+                                    '{"role":"assistant","content":"收到"}]}]}'
+                                ),
+                            },
+                        ]
+                    }
+                },
+            }
+        ]
+    )
+
+    assert sources[0]["title"] == "长期记忆"
+    assert sources[0]["items"][0]["value"] == "65 kg"
+    assert sources[1]["title"] == "权威健康记录"
+    assert sources[1]["items"][0]["value"] == "77 kg"
+    assert sources[2]["title"] == "最近对话 Working Memory"
+    assert sources[2]["items"][0]["value"] == "我身高179cm"
+    assert sources[2]["items"][0]["detail"] == "对话原文，不是长期记忆"
+
+
+def test_agent_message_does_not_duplicate_final_text() -> None:
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "agent_message",
+            "details": {"text": "这是一段最终回复"},
+        }
+    )
+
+    assert "这是一段最终回复" not in presentation["summary"]
+    assert "页面顶部展示" in presentation["summary"]
+
+
+def test_agent_item_uses_persisted_operation_timing_and_not_fake_zero() -> None:
+    item = AgentItemRecord(
+        id="item-1",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        sequence=1,
+        item_type="model_message",
+        status="completed",
+        payload_json=json.dumps(
+            {
+                "started_at": "2026-08-31T08:00:00+00:00",
+                "completed_at": "2026-08-31T08:00:01.250000+00:00",
+            }
+        ),
+        created_at=datetime(2026, 8, 31, 8, 0, 2, tzinfo=UTC),
+    )
+    view = AdminQueryRepository._item_view(item, None)
+
+    assert view["started_at"] == datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
+    assert view["duration_ms"] == 1250
+
+    historical = AgentItemRecord(
+        id="item-2",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        sequence=2,
+        item_type="agent_message",
+        status="completed",
+        payload_json='{"text":"完成"}',
+        created_at=datetime(2026, 8, 31, 8, 0, 3, tzinfo=UTC),
+    )
+    historical_view = AdminQueryRepository._item_view(historical, None)
+
+    assert historical_view["completed_at"] is None
+    assert historical_view["duration_ms"] is None
