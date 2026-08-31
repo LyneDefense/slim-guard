@@ -13,7 +13,7 @@ import {
 } from "react-router-dom";
 
 import { api, UnauthorizedError } from "./api";
-import type { TimelineEvent, TraceSummary, UserDetail } from "./types";
+import type { TimelineEvent, TraceDetail, TraceSummary, UserDetail } from "./types";
 
 const STATUS_LABELS: Record<string, string> = {
   accepted: "已送达",
@@ -30,6 +30,27 @@ const STATUS_LABELS: Record<string, string> = {
   unknown: "结果未知",
   skipped: "已跳过",
   deferred_external_session: "人工会话中",
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  input: "输入",
+  context: "上下文",
+  decision: "模型判断",
+  action: "动作",
+  observation: "观察",
+  output: "输出",
+  delivery: "投递",
+  system: "系统",
+};
+
+const TRIGGER_LABELS: Record<string, string> = {
+  user_message: "用户发来消息",
+  user_confirmation: "用户确认操作",
+  daily_reminder: "每日提醒",
+  weight_reminder: "体重提醒",
+  meal_reminder: "饮食提醒",
+  daily_review: "每日复盘",
+  weekly_review: "每周复盘",
 };
 
 function formatDate(value: string | null | undefined): string {
@@ -69,10 +90,10 @@ function Failure({ error }: { error: unknown }) {
   return <div className="state-card state-error">{error instanceof Error ? error.message : "读取失败"}</div>;
 }
 
-function JsonView({ value }: { value: unknown }) {
+function JsonView({ value, label = "查看技术详情" }: { value: unknown; label?: string }) {
   return (
     <details className="json-view">
-      <summary>查看结构化详情</summary>
+      <summary>{label}</summary>
       <pre>{JSON.stringify(value, null, 2)}</pre>
     </details>
   );
@@ -292,7 +313,7 @@ function TraceRow({ trace, userId }: { trace: TraceSummary; userId: string }) {
   return (
     <Link className="trace-row" to={`/users/${userId}/traces/${trace.id}`}>
       <div className={`trace-icon ${trace.generation_status === "succeeded" ? "ok" : "attention"}`}>{trace.generation_status === "succeeded" ? "✓" : "!"}</div>
-      <div className="trace-primary"><div><strong>{trace.trigger_type}</strong><code>{trace.id.slice(0, 8)}</code></div><span>{formatDate(trace.created_at)} · {formatDuration(trace.duration_ms)}</span></div>
+      <div className="trace-primary"><div><strong>{TRIGGER_LABELS[trace.trigger_type] ?? trace.trigger_type}</strong><code>{trace.id.slice(0, 8)}</code></div><span>{formatDate(trace.created_at)} · {formatDuration(trace.duration_ms)}</span></div>
       <div className="trace-statuses"><label>生成 <StatusBadge value={trace.generation_status} /></label><label>投递 <StatusBadge value={trace.delivery_status} /></label></div>
       <span className="arrow">→</span>
     </Link>
@@ -310,30 +331,62 @@ function TracePage() {
     <section>
       <Link to={`/users/${user.id}`} className="back-link">← 返回该用户的链路</Link>
       <div className="trace-heading">
-        <div><p className="eyebrow">TRACE · {data.trace.id}</p><h2>{data.trace.trigger_type}</h2><p>{formatDate(data.trace.created_at)} · 总耗时 {formatDuration(data.trace.duration_ms)}</p></div>
+        <div><p className="eyebrow">TRACE · {data.trace.id}</p><h2>{TRIGGER_LABELS[data.trace.trigger_type] ?? data.trace.trigger_type}</h2><p>{formatDate(data.trace.created_at)} · 总耗时 {formatDuration(data.trace.duration_ms)}</p></div>
         <div className="trace-statuses"><label>生成 <StatusBadge value={data.trace.generation_status} /></label><label>投递 <StatusBadge value={data.trace.delivery_status} /></label></div>
       </div>
       {data.trace.failure_code && <div className="alert"><strong>{data.trace.failure_code}</strong><span>{data.trace.error_detail}</span></div>}
       {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
-      <div className="section-heading"><div><h2>执行时间线</h2><p>展示真实组件事件、模型响应和工具执行，不推测隐藏思维过程。</p></div><span>{data.timeline.length} 个事件</span></div>
-      <div className="timeline">{data.timeline.map((event) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} />)}</div>
-      {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行账本</h3><JsonView value={data.tool_executions} /></section>}
-      {data.turn && <section className="detail-block"><h3>Agent Turn</h3><JsonView value={data.turn} /></section>}
+      <ExecutionOverview data={data} />
+      <div className="section-heading"><div><h2>Agent 是怎么完成这次回复的</h2><p>按 Harness 的真实事件解释上下文、模型动作、工具观察和投递过程。</p></div><span>{data.timeline.length} 个步骤</span></div>
+      <div className="trace-boundary"><strong>关于“思考”</strong><span>这里展示模型明确输出的工具选择和可验证观察，不展示、补写或猜测模型隐藏的逐字思维。</span></div>
+      <div className="timeline">{data.timeline.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
+      {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
+      {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
       <p className="privacy-footnote">敏感健康数据 · 已脱敏事件 {data.privacy.redacted_item_count} 条 · 本次查看已写入审计记录</p>
     </section>
   );
 }
 
-function TimelineItem({ event }: { event: TimelineEvent }) {
-  const failed = ["failed", "unknown"].includes(event.status);
+function ExecutionOverview({ data }: { data: TraceDetail }) {
+  const summary = data.execution_summary;
+  const isHarness = summary.architecture === "harness";
   return (
-    <article className={`timeline-item ${failed ? "timeline-failed" : ""}`}>
-      <div className="timeline-rail"><span>{failed ? "!" : event.redacted ? "×" : "✓"}</span></div>
+    <section className="execution-overview">
+      <div className="overview-copy">
+        <span className="architecture-badge">{isHarness ? "HARNESS ARCHITECTURE" : "SERVICE TRACE"}</span>
+        <h3>{isHarness ? "本轮由 Agent Harness 编排" : "这是一条服务级输出链路"}</h3>
+        <p>{isHarness ? "Harness 先冻结上下文，再让模型选择回复或工具；每次工具结果都会作为新观察返回给模型。" : "这条链路没有关联到可重建的 Harness Turn，通常来自历史数据或非 Agent 流程。"}</p>
+      </div>
+      <div className="overview-metrics">
+        <Metric label="上下文快照" value={summary.context_snapshot_count} />
+        <Metric label="模型调用" value={summary.model_call_count} />
+        <Metric label="工具动作" value={summary.tool_call_count} />
+        <Metric label="工具观察" value={summary.observation_count} />
+      </div>
+      {data.agent && <dl className="agent-manifest">
+        <div><dt>文本模型</dt><dd>{data.agent.text_model ?? "—"}</dd></div>
+        <div><dt>上下文策略</dt><dd>{data.agent.context_policy_version ?? "—"}</dd></div>
+        <div><dt>记忆策略</dt><dd>{data.agent.memory_policy_version ?? "—"}</dd></div>
+        <div><dt>可用工具</dt><dd>{data.agent.tool_count} 个</dd></div>
+        <div><dt>代码版本</dt><dd>{data.agent.code_revision}</dd></div>
+      </dl>}
+    </section>
+  );
+}
+
+function TimelineItem({ event, index }: { event: TimelineEvent; index: number }) {
+  const failed = ["failed", "unknown"].includes(event.status);
+  const view = event.presentation;
+  return (
+    <article className={`timeline-item stage-${view.stage} ${failed ? "timeline-failed" : ""}`}>
+      <div className="timeline-rail"><span>{failed ? "!" : index}</span></div>
       <div className="timeline-card">
-        <header><div><span className="component">{event.component}</span><h3>{event.operation}</h3></div><div className="timeline-meta"><StatusBadge value={event.status} /><span>{formatDuration(event.duration_ms)}</span><time>{formatDate(event.started_at)}</time></div></header>
+        <header><div><span className="stage-label">{STAGE_LABELS[view.stage] ?? view.stage}</span><span className="component">{event.component}</span><h3>{view.title}</h3></div><div className="timeline-meta"><StatusBadge value={event.status} /><span>{formatDuration(event.duration_ms)}</span><time>{formatDate(event.started_at)}</time></div></header>
+        <p className="event-summary">{view.summary}</p>
+        {view.facts.length > 0 && <dl className="event-facts">{view.facts.map((fact, factIndex) => <div key={`${fact.label}-${factIndex}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}
         {event.error_code && <div className="event-error">{event.error_code} {event.error_detail}</div>}
         {event.redacted && <div className="redacted">正文已按 {event.redaction_policy} 脱敏</div>}
-        <JsonView value={event.details} />
+        <JsonView value={{ operation: event.operation, details: event.details }} />
       </div>
     </article>
   );

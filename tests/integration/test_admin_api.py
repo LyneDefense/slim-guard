@@ -138,6 +138,14 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
         assert traces.json()["items"][0]["id"] == "trace-1"
         assert detail.status_code == 200
         assert detail.json()["timeline"][0]["operation"] == "send_text"
+        assert detail.json()["timeline"][0]["presentation"]["title"] == "发送回复到企业微信"
+        assert detail.json()["execution_summary"] == {
+            "architecture": "service",
+            "model_call_count": 0,
+            "tool_call_count": 0,
+            "observation_count": 0,
+            "context_snapshot_count": 0,
+        }
         assert detail.json()["output"]["content"] == "已记录。"
         assert wrong_user.status_code == 404
         assert logout.status_code == 200

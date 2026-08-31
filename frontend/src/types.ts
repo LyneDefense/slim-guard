@@ -77,12 +77,37 @@ export interface TimelineEvent {
   started_at: string;
   completed_at: string | null;
   duration_ms: number | null;
+  presentation: {
+    stage: string;
+    title: string;
+    summary: string;
+    facts: Array<{ label: string; value: string }>;
+  };
 }
 
 export interface TraceDetail {
   trace: TraceSummary;
   turn: Record<string, unknown> | null;
+  agent: {
+    id: string;
+    model_provider: string | null;
+    text_model: string | null;
+    vision_model: string | null;
+    system_prompt_version: string | null;
+    context_policy_version: string | null;
+    memory_policy_version: string | null;
+    safety_policy_version: string | null;
+    code_revision: string;
+    tool_count: number;
+  } | null;
   timeline: TimelineEvent[];
+  execution_summary: {
+    architecture: string;
+    model_call_count: number;
+    tool_call_count: number;
+    observation_count: number;
+    context_snapshot_count: number;
+  };
   tool_executions: Array<Record<string, unknown>>;
   output: {
     kind: string;

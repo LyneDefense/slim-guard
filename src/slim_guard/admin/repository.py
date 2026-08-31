@@ -7,11 +7,13 @@ from typing import Any
 
 from sqlalchemy import case, func, or_, select
 
+from slim_guard.admin.presentation import execution_summary, present_event
 from slim_guard.db.models import (
     AdminAuditEventRecord,
     AgentItemRecord,
     AgentItemRedactionRecord,
     AgentTurnRecord,
+    AgentVersionRecord,
     ChannelIdentity,
     ExerciseRecord,
     InteractionTraceRecord,
@@ -278,6 +280,11 @@ class AdminQueryRepository:
                 if trace.agent_turn_id is not None
                 else None
             )
+            agent_version = (
+                await session.get(AgentVersionRecord, turn.agent_version_id)
+                if turn is not None
+                else None
+            )
             item_rows: list[tuple[AgentItemRecord, AgentItemRedactionRecord | None]] = []
             tool_rows: tuple[ToolExecutionRecord, ...] = ()
             if turn is not None:
@@ -313,6 +320,8 @@ class AdminQueryRepository:
                 self._item_view(item, redaction) for item, redaction in item_rows
             )
             timeline.sort(key=lambda event: (self._aware(event["started_at"]), event["sequence"]))
+            for event in timeline:
+                event["presentation"] = present_event(event)
             return {
                 "trace": self._trace_summary(trace),
                 "turn": (
@@ -330,7 +339,9 @@ class AdminQueryRepository:
                     if turn is not None
                     else None
                 ),
+                "agent": self._agent_version_view(agent_version),
                 "timeline": timeline,
+                "execution_summary": execution_summary(timeline),
                 "tool_executions": [self._tool_view(tool) for tool in tool_rows],
                 "output": (
                     {
@@ -608,6 +619,27 @@ class AdminQueryRepository:
             "result": cls._json_load(row.result_json),
             "created_at": row.created_at,
             "completed_at": row.completed_at,
+        }
+
+    @classmethod
+    def _agent_version_view(cls, row: AgentVersionRecord | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        manifest = cls._json_load(row.manifest_json)
+        if not isinstance(manifest, dict):
+            return None
+        tools = manifest.get("tool_versions")
+        return {
+            "id": row.id,
+            "model_provider": manifest.get("model_provider"),
+            "text_model": manifest.get("text_model"),
+            "vision_model": manifest.get("vision_model"),
+            "system_prompt_version": manifest.get("system_prompt_version"),
+            "context_policy_version": manifest.get("context_policy_version"),
+            "memory_policy_version": manifest.get("memory_policy_version"),
+            "safety_policy_version": manifest.get("safety_policy_version"),
+            "code_revision": row.code_revision,
+            "tool_count": len(tools) if isinstance(tools, list) else 0,
         }
 
     @staticmethod
