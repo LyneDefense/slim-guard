@@ -160,3 +160,4 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             )
         assert audit_count == 1
         assert "20260831_01_interaction_tracing" in migrations
+        assert "20260902_01_body_fat_records" in migrations

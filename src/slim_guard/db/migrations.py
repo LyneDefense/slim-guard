@@ -24,6 +24,7 @@ async def _create_application_tables(connection: AsyncConnection) -> None:
 
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
+    SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
 )
 
 

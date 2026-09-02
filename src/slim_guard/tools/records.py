@@ -17,7 +17,7 @@ RECORD_STATUS_TOOL_VERSION = "v1"
 
 
 class UpdateRecordStatusArguments(ToolArguments):
-    record_kind: Literal["weight", "meal", "exercise"]
+    record_kind: Literal["weight", "body_fat", "meal", "exercise"]
     record_id: str
     action: Literal["void", "restore"]
 
@@ -64,7 +64,7 @@ def record_status_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=UPDATE_RECORD_STATUS_TOOL_NAME,
             description=(
-                "Void a mistaken weight, meal, or exercise record owned by the current "
+                "Void a mistaken weight, body-fat, meal, or exercise record owned by the current "
                 "user, or restore a previously voided record. First use a recent-record "
                 "read tool to obtain the exact record_id. Never guess an ID."
             ),

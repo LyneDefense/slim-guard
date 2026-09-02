@@ -270,6 +270,7 @@ function TraceList() {
       <div className="metric-grid">
         <Metric label="输出链路" value={user.counts.trace_count ?? 0} />
         <Metric label="体重记录" value={user.counts.weight_count ?? 0} />
+        <Metric label="体脂记录" value={user.counts.body_fat_count ?? 0} />
         <Metric label="饮食记录" value={user.counts.meal_count ?? 0} />
         <Metric label="当前记忆" value={user.counts.memory_count ?? 0} />
       </div>
@@ -427,7 +428,7 @@ function RecordsPage() {
   const query = useQuery({ queryKey: ["records", user.id], queryFn: () => api.records(user.id) });
   if (query.isLoading) return <Loading />;
   if (query.error) return <Failure error={query.error} />;
-  return <>{Object.entries(query.data ?? {}).map(([name, items]) => <DataCards key={name} title={{ weights: "体重", meals: "饮食", exercises: "运动" }[name] ?? name} items={items} empty="暂无记录" />)}</>;
+  return <>{Object.entries(query.data ?? {}).map(([name, items]) => <DataCards key={name} title={{ weights: "体重", body_fat: "体脂", meals: "饮食", exercises: "运动" }[name] ?? name} items={items} empty="暂无记录" />)}</>;
 }
 
 function RoutinesPage() {

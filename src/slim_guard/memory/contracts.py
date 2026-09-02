@@ -16,10 +16,12 @@ class MemoryKind(StrEnum):
 class MemoryKey(StrEnum):
     PREFERRED_NAME = "identity.preferred_name"
     HEIGHT = "profile.height"
+    EXERCISE_HABIT = "profile.exercise_habit"
     RESPONSE_STYLE = "coaching.response_style"
     FOOD_PREFERENCE = "food.preference"
     EXERCISE_PREFERENCE = "exercise.preference"
     TARGET_WEIGHT = "goal.target_weight"
+    TARGET_BODY_FAT = "goal.target_body_fat"
     BEHAVIOR_GOAL = "goal.behavior"
     DIETARY_CONSTRAINT = "constraint.dietary"
     EXERCISE_CONSTRAINT = "constraint.exercise"

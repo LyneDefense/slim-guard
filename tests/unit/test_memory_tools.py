@@ -18,8 +18,10 @@ from slim_guard.tools.memory import (
     MemoryToolHandlers,
     RecordUserConstraintArguments,
     SetBehaviorGoalArguments,
+    SetBodyFatGoalArguments,
     SetBodyProfileArguments,
     SetCoachingProfileArguments,
+    SetExerciseProfileArguments,
     SetWeightGoalArguments,
     UpsertExercisePreferenceArguments,
     UpsertFoodPreferenceArguments,
@@ -56,7 +58,8 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
             inputs=(
                 TurnInput.user_message(
                     text=(
-                        "以后叫我阿杰，身高179cm，我不喜欢香菜，也喜欢游泳，目标65kg，"
+                        "以后叫我阿杰，身高179，我不喜欢香菜，也喜欢游泳，目标65，"
+                        "体脂目标24%，目前不运动，"
                         "每周运动3次，我对花生过敏"
                         "，清空我的个性化记忆"
                     )
@@ -95,8 +98,19 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
             ),
             SetBodyProfileArguments(
                 height_value=179,
-                height_unit="cm",
-                evidence_excerpt="身高179cm",
+                evidence_excerpt="身高179",
+            ),
+        )
+        exercise_profile = await handlers.set_exercise_profile(
+            context.model_copy(
+                update={
+                    "tool_call_id": "call-exercise-profile",
+                    "execution_idempotency_key": "execution-exercise-profile",
+                }
+            ),
+            SetExerciseProfileArguments(
+                habit_summary="目前不运动",
+                evidence_excerpt="目前不运动",
             ),
         )
         mismatched_height_unit = await handlers.set_body_profile(
@@ -147,8 +161,32 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
             ),
             SetWeightGoalArguments(
                 value=65.0,
-                unit="kg",
-                evidence_excerpt="目标65kg",
+                evidence_excerpt="目标65",
+            ),
+        )
+        mismatched_weight_unit = await handlers.set_weight_goal(
+            context.model_copy(
+                update={
+                    "tool_call_id": "call-weight-goal-wrong-unit",
+                    "execution_idempotency_key": "execution-weight-goal-wrong-unit",
+                }
+            ),
+            SetWeightGoalArguments(
+                value=65,
+                unit="jin",
+                evidence_excerpt="目标65公斤",
+            ),
+        )
+        body_fat_goal = await handlers.set_body_fat_goal(
+            context.model_copy(
+                update={
+                    "tool_call_id": "call-body-fat-goal",
+                    "execution_idempotency_key": "execution-body-fat-goal",
+                }
+            ),
+            SetBodyFatGoalArguments(
+                value=24,
+                evidence_excerpt="体脂目标24%",
             ),
         )
         behavior_goal = await handlers.set_behavior_goal(
@@ -189,19 +227,24 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
         assert mismatched_height_unit.status is ToolResultStatus.FAILED
         assert mismatched_height_unit.failure is not None
         assert mismatched_height_unit.failure.code == "memory_value_not_in_evidence"
+        assert exercise_profile.status is ToolResultStatus.SUCCEEDED
         assert food.status is ToolResultStatus.SUCCEEDED
         assert exercise.status is ToolResultStatus.SUCCEEDED
         assert weight_goal.status is ToolResultStatus.SUCCEEDED
+        assert mismatched_weight_unit.status is ToolResultStatus.FAILED
+        assert body_fat_goal.status is ToolResultStatus.SUCCEEDED
         assert behavior_goal.status is ToolResultStatus.SUCCEEDED
         assert constraint.status is ToolResultStatus.SUCCEEDED
-        assert len(listed.output["memories"]) == 8
+        assert len(listed.output["memories"]) == 10
         assert {item["key"] for item in listed.output["memories"]} == {
             "identity.preferred_name",
             "profile.height",
+            "profile.exercise_habit",
             "coaching.response_style",
             "food.preference",
             "exercise.preference",
             "goal.target_weight",
+            "goal.target_body_fat",
             "goal.behavior",
             "constraint.dietary",
         }
@@ -225,7 +268,7 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
         )
         assert forgotten.status is ToolResultStatus.SUCCEEDED
         assert forgotten.output["changed"] is True
-        assert len(remaining.output["memories"]) == 7
+        assert len(remaining.output["memories"]) == 9
         active = await repository.active("user-1")
         target = next(item for item in active if item.key.value == "goal.target_weight")
         height = next(item for item in active if item.key.value == "profile.height")
@@ -259,8 +302,8 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
             ),
         )
         assert cleared.status is ToolResultStatus.SUCCEEDED
-        assert cleared.output["revoked_count"] == 7
-        assert replayed_clear.output["revoked_count"] == 7
+        assert cleared.output["revoked_count"] == 9
+        assert replayed_clear.output["revoked_count"] == 9
         assert await repository.active("user-1") == ()
     finally:
         await database.close()

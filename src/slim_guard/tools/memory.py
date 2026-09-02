@@ -34,17 +34,19 @@ from slim_guard.tools.registry import RegisteredTool
 
 SET_COACHING_PROFILE_TOOL_NAME = "set_coaching_profile"
 SET_BODY_PROFILE_TOOL_NAME = "set_body_profile"
+SET_EXERCISE_PROFILE_TOOL_NAME = "set_exercise_profile"
 UPSERT_FOOD_PREFERENCE_TOOL_NAME = "upsert_food_preference"
 UPSERT_EXERCISE_PREFERENCE_TOOL_NAME = "upsert_exercise_preference"
 LIST_USER_MEMORIES_TOOL_NAME = "list_user_memories"
 FORGET_USER_MEMORY_TOOL_NAME = "forget_user_memory"
 SET_WEIGHT_GOAL_TOOL_NAME = "set_weight_goal"
+SET_BODY_FAT_GOAL_TOOL_NAME = "set_body_fat_goal"
 SET_BEHAVIOR_GOAL_TOOL_NAME = "set_behavior_goal"
 RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
 SET_CONVERSATION_HANDOFF_TOOL_NAME = "set_conversation_handoff"
 RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME = "resolve_conversation_handoff"
 CLEAR_USER_MEMORIES_TOOL_NAME = "clear_user_memories"
-MEMORY_TOOL_VERSION = "v5"
+MEMORY_TOOL_VERSION = "v6"
 
 _GRAMS_PER_UNIT = {
     "kg": Decimal("1000"),
@@ -68,19 +70,46 @@ _HEIGHT_UNIT_EVIDENCE = {
 }
 
 
-def _height_measurement_in_evidence(*, value: str, unit: str, evidence: str) -> bool:
+def _number_in_evidence(value: str, evidence: str) -> bool:
     value_pattern = rf"(?<![\d.]){re.escape(value)}(?![\d.])"
-    if re.search(value_pattern, evidence) is None:
-        return False
+    return re.search(value_pattern, evidence) is not None
+
+
+def _unit_in_evidence(
+    *,
+    selected_unit: str,
+    default_unit: str,
+    aliases: Mapping[str, tuple[str, ...]],
+    evidence: str,
+) -> bool:
     lowered = evidence.lower()
-    for alias in _HEIGHT_UNIT_EVIDENCE[unit]:
-        normalized = alias.lower()
-        if normalized.isascii():
-            if re.search(rf"(?<![a-z]){re.escape(normalized)}(?![a-z])", lowered):
-                return True
-        elif normalized in lowered:
-            return True
-    return False
+    candidates = sorted(
+        (
+            (unit, alias.lower())
+            for unit, unit_aliases in aliases.items()
+            for alias in unit_aliases
+        ),
+        key=lambda candidate: len(candidate[1]),
+        reverse=True,
+    )
+    occupied: set[int] = set()
+    matched_units: set[str] = set()
+    for unit, alias in candidates:
+        for start, end in _unit_alias_spans(alias, lowered):
+            span = set(range(start, end))
+            if occupied.isdisjoint(span):
+                matched_units.add(unit)
+                occupied.update(span)
+    return selected_unit in matched_units if matched_units else selected_unit == default_unit
+
+
+def _unit_alias_spans(alias: str, lowered: str) -> tuple[tuple[int, int], ...]:
+    pattern = (
+        rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
+        if alias.isascii()
+        else re.escape(alias)
+    )
+    return tuple((match.start(), match.end()) for match in re.finditer(pattern, lowered))
 
 
 class SetCoachingProfileArguments(ToolArguments):
@@ -101,6 +130,11 @@ class SetBodyProfileArguments(ToolArguments):
     evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
+class SetExerciseProfileArguments(ToolArguments):
+    habit_summary: str = Field(min_length=1, max_length=300)
+    evidence_excerpt: str = Field(min_length=1, max_length=512)
+
+
 class UpsertFoodPreferenceArguments(ToolArguments):
     item: str = Field(min_length=1, max_length=128)
     stance: Literal["like", "dislike", "avoid"]
@@ -117,10 +151,12 @@ class ListUserMemoriesArguments(ToolArguments):
     key: Literal[
         "identity.preferred_name",
         "profile.height",
+        "profile.exercise_habit",
         "coaching.response_style",
         "food.preference",
         "exercise.preference",
         "goal.target_weight",
+        "goal.target_body_fat",
         "goal.behavior",
         "constraint.dietary",
         "constraint.exercise",
@@ -137,6 +173,11 @@ class SetWeightGoalArguments(ToolArguments):
     value: float = Field(gt=0)
     unit: Literal["kg", "jin", "lb"] = "kg"
     target_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    evidence_excerpt: str = Field(min_length=1, max_length=512)
+
+
+class SetBodyFatGoalArguments(ToolArguments):
+    value: float = Field(gt=0)
     evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
@@ -236,10 +277,13 @@ class MemoryToolHandlers:
         arguments: SetBodyProfileArguments,
     ) -> ToolResult:
         value_text = format(Decimal(str(arguments.height_value)).normalize(), "f")
-        if not _height_measurement_in_evidence(
-            value=value_text,
-            unit=arguments.height_unit,
-            evidence=arguments.evidence_excerpt,
+        if not _number_in_evidence(value_text, arguments.evidence_excerpt) or not (
+            _unit_in_evidence(
+                selected_unit=arguments.height_unit,
+                default_unit="cm",
+                aliases=_HEIGHT_UNIT_EVIDENCE,
+                evidence=arguments.evidence_excerpt,
+            )
         ):
             return self._value_not_in_evidence()
         millimeters = int(
@@ -254,6 +298,24 @@ class MemoryToolHandlers:
                 MemoryFactInput(
                     key=MemoryKey.HEIGHT,
                     value={"millimeters": millimeters},
+                ),
+            ),
+            evidence_excerpt=arguments.evidence_excerpt,
+        )
+
+    async def set_exercise_profile(
+        self,
+        context: ToolContext,
+        arguments: SetExerciseProfileArguments,
+    ) -> ToolResult:
+        if arguments.habit_summary.strip() not in arguments.evidence_excerpt:
+            return self._value_not_in_evidence()
+        return await self._write(
+            context,
+            facts=(
+                MemoryFactInput(
+                    key=MemoryKey.EXERCISE_HABIT,
+                    value={"statement": arguments.habit_summary},
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
@@ -286,9 +348,13 @@ class MemoryToolHandlers:
         arguments: SetWeightGoalArguments,
     ) -> ToolResult:
         value_text = format(Decimal(str(arguments.value)).normalize(), "f")
-        if value_text not in arguments.evidence_excerpt or not any(
-            alias.lower() in arguments.evidence_excerpt.lower()
-            for alias in _UNIT_EVIDENCE[arguments.unit]
+        if not _number_in_evidence(value_text, arguments.evidence_excerpt) or not (
+            _unit_in_evidence(
+                selected_unit=arguments.unit,
+                default_unit="kg",
+                aliases=_UNIT_EVIDENCE,
+                evidence=arguments.evidence_excerpt,
+            )
         ):
             return self._value_not_in_evidence()
         grams = int(
@@ -303,6 +369,30 @@ class MemoryToolHandlers:
                 MemoryFactInput(
                     key=MemoryKey.TARGET_WEIGHT,
                     value={"grams": grams, "target_date": arguments.target_date},
+                ),
+            ),
+            evidence_excerpt=arguments.evidence_excerpt,
+        )
+
+    async def set_body_fat_goal(
+        self,
+        context: ToolContext,
+        arguments: SetBodyFatGoalArguments,
+    ) -> ToolResult:
+        value_text = format(Decimal(str(arguments.value)).normalize(), "f")
+        if not _number_in_evidence(value_text, arguments.evidence_excerpt):
+            return self._value_not_in_evidence()
+        basis_points = int(
+            (Decimal(str(arguments.value)) * Decimal("100")).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        )
+        return await self._write(
+            context,
+            facts=(
+                MemoryFactInput(
+                    key=MemoryKey.TARGET_BODY_FAT,
+                    value={"basis_points": basis_points},
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
@@ -657,11 +747,26 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             description=(
                 "Save the current user's explicitly stated height as durable profile data. "
                 "The model decides from the current message whether the statement is the "
-                "user's own height. height_value, height_unit, and evidence_excerpt must be "
-                "faithful to that message; never infer height from old dialogue or images."
+                "user's own height. If the user omits a unit, use cm; preserve an explicit "
+                "unit. Never infer height from old dialogue or images."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBodyProfileArguments,
+            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            idempotent=True,
+            requires_confirmation=False,
+            timeout_seconds=3,
+        ),
+        RegisteredTool(
+            name=SET_EXERCISE_PROFILE_TOOL_NAME,
+            description=(
+                "Save the current user's explicitly stated usual exercise habit or baseline. "
+                "Use this for statements such as currently not exercising; do not turn that "
+                "into a medical exercise constraint. habit_summary and evidence_excerpt must "
+                "be grounded in the current message."
+            ),
+            version=MEMORY_TOOL_VERSION,
+            arguments_model=SetExerciseProfileArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
             idempotent=True,
             requires_confirmation=False,
@@ -699,11 +804,27 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             name=SET_WEIGHT_GOAL_TOOL_NAME,
             description=(
                 "Save a target weight explicitly stated by the current user. This stores a "
-                "self-reported goal, not a measurement or medical endorsement. value and unit "
-                "must appear in the exact current-message evidence excerpt."
+                "self-reported goal, not a measurement or medical endorsement. If the user "
+                "omits a unit, use kg; preserve an explicit unit. The number must appear in "
+                "the exact current-message evidence excerpt."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetWeightGoalArguments,
+            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            idempotent=True,
+            requires_confirmation=False,
+            timeout_seconds=3,
+        ),
+        RegisteredTool(
+            name=SET_BODY_FAT_GOAL_TOOL_NAME,
+            description=(
+                "Save a body-fat percentage goal explicitly stated by the current user. The "
+                "model decides which number is the target; value is a percentage and must "
+                "appear in the exact current-message evidence excerpt. This does not endorse "
+                "the goal as medically appropriate."
+            ),
+            version=MEMORY_TOOL_VERSION,
+            arguments_model=SetBodyFatGoalArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
             idempotent=True,
             requires_confirmation=False,
@@ -825,6 +946,10 @@ def memory_tool_executors(
             arguments_model=SetBodyProfileArguments,
             handler=handlers.set_body_profile,
         ),
+        SET_EXERCISE_PROFILE_TOOL_NAME: ToolExecutor(
+            arguments_model=SetExerciseProfileArguments,
+            handler=handlers.set_exercise_profile,
+        ),
         UPSERT_FOOD_PREFERENCE_TOOL_NAME: ToolExecutor(
             arguments_model=UpsertFoodPreferenceArguments,
             handler=handlers.upsert_food_preference,
@@ -836,6 +961,10 @@ def memory_tool_executors(
         SET_WEIGHT_GOAL_TOOL_NAME: ToolExecutor(
             arguments_model=SetWeightGoalArguments,
             handler=handlers.set_weight_goal,
+        ),
+        SET_BODY_FAT_GOAL_TOOL_NAME: ToolExecutor(
+            arguments_model=SetBodyFatGoalArguments,
+            handler=handlers.set_body_fat_goal,
         ),
         SET_BEHAVIOR_GOAL_TOOL_NAME: ToolExecutor(
             arguments_model=SetBehaviorGoalArguments,

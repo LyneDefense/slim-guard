@@ -24,6 +24,7 @@ from slim_guard.agent_models.vision import (
 )
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
+from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
@@ -31,13 +32,16 @@ from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.repository import MemoryRepository
+from slim_guard.tools.body_fat import RECORD_BODY_FAT_TOOL_NAME
 from slim_guard.tools.contracts import ToolExecutionMode
 from slim_guard.tools.meal import RECORD_MEAL_TOOL_NAME
 from slim_guard.tools.memory import (
     CLEAR_USER_MEMORIES_TOOL_NAME,
+    SET_BODY_FAT_GOAL_TOOL_NAME,
     SET_BODY_PROFILE_TOOL_NAME,
     SET_COACHING_PROFILE_TOOL_NAME,
     SET_CONVERSATION_HANDOFF_TOOL_NAME,
+    SET_EXERCISE_PROFILE_TOOL_NAME,
     SET_WEIGHT_GOAL_TOOL_NAME,
 )
 from slim_guard.tools.pending import RESOLVE_PENDING_USER_ACTION_TOOL_NAME
@@ -311,8 +315,10 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         assert model.requests[0].messages[0].content == SLIM_GUARD_HARNESS_PROMPT
         assert [tool.name for tool in model.requests[0].tools] == [
             RECORD_WEIGHT_TOOL_NAME,
-            GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-            "inspect_image",
+                GET_RECENT_WEIGHT_TREND_TOOL_NAME,
+                "record_body_fat",
+                "get_recent_body_fat_trend",
+                "inspect_image",
             "record_meal",
             "get_recent_meals",
             "record_exercise",
@@ -321,10 +327,12 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "get_checkin_schedule",
             "update_record_status",
             "set_coaching_profile",
-            "set_body_profile",
+                "set_body_profile",
+                "set_exercise_profile",
             "upsert_food_preference",
             "upsert_exercise_preference",
-            "set_weight_goal",
+                "set_weight_goal",
+                "set_body_fat_goal",
             "set_behavior_goal",
             "record_user_constraint",
             "list_user_memories",
@@ -421,13 +429,12 @@ async def test_runtime_saves_height_as_profile_memory_not_weight_record(
                 "call-height",
                 SET_BODY_PROFILE_TOOL_NAME,
                 {
-                    "height_value": 179,
-                    "height_unit": "cm",
-                    "evidence_excerpt": "我身高179cm",
+                    "height_value": 159,
+                    "evidence_excerpt": "我身高159",
                 },
             ),
-            final_reply("记住了，你的身高是 179cm。"),
-            final_reply("你保存的身高是 179cm。"),
+            final_reply("记住了，你的身高是 159cm。"),
+            final_reply("你保存的身高是 159cm。"),
         )
     )
     runtime = build_agent_runtime(
@@ -445,7 +452,7 @@ async def test_runtime_saves_height_as_profile_memory_not_weight_record(
         await runtime.run_user_message(
             AgentRuntimeRequest(
                 user_id="user-1",
-                text="我身高179cm",
+                text="我身高159",
                 execution_mode=ToolExecutionMode.EVALUATION,
                 isolated_write_environment=True,
             )
@@ -467,12 +474,177 @@ async def test_runtime_saves_height_as_profile_memory_not_weight_record(
         weights = await WeightRepository(database).recent_trend("user-1")
 
         assert '"key":"profile.height"' in memory_context
-        assert '"millimeters":1790' in memory_context
+        assert '"millimeters":1590' in memory_context
         assert [memory.value for memory in memories if memory.key.value == "profile.height"] == [
-            {"millimeters": 1790}
+            {"millimeters": 1590}
         ]
         assert weights.records == ()
         model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_handles_onboarding_measurements_goals_and_habits(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            ModelResponse(
+                message=ModelMessage(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(
+                        NormalizedToolCall(
+                            id="call-weight",
+                            name=RECORD_WEIGHT_TOOL_NAME,
+                            arguments={"value": 58},
+                        ),
+                        NormalizedToolCall(
+                            id="call-weight-goal",
+                            name=SET_WEIGHT_GOAL_TOOL_NAME,
+                            arguments={
+                                "value": 55,
+                                "evidence_excerpt": "目标55",
+                            },
+                        ),
+                        NormalizedToolCall(
+                            id="call-body-fat",
+                            name=RECORD_BODY_FAT_TOOL_NAME,
+                            arguments={"value": 31},
+                        ),
+                        NormalizedToolCall(
+                            id="call-body-fat-goal",
+                            name=SET_BODY_FAT_GOAL_TOOL_NAME,
+                            arguments={
+                                "value": 24,
+                                "evidence_excerpt": "目标24%",
+                            },
+                        ),
+                        NormalizedToolCall(
+                            id="call-health",
+                            name="record_user_constraint",
+                            arguments={
+                                "category": "health_context",
+                                "subject": "胰岛素抵抗",
+                                "statement": "我有胰岛素抵抗",
+                                "evidence_excerpt": "我有胰岛素抵抗",
+                            },
+                        ),
+                        NormalizedToolCall(
+                            id="call-exercise-profile",
+                            name=SET_EXERCISE_PROFILE_TOOL_NAME,
+                            arguments={
+                                "habit_summary": "不运动",
+                                "evidence_excerpt": "不运动",
+                            },
+                        ),
+                    ),
+                ),
+                finish_reason="tool_calls",
+            ),
+            final_reply(
+                "已记录体重58kg、体脂31%，并记住目标体重55kg、目标体脂24%、"
+                "你自述有胰岛素抵抗以及目前不运动。"
+            ),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-onboarding-facts",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="体重58 目标55 体脂31% 目标24% 我有胰岛素抵抗 不运动",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        weights = await WeightRepository(database).recent_trend("user-1")
+        body_fat = await BodyFatRepository(database).recent_trend("user-1")
+        memories = await MemoryRepository(database).active("user-1")
+        values = {memory.key.value: memory.value for memory in memories}
+
+        assert result.final_text.startswith("已记录体重58kg、体脂31%")
+        assert weights.current is not None and weights.current.weight_grams == 58_000
+        assert body_fat.current is not None and body_fat.current.basis_points == 3100
+        assert values["goal.target_weight"]["grams"] == 55_000
+        assert values["goal.target_body_fat"]["basis_points"] == 2400
+        assert values["profile.exercise_habit"]["statement"] == "不运动"
+        assert values["constraint.health_context"]["subject"] == "胰岛素抵抗"
+        assert "constraint.exercise" not in values
+        model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) -> None:
+    database = await prepare_database(tmp_path)
+    model = ScriptedModelGateway(
+        (
+            ModelResponse(
+                message=ModelMessage(
+                    role=MessageRole.ASSISTANT,
+                    tool_calls=(
+                        NormalizedToolCall(
+                            id="call-habit",
+                            name=SET_EXERCISE_PROFILE_TOOL_NAME,
+                            arguments={
+                                "habit_summary": "目前不运动",
+                                "evidence_excerpt": "目前不运动",
+                            },
+                        ),
+                        NormalizedToolCall(
+                            id="call-invalid-goal",
+                            name=SET_WEIGHT_GOAL_TOOL_NAME,
+                            arguments={
+                                "value": 55,
+                                "evidence_excerpt": "这里没有对应数字",
+                            },
+                        ),
+                    ),
+                ),
+                finish_reason="tool_calls",
+            ),
+            final_reply("已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-partial-memory-result",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="目前不运动，目标55",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        items = await HarnessStateRepository(database).list_items(result.turn_id)
+
+        assert result.final_text == (
+            "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
+        )
+        assert all(item.item_type is not ItemType.OUTPUT_GUARD for item in items)
     finally:
         await model.close()
         await database.close()

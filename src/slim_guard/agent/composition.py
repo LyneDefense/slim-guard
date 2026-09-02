@@ -12,6 +12,7 @@ from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
+from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.records.service import UserRecordStatusService
@@ -35,6 +36,7 @@ from slim_guard.memory.handoff import HandoffRepository
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
+from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
 from slim_guard.tools.gateway import ToolGateway
@@ -92,6 +94,7 @@ def build_agent_runtime(
 
     tool_definitions = (
         *weight_tool_definitions(),
+        *body_fat_tool_definitions(),
         *image_tool_definitions(),
         *meal_tool_definitions(),
         *exercise_tool_definitions(),
@@ -114,6 +117,7 @@ def build_agent_runtime(
     )
     assets = ImageAssetRepository(database)
     weights = WeightRepository(database)
+    body_fat = BodyFatRepository(database)
     meals = MealRepository(database)
     exercise = ExerciseRepository(database)
     routines = RoutinePreferenceRepository(database)
@@ -136,6 +140,7 @@ def build_agent_runtime(
             weights,
             clock=clock,
         ),
+        **body_fat_tool_executors(body_fat, clock=clock),
         **image_tool_executors(
             assets=assets,
             vision=vision,
@@ -185,6 +190,7 @@ def build_agent_runtime(
         context_data=AuthoritativeContextDataProvider(
             database=database,
             weights=weights,
+            body_fat=body_fat,
             meals=meals,
             exercise=exercise,
             routines=routines,
@@ -215,6 +221,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
     registry = ToolRegistry(
         (
             *weight_tool_definitions(),
+            *body_fat_tool_definitions(),
             *image_tool_definitions(),
             *meal_tool_definitions(),
             *exercise_tool_definitions(),

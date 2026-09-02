@@ -89,7 +89,7 @@ button:disabled { cursor: default; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 5px; border: 1px solid var(--line); border-radius: 14px; background: #e9eeea; margin-bottom: 28px; }
 .tabs a { white-space: nowrap; padding: 9px 15px; border-radius: 10px; color: var(--muted); font-size: 13px; }
 .tabs a.active { color: var(--ink); background: white; box-shadow: 0 2px 8px rgba(20,49,37,.07); }
-.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 32px; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 12px; margin-bottom: 32px; }
 .metric { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--cream); }
 .metric strong, .metric span { display: block; }
 .metric strong { font-size: 29px; letter-spacing: -.04em; }

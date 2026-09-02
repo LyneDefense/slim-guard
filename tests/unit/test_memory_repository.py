@@ -51,6 +51,10 @@ def test_memory_registry_rejects_unsafe_goal_ranges_and_review_periods() -> None
     ).value == {"millimeters": 1790}
     with pytest.raises(ValidationError):
         registry.canonicalize(MemoryKey.HEIGHT, {"millimeters": 3000})
+    assert registry.canonicalize(
+        MemoryKey.TARGET_BODY_FAT,
+        {"basis_points": 2400},
+    ).value == {"basis_points": 2400}
     with pytest.raises(ValidationError):
         registry.canonicalize(
             MemoryKey.BEHAVIOR_GOAL,

@@ -6,12 +6,13 @@ from typing import Any
 
 from sqlalchemy import select
 
-from slim_guard.db.models import ExerciseRecord, MealRecord, WeightRecord
+from slim_guard.db.models import BodyFatRecord, ExerciseRecord, MealRecord, WeightRecord
 from slim_guard.db.session import Database
 
 
 class RecordKind(StrEnum):
     WEIGHT = "weight"
+    BODY_FAT = "body_fat"
     MEAL = "meal"
     EXERCISE = "exercise"
 
@@ -34,6 +35,7 @@ class UserRecordStatusService:
 
     _MODELS = {
         RecordKind.WEIGHT: WeightRecord,
+        RecordKind.BODY_FAT: BodyFatRecord,
         RecordKind.MEAL: MealRecord,
         RecordKind.EXERCISE: ExerciseRecord,
     }

@@ -189,6 +189,43 @@ class WeightRecord(Base):
     )
 
 
+class BodyFatRecord(Base):
+    __tablename__ = "body_fat_records"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_body_fat_record_idempotency_key"),
+        CheckConstraint(
+            "body_fat_basis_points BETWEEN 100 AND 7500",
+            name="ck_body_fat_record_safe_range",
+        ),
+        CheckConstraint(
+            "status IN ('active','superseded','voided')",
+            name="ck_body_fat_record_status",
+        ),
+        Index("ix_body_fat_record_user_measured", "user_id", "measured_at"),
+        Index("ix_body_fat_record_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    body_fat_basis_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_value: Mapped[str] = mapped_column(String(32), nullable=False)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class ImageAssetRecord(Base):
     __tablename__ = "image_assets"
     __table_args__ = (

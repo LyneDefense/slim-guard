@@ -123,6 +123,14 @@ class SlimGuardOutputGuard:
         "已清空",
         "清空成功",
     )
+    _RECORD_WRITE_TOOLS = {
+        "record_weight",
+        "record_body_fat",
+        "record_meal",
+        "record_exercise",
+        "configure_checkin_schedule",
+        "update_record_status",
+    }
 
     def review(
         self,
@@ -185,12 +193,16 @@ class SlimGuardOutputGuard:
         text: str,
         outcomes: tuple[ToolCallOutcome, ...],
     ) -> bool:
-        has_failed_record_write = any(
-            outcome.execution.result.status is ToolResultStatus.FAILED
-            and outcome.execution.tool_name.startswith(("record_", "configure_"))
+        record_writes = tuple(
+            outcome
             for outcome in outcomes
+            if outcome.execution.tool_name in cls._RECORD_WRITE_TOOLS
         )
-        return has_failed_record_write and any(
+        all_record_writes_failed = bool(record_writes) and all(
+            outcome.execution.result.status is ToolResultStatus.FAILED
+            for outcome in record_writes
+        )
+        return all_record_writes_failed and any(
             claim in text for claim in cls._SUCCESS_CLAIMS
         )
 
@@ -200,14 +212,18 @@ class SlimGuardOutputGuard:
         text: str,
         outcomes: tuple[ToolCallOutcome, ...],
     ) -> bool:
-        has_failed_memory_write = any(
-            outcome.execution.result.status is ToolResultStatus.FAILED
-            and outcome.execution.tool_name
+        memory_writes = tuple(
+            outcome
+            for outcome in outcomes
+            if outcome.execution.tool_name
             in {
                 "set_coaching_profile",
+                "set_body_profile",
+                "set_exercise_profile",
                 "upsert_food_preference",
                 "upsert_exercise_preference",
                 "set_weight_goal",
+                "set_body_fat_goal",
                 "set_behavior_goal",
                 "record_user_constraint",
                 "forget_user_memory",
@@ -216,9 +232,12 @@ class SlimGuardOutputGuard:
                 "clear_user_memories",
                 "resolve_pending_user_action",
             }
-            for outcome in outcomes
         )
-        return has_failed_memory_write and any(
+        all_memory_writes_failed = bool(memory_writes) and all(
+            outcome.execution.result.status is ToolResultStatus.FAILED
+            for outcome in memory_writes
+        )
+        return all_memory_writes_failed and any(
             claim in text for claim in cls._MEMORY_SUCCESS_CLAIMS
         )
 

@@ -11,6 +11,8 @@ from sqlalchemy import select
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
+from slim_guard.domain.body_fat.contracts import BodyFatTrend
+from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
@@ -58,6 +60,7 @@ class AuthoritativeContextDataProvider:
         *,
         database: Database,
         weights: WeightRepository,
+        body_fat: BodyFatRepository | None = None,
         meals: MealRepository,
         exercise: ExerciseRepository,
         routines: RoutinePreferenceRepository | None = None,
@@ -76,6 +79,7 @@ class AuthoritativeContextDataProvider:
     ) -> None:
         self._database = database
         self._weights = weights
+        self._body_fat = body_fat
         self._meals = meals
         self._exercise = exercise
         self._routines = routines
@@ -102,9 +106,14 @@ class AuthoritativeContextDataProvider:
     ) -> Mapping[str, Any]:
         if current_time.utcoffset() is None:
             raise ValueError("Context data time must be timezone-aware")
-        profile, weight_trend, meals, exercise = await asyncio.gather(
+        profile, weight_trend, body_fat_trend, meals, exercise = await asyncio.gather(
             self._profile(user_id),
             self._weights.recent_trend(user_id, limit=self._weight_limit),
+            (
+                self._body_fat.recent_trend(user_id, limit=self._weight_limit)
+                if self._body_fat is not None
+                else self._empty_body_fat()
+            ),
             self._meals.recent(user_id, limit=self._meal_limit),
             self._exercise.recent(user_id, limit=self._exercise_limit),
         )
@@ -116,6 +125,13 @@ class AuthoritativeContextDataProvider:
                     "condition": record.condition.value,
                 }
                 for record in weight_trend.records
+            ],
+            "recent_body_fat": [
+                {
+                    "body_fat_percent": self._decimal_text(record.percent),
+                    "measured_at": record.measured_at.isoformat(),
+                }
+                for record in body_fat_trend.records
             ],
             "recent_meals": [
                 {
@@ -299,6 +315,8 @@ class AuthoritativeContextDataProvider:
         selected = {
             MemoryKey.PREFERRED_NAME,
             MemoryKey.HEIGHT,
+            MemoryKey.EXERCISE_HABIT,
+            MemoryKey.TARGET_BODY_FAT,
             MemoryKey.RESPONSE_STYLE,
         }
         if trigger is TurnTrigger.WEIGHT_REMINDER:
@@ -352,6 +370,10 @@ class AuthoritativeContextDataProvider:
                 **({"nickname": row.nickname} if row.nickname else {}),
                 "first_seen_at": self._as_aware(row.first_seen_at).isoformat(),
             }
+
+    @staticmethod
+    async def _empty_body_fat() -> BodyFatTrend:
+        return BodyFatTrend.from_records(())
 
     @staticmethod
     def _decimal_text(value: Decimal) -> str:

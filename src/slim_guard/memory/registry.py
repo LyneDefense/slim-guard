@@ -51,6 +51,17 @@ class HeightValue(BaseModel):
     millimeters: int = Field(ge=500, le=2500)
 
 
+class ExerciseHabitValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    statement: str = Field(min_length=1, max_length=300)
+
+    @field_validator("statement")
+    @classmethod
+    def normalize_statement(cls, value: str) -> str:
+        return _normalized_text(value, label="Exercise habit")
+
+
 class FoodPreferenceValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -80,6 +91,12 @@ class TargetWeightValue(BaseModel):
 
     grams: int = Field(ge=10_000, le=500_000)
     target_date: date | None = None
+
+
+class TargetBodyFatValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    basis_points: int = Field(ge=100, le=7500)
 
 
 class BehaviorGoalValue(BaseModel):
@@ -142,7 +159,7 @@ class CanonicalMemory:
 class MemorySchemaRegistry:
     """Versioned allowlist and canonicalizer for durable memory facts."""
 
-    version = "profile-goal-constraint-schema-v3"
+    version = "profile-goal-constraint-schema-v4"
 
     def __init__(self, *, health_review_days: int = 180) -> None:
         if not 30 <= health_review_days <= 730:
@@ -170,6 +187,13 @@ class MemorySchemaRegistry:
                 value_model=HeightValue,
             ),
             MemorySpec(
+                key=MemoryKey.EXERCISE_HABIT,
+                kind=MemoryKind.PROFILE,
+                cardinality=MemoryCardinality.SINGLE,
+                sensitivity=MemorySensitivity.NORMAL,
+                value_model=ExerciseHabitValue,
+            ),
+            MemorySpec(
                 key=MemoryKey.FOOD_PREFERENCE,
                 kind=MemoryKind.PROFILE,
                 cardinality=MemoryCardinality.SET,
@@ -191,6 +215,13 @@ class MemorySchemaRegistry:
                 cardinality=MemoryCardinality.SINGLE,
                 sensitivity=MemorySensitivity.HEALTH,
                 value_model=TargetWeightValue,
+            ),
+            MemorySpec(
+                key=MemoryKey.TARGET_BODY_FAT,
+                kind=MemoryKind.GOAL,
+                cardinality=MemoryCardinality.SINGLE,
+                sensitivity=MemorySensitivity.HEALTH,
+                value_model=TargetBodyFatValue,
             ),
             MemorySpec(
                 key=MemoryKey.BEHAVIOR_GOAL,

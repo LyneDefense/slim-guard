@@ -317,3 +317,13 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/harness/state_repository.py`、`trace.py` → 运行可观测性 → Turn step_count 写入实际模型调用数与工具调用数之和，等待、完成和异常终止均可审计。
 - `tests/unit/test_meal_tools.py`、`test_agent_runtime.py`、`test_working_memory.py`、`test_harness_loop.py` → 生产故障回归 → 覆盖真实 JSON Gateway、不可重试熔断、图片用户隔离与过期、餐图跨三轮确认后唯一写入，以及脱敏失败日志。
 - 最终验证 → Ruff 全仓、Mypy strict（107 个源码文件）、Pytest 213 项、Python compileall 与 Git diff check 全部通过。
+
+### `fix: preserve model-first onboarding facts`
+
+- `src/slim_guard/tools/memory.py`、`memory/registry.py` → 结构化资料与目标 → 体重目标省略单位时默认 kg、身高省略单位时默认 cm，并新增目标体脂和运动习惯档案；模型判断字段语义，执行层只验证数字、显式单位、来源、范围和幂等。
+- `src/slim_guard/domain/body_fat/`、`db/models.py`、`db/migrations.py` → 权威体脂领域 → 新增用户隔离、可撤销、幂等的体脂测量与趋势记录，以及已有 SQLite 的增量建表迁移。
+- `src/slim_guard/tools/body_fat.py`、`agent/composition.py` → 体脂 Tool 与生产装配 → 提供当前体脂写入和近期趋势读取，并冻结到 Agent Manifest。
+- `src/slim_guard/agent/prompt.py` → model-first 行为边界 → 明确当前值、目标值、身高和运动习惯由模型理解；不把“目前不运动”误写成身体限制，不对用户自述代谢问题给出武断临床结论。
+- `src/slim_guard/harness/safety.py` → 最终回复真实性保护 → 只有同类写操作全部失败却声称成功时才替换回复，保留模型对部分成功、部分失败的逐项如实说明。
+- `src/slim_guard/admin/`、`frontend/` → 管理后台 → 用户统计、健康记录和 Trace 上下文来源增加体脂与新记忆类型。
+- `tests/` → 故障回归 → 覆盖截图中的整条输入、默认 kg/cm、体脂记录及目标、运动习惯分类、部分成功回复、迁移与体脂软撤销。

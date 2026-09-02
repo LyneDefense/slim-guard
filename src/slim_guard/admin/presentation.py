@@ -10,19 +10,23 @@ TOOL_LABELS = {
     "forget_user_memory": "删除一条用户记忆",
     "get_checkin_schedule": "读取提醒日程",
     "get_recent_exercise": "查询近期运动",
+    "get_recent_body_fat_trend": "查询近期体脂趋势",
     "get_recent_meals": "查询近期饮食",
     "get_recent_weight_trend": "查询近期体重趋势",
     "inspect_image": "识别图片内容",
     "list_user_memories": "读取用户记忆",
     "record_exercise": "记录运动",
+    "record_body_fat": "记录体脂",
     "record_meal": "记录饮食",
     "record_user_constraint": "保存用户限制条件",
     "record_weight": "记录体重",
     "resolve_conversation_handoff": "完成跨轮待办",
     "resolve_pending_user_action": "处理待确认操作",
     "set_behavior_goal": "设置行为目标",
+    "set_body_fat_goal": "设置目标体脂",
     "set_body_profile": "保存身高档案",
     "set_coaching_profile": "更新陪伴偏好",
+    "set_exercise_profile": "保存运动习惯",
     "set_conversation_handoff": "保存跨轮待办",
     "set_weight_goal": "设置目标体重",
     "update_record_status": "修改健康记录状态",
@@ -57,6 +61,7 @@ FIELD_LABELS = {
     "time": "时间",
     "timezone": "时区",
     "weight_kg": "体重（kg）",
+    "body_fat_percent": "体脂率（%）",
 }
 
 OPERATION_LABELS = {
@@ -133,6 +138,7 @@ def context_sources(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
     memory_rows = memories if isinstance(memories, list) else []
     health_items: list[dict[str, str]] = []
     health_items.extend(_weight_source_items(authoritative.get("recent_weights")))
+    health_items.extend(_body_fat_source_items(authoritative.get("recent_body_fat")))
     health_items.extend(_meal_source_items(authoritative.get("recent_meals")))
     health_items.extend(_exercise_source_items(authoritative.get("recent_exercise")))
     other_authoritative_items = _other_authoritative_source_items(authoritative)
@@ -408,10 +414,12 @@ def _memory_source_item(row: Mapping[str, Any]) -> dict[str, str]:
     labels = {
         "identity.preferred_name": "常用称呼",
         "profile.height": "身高",
+        "profile.exercise_habit": "运动习惯",
         "coaching.response_style": "回复风格",
         "food.preference": "饮食偏好",
         "exercise.preference": "运动偏好",
         "goal.target_weight": "目标体重",
+        "goal.target_body_fat": "目标体脂",
         "goal.behavior": "行为目标",
         "constraint.dietary": "饮食限制",
         "constraint.exercise": "运动限制",
@@ -421,6 +429,10 @@ def _memory_source_item(row: Mapping[str, Any]) -> dict[str, str]:
         display = f"{float(value['millimeters']) / 10:g} cm"
     elif key == "goal.target_weight" and isinstance(value.get("grams"), (int, float)):
         display = f"{float(value['grams']) / 1000:g} kg"
+    elif key == "goal.target_body_fat" and isinstance(
+        value.get("basis_points"), (int, float)
+    ):
+        display = f"{float(value['basis_points']) / 100:g}%"
     else:
         display = _display(value)
     return {
@@ -450,6 +462,19 @@ def _meal_source_items(value: Any) -> list[dict[str, str]]:
             "label": "饮食记录",
             "value": _display(row.get("foods")),
             "detail": str(row.get("occurred_at") or ""),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _body_fat_source_items(value: Any) -> list[dict[str, str]]:
+    rows = value if isinstance(value, list) else []
+    return [
+        {
+            "label": "体脂记录",
+            "value": f"{row.get('body_fat_percent')}%",
+            "detail": str(row.get("measured_at") or ""),
         }
         for row in rows
         if isinstance(row, dict)

@@ -14,6 +14,7 @@ from slim_guard.db.models import (
     AgentItemRedactionRecord,
     AgentTurnRecord,
     AgentVersionRecord,
+    BodyFatRecord,
     ChannelIdentity,
     ExerciseRecord,
     InteractionTraceRecord,
@@ -160,6 +161,7 @@ class AdminQueryRepository:
             for key, model in (
                 ("trace_count", InteractionTraceRecord),
                 ("weight_count", WeightRecord),
+                ("body_fat_count", BodyFatRecord),
                 ("meal_count", MealRecord),
                 ("exercise_count", ExerciseRecord),
                 ("memory_count", UserMemoryFactRecord),
@@ -416,6 +418,14 @@ class AdminQueryRepository:
                     .limit(100)
                 )
             )
+            body_fat = tuple(
+                await session.scalars(
+                    select(BodyFatRecord)
+                    .where(BodyFatRecord.user_id == user_id)
+                    .order_by(BodyFatRecord.measured_at.desc())
+                    .limit(100)
+                )
+            )
             meals = tuple(
                 await session.scalars(
                     select(MealRecord)
@@ -443,6 +453,16 @@ class AdminQueryRepository:
                         "source_turn_id": row.source_turn_id,
                     }
                     for row in weights
+                ],
+                "body_fat": [
+                    {
+                        "id": row.id,
+                        "body_fat_percent": row.body_fat_basis_points / 100,
+                        "measured_at": row.measured_at,
+                        "status": row.status,
+                        "source_turn_id": row.source_turn_id,
+                    }
+                    for row in body_fat
                 ],
                 "meals": [
                     {

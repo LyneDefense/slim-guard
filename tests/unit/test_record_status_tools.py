@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from slim_guard.db.models import SlimGuardUser, WeightRecord
+from slim_guard.db.models import BodyFatRecord, SlimGuardUser, WeightRecord
 from slim_guard.db.session import Database
 from slim_guard.domain.records.service import UserRecordStatusService
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResultStatus
@@ -37,6 +37,19 @@ async def prepare(tmp_path):
                 idempotency_key="weight-key-1",
                 source_turn_id="turn-1",
                 source_tool_call_id="call-record",
+            )
+        )
+        session.add(
+            BodyFatRecord(
+                id="body-fat-1",
+                user_id="user-1",
+                body_fat_basis_points=3100,
+                original_value="31",
+                measured_at=NOW,
+                status="active",
+                idempotency_key="body-fat-key-1",
+                source_turn_id="turn-1",
+                source_tool_call_id="call-body-fat",
             )
         )
     return database
@@ -108,5 +121,25 @@ async def test_user_cannot_change_another_users_record(tmp_path) -> None:
         assert result.status is ToolResultStatus.FAILED
         assert result.failure is not None
         assert result.failure.code == "record_not_found"
+    finally:
+        await database.close()
+
+
+async def test_user_can_void_body_fat_record(tmp_path) -> None:
+    database = await prepare(tmp_path)
+    handlers = RecordStatusToolHandlers(UserRecordStatusService(database))
+    try:
+        result = await handlers.update(
+            context("user-1"),
+            UpdateRecordStatusArguments(
+                record_kind="body_fat",
+                record_id="body-fat-1",
+                action="void",
+            ),
+        )
+
+        assert result.status is ToolResultStatus.SUCCEEDED
+        assert result.output["record_kind"] == "body_fat"
+        assert result.output["status"] == "voided"
     finally:
         await database.close()
