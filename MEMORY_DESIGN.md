@@ -336,7 +336,9 @@ forget_user_memory
 
 专用 Recall 模型根据当前消息语义和指代，从 PostgreSQL 候选中选出少量本轮相关事实。Mem0 分数
 只是候选提示，模型不能创建候选之外的 ID，最终值始终重新取自 PostgreSQL。Core Agent 不接收全部
-长期记忆。
+长期记忆。若本轮摄取执行了写入，Core Agent 还会收到由 Repository 生成的结构化写入回执；回执明确
+标注 created、updated 或 unchanged，并在 updated 时同时给出 previous_value 和 current_value。
+它只描述已经提交到数据库的结果，不由模型自行推断，也不把 Mem0 结果提升为权威事实。
 
 建议默认总预算：
 

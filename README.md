@@ -176,7 +176,8 @@ data/slim_guard.sqlite3
 每个用户消息进入 Harness 后，会先经过独立的记忆摄取模型；摄取模型只提出有用户原话证据的结构化
 写入，Repository 再与数据库 active 记忆比较：不存在则新增、相同则幂等复用、当前明确新值则版本化
 替换。随后回复 Agent 重新读取数据库，因此数据库结果而不是 3 轮聊天窗口是长期事实权威。摄取阶段
-还会带入最近 20 条用户原话，用于为升级前尚未结构化的近期事实做渐进回填。
+还会把数据库本轮写入回执交给回复 Agent，明确区分“新保存”“从旧值更新”和“原值未变”，避免把
+刚更新后的值误说成旧记录。最近 20 条用户原话只用于为升级前尚未结构化的近期事实做渐进回填。
 用户可以直接问“你记得我什么”，也可以要求忘记某一条明确记忆。每轮还会加载最近最多 3 个
 已完成 Turn 的用户和最终助手可见文本，合计默认不超过 1500 字；其中历史用户原话带有仅限本轮使用的
 证据引用，模型可在用户说“保存上次那个”时直接调用记忆工具，后端验证同用户、原文、数值、可见范围和
@@ -205,7 +206,7 @@ MEMORY_RECALL_ENABLED=true
 MEMORY_RECALL_SEARCH_LIMIT=12
 MEMORY_RECALL_MAX_SELECTED=8
 MEMORY_SEMANTIC_ENABLED=false
-MEM0_BASE_URL=http://mem0:8888
+MEM0_BASE_URL=http://mem0:8000
 MEM0_API_KEY=
 MEM0_NAMESPACE=slim_guard
 MEM0_HTTP_TIMEOUT_SECONDS=10

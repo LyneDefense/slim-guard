@@ -41,6 +41,7 @@ class ItemType(StrEnum):
     APPROVAL_REQUEST = "approval_request"
     APPROVAL_RESULT = "approval_result"
     MEMORY_COMPACTION = "memory_compaction"
+    MEMORY_INGESTION = "memory_ingestion"
     MEMORY_RECALL = "memory_recall"
     OUTPUT_GUARD = "output_guard"
     AGENT_MESSAGE = "agent_message"

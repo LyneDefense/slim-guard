@@ -223,7 +223,14 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
 
         assert profile.status is ToolResultStatus.SUCCEEDED
         assert profile.output["created_count"] == 2
+        assert {change["action"] for change in profile.output["changes"]} == {
+            "created"
+        }
         assert body_profile.status is ToolResultStatus.SUCCEEDED
+        assert body_profile.output["changes"][0]["action"] == "created"
+        assert body_profile.output["changes"][0]["current_value"] == {
+            "millimeters": 1790
+        }
         assert mismatched_height_unit.status is ToolResultStatus.FAILED
         assert mismatched_height_unit.failure is not None
         assert mismatched_height_unit.failure.code == "memory_value_not_in_evidence"

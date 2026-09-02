@@ -19,8 +19,8 @@ Mem0 超时或不可达时，聊天不会失败。Recall 模型仍可直接筛�
 ## 部署 Mem0 OSS
 
 使用 Mem0 官方 self-hosted Docker Compose 部署 API Server。SlimGuard 只需要访问它的 REST API，
-不需要把 Mem0 Dashboard 暴露到公网。生产环境应启用 Mem0 API Key，并让 8888 端口仅在 Docker
-内网或服务器内网可访问。
+不需要把 Mem0 Dashboard 暴露到公网。生产环境应启用 Mem0 API Key。官方 Compose 映射到宿主机的
+端口可以是 8888，但同一 Docker 网络中的 SlimGuard 应访问 Mem0 容器内部的 8000 端口。
 
 官方部署说明：<https://docs.mem0.ai/open-source/setup>
 
@@ -42,7 +42,7 @@ Mem0 API 和 embedding 验证通过后再启用：
 
 ```dotenv
 MEMORY_SEMANTIC_ENABLED=true
-MEM0_BASE_URL=http://mem0:8888
+MEM0_BASE_URL=http://mem0:8000
 MEM0_API_KEY=m0sk_replace_me
 MEM0_NAMESPACE=slim_guard
 MEM0_HTTP_TIMEOUT_SECONDS=10

@@ -107,6 +107,7 @@ export interface TraceDetail {
     tool_call_count: number;
     observation_count: number;
     context_snapshot_count: number;
+    memory_ingestion_count: number;
     memory_recall_count: number;
   };
   context_sources: Array<{

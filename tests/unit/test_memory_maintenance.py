@@ -112,6 +112,21 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
                 payload={"execution": {"result": {"output": {"name": "阿杰"}}}},
             ),
             NewTurnItem(
+                item_type=ItemType.MEMORY_INGESTION,
+                status=ItemStatus.COMPLETED,
+                payload={
+                    "changed_count": 1,
+                    "changes": [
+                        {
+                            "action": "created",
+                            "key": "identity.preferred_name",
+                            "previous_value": None,
+                            "current_value": {"name": "阿杰"},
+                        }
+                    ],
+                },
+            ),
+            NewTurnItem(
                 item_type=ItemType.AGENT_MESSAGE,
                 status=ItemStatus.COMPLETED,
                 payload={"text": "已记录阿杰的77.6kg"},
@@ -228,7 +243,7 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
         )
         second = await service.run_once(now=maintenance_at)
 
-        assert result.transcript.item_count == 6
+        assert result.transcript.item_count == 7
         assert result.transcript.tool_execution_count == 1
         assert result.revoked_value_count == 1
         assert result.expired_handoff_count == 1
@@ -259,7 +274,7 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
         assert fact.value_json is None
         assert fact.value_hash == written.facts[0].value_hash
         assert handoff_row is not None and handoff_row.status == "expired"
-        assert len(redactions) == 6
+        assert len(redactions) == 7
         assert execution is not None
         assert '"_redacted":true' in execution.canonical_arguments_json
     finally:

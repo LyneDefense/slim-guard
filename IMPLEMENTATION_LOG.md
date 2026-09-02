@@ -345,3 +345,10 @@ curl -i https://enceladus.online/health/ready
 - `memory/index_sync.py`、`memory_index_outbox` → 可靠同步 → 权威记忆新增、替换、撤销与清空在同事务写入 Outbox，后台幂等同步、租约恢复、指数退避并在启动时回填历史 active 记忆。
 - `admin/`、`frontend/` → 召回可视化 → Trace 白话展示候选数、入选数、Mem0 状态和降级原因；记忆页显示权威值、用户证据、有效期和语义索引状态。
 - `MEM0_INTEGRATION.md` → 部署与回滚 → Mem0 只走服务器内网，无需新增 Nginx 入口；关闭语义索引不影响 PostgreSQL 记忆与聊天。
+
+### `fix: preserve current-turn memory mutation semantics`
+
+- `memory/contracts.py`、`memory/repository.py` → 权威写入回执 → 每个冲突槽明确返回 created、updated 或 unchanged；updated 同时保留前值和当前值，混合写入中的同值字段不再生成无意义版本。
+- `memory/ingestion.py`、`harness/runner.py` → 回复前事实交接 → 记忆摄取完成后把经过类型校验、去除内部 ID 的本轮回执加入 Core Agent 权威上下文，避免将刚写入的新值描述成历史旧值。
+- `harness/trace.py`、`admin/presentation.py`、`frontend/` → 可观察链路 → 独立记录“本轮记忆变更”事件，并以“身高从 179 cm 更新为 178 cm”等白话展示；回执正文沿用追踪保留期自动脱敏。
+- `tests/` → 故障回归 → 覆盖首次新增、同值幂等、混合写入、179 cm 更新为 178 cm、Core Agent 上下文回执、后台白话展示与隐私清理。

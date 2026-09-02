@@ -49,8 +49,9 @@ class HeightIngestionGateway:
         evidence = next(
             item
             for item in reversed(payload["user_messages"])
-            if item["content"] == f"我身高{height}"
+            if "身高" in item["content"] and str(height) in item["content"]
         )
+        evidence_excerpt = evidence["content"]
         return ModelResponse(
             message=ModelMessage(
                 role=MessageRole.ASSISTANT,
@@ -61,7 +62,7 @@ class HeightIngestionGateway:
                         arguments={
                             "height_value": height,
                             "height_unit": "cm",
-                            "evidence_excerpt": f"我身高{height}",
+                            "evidence_excerpt": evidence_excerpt,
                             "evidence_ref": evidence["evidence_ref"],
                         },
                     ),
@@ -104,13 +105,13 @@ async def test_model_first_ingestion_creates_and_updates_database_memory(
     tmp_path: Path,
 ) -> None:
     database = await prepare_database(tmp_path, "memory-ingestion.sqlite3")
-    ingestion = HeightIngestionGateway((179, 179, 180, None))
+    ingestion = HeightIngestionGateway((179, 179, 178, None))
     conversation = ScriptedModelGateway(
         (
             final("记住了。"),
             final("已经记着了。"),
-            final("已更新。"),
-            final("已经记着了，你身高180cm。"),
+            final("刚量的是178cm，我已经从179cm更新好了。"),
+            final("已经记着了，你身高178cm。"),
         )
     )
     runtime = build_agent_runtime(
@@ -125,7 +126,9 @@ async def test_model_first_ingestion_creates_and_updates_database_memory(
         first = await MemoryRepository(database).active("user-1", key=MemoryKey.HEIGHT)
         await runtime.run_user_message(request("我身高179"))
         repeated = await MemoryRepository(database).active("user-1", key=MemoryKey.HEIGHT)
-        await runtime.run_user_message(request("我身高180"))
+        updated = await runtime.run_user_message(
+            request("我刚量了一下，身高应该是178")
+        )
         second = await MemoryRepository(database).active("user-1", key=MemoryKey.HEIGHT)
         result = await runtime.run_user_message(request("帮我保存我的身高"))
 
@@ -133,16 +136,37 @@ async def test_model_first_ingestion_creates_and_updates_database_memory(
         assert first[0].value == {"millimeters": 1790}
         assert repeated[0].id == first[0].id
         assert len(second) == 1
-        assert second[0].value == {"millimeters": 1800}
+        assert second[0].value == {"millimeters": 1780}
         assert second[0].supersedes_id == first[0].id
-        assert result.final_text == "已经记着了，你身高180cm。"
+        assert updated.final_text == "刚量的是178cm，我已经从179cm更新好了。"
+        update_context = next(
+            message.content or ""
+            for message in conversation.requests[2].messages
+            if "权威用户事实" in (message.content or "")
+        )
+        assert '"action":"updated"' in update_context
+        assert '"previous_value":{"millimeters":1790}' in update_context
+        assert '"current_value":{"millimeters":1780}' in update_context
+        update_items = await HarnessStateRepository(database).list_items(updated.turn_id)
+        ingestion_trace = next(
+            item for item in update_items if item.item_type is ItemType.MEMORY_INGESTION
+        )
+        assert ingestion_trace.payload["changes"] == [
+            {
+                "action": "updated",
+                "key": "profile.height",
+                "previous_value": {"millimeters": 1790},
+                "current_value": {"millimeters": 1780},
+            }
+        ]
+        assert result.final_text == "已经记着了，你身高178cm。"
         latest_context = next(
             message.content or ""
             for message in conversation.requests[-1].messages
             if "权威用户事实" in (message.content or "")
         )
         assert '"key":"profile.height"' in latest_context
-        assert '"millimeters":1800' in latest_context
+        assert '"millimeters":1780' in latest_context
     finally:
         await ingestion.close()
         await conversation.close()

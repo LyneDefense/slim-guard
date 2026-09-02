@@ -101,6 +101,7 @@ def execution_summary(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     tool_calls = operations.count("tool_call")
     observations = operations.count("tool_result")
     context_snapshots = operations.count("context_snapshot")
+    memory_ingestions = operations.count("memory_ingestion")
     memory_recalls = operations.count("memory_recall")
     return {
         "architecture": "harness" if context_snapshots or model_calls else "service",
@@ -108,6 +109,7 @@ def execution_summary(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "tool_call_count": tool_calls,
         "observation_count": observations,
         "context_snapshot_count": context_snapshots,
+        "memory_ingestion_count": memory_ingestions,
         "memory_recall_count": memory_recalls,
     }
 
@@ -139,6 +141,9 @@ def context_sources(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
 
     memories = authoritative.get("profile_memory")
     memory_rows = memories if isinstance(memories, list) else []
+    receipt = _mapping(authoritative.get("current_turn_memory_receipt"))
+    raw_changes = receipt.get("changes")
+    receipt_changes = raw_changes if isinstance(raw_changes, list) else []
     health_items: list[dict[str, str]] = []
     health_items.extend(_weight_source_items(authoritative.get("recent_weights")))
     health_items.extend(_body_fat_source_items(authoritative.get("recent_body_fat")))
@@ -146,7 +151,7 @@ def context_sources(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
     health_items.extend(_exercise_source_items(authoritative.get("recent_exercise")))
     other_authoritative_items = _other_authoritative_source_items(authoritative)
     working_items = _working_source_items(working)
-    return [
+    sources = [
         {
             "kind": "durable_memory",
             "title": "长期记忆",
@@ -176,6 +181,22 @@ def context_sources(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
             "items": other_authoritative_items,
         },
     ]
+    if receipt_changes:
+        sources.insert(
+            1,
+            {
+                "kind": "current_turn_memory_receipt",
+                "title": "本轮记忆变更",
+                "retention": "本轮写入结果",
+                "description": "数据库对本轮长期记忆新增、更新或未变化的权威回执。",
+                "items": [
+                    _memory_change_source_item(row)
+                    for row in receipt_changes
+                    if isinstance(row, dict)
+                ],
+            },
+        )
+    return sources
 
 
 def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str, Any]:
@@ -227,6 +248,8 @@ def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str,
         return _presentation("observation", "收到确认结果", "Harness 已收到用户的确认或取消结果。")
     if operation == "memory_compaction":
         return _presentation("context", "整理长期记忆", "系统完成了一次记忆压缩或生命周期处理。")
+    if operation == "memory_ingestion":
+        return _memory_ingestion_presentation(details)
     if operation == "memory_recall":
         engine_status = str(details.get("engine_status") or "unknown")
         degraded = bool(details.get("degraded"))
@@ -273,11 +296,18 @@ def _context_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
     ]
     has_authoritative = any(content.startswith("权威用户事实") for content in contents)
     has_working_memory = any(content.startswith("近期对话工作记忆") for content in contents)
+    has_memory_receipt = any(
+        content.startswith("权威用户事实")
+        and "current_turn_memory_receipt" in content
+        for content in contents
+    )
     context_parts = []
     if has_authoritative:
         context_parts.append("长期记忆和权威健康事实")
     if has_working_memory:
         context_parts.append("最近对话工作记忆")
+    if has_memory_receipt:
+        context_parts.append("本轮记忆变更结果")
     context_text = "、".join(context_parts) if context_parts else "本轮输入和系统约束"
     allowed_tools = details.get("allowed_tool_names")
     tool_count = len(allowed_tools) if isinstance(allowed_tools, list) else 0
@@ -396,6 +426,51 @@ def _tool_result_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _memory_ingestion_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    raw_changes = details.get("changes")
+    changes = raw_changes if isinstance(raw_changes, list) else []
+    facts: list[dict[str, str]] = []
+    summaries: list[str] = []
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        key = str(change.get("key") or "unknown")
+        action = str(change.get("action") or "unknown")
+        current = _mapping(change.get("current_value"))
+        previous = _mapping(change.get("previous_value"))
+        current_text = _memory_value_display(key, current)
+        previous_text = _memory_value_display(key, previous) if previous else "—"
+        label = _memory_label(key)
+        if action == "updated":
+            value = f"{previous_text} → {current_text}"
+            detail = "已更新"
+            summaries.append(f"{label}从 {previous_text} 更新为 {current_text}")
+        elif action == "created":
+            value = current_text
+            detail = "新保存"
+            summaries.append(f"新保存{label} {current_text}")
+        elif action == "unchanged":
+            value = current_text
+            detail = "与原记录相同"
+            summaries.append(f"{label}保持 {current_text} 不变")
+        else:
+            value = current_text
+            detail = action
+        facts.append({"label": label, "value": value, "detail": detail})
+    failure_codes = details.get("failure_codes")
+    failures = failure_codes if isinstance(failure_codes, list) else []
+    if summaries:
+        summary = "；".join(summaries) + "。"
+    elif failures:
+        summary = "记忆摄取没有完整成功，可展开技术详情查看失败原因。"
+    else:
+        summary = "已核对数据库，本轮没有新增或变更长期记忆。"
+    return {
+        **_presentation("observation", "核对本轮长期记忆变更", summary),
+        "facts": facts,
+    }
+
+
 def _span_summary(operation: str, details: Mapping[str, Any], status: str) -> str:
     if status in {"failed", "unknown"}:
         return "这个系统步骤没有正常完成，请结合错误信息和技术详情排查。"
@@ -473,6 +548,41 @@ def _embedded_json(content: str) -> Mapping[str, Any]:
 def _memory_source_item(row: Mapping[str, Any]) -> dict[str, str]:
     key = str(row.get("key") or "unknown")
     value = _mapping(row.get("value"))
+    display = _memory_value_display(key, value)
+    return {
+        "label": _memory_label(key),
+        "value": display,
+        "detail": "已保存" + (" · 待复核" if row.get("stale") else ""),
+    }
+
+
+def _memory_change_source_item(row: Mapping[str, Any]) -> dict[str, str]:
+    key = str(row.get("key") or "unknown")
+    action = str(row.get("action") or "unknown")
+    current = _memory_value_display(key, _mapping(row.get("current_value")))
+    previous_value = row.get("previous_value")
+    previous = (
+        _memory_value_display(key, _mapping(previous_value))
+        if isinstance(previous_value, Mapping)
+        else None
+    )
+    details = {
+        "created": "本轮新保存",
+        "updated": "本轮已更新",
+        "unchanged": "与原记录相同",
+    }
+    return {
+        "label": _memory_label(key),
+        "value": (
+            f"{previous} → {current}"
+            if action == "updated" and previous
+            else current
+        ),
+        "detail": details.get(action, _humanize_identifier(action)),
+    }
+
+
+def _memory_label(key: str) -> str:
     labels = {
         "identity.preferred_name": "常用称呼",
         "profile.height": "身高",
@@ -487,21 +597,19 @@ def _memory_source_item(row: Mapping[str, Any]) -> dict[str, str]:
         "constraint.exercise": "运动限制",
         "constraint.health_context": "健康背景",
     }
+    return labels.get(key, _humanize_identifier(key))
+
+
+def _memory_value_display(key: str, value: Mapping[str, Any]) -> str:
     if key == "profile.height" and isinstance(value.get("millimeters"), (int, float)):
-        display = f"{float(value['millimeters']) / 10:g} cm"
-    elif key == "goal.target_weight" and isinstance(value.get("grams"), (int, float)):
-        display = f"{float(value['grams']) / 1000:g} kg"
-    elif key == "goal.target_body_fat" and isinstance(
+        return f"{float(value['millimeters']) / 10:g} cm"
+    if key == "goal.target_weight" and isinstance(value.get("grams"), (int, float)):
+        return f"{float(value['grams']) / 1000:g} kg"
+    if key == "goal.target_body_fat" and isinstance(
         value.get("basis_points"), (int, float)
     ):
-        display = f"{float(value['basis_points']) / 100:g}%"
-    else:
-        display = _display(value)
-    return {
-        "label": labels.get(key, _humanize_identifier(key)),
-        "value": display,
-        "detail": "已保存" + (" · 待复核" if row.get("stale") else ""),
-    }
+        return f"{float(value['basis_points']) / 100:g}%"
+    return _display(value)
 
 
 def _weight_source_items(value: Any) -> list[dict[str, str]]:

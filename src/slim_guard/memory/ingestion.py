@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from slim_guard.agent_models.errors import ModelGatewayError
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -19,6 +21,7 @@ from slim_guard.agent_models.gateway import (
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.tool_calls import ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
+from slim_guard.memory.contracts import MemoryChangeAction, MemoryWriteChange
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository, UserMessageEvidence
 from slim_guard.tools.memory import (
@@ -37,7 +40,7 @@ from slim_guard.tools.policy import ToolAuthorization
 
 logger = logging.getLogger(__name__)
 
-MEMORY_INGESTION_POLICY_VERSION = "model-first-memory-ingestion-v1"
+MEMORY_INGESTION_POLICY_VERSION = "model-first-memory-ingestion-receipt-v2"
 _INGESTION_TOOL_NAMES = frozenset(
     {
         SET_COACHING_PROFILE_TOOL_NAME,
@@ -79,6 +82,23 @@ class MemoryIngestionResult:
     succeeded_count: int
     changed_count: int
     failure_codes: tuple[str, ...] = ()
+    changes: tuple[MemoryWriteChange, ...] = ()
+
+    def context_receipt(self) -> dict[str, object] | None:
+        if not self.changes:
+            return None
+        return {
+            "authority": "memory_tool_result",
+            "changes": [
+                {
+                    "action": change.action.value,
+                    "key": change.key.value,
+                    "previous_value": change.previous_value,
+                    "current_value": change.current_value,
+                }
+                for change in self.changes
+            ],
+        }
 
 
 class MemoryIngestor(Protocol):
@@ -164,7 +184,11 @@ class ModelFirstMemoryIngestor:
                     "error_type": type(exc).__name__,
                 },
             )
-            return MemoryIngestionResult(False, 0, 0, 0, ("model_gateway_error",))
+            result = MemoryIngestionResult(
+                False, 0, 0, 0, ("model_gateway_error",)
+            )
+            await self._record_result(initialized.turn.id, result)
+            return result
         completed_at = current_time
         await self._recorder.record_model_response(
             turn_id=initialized.turn.id,
@@ -180,7 +204,9 @@ class ModelFirstMemoryIngestor:
             if call.name in _INGESTION_TOOL_NAMES
         )[:8]
         if not calls:
-            return MemoryIngestionResult(True, 0, 0, 0)
+            result = MemoryIngestionResult(True, 0, 0, 0)
+            await self._record_result(initialized.turn.id, result)
+            return result
 
         authorization = ToolAuthorization(
             allowed_tool_names=_INGESTION_TOOL_NAMES,
@@ -188,7 +214,7 @@ class ModelFirstMemoryIngestor:
         )
         evidence_ids = tuple(item.evidence_ref for item in evidence)
         succeeded = 0
-        changed = 0
+        changes: list[MemoryWriteChange] = []
         failures: list[str] = []
         for index, call in enumerate(calls, start=1):
             trace = await self._recorder.start_tool_call(
@@ -218,15 +244,50 @@ class ModelFirstMemoryIngestor:
                 failures.append(failure.code)
                 continue
             succeeded += 1
-            created_count = outcome.execution.result.output.get("created_count", 0)
-            if isinstance(created_count, int):
-                changed += created_count
-        return MemoryIngestionResult(
+            raw_changes = outcome.execution.result.output.get("changes")
+            if not isinstance(raw_changes, list):
+                failures.append("invalid_memory_change_receipt")
+                continue
+            try:
+                validated_changes = tuple(
+                    MemoryWriteChange.model_validate(change)
+                    for change in raw_changes
+                )
+            except ValidationError:
+                failures.append("invalid_memory_change_receipt")
+                continue
+            changes.extend(validated_changes)
+        result = MemoryIngestionResult(
             model_called=True,
             proposed_count=len(calls),
             succeeded_count=succeeded,
-            changed_count=changed,
+            changed_count=sum(
+                change.action != MemoryChangeAction.UNCHANGED
+                for change in changes
+            ),
             failure_codes=tuple(failures),
+            changes=tuple(changes),
+        )
+        await self._record_result(initialized.turn.id, result)
+        return result
+
+    async def _record_result(
+        self,
+        turn_id: str,
+        result: MemoryIngestionResult,
+    ) -> None:
+        receipt = result.context_receipt()
+        await self._recorder.record_memory_ingestion(
+            turn_id=turn_id,
+            payload={
+                "policy_version": MEMORY_INGESTION_POLICY_VERSION,
+                "model_called": result.model_called,
+                "proposed_count": result.proposed_count,
+                "succeeded_count": result.succeeded_count,
+                "changed_count": result.changed_count,
+                "failure_codes": list(result.failure_codes),
+                "changes": receipt["changes"] if receipt is not None else [],
+            },
         )
 
     def _request(

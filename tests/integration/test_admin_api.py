@@ -143,8 +143,9 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             "architecture": "service",
             "model_call_count": 0,
             "tool_call_count": 0,
-            "observation_count": 0,
+                "observation_count": 0,
                 "context_snapshot_count": 0,
+                "memory_ingestion_count": 0,
                 "memory_recall_count": 0,
         }
         assert detail.json()["output"]["content"] == "已记录。"

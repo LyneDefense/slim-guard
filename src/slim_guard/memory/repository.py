@@ -22,11 +22,13 @@ from slim_guard.domain.source import validate_record_source
 from slim_guard.memory.contracts import (
     MemoryBulkRevokeCommand,
     MemoryBulkRevokeResult,
+    MemoryChangeAction,
     MemoryFactRef,
     MemoryKey,
     MemoryRevokeCommand,
     MemoryRevokeResult,
     MemoryStatus,
+    MemoryWriteChange,
     MemoryWriteCommand,
     MemoryWriteResult,
 )
@@ -39,7 +41,7 @@ from slim_guard.memory.errors import (
 )
 from slim_guard.memory.registry import CanonicalMemory, MemorySchemaRegistry
 
-MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v8"
+MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-receipt-privacy-v9"
 
 
 class MemoryRepository:
@@ -96,16 +98,26 @@ class MemoryRepository:
                         and active.value_hash == fact.value_hash
                         for fact in canonical
                     ):
+                        unchanged_refs = tuple(
+                            self._ref(active_by_slot[fact.slot_key])
+                            for fact in canonical
+                        )
                         return MemoryWriteResult(
-                            facts=tuple(
-                                self._ref(active_by_slot[fact.slot_key])
-                                for fact in canonical
+                            facts=unchanged_refs,
+                            changes=tuple(
+                                self._change(
+                                    action=MemoryChangeAction.UNCHANGED,
+                                    current=fact,
+                                    previous=fact,
+                                )
+                                for fact in unchanged_refs
                             ),
                             created_count=0,
                         )
 
                     now = self._now()
                     output: list[MemoryFactRef] = []
+                    changes: list[MemoryWriteChange] = []
                     created_count = 0
                     for fact in canonical:
                         active = await session.scalar(
@@ -115,6 +127,18 @@ class MemoryRepository:
                                 UserMemoryFactRecord.status == MemoryStatus.ACTIVE.value,
                             )
                         )
+                        if active is not None and active.value_hash == fact.value_hash:
+                            unchanged_ref = self._ref(active)
+                            output.append(unchanged_ref)
+                            changes.append(
+                                self._change(
+                                    action=MemoryChangeAction.UNCHANGED,
+                                    current=unchanged_ref,
+                                    previous=unchanged_ref,
+                                )
+                            )
+                            continue
+                        previous = self._ref(active) if active is not None else None
                         if active is not None:
                             await self._reject_older_conflicting_evidence(
                                 session,
@@ -179,10 +203,23 @@ class MemoryRepository:
                             operation="upsert",
                             now=now,
                         )
-                        output.append(self._ref(row))
+                        current = self._ref(row)
+                        output.append(current)
+                        changes.append(
+                            self._change(
+                                action=(
+                                    MemoryChangeAction.UPDATED
+                                    if previous is not None
+                                    else MemoryChangeAction.CREATED
+                                ),
+                                current=current,
+                                previous=previous,
+                            )
+                        )
                         created_count += 1
                     return MemoryWriteResult(
                         facts=tuple(output),
+                        changes=tuple(changes),
                         created_count=created_count,
                     )
             except IntegrityError as exc:
@@ -463,7 +500,32 @@ class MemoryRepository:
             raise MemoryCollision("Memory operation identity was reused with different facts")
         return MemoryWriteResult(
             facts=tuple(self._ref(row) for row in rows),
+            changes=tuple(
+                self._change(
+                    action=MemoryChangeAction.UNCHANGED,
+                    current=self._ref(row),
+                    previous=self._ref(row),
+                )
+                for row in rows
+            ),
             created_count=0,
+        )
+
+    @staticmethod
+    def _change(
+        *,
+        action: MemoryChangeAction,
+        current: MemoryFactRef,
+        previous: MemoryFactRef | None,
+    ) -> MemoryWriteChange:
+        return MemoryWriteChange(
+            action=action,
+            memory_id=current.id,
+            key=current.key,
+            slot_key=current.slot_key,
+            previous_memory_id=previous.id if previous is not None else None,
+            previous_value=previous.value if previous is not None else None,
+            current_value=current.value,
         )
 
     @staticmethod

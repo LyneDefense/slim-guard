@@ -127,6 +127,12 @@ class HarnessTurnRunner:
                     context=authoritative_context,
                 )
                 authoritative_context = recall_result.context
+            if ingestion_result is not None:
+                memory_receipt = ingestion_result.context_receipt()
+                if memory_receipt is not None:
+                    authoritative_context["current_turn_memory_receipt"] = (
+                        memory_receipt
+                    )
             if safety_assessment.blocks_tools:
                 authoritative_context["health_safety"] = safety_assessment.to_context()
             allowed_tool_names = (

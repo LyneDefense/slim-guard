@@ -2,7 +2,7 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 
 
 def test_default_reply_style_is_conversational_and_non_templated() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION.endswith("v17")
+    assert SLIM_GUARD_PROMPT_VERSION.endswith("v18")
     assert "真人教练一样说话" in SLIM_GUARD_HARNESS_PROMPT
     assert "普通打卡或资料更新通常回复一到三句" in SLIM_GUARD_HARNESS_PROMPT
     assert "不要逐字段报账" in SLIM_GUARD_HARNESS_PROMPT
@@ -16,3 +16,7 @@ def test_memory_prompt_allows_verified_historical_user_evidence_without_repetiti
     assert "助手消息、没有 evidence_ref 的摘要" in SLIM_GUARD_HARNESS_PROMPT
     assert "独立记忆摄取层" in SLIM_GUARD_HARNESS_PROMPT
     assert "从数据库重新读取的权威结果" in SLIM_GUARD_HARNESS_PROMPT
+    assert "current_turn_memory_receipt" in SLIM_GUARD_HARNESS_PROMPT
+    assert "不能把更新后的 profile_memory 值误说成更新前的旧值" in (
+        SLIM_GUARD_HARNESS_PROMPT
+    )

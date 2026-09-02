@@ -47,7 +47,7 @@ RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
 SET_CONVERSATION_HANDOFF_TOOL_NAME = "set_conversation_handoff"
 RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME = "resolve_conversation_handoff"
 CLEAR_USER_MEMORIES_TOOL_NAME = "clear_user_memories"
-MEMORY_TOOL_VERSION = "v7"
+MEMORY_TOOL_VERSION = "v8"
 
 _GRAMS_PER_UNIT = {
     "kg": Decimal("1000"),
@@ -713,6 +713,9 @@ class MemoryToolHandlers:
         return ToolResult.success(
             output={
                 "memories": [self._output(fact) for fact in result.facts],
+                "changes": [
+                    change.model_dump(mode="json") for change in result.changes
+                ],
                 "created_count": result.created_count,
             },
             source_ids=tuple(fact.id for fact in result.facts),

@@ -19,6 +19,7 @@ from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.memory.contracts import (
+    MemoryChangeAction,
     MemoryFactInput,
     MemoryKey,
     MemoryRevokeCommand,
@@ -161,15 +162,38 @@ async def test_memory_write_is_versioned_idempotent_and_user_scoped(tmp_path) ->
                         key=MemoryKey.PREFERRED_NAME,
                         value={"name": "杰哥"},
                     ),
+                    MemoryFactInput(
+                        key=MemoryKey.RESPONSE_STYLE,
+                        value={"style": "concise"},
+                    ),
                 ),
             )
         )
         active = await repository.active("user-1")
 
         assert first.created_count == 2
+        assert {change.action for change in first.changes} == {
+            MemoryChangeAction.CREATED
+        }
         assert replay.created_count == 0
         assert {fact.id for fact in replay.facts} == {fact.id for fact in first.facts}
+        assert {change.action for change in replay.changes} == {
+            MemoryChangeAction.UNCHANGED
+        }
         assert replacement.created_count == 1
+        replacement_changes = {change.key: change for change in replacement.changes}
+        assert replacement_changes[MemoryKey.PREFERRED_NAME].action == (
+            MemoryChangeAction.UPDATED
+        )
+        assert replacement_changes[MemoryKey.PREFERRED_NAME].previous_value == {
+            "name": "阿杰"
+        }
+        assert replacement_changes[MemoryKey.PREFERRED_NAME].current_value == {
+            "name": "杰哥"
+        }
+        assert replacement_changes[MemoryKey.RESPONSE_STYLE].action == (
+            MemoryChangeAction.UNCHANGED
+        )
         assert {fact.key for fact in active} == {
             MemoryKey.PREFERRED_NAME,
             MemoryKey.RESPONSE_STYLE,

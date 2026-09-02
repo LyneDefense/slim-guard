@@ -79,6 +79,38 @@ def test_memory_recall_is_presented_in_plain_language() -> None:
     assert "选择了 2 条" in presentation["summary"]
 
 
+def test_memory_ingestion_receipt_explains_an_update_in_plain_language() -> None:
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "memory_ingestion",
+            "details": {
+                "model_called": True,
+                "proposed_count": 1,
+                "succeeded_count": 1,
+                "changed_count": 1,
+                "failure_codes": [],
+                "changes": [
+                    {
+                        "action": "updated",
+                        "key": "profile.height",
+                        "previous_value": {"millimeters": 1790},
+                        "current_value": {"millimeters": 1780},
+                    }
+                ],
+            },
+        }
+    )
+
+    assert presentation["title"] == "核对本轮长期记忆变更"
+    assert "身高从 179 cm 更新为 178 cm" in presentation["summary"]
+    assert {
+        "label": "身高",
+        "value": "179 cm → 178 cm",
+        "detail": "已更新",
+    } in presentation["facts"]
+
+
 def test_tool_result_is_presented_as_an_observation() -> None:
     presentation = present_event(
         {
@@ -134,6 +166,7 @@ def test_execution_summary_counts_harness_actions() -> None:
             {"operation": "model_message"},
             {"operation": "tool_call"},
             {"operation": "tool_result"},
+            {"operation": "memory_ingestion"},
             {"operation": "model_message"},
         ]
     )
@@ -143,8 +176,9 @@ def test_execution_summary_counts_harness_actions() -> None:
         "model_call_count": 2,
         "tool_call_count": 1,
         "observation_count": 1,
-            "context_snapshot_count": 1,
-            "memory_recall_count": 0,
+        "context_snapshot_count": 1,
+        "memory_ingestion_count": 1,
+        "memory_recall_count": 0,
     }
 
 
@@ -189,6 +223,45 @@ def test_context_sources_distinguish_durable_memory_records_and_dialogue() -> No
     assert sources[2]["title"] == "最近对话 Working Memory"
     assert sources[2]["items"][0]["value"] == "我身高179cm"
     assert sources[2]["items"][0]["detail"] == "对话原文，不是长期记忆"
+
+
+def test_context_sources_show_current_turn_memory_receipt() -> None:
+    sources = context_sources(
+        [
+            {
+                "operation": "context_snapshot",
+                "details": {
+                    "request": {
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "权威用户事实（只读）："
+                                    '{"current_turn_memory_receipt":{'
+                                    '"authority":"memory_tool_result","changes":[{'
+                                    '"action":"updated","key":"profile.height",'
+                                    '"previous_value":{"millimeters":1790},'
+                                    '"current_value":{"millimeters":1780}}]}}'
+                                ),
+                            }
+                        ]
+                    }
+                },
+            }
+        ]
+    )
+
+    receipt = next(
+        source for source in sources if source["kind"] == "current_turn_memory_receipt"
+    )
+    assert receipt["title"] == "本轮记忆变更"
+    assert receipt["items"] == [
+        {
+            "label": "身高",
+            "value": "179 cm → 178 cm",
+            "detail": "本轮已更新",
+        }
+    ]
 
 
 def test_agent_message_does_not_duplicate_final_text() -> None:

@@ -35,6 +35,12 @@ class MemoryStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class MemoryChangeAction(StrEnum):
+    CREATED = "created"
+    UPDATED = "updated"
+    UNCHANGED = "unchanged"
+
+
 class MemoryAssertion(StrEnum):
     USER_EXPLICIT = "user_explicit"
     USER_CONFIRMED = "user_confirmed"
@@ -156,10 +162,25 @@ class MemoryFactRef(BaseModel):
     ended_at: datetime | None
 
 
+class MemoryWriteChange(BaseModel):
+    """Authoritative outcome for one conflict slot in a memory write."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    action: MemoryChangeAction
+    memory_id: str
+    key: MemoryKey
+    slot_key: str
+    previous_memory_id: str | None = None
+    previous_value: dict[str, Any] | None = None
+    current_value: dict[str, Any]
+
+
 class MemoryWriteResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     facts: tuple[MemoryFactRef, ...]
+    changes: tuple[MemoryWriteChange, ...]
     created_count: int = Field(ge=0)
 
 

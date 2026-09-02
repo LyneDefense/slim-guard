@@ -382,6 +382,7 @@ function ExecutionOverview({ data }: { data: TraceDetail }) {
       </div>
       <div className="overview-metrics">
         <Metric label="上下文快照" value={summary.context_snapshot_count} />
+        <Metric label="记忆摄取" value={summary.memory_ingestion_count} />
         <Metric label="记忆召回" value={summary.memory_recall_count} />
         <Metric label="模型调用" value={summary.model_call_count} />
         <Metric label="工具动作" value={summary.tool_call_count} />

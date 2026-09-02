@@ -32,6 +32,7 @@ _REDACTED_ITEM_TYPES = (
     "model_message",
     "tool_call",
     "tool_result",
+    "memory_ingestion",
     "agent_message",
 )
 _TERMINAL_EXECUTIONS = ("succeeded", "failed")
