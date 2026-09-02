@@ -50,6 +50,7 @@ class HarnessTurnContext:
         tool_call_id: str,
         *,
         source_item_id: str | None = None,
+        trusted_evidence_item_ids: tuple[str, ...] = (),
     ) -> ToolContext:
         return ToolContext(
             thread_id=self.thread_id,
@@ -59,6 +60,7 @@ class HarnessTurnContext:
             agent_version_id=self.agent_version_id,
             execution_mode=self.execution_mode,
             source_item_id=source_item_id,
+            trusted_evidence_item_ids=trusted_evidence_item_ids,
         )
 
 
@@ -112,6 +114,7 @@ class HarnessLoop:
         authorization: ToolAuthorization,
         source_item_id: str | None,
         now: datetime,
+        trusted_evidence_item_ids: tuple[str, ...] = (),
         safety_assessment: SafetyAssessment | None = None,
     ) -> HarnessLoopResult:
         messages = list(request.messages)
@@ -250,6 +253,7 @@ class HarnessLoop:
                     context=context.for_tool_call(
                         call.id,
                         source_item_id=source_item_id,
+                        trusted_evidence_item_ids=trusted_evidence_item_ids,
                     ),
                     authorization=authorization,
                     source_item_id=source_item_id,

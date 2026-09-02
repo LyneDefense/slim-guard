@@ -13,7 +13,7 @@ from slim_guard.db.models import (
     UserMemoryFactRecord,
 )
 from slim_guard.db.session import Database
-from slim_guard.harness.events import TurnTrigger
+from slim_guard.harness.events import ItemStatus, ItemType, TurnTrigger
 from slim_guard.harness.initialization import TurnInitializationRequest, TurnInitializer, TurnInput
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
@@ -29,6 +29,7 @@ from slim_guard.memory.errors import (
     MemoryCollision,
     MemoryEvidenceMismatch,
     MemorySourceMismatch,
+    MemoryStaleEvidence,
 )
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MemoryRepository
@@ -117,6 +118,7 @@ def write_command(
     facts: tuple[MemoryFactInput, ...],
     evidence: str,
     user_id: str = "user-1",
+    evidence_item_id: str | None = None,
 ) -> MemoryWriteCommand:
     return MemoryWriteCommand(
         user_id=user_id,
@@ -125,6 +127,7 @@ def write_command(
         operation_id=operation_id,
         source_turn_id=turn_id,
         source_item_id=item_id,
+        evidence_item_id=evidence_item_id,
         source_tool_call_id=f"call-{operation_id}",
     )
 
@@ -273,6 +276,186 @@ async def test_memory_requires_current_exact_user_evidence(tmp_path) -> None:
                         MemoryFactInput(
                             key=MemoryKey.PREFERRED_NAME,
                             value={"name": "阿杰"},
+                        ),
+                    ),
+                )
+            )
+    finally:
+        await database.close()
+
+
+async def test_memory_accepts_same_user_historical_evidence_without_repetition(
+    tmp_path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'historical-memory.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add_all(
+            (
+                SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW),
+                SlimGuardUser(id="user-2", first_seen_at=NOW, last_seen_at=NOW),
+            )
+        )
+    active_manifest = manifest()
+    await AgentVersionRepository(database).register(active_manifest)
+    state = HarnessStateRepository(database)
+    initializer = TurnInitializer(state)
+
+    async def user_message(user_id: str, text: str):
+        initialized = await initializer.initialize(
+            TurnInitializationRequest(
+                user_id=user_id,
+                agent_version_id=active_manifest.version_id,
+                trigger=TurnTrigger.USER_MESSAGE,
+                execution_mode=ToolExecutionMode.EVALUATION,
+                inputs=(TurnInput.user_message(text=text),),
+            )
+        )
+        assert initialized.source_item_id is not None
+        return initialized
+
+    historical = await user_message("user-1", "我身高179")
+    current = await user_message("user-1", "帮我把身高保存了")
+    other_user = await user_message("user-2", "我身高166")
+    assistant_claim = await state.append_item(
+        turn_id=historical.turn.id,
+        item_type=ItemType.AGENT_MESSAGE,
+        status=ItemStatus.COMPLETED,
+        payload={"text": "你的身高是188"},
+    )
+    repository = MemoryRepository(database)
+    try:
+        result = await repository.write(
+            write_command(
+                turn_id=current.turn.id,
+                item_id=current.source_item_id,
+                operation_id="historical-height",
+                evidence="我身高179",
+                evidence_item_id=historical.source_item_id,
+                facts=(
+                    MemoryFactInput(
+                        key=MemoryKey.HEIGHT,
+                        value={"millimeters": 1790},
+                    ),
+                ),
+            )
+        )
+
+        assert result.created_count == 1
+        assert result.facts[0].source_item_id == current.source_item_id
+        assert result.facts[0].evidence_item_id == historical.source_item_id
+
+        with pytest.raises(MemorySourceMismatch):
+            await repository.write(
+                write_command(
+                    turn_id=current.turn.id,
+                    item_id=current.source_item_id,
+                    operation_id="cross-user-height",
+                    evidence="我身高166",
+                    evidence_item_id=other_user.source_item_id,
+                    facts=(
+                        MemoryFactInput(
+                            key=MemoryKey.HEIGHT,
+                            value={"millimeters": 1660},
+                        ),
+                    ),
+                )
+            )
+        with pytest.raises(MemoryEvidenceMismatch):
+            await repository.write(
+                write_command(
+                    turn_id=current.turn.id,
+                    item_id=current.source_item_id,
+                    operation_id="assistant-height",
+                    evidence="你的身高是188",
+                    evidence_item_id=assistant_claim.id,
+                    facts=(
+                        MemoryFactInput(
+                            key=MemoryKey.HEIGHT,
+                            value={"millimeters": 1880},
+                        ),
+                    ),
+                )
+            )
+    finally:
+        await database.close()
+
+
+async def test_older_historical_evidence_cannot_replace_a_newer_memory(
+    tmp_path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'stale-memory.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add(SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW))
+    active_manifest = manifest()
+    await AgentVersionRepository(database).register(active_manifest)
+    initializer = TurnInitializer(HarnessStateRepository(database))
+
+    async def user_message(text: str):
+        initialized = await initializer.initialize(
+            TurnInitializationRequest(
+                user_id="user-1",
+                agent_version_id=active_manifest.version_id,
+                trigger=TurnTrigger.USER_MESSAGE,
+                execution_mode=ToolExecutionMode.EVALUATION,
+                inputs=(TurnInput.user_message(text=text),),
+            )
+        )
+        assert initialized.source_item_id is not None
+        return initialized
+
+    old = await user_message("我身高179")
+    newer = await user_message("我现在身高180")
+    current = await user_message("还是保存上次那个")
+    repository = MemoryRepository(database)
+    try:
+        first = await repository.write(
+            write_command(
+                turn_id=newer.turn.id,
+                item_id=newer.source_item_id,
+                operation_id="newer-height",
+                evidence="我现在身高180",
+                facts=(
+                    MemoryFactInput(
+                        key=MemoryKey.HEIGHT,
+                        value={"millimeters": 1800},
+                    ),
+                ),
+            )
+        )
+        same = await repository.write(
+            write_command(
+                turn_id=current.turn.id,
+                item_id=current.source_item_id,
+                operation_id="same-height",
+                evidence="我现在身高180",
+                evidence_item_id=newer.source_item_id,
+                facts=(
+                    MemoryFactInput(
+                        key=MemoryKey.HEIGHT,
+                        value={"millimeters": 1800},
+                    ),
+                ),
+            )
+        )
+
+        assert first.created_count == 1
+        assert same.created_count == 0
+        assert same.facts[0].id == first.facts[0].id
+
+        with pytest.raises(MemoryStaleEvidence):
+            await repository.write(
+                write_command(
+                    turn_id=current.turn.id,
+                    item_id=current.source_item_id,
+                    operation_id="stale-height",
+                    evidence="我身高179",
+                    evidence_item_id=old.source_item_id,
+                    facts=(
+                        MemoryFactInput(
+                            key=MemoryKey.HEIGHT,
+                            value={"millimeters": 1790},
                         ),
                     ),
                 )

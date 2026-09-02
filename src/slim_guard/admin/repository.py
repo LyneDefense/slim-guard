@@ -398,6 +398,8 @@ class AdminQueryRepository:
                     "assertion": row.assertion,
                     "sensitivity": row.sensitivity,
                     "source_turn_id": row.source_turn_id,
+                    "source_item_id": row.source_item_id,
+                    "evidence_item_id": row.evidence_item_id,
                     "valid_from": row.valid_from,
                     "expires_at": row.expires_at,
                     "review_after": row.review_after,

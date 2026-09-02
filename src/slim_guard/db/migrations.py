@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import Table, insert, select
+from sqlalchemy import Table, insert, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from slim_guard.db.models import Base, SchemaMigrationRecord
@@ -22,9 +22,33 @@ async def _create_application_tables(connection: AsyncConnection) -> None:
     await connection.run_sync(Base.metadata.create_all)
 
 
+async def _add_memory_evidence_item(connection: AsyncConnection) -> None:
+    """Persist the user-authored fact source separately from the current action."""
+
+    await _create_application_tables(connection)
+    columns = await connection.run_sync(
+        lambda sync_connection: {
+            column["name"]
+            for column in inspect(sync_connection).get_columns("user_memory_facts")
+        }
+    )
+    if "evidence_item_id" in columns:
+        return
+    await connection.execute(
+        text("ALTER TABLE user_memory_facts ADD COLUMN evidence_item_id VARCHAR(36)")
+    )
+    await connection.execute(
+        text(
+            "UPDATE user_memory_facts SET evidence_item_id = source_item_id "
+            "WHERE evidence_item_id IS NULL"
+        )
+    )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
+    SchemaMigration("20260902_02_memory_evidence_refs", _add_memory_evidence_item),
 )
 
 

@@ -10,6 +10,10 @@ class MemoryEvidenceMismatch(MemoryError):
     pass
 
 
+class MemoryStaleEvidence(MemoryError):
+    pass
+
+
 class MemoryCollision(MemoryError):
     pass
 

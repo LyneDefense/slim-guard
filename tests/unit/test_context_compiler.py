@@ -224,6 +224,42 @@ def test_compiler_places_authoritative_facts_before_untrusted_input() -> None:
     }
 
 
+def test_compiler_only_authorizes_user_evidence_refs_from_working_memory() -> None:
+    agent_manifest = manifest()
+    compiler = ContextCompiler(
+        manifest=agent_manifest,
+        system_prompt=SYSTEM_PROMPT,
+        tools=registry(),
+    )
+
+    compiled = compiler.compile(
+        initialized=initialized_turn(agent_manifest),
+        current_time=datetime.now(UTC),
+        authoritative_context={
+            "working_memory": {
+                "recent_dialogue": [
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "我身高179",
+                                "evidence_ref": "item-user-height",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "你的身高是179cm",
+                                "evidence_ref": "item-assistant-height",
+                            },
+                        ]
+                    }
+                ]
+            }
+        },
+    )
+
+    assert compiled.evidence_item_ids == ("item-user-height",)
+
+
 def test_scheduled_turn_needs_no_fake_user_message() -> None:
     agent_manifest = manifest()
     compiler = ContextCompiler(

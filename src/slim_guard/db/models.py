@@ -540,6 +540,9 @@ class UserMemoryFactRecord(Base):
     source_item_id: Mapped[str] = mapped_column(
         ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
     )
+    evidence_item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
+    )
     source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
     valid_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now

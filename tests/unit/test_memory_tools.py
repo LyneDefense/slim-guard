@@ -335,3 +335,82 @@ async def test_memory_tool_rejects_non_source_evidence(tmp_path) -> None:
         assert result.failure.code == "missing_memory_execution_identity"
     finally:
         await database.close()
+
+
+async def test_body_profile_uses_visible_historical_user_evidence(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'historical-tool.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add(SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW))
+    manifest = AgentManifest.build(
+        model_provider="zhipu",
+        text_model="glm-5.2",
+        vision_model="glm-5v-turbo",
+        model_parameters={},
+        system_prompt_version="test-v1",
+        system_prompt="test",
+        context_policy_version="test-v1",
+        memory_policy_version="test-v1",
+        compaction_policy_version="test-v1",
+        safety_policy_version="test-v1",
+        code_revision="test",
+    )
+    await AgentVersionRepository(database).register(manifest)
+    initializer = TurnInitializer(HarnessStateRepository(database))
+    historical = await initializer.initialize(
+        TurnInitializationRequest(
+            user_id="user-1",
+            agent_version_id=manifest.version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+            execution_mode=ToolExecutionMode.EVALUATION,
+            inputs=(TurnInput.user_message(text="我身高179"),),
+        )
+    )
+    current = await initializer.initialize(
+        TurnInitializationRequest(
+            user_id="user-1",
+            agent_version_id=manifest.version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+            execution_mode=ToolExecutionMode.EVALUATION,
+            inputs=(TurnInput.user_message(text="帮我把身高也保存了"),),
+        )
+    )
+    assert historical.source_item_id is not None
+    assert current.source_item_id is not None
+    context = ToolContext(
+        thread_id=current.thread.id,
+        turn_id=current.turn.id,
+        tool_call_id="call-historical-height",
+        user_id="user-1",
+        agent_version_id=manifest.version_id,
+        execution_mode=ToolExecutionMode.EVALUATION,
+        source_item_id=current.source_item_id,
+        execution_idempotency_key="execution-historical-height",
+        trusted_evidence_item_ids=(historical.source_item_id,),
+    )
+    arguments = SetBodyProfileArguments(
+        height_value=179,
+        evidence_excerpt="我身高179",
+        evidence_ref=historical.source_item_id,
+    )
+    handlers = MemoryToolHandlers(MemoryRepository(database))
+    try:
+        saved = await handlers.set_body_profile(context, arguments)
+        hidden = await handlers.set_body_profile(
+            context.model_copy(
+                update={
+                    "tool_call_id": "call-hidden-height",
+                    "execution_idempotency_key": "execution-hidden-height",
+                    "trusted_evidence_item_ids": (),
+                }
+            ),
+            arguments,
+        )
+
+        assert saved.status is ToolResultStatus.SUCCEEDED
+        assert saved.output["created_count"] == 1
+        assert hidden.status is ToolResultStatus.FAILED
+        assert hidden.failure is not None
+        assert hidden.failure.code == "memory_evidence_not_visible"
+    finally:
+        await database.close()

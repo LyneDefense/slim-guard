@@ -57,6 +57,7 @@ class ToolContext(BaseModel):
         min_length=1,
         max_length=128,
     )
+    trusted_evidence_item_ids: tuple[str, ...] = ()
 
 
 class ToolResultStatus(StrEnum):

@@ -131,6 +131,15 @@ async def test_recent_dialogue_is_user_isolated_visible_and_bounded(
         ]
         contents = [message.content for turn in recent for message in turn.messages]
         assert contents == ["中间的问题", "中间的回答", "刚才的问题", "刚才的回答"]
+        assert [
+            message.evidence_ref for turn in recent for message in turn.messages
+        ][1::2] == [None, None]
+        assert all(
+            message.evidence_ref
+            for turn in recent
+            for message in turn.messages
+            if message.role == "user"
+        )
         assert all("must-not-leak" not in content for content in contents)
         assert all("另一个用户" not in content for content in contents)
     finally:

@@ -177,6 +177,7 @@ class HarnessTurnRunner:
             authorization=authorization,
             source_item_id=initialized.source_item_id,
             now=current_time,
+            trusted_evidence_item_ids=compiled.evidence_item_ids,
             safety_assessment=safety_assessment,
         )
         return HarnessTurnRunResult(

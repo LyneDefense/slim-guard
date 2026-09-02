@@ -239,7 +239,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
         system_prompt=SLIM_GUARD_HARNESS_PROMPT,
         tool_versions=registry.versions,
-        context_policy_version="authoritative-working-memory-privacy-v6",
+        context_policy_version="authoritative-working-memory-privacy-v7",
         memory_policy_version=MEMORY_POLICY_VERSION,
         compaction_policy_version="bounded-working-images-handoff-redaction-v3",
         safety_policy_version="health-output-guard-v2",

@@ -36,6 +36,7 @@ class CompiledContext:
     request: ModelRequest
     allowed_tool_names: tuple[str, ...]
     input_item_ids: tuple[str, ...]
+    evidence_item_ids: tuple[str, ...] = ()
 
 
 class ContextCompiler:
@@ -120,7 +121,30 @@ class ContextCompiler:
             request=request,
             allowed_tool_names=selected_names,
             input_item_ids=tuple(item.id for item in initialized.input_items),
+            evidence_item_ids=self._evidence_item_ids(working_memory),
         )
+
+    @staticmethod
+    def _evidence_item_ids(working_memory: Any) -> tuple[str, ...]:
+        if not isinstance(working_memory, Mapping):
+            return ()
+        dialogue = working_memory.get("recent_dialogue")
+        if not isinstance(dialogue, list):
+            return ()
+        result: list[str] = []
+        for turn in dialogue:
+            if not isinstance(turn, Mapping):
+                continue
+            messages = turn.get("messages")
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, Mapping) or message.get("role") != "user":
+                    continue
+                evidence_ref = message.get("evidence_ref")
+                if isinstance(evidence_ref, str) and evidence_ref and evidence_ref not in result:
+                    result.append(evidence_ref)
+        return tuple(result)
 
     @staticmethod
     def _authoritative_context_message(

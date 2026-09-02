@@ -81,6 +81,7 @@ class MemoryWriteCommand(BaseModel):
     operation_id: str = Field(min_length=1, max_length=128)
     source_turn_id: str = Field(min_length=1, max_length=128)
     source_item_id: str = Field(min_length=1, max_length=128)
+    evidence_item_id: str | None = Field(default=None, min_length=1, max_length=128)
     source_tool_call_id: str = Field(min_length=1, max_length=256)
     assertion: MemoryAssertion = MemoryAssertion.USER_EXPLICIT
 
@@ -147,6 +148,7 @@ class MemoryFactRef(BaseModel):
     supersedes_id: str | None
     source_turn_id: str
     source_item_id: str
+    evidence_item_id: str
     source_tool_call_id: str
     valid_from: datetime
     review_after: datetime | None

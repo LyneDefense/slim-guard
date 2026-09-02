@@ -219,7 +219,15 @@ class AuthoritativeContextDataProvider:
                 working_memory["recent_dialogue"] = [
                     {
                         "messages": [
-                            {"role": message.role, "content": message.content}
+                            {
+                                "role": message.role,
+                                "content": message.content,
+                                **(
+                                    {"evidence_ref": message.evidence_ref}
+                                    if message.evidence_ref is not None
+                                    else {}
+                                ),
+                            }
                             for message in turn.messages
                         ],
                     }

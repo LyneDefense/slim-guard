@@ -31,6 +31,7 @@ from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
+from slim_guard.memory.contracts import MemoryKey
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.body_fat import RECORD_BODY_FAT_TOOL_NAME
 from slim_guard.tools.contracts import ToolExecutionMode
@@ -74,6 +75,47 @@ def final_reply(text: str) -> ModelResponse:
         message=ModelMessage(role=MessageRole.ASSISTANT, content=text),
         finish_reason="stop",
     )
+
+
+class HistoricalHeightModelGateway:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self._step = 0
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        step = self._step
+        self._step += 1
+        if step == 0:
+            return final_reply("知道了。")
+        if step == 1:
+            working_memory = next(
+                message.content or ""
+                for message in request.messages
+                if "近期对话工作记忆" in (message.content or "")
+            )
+            payload = json.loads(working_memory.split("：", maxsplit=1)[1])
+            evidence_ref = next(
+                message["evidence_ref"]
+                for turn in payload["recent_dialogue"]
+                for message in turn["messages"]
+                if message["role"] == "user" and message["content"] == "我身高179"
+            )
+            return tool_call(
+                "call-historical-height",
+                SET_BODY_PROFILE_TOOL_NAME,
+                {
+                    "height_value": 179,
+                    "evidence_excerpt": "我身高179",
+                    "evidence_ref": evidence_ref,
+                },
+            )
+        if step == 2:
+            return final_reply("记好了，身高179cm。")
+        raise AssertionError("Unexpected model call")
+
+    async def close(self) -> None:
+        return None
 
 
 class MemoryClearModelGateway:
@@ -414,6 +456,59 @@ async def test_runtime_persists_and_recalls_profile_memory_across_turns(
         assert '"name":"阿杰"' in memory_context
         assert '"style":"concise"' in memory_context
         model.assert_exhausted()
+    finally:
+        await model.close()
+        await database.close()
+
+
+async def test_runtime_saves_unambiguous_historical_height_without_asking_again(
+    tmp_path: Path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    model = HistoricalHeightModelGateway()
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="test-historical-height",
+        ),
+        clock=lambda: FIXED_NOW,
+    )
+    try:
+        first = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="我身高179",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        second = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="帮我把身高也保存了",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+        memories = await MemoryRepository(database).active(
+            "user-1",
+            key=MemoryKey.HEIGHT,
+        )
+        first_items = await HarnessStateRepository(database).list_items(first.turn_id)
+        original_user_item = next(
+            item for item in first_items if item.item_type is ItemType.USER_MESSAGE
+        )
+
+        assert first.final_text == "知道了。"
+        assert second.final_text == "记好了，身高179cm。"
+        assert len(memories) == 1
+        assert memories[0].value == {"millimeters": 1790}
+        assert memories[0].source_turn_id == second.turn_id
+        assert memories[0].evidence_item_id == original_user_item.id
     finally:
         await model.close()
         await database.close()

@@ -34,10 +34,11 @@ from slim_guard.memory.errors import (
     MemoryEvidenceMismatch,
     MemoryNotFound,
     MemorySourceMismatch,
+    MemoryStaleEvidence,
 )
 from slim_guard.memory.registry import CanonicalMemory, MemorySchemaRegistry
 
-MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v6"
+MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v7"
 
 
 class MemoryRepository:
@@ -63,7 +64,7 @@ class MemoryRepository:
         async with self._database.session() as session:
             try:
                 async with session.begin():
-                    await self._validate_evidence(session, command)
+                    evidence = await self._validate_evidence(session, command)
                     existing_operation = tuple(
                         await session.scalars(
                             select(UserMemoryFactRecord).where(
@@ -74,6 +75,31 @@ class MemoryRepository:
                     )
                     if existing_operation:
                         return self._replayed_write(existing_operation, canonical)
+
+                    active_by_slot = {
+                        row.slot_key: row
+                        for row in await session.scalars(
+                            select(UserMemoryFactRecord).where(
+                                UserMemoryFactRecord.user_id == command.user_id,
+                                UserMemoryFactRecord.slot_key.in_(
+                                    tuple(fact.slot_key for fact in canonical)
+                                ),
+                                UserMemoryFactRecord.status == MemoryStatus.ACTIVE.value,
+                            )
+                        )
+                    }
+                    if all(
+                        (active := active_by_slot.get(fact.slot_key)) is not None
+                        and active.value_hash == fact.value_hash
+                        for fact in canonical
+                    ):
+                        return MemoryWriteResult(
+                            facts=tuple(
+                                self._ref(active_by_slot[fact.slot_key])
+                                for fact in canonical
+                            ),
+                            created_count=0,
+                        )
 
                     now = self._now()
                     output: list[MemoryFactRef] = []
@@ -87,6 +113,11 @@ class MemoryRepository:
                             )
                         )
                         if active is not None:
+                            await self._reject_older_conflicting_evidence(
+                                session,
+                                active=active,
+                                evidence=evidence,
+                            )
                             active.status = MemoryStatus.SUPERSEDED.value
                             active.ended_at = now
                             session.add(
@@ -113,6 +144,7 @@ class MemoryRepository:
                             supersedes_id=active.id if active is not None else None,
                             source_turn_id=command.source_turn_id,
                             source_item_id=command.source_item_id,
+                            evidence_item_id=evidence.id,
                             source_tool_call_id=command.source_tool_call_id,
                             valid_from=now,
                             review_after=(
@@ -268,7 +300,7 @@ class MemoryRepository:
         self,
         session: AsyncSession,
         command: MemoryWriteCommand,
-    ) -> None:
+    ) -> AgentItemRecord:
         mismatch = await validate_record_source(
             session,
             user_id=command.user_id,
@@ -277,17 +309,56 @@ class MemoryRepository:
         )
         if mismatch is not None:
             raise MemorySourceMismatch(f"Memory {mismatch}")
-        source = await session.get(AgentItemRecord, command.source_item_id)
-        if source is None or source.item_type != "user_message":
+        action_source = await session.get(AgentItemRecord, command.source_item_id)
+        if action_source is None or action_source.item_type != "user_message":
             raise MemoryEvidenceMismatch("Memory writes require a current user message source")
+        evidence_item_id = command.evidence_item_id or command.source_item_id
+        evidence = await session.get(AgentItemRecord, evidence_item_id)
+        if (
+            evidence is None
+            or evidence.item_type != "user_message"
+            or evidence.status != "completed"
+        ):
+            raise MemoryEvidenceMismatch(
+                "Memory evidence must reference a completed user message"
+            )
+        evidence_mismatch = await validate_record_source(
+            session,
+            user_id=command.user_id,
+            source_turn_id=evidence.turn_id,
+            source_item_id=evidence.id,
+        )
+        if evidence_mismatch is not None:
+            raise MemorySourceMismatch(f"Memory evidence {evidence_mismatch}")
+        if self._as_utc(evidence.created_at) > self._as_utc(action_source.created_at):
+            raise MemoryEvidenceMismatch("Memory evidence cannot come from a future message")
         try:
-            payload = json.loads(source.payload_json)
+            payload = json.loads(evidence.payload_json)
         except (TypeError, json.JSONDecodeError) as exc:
             raise MemoryEvidenceMismatch("Memory source payload is invalid") from exc
         text = payload.get("text")
         if not isinstance(text, str) or command.evidence_excerpt not in text:
             raise MemoryEvidenceMismatch(
-                "Memory evidence must be an exact excerpt of the current user message"
+                "Memory evidence must be an exact excerpt of its referenced user message"
+            )
+        return evidence
+
+    async def _reject_older_conflicting_evidence(
+        self,
+        session: AsyncSession,
+        *,
+        active: UserMemoryFactRecord,
+        evidence: AgentItemRecord,
+    ) -> None:
+        active_evidence = await session.get(
+            AgentItemRecord,
+            active.evidence_item_id or active.source_item_id,
+        )
+        if active_evidence is None:
+            raise MemorySourceMismatch("Active memory evidence no longer exists")
+        if self._as_utc(evidence.created_at) < self._as_utc(active_evidence.created_at):
+            raise MemoryStaleEvidence(
+                "Historical evidence is older than the active conflicting memory"
             )
 
     async def _validate_bulk_evidence(
@@ -403,6 +474,7 @@ class MemoryRepository:
             supersedes_id=row.supersedes_id,
             source_turn_id=row.source_turn_id,
             source_item_id=row.source_item_id,
+            evidence_item_id=row.evidence_item_id or row.source_item_id,
             source_tool_call_id=row.source_tool_call_id,
             valid_from=cls._as_utc(row.valid_from),
             review_after=(

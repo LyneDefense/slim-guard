@@ -19,6 +19,7 @@ from slim_guard.db.session import Database
 class DialogueMessage:
     role: str
     content: str
+    evidence_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +105,13 @@ class ConversationWindowRepository:
                     break
                 content = message.content[-remaining:]
                 if content:
-                    messages.append(DialogueMessage(role=message.role, content=content))
+                    messages.append(
+                        DialogueMessage(
+                            role=message.role,
+                            content=content,
+                            evidence_ref=message.evidence_ref,
+                        )
+                    )
                     remaining -= len(content)
             if messages:
                 newest.append(
@@ -197,7 +204,11 @@ class ConversationWindowRepository:
         if not isinstance(text, str) or not text.strip():
             return None
         role = "user" if row.item_type == "user_message" else "assistant"
-        return DialogueMessage(role=role, content=text.strip())
+        return DialogueMessage(
+            role=role,
+            content=text.strip(),
+            evidence_ref=row.id if role == "user" else None,
+        )
 
     @staticmethod
     def _image_observation(

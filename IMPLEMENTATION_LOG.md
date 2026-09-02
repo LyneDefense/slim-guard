@@ -326,5 +326,6 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/agent/prompt.py` → model-first 行为边界 → 明确当前值、目标值、身高和运动习惯由模型理解；不把“目前不运动”误写成身体限制，不对用户自述代谢问题给出武断临床结论。
 - `src/slim_guard/harness/safety.py` → 最终回复真实性保护 → 只有同类写操作全部失败却声称成功时才替换回复，保留模型对部分成功、部分失败的逐项如实说明。
 - `src/slim_guard/agent/prompt.py` → 默认对话风格 v15 → 普通打卡采用一到三句的微信口语对话，多项写入自然合并确认，避免客服套话、逐字段报账和未请求的通用长建议；用户明确保存的 `response_style` 仍优先。
+- `memory/working.py`、`tools/memory.py`、`memory/repository.py` → 跨轮历史事实写入 → 只为模型当前可见的同用户历史原话提供 `evidence_ref`，模型负责理解“保存上次那个”，执行层验证原文、用户归属、可见范围和新旧冲突；证据充足时直接写入，不要求用户重复数值。
 - `src/slim_guard/admin/`、`frontend/` → 管理后台 → 用户统计、健康记录和 Trace 上下文来源增加体脂与新记忆类型。
 - `tests/` → 故障回归 → 覆盖截图中的整条输入、默认 kg/cm、体脂记录及目标、运动习惯分类、部分成功回复、迁移与体脂软撤销。

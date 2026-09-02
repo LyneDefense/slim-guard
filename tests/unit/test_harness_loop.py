@@ -181,6 +181,7 @@ async def run_loop(
     limits: HarnessLimits | None = None,
     turn_context: HarnessTurnContext | None = None,
     clock: Callable[[], datetime] | None = None,
+    trusted_evidence_item_ids: tuple[str, ...] = (),
 ):
     return await HarnessLoop(
         model=model,
@@ -193,6 +194,7 @@ async def run_loop(
         authorization=authorization(),
         source_item_id="user-item-1",
         now=datetime.now(UTC),
+        trusted_evidence_item_ids=trusted_evidence_item_ids,
     )
 
 
@@ -220,6 +222,26 @@ async def test_loop_executes_tool_and_returns_one_final_response() -> None:
     observation = json.loads(second_messages[-1].content or "")
     assert observation["status"] == "succeeded"
     assert observation["output"]["weight_kg"] == 77.6
+
+
+async def test_loop_passes_only_compiled_historical_evidence_to_tools() -> None:
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(tool_call("call-evidence")),
+            assistant_text("记好了。"),
+        )
+    )
+    tools = RecordingToolCallRunner()
+
+    await run_loop(
+        model,
+        tools,
+        trusted_evidence_item_ids=("historical-user-item",),
+    )
+
+    assert tools.contexts[0].trusted_evidence_item_ids == (
+        "historical-user-item",
+    )
 
 
 async def test_loop_executes_multiple_tool_calls_before_next_model_call() -> None:

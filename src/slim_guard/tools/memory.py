@@ -20,6 +20,7 @@ from slim_guard.memory.errors import (
     MemoryEvidenceMismatch,
     MemoryNotFound,
     MemorySourceMismatch,
+    MemoryStaleEvidence,
 )
 from slim_guard.memory.handoff import (
     HandoffRef,
@@ -46,7 +47,7 @@ RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
 SET_CONVERSATION_HANDOFF_TOOL_NAME = "set_conversation_handoff"
 RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME = "resolve_conversation_handoff"
 CLEAR_USER_MEMORIES_TOOL_NAME = "clear_user_memories"
-MEMORY_TOOL_VERSION = "v6"
+MEMORY_TOOL_VERSION = "v7"
 
 _GRAMS_PER_UNIT = {
     "kg": Decimal("1000"),
@@ -112,10 +113,14 @@ def _unit_alias_spans(alias: str, lowered: str) -> tuple[tuple[int, int], ...]:
     return tuple((match.start(), match.end()) for match in re.finditer(pattern, lowered))
 
 
-class SetCoachingProfileArguments(ToolArguments):
+class MemoryEvidenceArguments(ToolArguments):
+    evidence_excerpt: str = Field(min_length=1, max_length=512)
+    evidence_ref: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class SetCoachingProfileArguments(MemoryEvidenceArguments):
     preferred_name: str | None = Field(default=None, min_length=1, max_length=64)
     response_style: Literal["concise", "detailed", "gentle", "direct"] | None = None
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
     @model_validator(mode="after")
     def require_change(self) -> SetCoachingProfileArguments:
@@ -124,27 +129,23 @@ class SetCoachingProfileArguments(ToolArguments):
         return self
 
 
-class SetBodyProfileArguments(ToolArguments):
+class SetBodyProfileArguments(MemoryEvidenceArguments):
     height_value: float = Field(gt=0)
     height_unit: Literal["cm", "m", "in"] = "cm"
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
-class SetExerciseProfileArguments(ToolArguments):
+class SetExerciseProfileArguments(MemoryEvidenceArguments):
     habit_summary: str = Field(min_length=1, max_length=300)
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
-class UpsertFoodPreferenceArguments(ToolArguments):
+class UpsertFoodPreferenceArguments(MemoryEvidenceArguments):
     item: str = Field(min_length=1, max_length=128)
     stance: Literal["like", "dislike", "avoid"]
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
-class UpsertExercisePreferenceArguments(ToolArguments):
+class UpsertExercisePreferenceArguments(MemoryEvidenceArguments):
     activity: str = Field(min_length=1, max_length=128)
     stance: Literal["like", "dislike", "avoid"]
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
 class ListUserMemoriesArguments(ToolArguments):
@@ -169,33 +170,29 @@ class ForgetUserMemoryArguments(ToolArguments):
     memory_id: str = Field(min_length=1, max_length=128)
 
 
-class SetWeightGoalArguments(ToolArguments):
+class SetWeightGoalArguments(MemoryEvidenceArguments):
     value: float = Field(gt=0)
     unit: Literal["kg", "jin", "lb"] = "kg"
     target_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
-class SetBodyFatGoalArguments(ToolArguments):
+class SetBodyFatGoalArguments(MemoryEvidenceArguments):
     value: float = Field(gt=0)
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
-class SetBehaviorGoalArguments(ToolArguments):
+class SetBehaviorGoalArguments(MemoryEvidenceArguments):
     kind: Literal[
         "weekly_exercise_sessions",
         "daily_steps",
         "daily_meal_checkins",
     ]
     target: int = Field(ge=1, le=200_000)
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
-class RecordUserConstraintArguments(ToolArguments):
+class RecordUserConstraintArguments(MemoryEvidenceArguments):
     category: Literal["dietary", "exercise", "health_context"]
     subject: str = Field(min_length=1, max_length=128)
     statement: str = Field(min_length=1, max_length=500)
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
 class SetConversationHandoffArguments(ToolArguments):
@@ -251,6 +248,7 @@ class MemoryToolHandlers:
             context,
             facts=tuple(facts),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def upsert_food_preference(
@@ -269,6 +267,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def set_body_profile(
@@ -301,6 +300,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def set_exercise_profile(
@@ -319,6 +319,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def upsert_exercise_preference(
@@ -340,6 +341,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def set_weight_goal(
@@ -372,6 +374,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def set_body_fat_goal(
@@ -396,6 +399,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def set_behavior_goal(
@@ -419,6 +423,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def record_user_constraint(
@@ -448,6 +453,7 @@ class MemoryToolHandlers:
                 ),
             ),
             evidence_excerpt=arguments.evidence_excerpt,
+            evidence_ref=arguments.evidence_ref,
         )
 
     async def list_user_memories(
@@ -644,11 +650,23 @@ class MemoryToolHandlers:
         *,
         facts: tuple[MemoryFactInput, ...],
         evidence_excerpt: str,
+        evidence_ref: str | None,
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
                 code="missing_memory_execution_identity",
                 message="Saving a memory requires a trusted current user message.",
+            )
+        if (
+            evidence_ref is not None
+            and evidence_ref not in context.trusted_evidence_item_ids
+        ):
+            return ToolResult.failed(
+                code="memory_evidence_not_visible",
+                message=(
+                    "Historical memory evidence must come from a user message visible in "
+                    "this turn's working memory."
+                ),
             )
         try:
             result = await self._repository.write(
@@ -659,6 +677,7 @@ class MemoryToolHandlers:
                     operation_id=context.execution_idempotency_key,
                     source_turn_id=context.turn_id,
                     source_item_id=context.source_item_id,
+                    evidence_item_id=evidence_ref,
                     source_tool_call_id=context.tool_call_id,
                 )
             )
@@ -671,6 +690,14 @@ class MemoryToolHandlers:
             return ToolResult.failed(
                 code="memory_source_mismatch",
                 message="The memory source could not be verified.",
+            )
+        except MemoryStaleEvidence:
+            return ToolResult.failed(
+                code="memory_stale_evidence",
+                message=(
+                    "That historical statement conflicts with a newer saved value. Ask the "
+                    "user which value is current."
+                ),
             )
         except MemoryCollision:
             return ToolResult.failed(
@@ -731,9 +758,9 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=SET_COACHING_PROFILE_TOOL_NAME,
             description=(
-                "Save the current user's explicitly stated preferred name or response style. "
-                "evidence_excerpt must be copied exactly from the current user message. Never "
-                "infer profile attributes."
+                "Save the user's explicitly stated preferred name or response style. Copy "
+                "evidence_excerpt exactly from a user message. For historical evidence, pass "
+                "its evidence_ref from working memory. Never infer profile attributes."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetCoachingProfileArguments,
@@ -745,10 +772,11 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=SET_BODY_PROFILE_TOOL_NAME,
             description=(
-                "Save the current user's explicitly stated height as durable profile data. "
-                "The model decides from the current message whether the statement is the "
-                "user's own height. If the user omits a unit, use cm; preserve an explicit "
-                "unit. Never infer height from old dialogue or images."
+                "Save the user's explicitly stated height as durable profile data. If the "
+                "current user refers unambiguously to a historical user message, copy its "
+                "exact evidence_excerpt and evidence_ref from working memory; do not ask them "
+                "to repeat it. If no unit was stated, use cm. Never use assistant text or "
+                "images as evidence."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBodyProfileArguments,
@@ -760,10 +788,10 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=SET_EXERCISE_PROFILE_TOOL_NAME,
             description=(
-                "Save the current user's explicitly stated usual exercise habit or baseline. "
+                "Save the user's explicitly stated usual exercise habit or baseline. "
                 "Use this for statements such as currently not exercising; do not turn that "
-                "into a medical exercise constraint. habit_summary and evidence_excerpt must "
-                "be grounded in the current message."
+                "into a medical exercise constraint. For historical user evidence, pass its "
+                "exact evidence_excerpt and evidence_ref from working memory."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetExerciseProfileArguments,
@@ -775,9 +803,10 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=UPSERT_FOOD_PREFERENCE_TOOL_NAME,
             description=(
-                "Save one food preference explicitly stated by the current user. Use avoid "
+                "Save one food preference explicitly stated by the user. Use avoid "
                 "only when the user explicitly says they avoid the item; do not turn a meal "
-                "record into a preference. evidence_excerpt must be exact."
+                "record into a preference. Historical user evidence requires its exact "
+                "evidence_excerpt and evidence_ref from working memory."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=UpsertFoodPreferenceArguments,
@@ -789,9 +818,9 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=UPSERT_EXERCISE_PREFERENCE_TOOL_NAME,
             description=(
-                "Save one exercise preference explicitly stated by the current user. Do not "
-                "infer a durable preference from one activity record. evidence_excerpt must "
-                "be copied exactly from the current message."
+                "Save one exercise preference explicitly stated by the user. Do not infer a "
+                "durable preference from one activity record. Historical user evidence "
+                "requires its exact evidence_excerpt and evidence_ref from working memory."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=UpsertExercisePreferenceArguments,
@@ -803,10 +832,10 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=SET_WEIGHT_GOAL_TOOL_NAME,
             description=(
-                "Save a target weight explicitly stated by the current user. This stores a "
+                "Save a target weight explicitly stated by the user. This stores a "
                 "self-reported goal, not a measurement or medical endorsement. If the user "
-                "omits a unit, use kg; preserve an explicit unit. The number must appear in "
-                "the exact current-message evidence excerpt."
+                "omits a unit, use kg; preserve an explicit unit. Historical user evidence "
+                "requires its exact evidence_excerpt and evidence_ref from working memory."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetWeightGoalArguments,
@@ -818,10 +847,10 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=SET_BODY_FAT_GOAL_TOOL_NAME,
             description=(
-                "Save a body-fat percentage goal explicitly stated by the current user. The "
-                "model decides which number is the target; value is a percentage and must "
-                "appear in the exact current-message evidence excerpt. This does not endorse "
-                "the goal as medically appropriate."
+                "Save a body-fat percentage goal explicitly stated by the user. The model "
+                "decides which number is the target. Historical user evidence requires its "
+                "exact evidence_excerpt and evidence_ref from working memory. This does not "
+                "endorse the goal as medically appropriate."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBodyFatGoalArguments,
@@ -834,7 +863,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             name=SET_BEHAVIOR_GOAL_TOOL_NAME,
             description=(
                 "Save one explicit behavior goal for exercise sessions, daily steps, or meal "
-                "check-ins. The numeric target must appear in exact current-message evidence."
+                "check-ins. Historical user evidence requires its exact evidence_excerpt and "
+                "evidence_ref from working memory."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBehaviorGoalArguments,
@@ -847,8 +877,9 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             name=RECORD_USER_CONSTRAINT_TOOL_NAME,
             description=(
                 "Save a dietary, exercise, or health constraint explicitly reported by the "
-                "current user. statement must be copied exactly from the current message. "
-                "Store it as user-reported context, never as a diagnosis."
+                "user. statement must be copied exactly from user-authored evidence. For "
+                "historical evidence pass evidence_ref from working memory. Store it as "
+                "user-reported context, never as a diagnosis."
             ),
             version=MEMORY_TOOL_VERSION,
             arguments_model=RecordUserConstraintArguments,

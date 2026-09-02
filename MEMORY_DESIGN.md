@@ -157,6 +157,7 @@ sensitivity              normal | health | restricted
 supersedes_id            nullable FK user_memory_facts.id
 source_turn_id           FK agent_turns.id
 source_item_id           FK agent_items.id
+evidence_item_id         FK agent_items.id；事实对应的用户原话，可与本轮操作来源不同
 source_tool_call_id       required
 valid_from                timezone-aware datetime
 expires_at               nullable
@@ -226,21 +227,22 @@ Handoff 是带来源的临时摘要，不得覆盖 Profile 或 Domain Fact。摘
 ### 7.1 基本流程
 
 ```text
-用户当前消息
+用户当前消息或带 evidence_ref 的近期用户原话
   → Core Agent 判断存在明确、未来仍有价值的表达
   → 调用语义明确的 Memory Tool
   → Tool Gateway 注入 user_id / turn_id / source_item_id / tool_call_id
   → MemorySchemaRegistry 校验类型、范围、基数和敏感级别
-  → Source Validator 确认来源 Item 属于当前用户和当前 Turn
+  → Source Validator 分别确认本轮操作来源与事实证据属于当前用户
   → Memory Policy 判断直接写入、要求确认或拒绝
   → Repository 幂等创建 / 替换 / 撤销
   → Tool 返回实际生效结果
   → Agent 只在成功后向用户简短确认
 ```
 
-模型提供一个来自当前用户消息的 `evidence_excerpt`。执行器验证它确实是当前来源正文的子串，
-但长期表只保存来源 ID 和正文哈希，不重复保存 excerpt。语义映射仍由模型完成，执行器负责确保
-它没有脱离当前用户输入凭空写入。
+模型提供来自用户原话的 `evidence_excerpt`；使用近期历史用户消息时，还必须传 Working Memory
+提供的 `evidence_ref`。Harness 只授权本轮模型实际看见的用户消息引用，执行器验证引用属于同一
+用户、原文包含该片段、数值与单位一致且不会用旧证据覆盖更新事实。当前操作仍绑定当前 Turn 和
+用户消息，长期表另存 `evidence_item_id`，不重复保存 excerpt。语义映射和指代消解仍由模型完成。
 
 ### 7.2 允许直接写入
 
@@ -252,7 +254,7 @@ Handoff 是带来源的临时摘要，不得覆盖 Profile 或 Domain Fact。摘
 
 ### 7.3 必须确认
 
-- 模糊指代：“这个以后记住”；
+- 存在多个合理候选的模糊指代：“把上次那个记住”；唯一且有用户原话证据的候选可直接写入；
 - 与现有 single 记忆冲突但用户没有清楚表达替换意图；
 - 模型需要从上下文推导而不是直接读取的目标值；
 - 涉及第三方的信息；
@@ -276,22 +278,22 @@ Handoff 是带来源的临时摘要，不得覆盖 Profile 或 Domain Fact。摘
 
 ```text
 set_coaching_profile
-  preferred_name? / response_style? / evidence_excerpt
+  preferred_name? / response_style? / evidence_excerpt / evidence_ref?
 
 upsert_food_preference
-  item / stance(like|dislike|avoid) / reason? / evidence_excerpt
+  item / stance(like|dislike|avoid) / reason? / evidence_excerpt / evidence_ref?
 
 upsert_exercise_preference
-  activity / stance(like|dislike|avoid) / evidence_excerpt
+  activity / stance(like|dislike|avoid) / evidence_excerpt / evidence_ref?
 
 set_weight_goal
-  value / unit(kg|jin|lb) / target_date? / evidence_excerpt
+  value / unit(kg|jin|lb) / target_date? / evidence_excerpt / evidence_ref?
 
 set_behavior_goal
-  kind / target / period / evidence_excerpt
+  kind / target / period / evidence_excerpt / evidence_ref?
 
 record_user_constraint
-  category(dietary|exercise|health_context) / user_wording / evidence_excerpt
+  category(dietary|exercise|health_context) / user_wording / evidence_excerpt / evidence_ref?
 
 list_user_memories
   kind? / include_stale=false
@@ -377,12 +379,14 @@ Context Compiler 在该 JSON 前固定声明：这些是用户数据，不是系
 ### 10.1 最近对话窗口
 
 Working Memory 只读取用户和最终 Agent 可见消息，不读取 Context Snapshot、内部 Prompt、模型
-草稿、Tool 参数或错误堆栈。选择规则固定为最近最多 3 个完成 Turn，并受字符预算约束。另加载
+草稿、Tool 参数或错误堆栈。历史用户消息携带 `evidence_ref`，最终 Agent 消息不携带；该引用只
+允许作为本轮记忆工具的事实来源，执行层仍会核验用户归属和原文。选择规则固定为最近最多 3 个
+完成 Turn，并受字符预算约束。另加载
 最近最多 3 张仍未到期、属于当前用户的图片能力引用；只暴露真实 `asset_id`、MIME、期限和视觉
 模型的非权威结构化观察，不暴露图片字节，也不把观察提升为领域事实。
 
-用户使用“刚才”“上次那个”等指代时，先在 Working Memory 与 active Handoff 中解析；仍有多个
-候选就询问，不能凭最近一条记录强行匹配。图片指代同样由核心模型结合语境判断；执行层只验证
+用户使用“刚才”“上次那个”等指代时，先在 Working Memory 与 active Handoff 中解析；唯一且证据
+充分的用户事实可直接写入，仍有多个候选才询问，不能凭最近一条记录强行匹配。图片指代同样由核心模型结合语境判断；执行层只验证
 用户隔离和 TTL，不使用关键词规则，也不接受模型生成的虚构 `asset_id`。
 
 ### 10.2 Handoff 创建
