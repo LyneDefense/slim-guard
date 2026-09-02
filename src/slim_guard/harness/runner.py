@@ -26,6 +26,8 @@ from slim_guard.harness.safety import (
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
+from slim_guard.memory.ingestion import MemoryIngestionResult, MemoryIngestor
+from slim_guard.memory.recall import MemoryRecaller, MemoryRecallResult
 from slim_guard.tools.policy import ToolAuthorization
 
 
@@ -45,6 +47,8 @@ class HarnessTurnRunResult:
     initialized: InitializedTurn
     compiled: CompiledContext | None
     loop: HarnessLoopResult
+    memory_ingestion: MemoryIngestionResult | None = None
+    memory_recall: MemoryRecallResult | None = None
 
     @property
     def final_text(self) -> str | None:
@@ -64,6 +68,8 @@ class HarnessTurnRunner:
         recorder: HarnessRunRecorder,
         limits: HarnessLimits,
         context_data: ContextDataProvider | None = None,
+        memory_ingestor: MemoryIngestor | None = None,
+        memory_recaller: MemoryRecaller | None = None,
         input_safety: InputSafetyPolicy | None = None,
         output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -72,6 +78,8 @@ class HarnessTurnRunner:
         self._compiler = compiler
         self._recorder = recorder
         self._context_data = context_data or EmptyContextDataProvider()
+        self._memory_ingestor = memory_ingestor
+        self._memory_recaller = memory_recaller
         self._input_safety = input_safety or DefaultInputSafetyPolicy()
         self._clock = clock or self._utc_now
         self._loop = HarnessLoop(
@@ -95,7 +103,15 @@ class HarnessTurnRunner:
         initialized = await self._initializer.initialize(request)
         active_grants = grants or HarnessTurnGrants()
         safety_assessment = self._input_safety.assess(initialized.input_items)
+        ingestion_result: MemoryIngestionResult | None = None
+        recall_result: MemoryRecallResult | None = None
         try:
+            if self._memory_ingestor is not None and not safety_assessment.blocks_tools:
+                ingestion_result = await self._memory_ingestor.ingest(
+                    initialized=initialized,
+                    current_time=current_time,
+                    isolated_write_environment=active_grants.isolated_write_environment,
+                )
             authoritative_context = dict(
                 await self._context_data.load(
                     user_id=initialized.context.user_id,
@@ -104,6 +120,13 @@ class HarnessTurnRunner:
                     input_items=initialized.input_items,
                 )
             )
+            if self._memory_recaller is not None:
+                recall_result = await self._memory_recaller.recall(
+                    initialized=initialized,
+                    current_time=current_time,
+                    context=authoritative_context,
+                )
+                authoritative_context = recall_result.context
             if safety_assessment.blocks_tools:
                 authoritative_context["health_safety"] = safety_assessment.to_context()
             allowed_tool_names = (
@@ -142,6 +165,8 @@ class HarnessTurnRunner:
                     tool_outcomes=(),
                     failure=failure,
                 ),
+                memory_ingestion=ingestion_result,
+                memory_recall=recall_result,
             )
 
         authorization = ToolAuthorization(
@@ -184,6 +209,8 @@ class HarnessTurnRunner:
             initialized=initialized,
             compiled=compiled,
             loop=loop_result,
+            memory_ingestion=ingestion_result,
+            memory_recall=recall_result,
         )
 
     @staticmethod

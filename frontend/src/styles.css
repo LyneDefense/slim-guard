@@ -127,7 +127,7 @@ button:disabled { cursor: default; }
 .architecture-badge { display: inline-flex; padding: 5px 8px; border-radius: 7px; color: #1a6248; background: #d9ecdf; font-size: 9px; font-weight: 900; letter-spacing: .12em; }
 .overview-copy h3 { margin: 10px 0 7px; font-size: 19px; }
 .overview-copy p, .detail-block > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
-.overview-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.overview-metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .overview-metrics .metric { padding: 13px; background: rgba(255,255,255,.7); }
 .overview-metrics .metric strong { font-size: 22px; }
 .agent-manifest { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: -10px 0 0; overflow: hidden; border: 1px solid #d9e5dd; border-radius: 10px; background: #d9e5dd; }
@@ -192,6 +192,16 @@ button:disabled { cursor: default; }
 .privacy-footnote { text-align: center; color: var(--muted); font-size: 11px; margin-top: 24px; }
 .data-grid { display: grid; gap: 10px; }
 .data-card { padding: 10px 16px 16px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.memory-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 12px; }
+.memory-card { min-width: 0; padding: 18px; border: 1px solid #cbded2; border-radius: 16px; background: white; }
+.memory-card.memory-superseded, .memory-card.memory-revoked, .memory-card.memory-expired { opacity: .7; border-color: var(--line); }
+.memory-card header { display: flex; justify-content: space-between; gap: 15px; }
+.memory-card h3 { margin: 6px 0 0; font-size: 17px; }
+.memory-value { min-height: 30px; margin: 18px 0; color: #183d2f; font-size: 22px; font-weight: 750; line-height: 1.45; white-space: pre-wrap; }
+.memory-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
+.memory-meta > div { min-width: 0; padding: 10px; border-radius: 9px; background: #f5f8f5; }
+.memory-meta dt { color: var(--muted); font-size: 9px; }
+.memory-meta dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 11px; line-height: 1.45; }
 
 @media (max-width: 860px) {
   .app-shell { display: block; }

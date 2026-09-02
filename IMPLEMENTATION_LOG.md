@@ -329,3 +329,19 @@ curl -i https://enceladus.online/health/ready
 - `memory/working.py`、`tools/memory.py`、`memory/repository.py` → 跨轮历史事实写入 → 只为模型当前可见的同用户历史原话提供 `evidence_ref`，模型负责理解“保存上次那个”，执行层验证原文、用户归属、可见范围和新旧冲突；证据充足时直接写入，不要求用户重复数值。
 - `src/slim_guard/admin/`、`frontend/` → 管理后台 → 用户统计、健康记录和 Trace 上下文来源增加体脂与新记忆类型。
 - `tests/` → 故障回归 → 覆盖截图中的整条输入、默认 kg/cm、体脂记录及目标、运动习惯分类、部分成功回复、迁移与体脂软撤销。
+
+### `feat: ingest durable memories before agent replies`
+
+- `src/slim_guard/memory/ingestion.py` → 独立 model-first 记忆摄取 → 每条用户消息先由专用模型阶段结合数据库 active 记忆和有界用户原话回填窗口判断长期事实，再复用受控 Memory Tool 写入；不靠 Core Agent Prompt 是否恰好调用工具。
+- `src/slim_guard/harness/runner.py`、`agent/composition.py` → 回复前数据库对账 → 摄取完成后才重新加载权威上下文；缺失新增、同值幂等、新的明确值版本化替换，Core Agent 读取数据库结果回复。
+- `src/slim_guard/memory/working.py` → 用户证据回填窗口 → 只加载同用户、已完成、用户本人发送的最近消息，排除助手文本和当前 Turn，使升级前近期未结构化事实可以渐进写入。
+- `src/slim_guard/admin/presentation.py` → 可视化链路 → 将 `memory_ingestion` 模型调用单独展示为“模型提取需要写入的长期记忆”，并继续显示实际 Memory Tool 及数据库结果。
+- `tests/unit/test_memory_ingestion.py` → 端到端回归 → 覆盖“我身高179”首次自动入库、重复同值不建版本、“我身高180”替换旧值，以及原话滑出 3 Turn 后仍从近期证据回填。
+
+### `feat: add model-ranked recall with optional Mem0 projection`
+
+- `memory/engine.py` → Mem0 OSS HTTP 适配层 → 强制按 `user_id` 查询；只投影 PostgreSQL 权威事实，Mem0 不成为第二份真相；超时和响应错误不泄露 API Key 或上游正文。
+- `memory/recall.py`、`harness/runner.py` → model-first Recall → 删除关键词筛选，先获取语义候选，再由独立模型从数据库候选中选出本轮需要的少量事实；非法 ID 被丢弃，模型故障时保守降级。
+- `memory/index_sync.py`、`memory_index_outbox` → 可靠同步 → 权威记忆新增、替换、撤销与清空在同事务写入 Outbox，后台幂等同步、租约恢复、指数退避并在启动时回填历史 active 记忆。
+- `admin/`、`frontend/` → 召回可视化 → Trace 白话展示候选数、入选数、Mem0 状态和降级原因；记忆页显示权威值、用户证据、有效期和语义索引状态。
+- `MEM0_INTEGRATION.md` → 部署与回滚 → Mem0 只走服务器内网，无需新增 Nginx 入口；关闭语义索引不影响 PostgreSQL 记忆与聊天。

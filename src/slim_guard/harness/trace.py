@@ -20,6 +20,13 @@ class ToolTrace:
 
 
 class HarnessRunRecorder(Protocol):
+    async def record_memory_recall(
+        self,
+        *,
+        turn_id: str,
+        payload: Mapping[str, Any],
+    ) -> None: ...
+
     async def record_output_guard(
         self,
         *,
@@ -77,6 +84,14 @@ class HarnessRunRecorder(Protocol):
 
 class NullHarnessRunRecorder:
     """Keeps the core loop usable in deterministic unit tests without persistence."""
+
+    async def record_memory_recall(
+        self,
+        *,
+        turn_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        return None
 
     async def record_context_snapshot(
         self,
@@ -144,6 +159,19 @@ class PersistentHarnessRunRecorder:
 
     def __init__(self, store: HarnessRunStore) -> None:
         self._store = store
+
+    async def record_memory_recall(
+        self,
+        *,
+        turn_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        await self._store.append_item(
+            turn_id=turn_id,
+            item_type=ItemType.MEMORY_RECALL,
+            status=ItemStatus.COMPLETED,
+            payload=payload,
+        )
 
     async def record_context_snapshot(
         self,

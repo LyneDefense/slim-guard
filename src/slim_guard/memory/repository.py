@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from slim_guard.db.models import (
     AgentItemRecord,
     MemoryBulkOperationRecord,
+    MemoryIndexOutboxRecord,
     UserMemoryEventRecord,
     UserMemoryFactRecord,
     utc_now,
@@ -38,7 +39,7 @@ from slim_guard.memory.errors import (
 )
 from slim_guard.memory.registry import CanonicalMemory, MemorySchemaRegistry
 
-MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v7"
+MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-privacy-v8"
 
 
 class MemoryRepository:
@@ -50,10 +51,12 @@ class MemoryRepository:
         *,
         registry: MemorySchemaRegistry | None = None,
         clock: Callable[[], datetime] | None = None,
+        index_sync_enabled: bool = False,
     ) -> None:
         self._database = database
         self._registry = registry or MemorySchemaRegistry()
         self._clock = clock or utc_now
+        self._index_sync_enabled = index_sync_enabled
 
     async def write(self, command: MemoryWriteCommand) -> MemoryWriteResult:
         canonical = tuple(
@@ -129,6 +132,12 @@ class MemoryRepository:
                                     detail={"replacement_operation_id": command.operation_id},
                                 )
                             )
+                            self._enqueue_index(
+                                session,
+                                row=active,
+                                operation="delete",
+                                now=now,
+                            )
                             await session.flush()
                         row = UserMemoryFactRecord(
                             user_id=command.user_id,
@@ -163,6 +172,12 @@ class MemoryRepository:
                                 item_id=command.source_item_id,
                                 detail={"schema_version": self._registry.version},
                             )
+                        )
+                        self._enqueue_index(
+                            session,
+                            row=row,
+                            operation="upsert",
+                            now=now,
                         )
                         output.append(self._ref(row))
                         created_count += 1
@@ -232,6 +247,12 @@ class MemoryRepository:
                     detail={"operation_id": command.operation_id},
                 )
             )
+            self._enqueue_index(
+                session,
+                row=row,
+                operation="delete",
+                now=row.ended_at,
+            )
             await session.flush()
             return MemoryRevokeResult(fact=self._ref(row), changed=True)
 
@@ -284,6 +305,19 @@ class MemoryRepository:
                     created_at=now,
                 )
             )
+            if self._index_sync_enabled:
+                session.add(
+                    MemoryIndexOutboxRecord(
+                        operation_key=f"delete_user:{command.operation_id}",
+                        user_id=command.user_id,
+                        memory_id=None,
+                        operation="delete_user",
+                        status="pending",
+                        available_at=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
             try:
                 await session.flush()
             except IntegrityError as exc:
@@ -449,6 +483,30 @@ class MemoryRepository:
             item_id=item_id,
             policy_version=MEMORY_POLICY_VERSION,
             detail_json=json.dumps(detail, separators=(",", ":"), sort_keys=True),
+        )
+
+    def _enqueue_index(
+        self,
+        session: AsyncSession,
+        *,
+        row: UserMemoryFactRecord,
+        operation: str,
+        now: datetime | None,
+    ) -> None:
+        if not self._index_sync_enabled:
+            return
+        queued_at = now or self._now()
+        session.add(
+            MemoryIndexOutboxRecord(
+                operation_key=f"{operation}:{row.id}:{row.value_hash}",
+                user_id=row.user_id,
+                memory_id=row.id,
+                operation=operation,
+                status="pending",
+                available_at=queued_at,
+                created_at=queued_at,
+                updated_at=queued_at,
+            )
         )
 
     @classmethod

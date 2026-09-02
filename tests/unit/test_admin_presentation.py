@@ -32,6 +32,53 @@ def test_model_tool_choice_is_presented_as_an_explicit_decision() -> None:
     assert "隐藏思维" in presentation["summary"]
 
 
+def test_memory_ingestion_model_is_presented_as_a_separate_stage() -> None:
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "model_message",
+            "details": {
+                "purpose": "memory_ingestion",
+                "call_index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [
+                        {"name": "set_body_profile", "arguments": {"height_value": 179}}
+                    ]
+                },
+                "usage": {"input_tokens": 200, "output_tokens": 30},
+            },
+        }
+    )
+
+    assert presentation["title"] == "模型提取需要写入的长期记忆"
+    assert "保存身高档案" in presentation["summary"]
+    assert {"label": "调用用途", "value": "提取并核对长期记忆"} in presentation[
+        "facts"
+    ]
+
+
+def test_memory_recall_is_presented_in_plain_language() -> None:
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "memory_recall",
+            "details": {
+                "engine_status": "succeeded",
+                "candidate_count": 9,
+                "engine_candidate_count": 4,
+                "selected_count": 2,
+                "degraded": False,
+                "reason_summary": "用户正在询问身高和目标体重。",
+            },
+        }
+    )
+
+    assert presentation["title"] == "筛选本轮相关记忆"
+    assert "9 条数据库候选" in presentation["summary"]
+    assert "选择了 2 条" in presentation["summary"]
+
+
 def test_tool_result_is_presented_as_an_observation() -> None:
     presentation = present_event(
         {
@@ -96,7 +143,8 @@ def test_execution_summary_counts_harness_actions() -> None:
         "model_call_count": 2,
         "tool_call_count": 1,
         "observation_count": 1,
-        "context_snapshot_count": 1,
+            "context_snapshot_count": 1,
+            "memory_recall_count": 0,
     }
 
 

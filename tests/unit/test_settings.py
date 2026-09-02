@@ -40,6 +40,13 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.memory_recent_dialogue_max_chars == 1500
     assert settings.memory_recent_image_count == 3
     assert settings.memory_handoff_ttl_days == 14
+    assert settings.memory_ingestion_enabled is True
+    assert settings.memory_ingestion_history_count == 20
+    assert settings.memory_ingestion_history_max_chars == 6000
+    assert settings.memory_recall_enabled is True
+    assert settings.memory_recall_search_limit == 12
+    assert settings.memory_recall_max_selected == 8
+    assert settings.memory_semantic_enabled is False
     assert settings.agent_transcript_body_retention_days == 30
     assert settings.memory_revoked_value_retention_days == 30
     assert settings.memory_maintenance_interval_seconds == 21_600

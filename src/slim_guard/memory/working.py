@@ -29,6 +29,13 @@ class DialogueTurn:
 
 
 @dataclass(frozen=True, slots=True)
+class UserMessageEvidence:
+    evidence_ref: str
+    content: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class RecentImageReference:
     asset_id: str
     mime_type: str
@@ -193,6 +200,60 @@ class ConversationWindowRepository:
             )
             for asset in assets
         )
+
+    async def recent_user_evidence(
+        self,
+        user_id: str,
+        *,
+        exclude_turn_id: str,
+        limit: int = 20,
+        char_limit: int = 6000,
+    ) -> tuple[UserMessageEvidence, ...]:
+        """Load a bounded, user-only evidence backlog for model-first ingestion."""
+        if not 1 <= limit <= 100:
+            raise ValueError("Evidence message limit must be between 1 and 100")
+        if not 100 <= char_limit <= 20_000:
+            raise ValueError("Evidence character limit must be between 100 and 20000")
+        async with self._database.session() as session:
+            rows = tuple(
+                await session.scalars(
+                    select(AgentItemRecord)
+                    .join(
+                        AgentThreadRecord,
+                        AgentThreadRecord.id == AgentItemRecord.thread_id,
+                    )
+                    .join(AgentTurnRecord, AgentTurnRecord.id == AgentItemRecord.turn_id)
+                    .where(
+                        AgentThreadRecord.user_id == user_id,
+                        AgentTurnRecord.status == "completed",
+                        AgentItemRecord.turn_id != exclude_turn_id,
+                        AgentItemRecord.item_type == "user_message",
+                        AgentItemRecord.status == "completed",
+                    )
+                    .order_by(AgentItemRecord.created_at.desc(), AgentItemRecord.id.desc())
+                    .limit(limit)
+                )
+            )
+        remaining = char_limit
+        newest: list[UserMessageEvidence] = []
+        for row in rows:
+            message = self._message(row)
+            if message is None or message.evidence_ref is None:
+                continue
+            content = message.content[-remaining:]
+            if not content:
+                break
+            newest.append(
+                UserMessageEvidence(
+                    evidence_ref=message.evidence_ref,
+                    content=content,
+                    created_at=self._as_utc(row.created_at),
+                )
+            )
+            remaining -= len(content)
+            if remaining <= 0:
+                break
+        return tuple(reversed(newest))
 
     @staticmethod
     def _message(row: AgentItemRecord) -> DialogueMessage | None:

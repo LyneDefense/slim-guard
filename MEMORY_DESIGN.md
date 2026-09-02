@@ -195,7 +195,13 @@ created_at                datetime
 召回量较大时，同一 Turn 的多条 `recalled` 合并为一个 `memory_recall` Agent Item，保存
 `memory_ids`、策略版本、命中原因和被预算截断的数量，避免事件表膨胀。
 
-### 6.3 `memory_handoffs`
+### 6.3 `memory_index_outbox`
+
+权威事实与可选 Mem0 语义索引之间通过事务 Outbox 投影。新增、替换、撤销和全量清除与事实变更
+同事务入队；后台使用租约、幂等 operation key、指数退避和最大尝试次数同步。Mem0 不可用不会回滚
+PostgreSQL 事实，也不会阻塞用户回复。
+
+### 6.4 `memory_handoffs`
 
 ```text
 id                       UUID PK
@@ -227,8 +233,8 @@ Handoff 是带来源的临时摘要，不得覆盖 Profile 或 Domain Fact。摘
 ### 7.1 基本流程
 
 ```text
-用户当前消息或带 evidence_ref 的近期用户原话
-  → Core Agent 判断存在明确、未来仍有价值的表达
+当前用户消息 + 有界的近期用户原话 + 数据库 active 记忆
+  → 独立 Memory Ingestion 模型判断明确、未来仍有价值的表达
   → 调用语义明确的 Memory Tool
   → Tool Gateway 注入 user_id / turn_id / source_item_id / tool_call_id
   → MemorySchemaRegistry 校验类型、范围、基数和敏感级别
@@ -236,13 +242,18 @@ Handoff 是带来源的临时摘要，不得覆盖 Profile 或 Domain Fact。摘
   → Memory Policy 判断直接写入、要求确认或拒绝
   → Repository 幂等创建 / 替换 / 撤销
   → Tool 返回实际生效结果
-  → Agent 只在成功后向用户简短确认
+  → Context Provider 重新读取数据库 active 记忆
+  → Core Agent 基于数据库结果回复
 ```
 
-模型提供来自用户原话的 `evidence_excerpt`；使用近期历史用户消息时，还必须传 Working Memory
-提供的 `evidence_ref`。Harness 只授权本轮模型实际看见的用户消息引用，执行器验证引用属于同一
-用户、原文包含该片段、数值与单位一致且不会用旧证据覆盖更新事实。当前操作仍绑定当前 Turn 和
-用户消息，长期表另存 `evidence_item_id`，不重复保存 excerpt。语义映射和指代消解仍由模型完成。
+摄取模型提供来自用户原话的 `evidence_excerpt` 和同一条消息的 `evidence_ref`。Harness 只授权
+摄取模型实际看见的当前用户消息引用，执行器验证引用属于同一用户、原文包含该片段、数值与单位一致
+且不会用旧证据覆盖更新事实。当前操作仍绑定当前 Turn 和用户消息，长期表另存
+`evidence_item_id`，不重复保存 excerpt。语义映射由模型完成，代码只负责结构、来源和状态约束。
+
+这条摄取链路不依赖 Core Agent 是否记得调用工具，也不要求用户显式说“记住”。数据库已有同槽事实
+时，Repository 进行最终仲裁：同值不新建版本，较新的明确用户事实替换旧值，较旧冲突证据被拒绝。
+摄取完成后才编译回复上下文，所以 Core Agent 看到的是写入后的数据库状态。
 
 ### 7.2 允许直接写入
 
@@ -313,17 +324,19 @@ forget_user_memory
 
 ## 9. 召回与 Context 预算
 
-### 9.1 每轮预加载
+### 9.1 每轮候选与筛选
 
-按以下顺序构建只读 `memory_context`：
+每轮先并行获得有界候选：
 
-1. `preferred_name` 和回复风格；
-2. 与本轮主题有关的 active Constraint；
-3. 与本轮触发类型有关的 active Goal；
-4. 相关饮食/运动偏好；
-5. 未解决 Handoff；
-6. 最近最多 3 个已完成 Turn 的用户/助手可见文本，合计不超过 1,500 字符；
-7. 现有 Authoritative Domain Context。
+1. PostgreSQL 中当前用户的 active Profile、Goal 和 Constraint；
+2. Mem0 按同一 `user_id` 返回的语义候选及分数；
+3. 未解决 Handoff；
+4. 最近最多 3 个已完成 Turn 的用户/助手可见文本；
+5. 现有 Authoritative Domain Context。
+
+专用 Recall 模型根据当前消息语义和指代，从 PostgreSQL 候选中选出少量本轮相关事实。Mem0 分数
+只是候选提示，模型不能创建候选之外的 ID，最终值始终重新取自 PostgreSQL。Core Agent 不接收全部
+长期记忆。
 
 建议默认总预算：
 
@@ -333,23 +346,18 @@ MEMORY_PRELOAD_MAX_FACTS=30
 MEMORY_RECENT_TURN_COUNT=3
 MEMORY_RECENT_DIALOGUE_MAX_CHARS=1500
 MEMORY_HANDOFF_TTL_DAYS=14
+MEMORY_RECALL_SEARCH_LIMIT=12
+MEMORY_RECALL_MAX_SELECTED=8
 ```
 
-Constraint 和当前 Goal 优先于交流风格；达到预算后按确定性优先级截断，不能让模型自行选择
-保留哪些安全事实。被截断的记忆仍可通过只读工具按类别获取。
+Recall 模型故障时，系统保守带入已有的有界权威候选并记录 degraded 事件；Mem0 故障时仍由模型
+直接筛选 PostgreSQL 候选。被筛掉的记忆仍可通过只读工具按类别获取。
 
 ### 9.2 相关性
 
-V1 使用确定性路由，不使用 Embedding：
-
-- 体重记录、趋势、复盘 Turn → weight goal；
-- 饮食消息、餐次 Tool → food preference + dietary constraint；
-- 运动消息、运动 Tool → exercise preference + exercise constraint；
-- 健康风险信号 → 所有 active health constraint；
-- 普通闲聊 → 只加载称呼、回复风格和 active Handoff。
-
-一个 Turn 可同时命中多个类别。无法判断主题时只加载小型稳定前缀，更深内容由
-`list_user_memories` 按需读取。
+相关性由专用模型判断，不再用“体重、饭、运动”等关键词枚举。向量搜索只做第一阶段粗召回，第二
+阶段模型结合当前请求、触发类型、候选 key/value、时效性和语义分数完成选择。用户隔离、ID 合法性、
+数量上限和数据库优先级仍由代码强制执行。
 
 ### 9.3 注入格式
 
@@ -388,6 +396,10 @@ Working Memory 只读取用户和最终 Agent 可见消息，不读取 Context S
 用户使用“刚才”“上次那个”等指代时，先在 Working Memory 与 active Handoff 中解析；唯一且证据
 充分的用户事实可直接写入，仍有多个候选才询问，不能凭最近一条记录强行匹配。图片指代同样由核心模型结合语境判断；执行层只验证
 用户隔离和 TTL，不使用关键词规则，也不接受模型生成的虚构 `asset_id`。
+
+Working Memory 的 3 Turn 限制只约束对话承接，不约束长期记忆保存。长期资料在用户首次明确表达时
+由 Memory Ingestion 写入数据库；为兼容上线前尚未摄取的消息，摄取阶段另有用户消息专用的有界回填
+窗口，默认最近 20 条、6000 字，且不包含助手消息、工具结果或内部快照。
 
 ### 10.2 Handoff 创建
 
@@ -614,15 +626,12 @@ memory_transcript_body_scrubbed
 
 ## 17. 暂缓决策
 
-以下能力在上述四个增量稳定后再评估：
+以下能力在当前实现稳定后再评估：
 
-- SQLite FTS5 或 Embedding 语义检索；
-- 向量数据库；
-- 自动从长历史提取候选 Profile；
 - 多渠道身份合并后的共享记忆；
 - 用户自助记忆管理页面与数据导出；
 - 经审核的 Knowledge Memory；
 - 基于 Eval 的 Memory 策略自动优化。
 
-只有当活跃 Fact 数量和对话跨度证明确定性召回不足时，才引入语义检索。引入 Embedding 前必须
-单独完成敏感数据出境、供应商保留策略、删除传播和召回可解释性设计。
+Embedding 语义检索已通过可选 Mem0 OSS 投影实现，默认关闭。启用前必须使用私有部署、验证模型与
+Embedding 的数据保留策略，并完成删除传播测试；管理后台持续显示同步与召回解释。

@@ -209,7 +209,7 @@ async def test_callback_url_verification(test_settings: Settings) -> None:
 
 async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> None:
     harness_settings = test_settings.model_copy(
-        update={"agent_runtime_mode": "harness"}
+        update={"agent_runtime_mode": "harness", "memory_ingestion_enabled": False}
     )
     fake = FakeWeComClient(
         {
@@ -318,7 +318,7 @@ async def test_callback_delivers_bulk_memory_clear_confirmation(
     test_settings: Settings,
 ) -> None:
     harness_settings = test_settings.model_copy(
-        update={"agent_runtime_mode": "harness"}
+        update={"agent_runtime_mode": "harness", "memory_ingestion_enabled": False}
     )
     fake = FakeWeComClient(
         {
@@ -387,7 +387,7 @@ async def test_image_callback_runs_vision_then_records_weight(
     test_settings: Settings,
 ) -> None:
     harness_settings = test_settings.model_copy(
-        update={"agent_runtime_mode": "harness"}
+        update={"agent_runtime_mode": "harness", "memory_ingestion_enabled": False}
     )
     image = b"\x89PNG\r\n\x1a\nscale-image"
     fake = FakeWeComClient(

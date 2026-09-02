@@ -15,6 +15,8 @@ class MessageRole(StrEnum):
 
 class ModelPurpose(StrEnum):
     HARNESS_TURN = "harness_turn"
+    MEMORY_INGESTION = "memory_ingestion"
+    MEMORY_RECALL = "memory_recall"
     VISION_INSPECTION = "vision_inspection"
     EVALUATION = "evaluation"
     IMPROVEMENT = "improvement"

@@ -18,10 +18,9 @@ from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.domain.weight.repository import WeightRepository
-from slim_guard.harness.events import ItemType, TurnTrigger
+from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.state_repository import ItemRef
-from slim_guard.memory.contracts import MemoryFactRef, MemoryKey
 from slim_guard.memory.handoff import HandoffRepository
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
@@ -180,11 +179,6 @@ class AuthoritativeContextDataProvider:
                 user_id,
                 limit=self._memory_limit,
             )
-            memories = self._relevant_memories(
-                memories,
-                trigger=trigger,
-                input_items=input_items,
-            )
             if memories:
                 context["profile_memory"] = [
                     {
@@ -310,62 +304,6 @@ class AuthoritativeContextDataProvider:
                         "exercise_count": status.exercise_count,
                     }
         return context
-
-    @staticmethod
-    def _relevant_memories(
-        memories: tuple[MemoryFactRef, ...],
-        *,
-        trigger: TurnTrigger | None,
-        input_items: tuple[ItemRef, ...],
-    ) -> tuple[MemoryFactRef, ...]:
-        if trigger is None or trigger is TurnTrigger.DAILY_REVIEW:
-            return memories
-        selected = {
-            MemoryKey.PREFERRED_NAME,
-            MemoryKey.HEIGHT,
-            MemoryKey.EXERCISE_HABIT,
-            MemoryKey.TARGET_BODY_FAT,
-            MemoryKey.RESPONSE_STYLE,
-        }
-        if trigger is TurnTrigger.WEIGHT_REMINDER:
-            selected.update({MemoryKey.TARGET_WEIGHT, MemoryKey.HEALTH_CONTEXT})
-        elif trigger is TurnTrigger.MEAL_REMINDER:
-            selected.update(
-                {
-                    MemoryKey.FOOD_PREFERENCE,
-                    MemoryKey.DIETARY_CONSTRAINT,
-                    MemoryKey.HEALTH_CONTEXT,
-                }
-            )
-        text = "\n".join(
-            str(item.payload.get("text", ""))
-            for item in input_items
-            if item.item_type is ItemType.USER_MESSAGE
-        )
-        if any(word in text for word in ("记得什么", "记住什么", "哪些记忆")):
-            return memories
-        if any(word in text.lower() for word in ("体重", "称重", "目标", "kg", "公斤", "斤", "磅")):
-            selected.update({MemoryKey.TARGET_WEIGHT, MemoryKey.HEALTH_CONTEXT})
-        if any(word in text for word in ("吃", "饮食", "餐", "饭", "食物", "过敏", "忌口")):
-            selected.update(
-                {
-                    MemoryKey.FOOD_PREFERENCE,
-                    MemoryKey.DIETARY_CONSTRAINT,
-                    MemoryKey.HEALTH_CONTEXT,
-                }
-            )
-        if any(word in text for word in ("运动", "锻炼", "步数", "跑步", "游泳", "健身", "膝")):
-            selected.update(
-                {
-                    MemoryKey.EXERCISE_PREFERENCE,
-                    MemoryKey.EXERCISE_CONSTRAINT,
-                    MemoryKey.BEHAVIOR_GOAL,
-                    MemoryKey.HEALTH_CONTEXT,
-                }
-            )
-        if any(word in text for word in ("打卡", "习惯", "计划")):
-            selected.add(MemoryKey.BEHAVIOR_GOAL)
-        return tuple(memory for memory in memories if memory.key in selected)
 
     async def _profile(self, user_id: str) -> dict[str, Any] | None:
         async with self._database.session() as session:

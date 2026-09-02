@@ -20,6 +20,7 @@ TOOL_LABELS = {
     "record_meal": "记录饮食",
     "record_user_constraint": "保存用户限制条件",
     "record_weight": "记录体重",
+    "select_relevant_memories": "选择相关记忆",
     "resolve_conversation_handoff": "完成跨轮待办",
     "resolve_pending_user_action": "处理待确认操作",
     "set_behavior_goal": "设置行为目标",
@@ -100,12 +101,14 @@ def execution_summary(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     tool_calls = operations.count("tool_call")
     observations = operations.count("tool_result")
     context_snapshots = operations.count("context_snapshot")
+    memory_recalls = operations.count("memory_recall")
     return {
         "architecture": "harness" if context_snapshots or model_calls else "service",
         "model_call_count": model_calls,
         "tool_call_count": tool_calls,
         "observation_count": observations,
         "context_snapshot_count": context_snapshots,
+        "memory_recall_count": memory_recalls,
     }
 
 
@@ -224,6 +227,28 @@ def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str,
         return _presentation("observation", "收到确认结果", "Harness 已收到用户的确认或取消结果。")
     if operation == "memory_compaction":
         return _presentation("context", "整理长期记忆", "系统完成了一次记忆压缩或生命周期处理。")
+    if operation == "memory_recall":
+        engine_status = str(details.get("engine_status") or "unknown")
+        degraded = bool(details.get("degraded"))
+        return {
+            **_presentation(
+                "context",
+                "筛选本轮相关记忆",
+                (
+                    f"从 {details.get('candidate_count', 0)} 条数据库候选中选择了 "
+                    f"{details.get('selected_count', 0)} 条。"
+                    f"{details.get('reason_summary') or ''}"
+                ),
+            ),
+            "facts": [
+                {"label": "语义索引", "value": engine_status},
+                {
+                    "label": "Mem0 候选",
+                    "value": _display(details.get("engine_candidate_count")),
+                },
+                {"label": "召回状态", "value": "降级" if degraded else "正常"},
+            ],
+        }
     if operation == "error":
         return _presentation(
             "system",
@@ -277,7 +302,9 @@ def _model_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
     tool_calls_value = message.get("tool_calls")
     tool_calls = tool_calls_value if isinstance(tool_calls_value, list) else []
     usage = _mapping(details.get("usage"))
+    purpose = str(details.get("purpose") or "")
     facts = [
+        {"label": "调用用途", "value": _model_purpose_label(purpose)},
         {"label": "第几次模型调用", "value": _display(details.get("call_index"))},
         {"label": "输入 Token", "value": _display(usage.get("input_tokens"))},
         {"label": "输出 Token", "value": _display(usage.get("output_tokens"))},
@@ -292,8 +319,22 @@ def _model_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
         return {
             **_presentation(
                 "decision",
-                "模型选择下一步动作",
-                "模型明确请求调用：" + "、".join(names) + "。这不是推测的隐藏思维。",
+                (
+                    "模型提取需要写入的长期记忆"
+                    if purpose == "memory_ingestion"
+                    else "模型选择本轮相关记忆"
+                    if purpose == "memory_recall"
+                    else "模型选择下一步动作"
+                ),
+                (
+                    "记忆摄取模型根据用户原话提出写入："
+                    if purpose == "memory_ingestion"
+                    else "召回模型明确提交筛选结果："
+                    if purpose == "memory_recall"
+                    else "模型明确请求调用："
+                )
+                + "、".join(names)
+                + "。这不是推测的隐藏思维。",
             ),
             "facts": facts,
         }
@@ -301,11 +342,32 @@ def _model_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **_presentation(
             "decision",
-            "模型形成回复",
-            _quote(content) if isinstance(content, str) else "模型结束本轮判断并返回文本。",
+            (
+                "记忆摄取模型未发现需要更新的资料"
+                if purpose == "memory_ingestion"
+                else "模型形成回复"
+            ),
+            (
+                "数据库记忆保持不变。"
+                if purpose == "memory_ingestion"
+                else (
+                    _quote(content)
+                    if isinstance(content, str)
+                    else "模型结束本轮判断并返回文本。"
+                )
+            ),
         ),
         "facts": facts,
     }
+
+
+def _model_purpose_label(purpose: str) -> str:
+    return {
+        "memory_ingestion": "提取并核对长期记忆",
+        "memory_recall": "筛选本轮相关记忆",
+        "harness_turn": "理解用户并形成回复",
+        "vision_inspection": "识别图片内容",
+    }.get(purpose, _humanize_identifier(purpose) if purpose else "未标注")
 
 
 def _tool_result_presentation(details: Mapping[str, Any]) -> dict[str, Any]:

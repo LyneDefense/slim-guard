@@ -179,6 +179,62 @@ async def test_recent_dialogue_keeps_the_newest_text_within_character_budget(
         await database.close()
 
 
+async def test_recent_user_evidence_is_user_only_ordered_and_bounded(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'evidence.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add_all(
+            (
+                SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW),
+                SlimGuardUser(id="user-2", first_seen_at=NOW, last_seen_at=NOW),
+            )
+        )
+    active_manifest = manifest()
+    await AgentVersionRepository(database).register(active_manifest)
+    state = HarnessStateRepository(database)
+    try:
+        first_id = await add_completed_turn(
+            state,
+            user_id="user-1",
+            agent_version_id=active_manifest.version_id,
+            user_text="我身高179",
+            assistant_text="助手说身高188",
+        )
+        excluded_id = await add_completed_turn(
+            state,
+            user_id="user-1",
+            agent_version_id=active_manifest.version_id,
+            user_text="当前轮不应重复加载",
+            assistant_text="好的",
+        )
+        await add_completed_turn(
+            state,
+            user_id="user-2",
+            agent_version_id=active_manifest.version_id,
+            user_text="我身高166",
+            assistant_text="好的",
+        )
+
+        evidence = await ConversationWindowRepository(database).recent_user_evidence(
+            "user-1",
+            exclude_turn_id=excluded_id,
+            limit=20,
+            char_limit=6000,
+        )
+        items = await state.list_items(first_id)
+        user_item = next(item for item in items if item.item_type is ItemType.USER_MESSAGE)
+
+        assert [(item.content, item.evidence_ref) for item in evidence] == [
+            ("我身高179", user_item.id)
+        ]
+        assert all("188" not in item.content for item in evidence)
+        assert all("166" not in item.content for item in evidence)
+    finally:
+        await database.close()
+
+
 async def test_recent_images_are_user_scoped_unexpired_and_include_observation(
     tmp_path: Path,
 ) -> None:

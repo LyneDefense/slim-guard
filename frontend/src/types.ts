@@ -107,6 +107,7 @@ export interface TraceDetail {
     tool_call_count: number;
     observation_count: number;
     context_snapshot_count: number;
+    memory_recall_count: number;
   };
   context_sources: Array<{
     kind: string;
@@ -128,5 +129,31 @@ export interface TraceDetail {
   privacy: {
     contains_sensitive_health_data: boolean;
     redacted_item_count: number;
+  };
+}
+
+export interface MemoryRecord {
+  id: string;
+  kind: string;
+  memory_key: string;
+  value: Record<string, unknown> | null;
+  status: string;
+  assertion: string;
+  sensitivity: string;
+  source_turn_id: string;
+  source_item_id: string;
+  evidence_item_id: string | null;
+  valid_from: string;
+  expires_at: string | null;
+  review_after: string | null;
+  ended_at: string | null;
+  semantic_index: {
+    provider: string;
+    operation?: string;
+    status: string;
+    attempt_count?: number;
+    error_code?: string | null;
+    error_detail?: string | null;
+    updated_at?: string;
   };
 }

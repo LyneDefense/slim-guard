@@ -67,6 +67,20 @@ class Settings(DatabaseSettings):
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
     memory_recent_image_count: int = Field(default=3, ge=1, le=10)
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
+    memory_ingestion_enabled: bool = True
+    memory_ingestion_history_count: int = Field(default=20, ge=1, le=100)
+    memory_ingestion_history_max_chars: int = Field(default=6000, ge=100, le=20_000)
+    memory_recall_enabled: bool = True
+    memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
+    memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
+    memory_semantic_enabled: bool = False
+    mem0_base_url: str = "http://mem0:8888"
+    mem0_api_key: str = ""
+    mem0_namespace: str = "slim_guard"
+    mem0_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    memory_index_sync_interval_seconds: int = Field(default=5, ge=1, le=3600)
+    memory_index_sync_batch_size: int = Field(default=20, ge=1, le=100)
+    memory_index_sync_max_attempts: int = Field(default=10, ge=1, le=100)
     agent_transcript_body_retention_days: int = Field(default=30, ge=1, le=3650)
     memory_revoked_value_retention_days: int = Field(default=30, ge=0, le=3650)
     memory_maintenance_interval_seconds: int = Field(default=21_600, ge=60, le=86_400)

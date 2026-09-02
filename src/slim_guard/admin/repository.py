@@ -20,6 +20,7 @@ from slim_guard.db.models import (
     InteractionTraceRecord,
     MealRecord,
     MemoryHandoffRecord,
+    MemoryIndexOutboxRecord,
     OutboundMessage,
     ProactiveMessageRecord,
     RoutineJobRecord,
@@ -388,6 +389,17 @@ class AdminQueryRepository:
                     .order_by(UserMemoryFactRecord.created_at.desc())
                 )
             )
+            sync_rows = tuple(
+                await session.scalars(
+                    select(MemoryIndexOutboxRecord)
+                    .where(MemoryIndexOutboxRecord.user_id == user_id)
+                    .order_by(MemoryIndexOutboxRecord.created_at.desc())
+                )
+            )
+            latest_sync: dict[str, MemoryIndexOutboxRecord] = {}
+            for sync in sync_rows:
+                if sync.memory_id is not None:
+                    latest_sync.setdefault(sync.memory_id, sync)
             return [
                 {
                     "id": row.id,
@@ -404,9 +416,26 @@ class AdminQueryRepository:
                     "expires_at": row.expires_at,
                     "review_after": row.review_after,
                     "ended_at": row.ended_at,
+                    "semantic_index": self._memory_sync_view(latest_sync.get(row.id)),
                 }
                 for row in rows
             ]
+
+    @staticmethod
+    def _memory_sync_view(
+        row: MemoryIndexOutboxRecord | None,
+    ) -> dict[str, Any]:
+        if row is None:
+            return {"provider": "disabled_or_not_queued", "status": "not_queued"}
+        return {
+            "provider": "mem0",
+            "operation": row.operation,
+            "status": row.status,
+            "attempt_count": row.attempt_count,
+            "error_code": row.error_code,
+            "error_detail": row.error_detail,
+            "updated_at": row.updated_at,
+        }
 
     async def list_records(self, *, user_id: str) -> dict[str, Any] | None:
         async with self._database.session() as session:

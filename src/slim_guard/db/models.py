@@ -587,6 +587,55 @@ class UserMemoryEventRecord(Base):
     )
 
 
+class MemoryIndexOutboxRecord(Base):
+    """Transactional projection work for the optional semantic memory engine."""
+
+    __tablename__ = "memory_index_outbox"
+    __table_args__ = (
+        UniqueConstraint("operation_key", name="uq_memory_index_outbox_operation"),
+        CheckConstraint(
+            "operation IN ('upsert','delete','delete_user')",
+            name="ck_memory_index_outbox_operation",
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing','completed','failed')",
+            name="ck_memory_index_outbox_status",
+        ),
+        Index("ix_memory_index_outbox_due", "status", "available_at"),
+        Index("ix_memory_index_outbox_user_created", "user_id", "created_at"),
+        Index("ix_memory_index_outbox_memory_created", "memory_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    operation_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    memory_id: Mapped[str | None] = mapped_column(
+        ForeignKey("user_memory_facts.id", ondelete="CASCADE"), nullable=True
+    )
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class MemoryBulkOperationRecord(Base):
     __tablename__ = "memory_bulk_operations"
     __table_args__ = (Index("ix_memory_bulk_user_created", "user_id", "created_at"),)

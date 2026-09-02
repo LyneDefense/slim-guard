@@ -31,6 +31,8 @@ from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
+from slim_guard.memory.engine import Mem0HttpMemoryEngine, MemoryEngine
+from slim_guard.memory.index_sync import MemoryIndexSyncRepository, MemoryIndexSyncService
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
 from slim_guard.observability.logging import configure_logging
 from slim_guard.observability.tracing import InteractionTraceRepository
@@ -62,6 +64,7 @@ def create_app(
     reply_agent: ReplyAgentProtocol | None = None,
     model_gateway: ModelGateway | None = None,
     vision_gateway: VisionModelGateway | None = None,
+    memory_engine: MemoryEngine | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
     if app_settings.agent_runtime_mode == "shadow":
@@ -90,6 +93,12 @@ def create_app(
         ),
         memory_recent_image_count=app_settings.memory_recent_image_count,
         memory_handoff_ttl_days=app_settings.memory_handoff_ttl_days,
+        memory_ingestion_history_count=app_settings.memory_ingestion_history_count,
+        memory_ingestion_history_max_chars=(
+            app_settings.memory_ingestion_history_max_chars
+        ),
+        memory_recall_search_limit=app_settings.memory_recall_search_limit,
+        memory_recall_max_selected=app_settings.memory_recall_max_selected,
     )
     agent_manifest = (
         build_agent_manifest(runtime_definition)
@@ -112,10 +121,12 @@ def create_app(
     owned_reply_agent: ZhipuReplyAgent | None = None
     owned_model_gateway: ZhipuModelGateway | None = None
     owned_vision_gateway: ZhipuVisionModelGateway | None = None
+    owned_memory_engine: Mem0HttpMemoryEngine | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal owned_client, owned_model_gateway, owned_reply_agent, owned_vision_gateway
+        nonlocal owned_client, owned_memory_engine, owned_model_gateway
+        nonlocal owned_reply_agent, owned_vision_gateway
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
@@ -129,6 +140,16 @@ def create_app(
                 "interaction_traces_backfilled",
                 extra={"trace_count": backfilled_trace_count},
             )
+
+        active_memory_engine = memory_engine
+        if active_memory_engine is None and app_settings.memory_semantic_enabled:
+            owned_memory_engine = Mem0HttpMemoryEngine(
+                base_url=app_settings.mem0_base_url,
+                api_key=app_settings.mem0_api_key,
+                namespace=app_settings.mem0_namespace,
+                timeout_seconds=app_settings.mem0_http_timeout_seconds,
+            )
+            active_memory_engine = owned_memory_engine
 
         active_client = client
         if active_client is None and app_settings.wecom_api_is_configured:
@@ -164,6 +185,13 @@ def create_app(
                 active_runtime = build_agent_runtime(
                     database=database,
                     model=active_model,
+                    memory_ingestion_model=(
+                        active_model if app_settings.memory_ingestion_enabled else None
+                    ),
+                    memory_recall_model=(
+                        active_model if app_settings.memory_recall_enabled else None
+                    ),
+                    memory_engine=active_memory_engine,
                     vision=active_vision,
                     definition=runtime_definition,
                     manifest=agent_manifest,
@@ -200,6 +228,8 @@ def create_app(
         memory_maintenance_task: asyncio.Task[None] | None = None
         outbox_stop: asyncio.Event | None = None
         outbox_task: asyncio.Task[None] | None = None
+        memory_index_stop: asyncio.Event | None = None
+        memory_index_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -311,11 +341,32 @@ def create_app(
             memory_maintenance.run_forever(memory_maintenance_stop),
             name="slim-guard-memory-maintenance",
         )
+        if active_memory_engine is not None:
+            memory_index_repository = MemoryIndexSyncRepository(database)
+            backfilled_memory_count = await memory_index_repository.enqueue_active_backfill()
+            if backfilled_memory_count:
+                logger.info(
+                    "memory_index_backfill_queued",
+                    extra={"memory_count": backfilled_memory_count},
+                )
+            memory_index_sync = MemoryIndexSyncService(
+                repository=memory_index_repository,
+                engine=active_memory_engine,
+                interval_seconds=app_settings.memory_index_sync_interval_seconds,
+                batch_size=app_settings.memory_index_sync_batch_size,
+                max_attempts=app_settings.memory_index_sync_max_attempts,
+            )
+            memory_index_stop = asyncio.Event()
+            memory_index_task = asyncio.create_task(
+                memory_index_sync.run_forever(memory_index_stop),
+                name="slim-guard-memory-index-sync",
+            )
 
         app.state.settings = app_settings
         app.state.database = database
         app.state.traces = traces
         app.state.agent_runtime = active_runtime
+        app.state.memory_engine = active_memory_engine
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
         try:
@@ -331,6 +382,8 @@ def create_app(
                 memory_maintenance_stop.set()
             if outbox_stop is not None:
                 outbox_stop.set()
+            if memory_index_stop is not None:
+                memory_index_stop.set()
             if watchdog_task is not None:
                 await watchdog_task
             if routine_task is not None:
@@ -341,6 +394,8 @@ def create_app(
                 await memory_maintenance_task
             if outbox_task is not None:
                 await outbox_task
+            if memory_index_task is not None:
+                await memory_index_task
             if owned_client is not None:
                 await owned_client.close()
             if owned_reply_agent is not None:
@@ -349,6 +404,8 @@ def create_app(
                 await owned_model_gateway.close()
             if owned_vision_gateway is not None:
                 await owned_vision_gateway.close()
+            if owned_memory_engine is not None:
+                await owned_memory_engine.close()
             await database.close()
 
     application = FastAPI(

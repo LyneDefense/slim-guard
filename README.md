@@ -6,8 +6,9 @@ SlimGuard 是一个 Python 编写的企业微信“微信客服”减脂助手�
 GLM 完成理解与回复，并把业务事实按用户隔离、幂等地保存。Agent 每轮只读取紧凑的用户
 资料、当前有效的个性化记忆、近期权威记录、最近有限对话和当天打卡状态，不依赖无限增长的
 原始聊天历史。
-用户明确表达后，Agent 可以跨轮记住其身高、运动习惯、偏好称呼、回复风格和饮食/运动偏好；这些记忆
-可以查询、更新或逐条撤销，不会从单次打卡或图片中自动猜测。
+用户明确表达身高、目标、运动习惯或偏好后，独立的 model-first 记忆摄取阶段会在回复前自动理解、
+核对数据库并新增或更新长期记忆，不要求用户额外说“请记住”；这些记忆可以查询、更新或逐条撤销，
+也不会从单次打卡或图片中自动猜测。
 
 通道已经包含企业微信会话状态管理：新会话会从“未处理”自动认领为“智能助手
 接待”，避免误入人工接待后 API 无法回复。若历史或误操作导致会话处于人工接待状态，
@@ -172,6 +173,10 @@ data/slim_guard.sqlite3
 也不表示系统认可其医学安全性；健康约束始终标记为用户自述，180 天后提示复核而不会变成诊断。
 自然语言中明确说的是体重但省略单位时默认使用 kg，明确说的是身高但省略单位时默认使用 cm；
 模型负责理解数字属于当前测量、目标还是个人资料，工具只负责默认单位、范围、来源和幂等校验。
+每个用户消息进入 Harness 后，会先经过独立的记忆摄取模型；摄取模型只提出有用户原话证据的结构化
+写入，Repository 再与数据库 active 记忆比较：不存在则新增、相同则幂等复用、当前明确新值则版本化
+替换。随后回复 Agent 重新读取数据库，因此数据库结果而不是 3 轮聊天窗口是长期事实权威。摄取阶段
+还会带入最近 20 条用户原话，用于为升级前尚未结构化的近期事实做渐进回填。
 用户可以直接问“你记得我什么”，也可以要求忘记某一条明确记忆。每轮还会加载最近最多 3 个
 已完成 Turn 的用户和最终助手可见文本，合计默认不超过 1500 字；其中历史用户原话带有仅限本轮使用的
 证据引用，模型可在用户说“保存上次那个”时直接调用记忆工具，后端验证同用户、原文、数值、可见范围和
@@ -193,6 +198,20 @@ MEMORY_RECENT_TURN_COUNT=3
 MEMORY_RECENT_DIALOGUE_MAX_CHARS=1500
 MEMORY_RECENT_IMAGE_COUNT=3
 MEMORY_HANDOFF_TTL_DAYS=14
+MEMORY_INGESTION_ENABLED=true
+MEMORY_INGESTION_HISTORY_COUNT=20
+MEMORY_INGESTION_HISTORY_MAX_CHARS=6000
+MEMORY_RECALL_ENABLED=true
+MEMORY_RECALL_SEARCH_LIMIT=12
+MEMORY_RECALL_MAX_SELECTED=8
+MEMORY_SEMANTIC_ENABLED=false
+MEM0_BASE_URL=http://mem0:8888
+MEM0_API_KEY=
+MEM0_NAMESPACE=slim_guard
+MEM0_HTTP_TIMEOUT_SECONDS=10
+MEMORY_INDEX_SYNC_INTERVAL_SECONDS=5
+MEMORY_INDEX_SYNC_BATCH_SIZE=20
+MEMORY_INDEX_SYNC_MAX_ATTEMPTS=10
 AGENT_TRANSCRIPT_BODY_RETENTION_DAYS=30
 MEMORY_REVOKED_VALUE_RETENTION_DAYS=30
 MEMORY_MAINTENANCE_INTERVAL_SECONDS=21600

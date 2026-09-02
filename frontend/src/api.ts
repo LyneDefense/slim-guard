@@ -1,4 +1,4 @@
-import type { Page, TraceDetail, TraceSummary, UserDetail, UserListItem } from "./types";
+import type { MemoryRecord, Page, TraceDetail, TraceSummary, UserDetail, UserListItem } from "./types";
 
 export type AdminSession = {
   username: string;
@@ -66,7 +66,7 @@ export const api = {
       `/users/${encodeURIComponent(userId)}/traces/${encodeURIComponent(traceId)}`,
     ),
   memories: (userId: string) =>
-    request<Array<Record<string, unknown>>>(`/users/${encodeURIComponent(userId)}/memories`),
+    request<MemoryRecord[]>(`/users/${encodeURIComponent(userId)}/memories`),
   records: (userId: string) =>
     request<Record<string, Array<Record<string, unknown>>>>(
       `/users/${encodeURIComponent(userId)}/records`,

@@ -32,7 +32,10 @@ from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.tool_calls import ToolCallCoordinator
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
+from slim_guard.memory.engine import MemoryEngine
 from slim_guard.memory.handoff import HandoffRepository
+from slim_guard.memory.ingestion import ModelFirstMemoryIngestor
+from slim_guard.memory.recall import ModelFirstMemoryRecaller
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
@@ -79,12 +82,19 @@ class AgentRuntimeDefinition(BaseModel):
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
     memory_recent_image_count: int = Field(default=3, ge=1, le=10)
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
+    memory_ingestion_history_count: int = Field(default=20, ge=1, le=100)
+    memory_ingestion_history_max_chars: int = Field(default=6000, ge=100, le=20_000)
+    memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
+    memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
 
 
 def build_agent_runtime(
     *,
     database: Database,
     model: ModelGateway,
+    memory_ingestion_model: ModelGateway | None = None,
+    memory_recall_model: ModelGateway | None = None,
+    memory_engine: MemoryEngine | None = None,
     vision: VisionModelGateway | None = None,
     definition: AgentRuntimeDefinition,
     manifest: AgentManifest | None = None,
@@ -128,6 +138,7 @@ def build_agent_runtime(
             health_review_days=definition.memory_health_review_days,
         ),
         clock=clock,
+        index_sync_enabled=memory_engine is not None,
     )
     conversation = ConversationWindowRepository(database)
     handoffs = HandoffRepository(
@@ -176,6 +187,33 @@ def build_agent_runtime(
         )
     )
     recorder = PersistentHarnessRunRecorder(state)
+    memory_ingestor = (
+        ModelFirstMemoryIngestor(
+            model=memory_ingestion_model,
+            model_name=definition.text_model,
+            conversation=conversation,
+            memories=memories,
+            tool_calls=tool_calls,
+            recorder=recorder,
+            history_limit=definition.memory_ingestion_history_count,
+            history_char_limit=definition.memory_ingestion_history_max_chars,
+            max_output_tokens=definition.vision_max_output_tokens,
+        )
+        if memory_ingestion_model is not None
+        else None
+    )
+    memory_recaller = (
+        ModelFirstMemoryRecaller(
+            model=memory_recall_model,
+            model_name=definition.text_model,
+            recorder=recorder,
+            engine=memory_engine,
+            search_limit=definition.memory_recall_search_limit,
+            max_selected=definition.memory_recall_max_selected,
+        )
+        if memory_recall_model is not None
+        else None
+    )
     runner = HarnessTurnRunner(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
@@ -204,6 +242,8 @@ def build_agent_runtime(
             dialogue_char_limit=definition.memory_recent_dialogue_max_chars,
             recent_image_limit=definition.memory_recent_image_count,
         ),
+        memory_ingestor=memory_ingestor,
+        memory_recaller=memory_recaller,
         output_guard=SlimGuardOutputGuard(),
         clock=clock,
     )
@@ -239,7 +279,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
         system_prompt=SLIM_GUARD_HARNESS_PROMPT,
         tool_versions=registry.versions,
-        context_policy_version="authoritative-working-memory-privacy-v7",
+        context_policy_version="model-ranked-authoritative-working-memory-v8",
         memory_policy_version=MEMORY_POLICY_VERSION,
         compaction_policy_version="bounded-working-images-handoff-redaction-v3",
         safety_policy_version="health-output-guard-v2",
