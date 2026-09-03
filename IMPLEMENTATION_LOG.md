@@ -366,4 +366,8 @@ curl -i https://enceladus.online/health/ready
 ### `fix: install Mem0 PostgreSQL runtime library`
 
 - `deploy/mem0/Dockerfile` → Mem0 数据库驱动运行环境 → 在 `python:3.12-slim` 中安装 `libpq5`，让 requirements 中的纯 Python `psycopg` 实现可以加载 PostgreSQL 客户端库并执行 Alembic；避免首次统一 cutover 因 `no pq wrapper available` 回退旧容器。
+
+### `fix: bundle Mem0 psycopg binary runtime`
+
+- `deploy/mem0/Dockerfile` → 国内服务器可复现构建 → 改由清华 PyPI 镜像安装固定的 `psycopg[binary]==3.3.5`，不再等待腾讯云连接缓慢的 Debian apt 索引；二进制 wheel 自带 libpq 实现，并与旧 Mem0 当前运行版本一致。
 - 首次服务器验证 → 兼容测试环境已初始化数据卷中的短数据库密码，仅在 `APP_ENV=production` 强制数据库密码至少 16 位，避免新配置与旧库内角色密码不一致。
