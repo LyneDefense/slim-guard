@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "SlimGuard",
+    "slug": "slim-guard",
+    "version": "1.0.0",
+    "scheme": "slimguard",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.slimguard.app",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.slimguard.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SlimGuard 需要读取你选择的饮食照片，以便减脂教练帮助分析。",
+          "cameraPermission": "SlimGuard 需要使用相机拍摄饮食照片，以便减脂教练帮助分析。",
+          "microphonePermission": false
+        }
+      ],
+      "expo-notifications"
+    ]
+  }
+}
