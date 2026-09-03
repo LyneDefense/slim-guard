@@ -19,6 +19,7 @@ from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
 from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 from slim_guard.api.admin_routes import router as admin_router
+from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.routes import router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
@@ -34,6 +35,12 @@ from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.memory.engine import Mem0HttpMemoryEngine, MemoryEngine
 from slim_guard.memory.index_sync import MemoryIndexSyncRepository, MemoryIndexSyncService
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
+from slim_guard.mobile.auth import (
+    MobileAuthService,
+    NullMobileOtpSender,
+    WebhookMobileOtpSender,
+)
+from slim_guard.mobile.service import MobileApplicationService
 from slim_guard.observability.logging import configure_logging
 from slim_guard.observability.tracing import InteractionTraceRepository
 from slim_guard.services.conversation_state import ConversationStateMachine
@@ -216,6 +223,41 @@ def create_app(
             logger.warning("zhipu_not_configured_using_fallback_reply")
             active_reply_agent = StaticReplyAgent(app_settings.agent_fallback_reply_text)
 
+        mobile_auth: MobileAuthService | None = None
+        mobile_service: MobileApplicationService | None = None
+        if app_settings.mobile_is_configured:
+            otp_sender = (
+                WebhookMobileOtpSender(
+                    url=app_settings.mobile_sms_webhook_url,
+                    token=app_settings.mobile_sms_webhook_token,
+                    timeout_seconds=app_settings.wecom_http_timeout_seconds,
+                )
+                if app_settings.mobile_sms_webhook_url
+                else NullMobileOtpSender()
+            )
+            mobile_auth = MobileAuthService(
+                database=database,
+                secret=app_settings.mobile_auth_secret,
+                sender=otp_sender,
+                access_ttl=timedelta(
+                    minutes=app_settings.mobile_access_token_ttl_minutes
+                ),
+                refresh_ttl=timedelta(
+                    days=app_settings.mobile_refresh_token_ttl_days
+                ),
+                otp_ttl=timedelta(seconds=app_settings.mobile_otp_ttl_seconds),
+                resend_after=timedelta(
+                    seconds=app_settings.mobile_otp_resend_seconds
+                ),
+                hourly_limit=app_settings.mobile_otp_hourly_limit,
+            )
+            mobile_service = MobileApplicationService(
+                database=database,
+                runtime=active_runtime,
+                traces=traces,
+                max_image_bytes=app_settings.wecom_media_max_bytes,
+            )
+
         crypto: WeComCallbackCrypto | None = None
         sync_service: AgentReplySyncService | None = None
         watchdog_stop: asyncio.Event | None = None
@@ -367,6 +409,8 @@ def create_app(
         app.state.traces = traces
         app.state.agent_runtime = active_runtime
         app.state.memory_engine = active_memory_engine
+        app.state.mobile_auth = mobile_auth
+        app.state.mobile_service = mobile_service
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
         try:
@@ -417,21 +461,24 @@ def create_app(
     )
 
     @application.middleware("http")
-    async def disable_admin_response_cache(
+    async def disable_sensitive_response_cache(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
-        if request.url.path.startswith("/api/admin"):
+        if request.url.path.startswith(("/api/admin", "/api/mobile")):
             response.headers["Cache-Control"] = "no-store"
             response.headers["Pragma"] = "no-cache"
         return response
 
     application.include_router(router)
     application.include_router(admin_router)
+    application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
+    application.state.mobile_auth = None
+    application.state.mobile_service = None
     return application
 
 

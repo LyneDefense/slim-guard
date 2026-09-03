@@ -32,6 +32,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260902_01_body_fat_records",
             "20260902_02_memory_evidence_refs",
             "20260902_03_memory_index_outbox",
+            "20260903_01_mobile_accounts",
         )
         assert "body_fat_records" in table_names
     finally:
@@ -88,6 +89,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
         assert completed == (
             "20260902_02_memory_evidence_refs",
             "20260902_03_memory_index_outbox",
+            "20260903_01_mobile_accounts",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

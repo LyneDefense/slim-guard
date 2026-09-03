@@ -37,10 +37,10 @@ async def live() -> dict[str, str]:
 @router.get("/health/ready")
 async def ready(request: Request) -> dict[str, str]:
     settings = _settings(request)
-    if not settings.wecom_is_configured:
+    if not settings.wecom_is_configured and not settings.mobile_is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WeCom is not configured",
+            detail="No user channel is configured",
         )
     if settings.agent_runtime_mode == "harness" and not settings.zhipu_is_configured:
         raise HTTPException(

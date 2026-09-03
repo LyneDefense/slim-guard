@@ -50,6 +50,7 @@ MIGRATIONS = (
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
     SchemaMigration("20260902_02_memory_evidence_refs", _add_memory_evidence_item),
     SchemaMigration("20260902_03_memory_index_outbox", _create_application_tables),
+    SchemaMigration("20260903_01_mobile_accounts", _create_application_tables),
 )
 
 

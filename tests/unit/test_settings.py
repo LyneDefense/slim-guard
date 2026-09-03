@@ -50,6 +50,37 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.agent_transcript_body_retention_days == 30
     assert settings.memory_revoked_value_retention_days == 30
     assert settings.memory_maintenance_interval_seconds == 21_600
+    assert settings.mobile_api_enabled is False
+    assert settings.mobile_is_configured is False
+
+
+def test_mobile_api_requires_a_real_secret_and_production_sms_provider() -> None:
+    with pytest.raises(ValidationError, match="MOBILE_AUTH_SECRET"):
+        Settings(mobile_api_enabled=True, mobile_auth_secret="short")
+
+    with pytest.raises(ValidationError, match="MOBILE_DEV_OTP_ENABLED"):
+        Settings(
+            app_env="production",
+            mobile_api_enabled=True,
+            mobile_auth_secret="x" * 32,
+        )
+
+    with pytest.raises(ValidationError, match="MOBILE_SMS_WEBHOOK_URL"):
+        Settings(
+            app_env="production",
+            mobile_api_enabled=True,
+            mobile_auth_secret="x" * 32,
+            mobile_dev_otp_enabled=False,
+        )
+
+    settings = Settings(
+        app_env="production",
+        mobile_api_enabled=True,
+        mobile_auth_secret="x" * 32,
+        mobile_dev_otp_enabled=False,
+        mobile_sms_webhook_url="https://sms.internal/send",
+    )
+    assert settings.mobile_is_configured is True
 
 
 def test_routine_scheduler_reserves_proactive_message_capacity() -> None:

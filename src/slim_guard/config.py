@@ -45,6 +45,16 @@ class Settings(DatabaseSettings):
     admin_username: str = ""
     admin_password: str = ""
     admin_session_ttl_hours: int = Field(default=12, ge=1, le=168)
+    mobile_api_enabled: bool = False
+    mobile_auth_secret: str = ""
+    mobile_access_token_ttl_minutes: int = Field(default=15, ge=5, le=1440)
+    mobile_refresh_token_ttl_days: int = Field(default=30, ge=1, le=365)
+    mobile_otp_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    mobile_otp_resend_seconds: int = Field(default=60, ge=30, le=600)
+    mobile_otp_hourly_limit: int = Field(default=5, ge=1, le=20)
+    mobile_dev_otp_enabled: bool = True
+    mobile_sms_webhook_url: str = ""
+    mobile_sms_webhook_token: str = ""
     callback_body_limit_bytes: int = Field(default=1_048_576, ge=1024)
     wecom_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     wecom_media_max_bytes: int = Field(default=10_485_760, ge=1024, le=20_971_520)
@@ -74,7 +84,7 @@ class Settings(DatabaseSettings):
     memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
     memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
     memory_semantic_enabled: bool = False
-    mem0_base_url: str = "http://mem0:8888"
+    mem0_base_url: str = "http://mem0:8000"
     mem0_api_key: str = ""
     mem0_namespace: str = "slim_guard"
     mem0_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
@@ -112,6 +122,23 @@ class Settings(DatabaseSettings):
     def validate_admin_credentials(self) -> Settings:
         if bool(self.admin_username) != bool(self.admin_password):
             raise ValueError("Admin username and password must be configured together")
+        if self.mobile_api_enabled and len(self.mobile_auth_secret) < 32:
+            raise ValueError(
+                "MOBILE_AUTH_SECRET must contain at least 32 characters when the "
+                "mobile API is enabled"
+            )
+        if (
+            self.mobile_api_enabled
+            and self.app_env == "production"
+            and self.mobile_dev_otp_enabled
+        ):
+            raise ValueError("MOBILE_DEV_OTP_ENABLED must be false in production")
+        if (
+            self.mobile_api_enabled
+            and self.app_env == "production"
+            and not self.mobile_sms_webhook_url
+        ):
+            raise ValueError("MOBILE_SMS_WEBHOOK_URL is required in production")
         return self
 
     @cached_property
@@ -125,3 +152,7 @@ class Settings(DatabaseSettings):
     @cached_property
     def admin_is_configured(self) -> bool:
         return bool(self.admin_username and self.admin_password)
+
+    @cached_property
+    def mobile_is_configured(self) -> bool:
+        return self.mobile_api_enabled and len(self.mobile_auth_secret) >= 32

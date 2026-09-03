@@ -476,6 +476,126 @@ class SlimGuardUser(Base):
     )
 
 
+class MobileAuthIdentityRecord(Base):
+    """A login identity without retaining the raw phone number or provider subject."""
+
+    __tablename__ = "mobile_auth_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "subject_hash", name="uq_mobile_identity_subject"),
+        CheckConstraint(
+            "provider IN ('phone','apple')",
+            name="ck_mobile_identity_provider",
+        ),
+        Index("ix_mobile_identity_user", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_hint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    last_authenticated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class MobileOtpChallengeRecord(Base):
+    __tablename__ = "mobile_otp_challenges"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','consumed','expired','locked')",
+            name="ck_mobile_otp_status",
+        ),
+        Index("ix_mobile_otp_subject_created", "subject_hash", "created_at"),
+        Index("ix_mobile_otp_expiry", "status", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    phone_hint: Mapped[str] = mapped_column(String(4), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class MobileSessionRecord(Base):
+    __tablename__ = "mobile_sessions"
+    __table_args__ = (
+        UniqueConstraint("refresh_token_hash", name="uq_mobile_session_refresh"),
+        Index("ix_mobile_session_user", "user_id", "created_at"),
+        Index("ix_mobile_session_expiry", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class MobileAgentRequestRecord(Base):
+    """Idempotency ledger for one user-authored mobile Agent request."""
+
+    __tablename__ = "mobile_agent_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_mobile_agent_request_user_key",
+        ),
+        CheckConstraint(
+            "status IN ('running','succeeded','failed')",
+            name="ck_mobile_agent_request_status",
+        ),
+        Index("ix_mobile_agent_request_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        ForeignKey("interaction_traces.id", ondelete="SET NULL"), nullable=True
+    )
+    final_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class UserMemoryFactRecord(Base):
     __tablename__ = "user_memory_facts"
     __table_args__ = (

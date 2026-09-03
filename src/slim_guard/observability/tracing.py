@@ -60,6 +60,29 @@ class InteractionTraceRepository:
     def __init__(self, database: Database) -> None:
         self._database = database
 
+    async def start_user_trace(
+        self,
+        *,
+        user_id: str,
+        trigger_type: str,
+        channel_id: str,
+        inbound_msgid: str,
+    ) -> str:
+        """Create a channel-neutral trace for non-WeCom user interactions."""
+
+        row = InteractionTraceRecord(
+            user_id=user_id,
+            trigger_type=trigger_type,
+            channel_id=channel_id,
+            inbound_msgid=inbound_msgid,
+            generation_status="running",
+            delivery_status="planned",
+        )
+        async with self._database.session() as session, session.begin():
+            session.add(row)
+            await session.flush()
+        return row.id
+
     async def backfill_existing(self, *, limit: int = 5000) -> int:
         """Best-effort correlation for messages created before Trace support."""
 
