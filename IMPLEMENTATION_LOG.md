@@ -362,3 +362,4 @@ curl -i https://enceladus.online/health/ready
 - `deploy/nginx/slim-guard.locations.conf` → 宿主机入口片段 → Nginx 只负责现有域名的 HTTPS 与反向代理，后台认证继续完全由 FastAPI 负责，不引入 Basic Auth 或第二套密码。
 - `SERVER_DEPLOYMENT.md` 及各部署文档 → 唯一生产操作手册 → 明确上传版 Mem0 无需服务器 clone、现有数据卷复用、Nginx include、首次切换、日常一条命令、回滚与稳定后清理流程；根 Compose 明确只用于本地开发。
 - 验证 → Shell 语法、Python 编译与 Ruff、生产 Compose 渲染、后端 Ruff/Mypy、269 项 Pytest 以及管理前端生产构建全部通过。
+- 首次服务器验证 → 兼容测试环境已初始化数据卷中的短数据库密码，仅在 `APP_ENV=production` 强制数据库密码至少 16 位，避免新配置与旧库内角色密码不一致。

@@ -76,8 +76,12 @@ validate_environment() {
   [[ -f "$COMPOSE_FILE" ]] || die "missing production Compose file: $COMPOSE_FILE"
   validate_unique_env_keys
 
-  require_env_value SLIM_GUARD_POSTGRES_PASSWORD 16
-  require_env_value MEM0_POSTGRES_PASSWORD 16
+  local database_password_minimum=1
+  if [[ "$(env_value APP_ENV)" == "production" ]]; then
+    database_password_minimum=16
+  fi
+  require_env_value SLIM_GUARD_POSTGRES_PASSWORD "$database_password_minimum"
+  require_env_value MEM0_POSTGRES_PASSWORD "$database_password_minimum"
   require_env_value MEM0_API_KEY 16
   require_env_value MEM0_JWT_SECRET 32
   require_env_value ZHIPU_API_KEY 8
