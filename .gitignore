@@ -1,5 +1,8 @@
 .DS_Store
 .env
+deploy/.env.server
+deploy/.state/
+deploy/backups/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
@@ -10,4 +13,3 @@ __pycache__/
 *.sqlite3
 data/
 htmlcov/
-

@@ -352,3 +352,13 @@ curl -i https://enceladus.online/health/ready
 - `memory/ingestion.py`、`harness/runner.py` → 回复前事实交接 → 记忆摄取完成后把经过类型校验、去除内部 ID 的本轮回执加入 Core Agent 权威上下文，避免将刚写入的新值描述成历史旧值。
 - `harness/trace.py`、`admin/presentation.py`、`frontend/` → 可观察链路 → 独立记录“本轮记忆变更”事件，并以“身高从 179 cm 更新为 178 cm”等白话展示；回执正文沿用追踪保留期自动脱敏。
 - `tests/` → 故障回归 → 覆盖首次新增、同值幂等、混合写入、179 cm 更新为 178 cm、Core Agent 上下文回执、后台白话展示与隐私清理。
+
+### `ops: unify single-server production deployment`
+
+- `deploy/compose.production.yaml` → 单一生产编排 → 用 `slim-guard-prod` 统一管理后端、管理前端、SlimGuard PostgreSQL、Mem0 和 pgvector；只向宿主机回环地址发布 18083/18084，数据库与 Mem0 不再暴露端口。
+- `deploy/env.server.example`、`.gitignore` → 唯一服务器配置 → 将两个数据库、Mem0、模型、企业微信、后台和移动端配置收口到不入库的 `deploy/.env.server`，并校验重复键、占位值、密钥长度与文件权限。
+- `deploy/mem0/` → 固定第三方生产镜像 → 固定 `mem0ai==2.0.19`、关闭 reload 和启动时重装；用临时白名单上下文构建，避免把旧 `.env` 密钥或 history 数据发送给 Docker 或烘进镜像，并持久化、一致性导出 Mem0 change history。
+- `deploy.sh`、`deploy/scripts/` → 一键部署与安全切换 → 提供首次 cutover、日常发布、备份、状态、日志、应用回滚和旧架构精确清理；镜像在旧服务在线时预构建，切换失败恢复旧容器，日常健康失败恢复上一应用镜像，绝不删除数据卷。
+- `deploy/nginx/slim-guard.locations.conf` → 宿主机入口片段 → Nginx 只负责现有域名的 HTTPS 与反向代理，后台认证继续完全由 FastAPI 负责，不引入 Basic Auth 或第二套密码。
+- `SERVER_DEPLOYMENT.md` 及各部署文档 → 唯一生产操作手册 → 明确上传版 Mem0 无需服务器 clone、现有数据卷复用、Nginx include、首次切换、日常一条命令、回滚与稳定后清理流程；根 Compose 明确只用于本地开发。
+- 验证 → Shell 语法、Python 编译与 Ruff、生产 Compose 渲染、后端 Ruff/Mypy、269 项 Pytest 以及管理前端生产构建全部通过。

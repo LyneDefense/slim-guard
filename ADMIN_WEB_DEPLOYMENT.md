@@ -1,5 +1,8 @@
 # SlimGuard 用户级 Trace 管理后台部署
 
+> 腾讯云服务器现在以 [单机生产部署说明](./SERVER_DEPLOYMENT.md) 为权威入口。管理前端由统一
+> `slim-guard-prod` Compose 和 `./deploy.sh` 发布；本文其余内容主要说明路由与认证边界。
+
 管理后台由两个独立服务组成：FastAPI 提供 `/api/admin/*`，React SPA 由独立的
 `admin-web` 容器提供。两个容器只绑定宿主机回环地址，宿主机 Nginx 只负责公网 HTTPS、
 静态前端转发和 API 反向代理；认证统一由 FastAPI 负责。
@@ -16,18 +19,10 @@
 和健康记录详情的读取会写入 `admin_audit_events`。API 不返回原始 `external_userid`，只返回
 不可逆的短哈希引用。
 
-## 首次部署
+## 配置与首次部署
 
-主业务库现已使用 PostgreSQL。如果这是从旧 SQLite 测试环境首次切换且不保留数据，请先更新代码，
-再按照 [PostgreSQL 部署说明](./POSTGRESQL_DEPLOYMENT.md) 设置数据库密码并创建空库：
-
-```bash
-cd /home/ubuntu/slim-guard
-git pull --ff-only
-```
-
-在 `.env` 中增加后台端口和唯一一套后台凭据。密码建议使用密码管理器生成的长随机值；
-`APP_ENV=production` 会让会话 Cookie 强制只通过 HTTPS 发送：
+后台配置与所有服务共用 `deploy/.env.server`，不要另外维护管理前端配置。密码建议使用密码管理器
+生成的长随机值；`APP_ENV=production` 会让会话 Cookie 强制只通过 HTTPS 发送：
 
 ```dotenv
 APP_ENV=production
@@ -40,21 +35,16 @@ ADMIN_SESSION_TTL_HOURS=12
 不需要安装 `apache2-utils`，不需要执行 `htpasswd`，也不需要在 Nginx 保存第二份密码。
 修改 `ADMIN_PASSWORD` 会同步使所有已有后台会话失效。
 
-将 `deploy/nginx/slim-guard.conf.example` 中的 `/admin/` 和 `/api/admin/` location 合并进
-服务器现有 HTTPS `server` 块。不要覆盖现有证书路径，也不要给企业微信 callback 增加
-后台 Session 校验。
-
-构建新镜像并显式执行数据库迁移：
+将 [`deploy/nginx/slim-guard.locations.conf`](./deploy/nginx/slim-guard.locations.conf) 安装为宿主机
+Nginx snippet，并从现有 HTTPS `server` 块 include。不要覆盖证书路径，也不要给企业微信 callback
+增加后台 Session 校验。完整安装与首次切换只执行权威文档中的统一入口：
 
 ```bash
-docker compose build
-docker compose up -d postgres
-docker compose run --rm app python -m slim_guard.db.migrate
-docker compose up -d
-docker compose ps
+cd /home/ubuntu/slim-guard
+./deploy.sh bootstrap --cutover
 ```
 
-迁移是幂等的；应用启动时也会自动执行一次。空 PostgreSQL 会创建完整业务表结构。
+迁移是幂等的；空 PostgreSQL 会创建完整业务表结构。
 
 验证并加载 Nginx：
 
@@ -70,7 +60,7 @@ curl https://你的域名/health/live
 curl -I https://你的域名/admin/
 ```
 
-浏览器打开登录页，并使用 `.env` 中的唯一一套账号密码登录：
+浏览器打开登录页，并使用 `deploy/.env.server` 中的唯一一套账号密码登录：
 
 ```text
 https://你的域名/admin/login
@@ -78,25 +68,18 @@ https://你的域名/admin/login
 
 ## 日常升级
 
-涉及数据库模型的升级应先用 `pg_dump` 备份。一般升级命令：
+统一部署脚本会先备份数据库，再构建、迁移、启动和执行 smoke test：
 
 ```bash
 cd /home/ubuntu/slim-guard
-git pull --ff-only
-docker compose build
-docker compose up -d postgres
-docker compose run --rm app python -m slim_guard.db.migrate
-docker compose up -d
-docker compose ps
-sudo nginx -t
-sudo systemctl reload nginx
+./deploy.sh
 ```
 
 查看运行状态：
 
 ```bash
-docker compose logs --tail=200 app
-docker compose logs --tail=100 admin-web
+./deploy.sh status
+./deploy.sh logs
 ```
 
 所有应用日志会自动携带当前可用的 `trace_id`。管理页面使用数据库中的持久化 Trace 作为事实
@@ -108,6 +91,6 @@ docker compose logs --tail=100 admin-web
 - Nginx 不配置 Basic Auth，所有 `/api/admin/` 数据接口由后端验证签名 Session；
 - 生产环境必须设置 `APP_ENV=production` 并使用 HTTPS；
 - Session Cookie 使用 `HttpOnly`、`SameSite=Strict`，生产环境同时使用 `Secure`；
-- `.env` 不得提交 Git；
+- `deploy/.env.server` 不得提交 Git；
 - 后台展示健康数据，账号不得多人共享；
 - Agent transcript、工具内容和已完成出站正文默认在保留期后不可逆脱敏，Trace 元数据继续保留。

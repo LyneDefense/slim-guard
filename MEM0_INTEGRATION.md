@@ -1,5 +1,8 @@
 # Mem0 语义记忆集成
 
+> 腾讯云上的 Mem0 现由 [单机生产部署说明](./SERVER_DEPLOYMENT.md) 中的统一生产 Compose 管理。
+> 下文保留工作原理和验证边界；服务器不要再单独运行 Mem0 的开发 Compose。
+
 SlimGuard 把 PostgreSQL 中的结构化记忆作为唯一可信来源。Mem0 OSS 是可选的语义索引：它帮助找出
 与当前消息可能相关的候选，但不能覆盖数据库值，也不能绕过 Memory Tool 的证据、单位和版本校验。
 
@@ -18,14 +21,13 @@ Mem0 超时或不可达时，聊天不会失败。Recall 模型仍可直接筛�
 
 ## 部署 Mem0 OSS
 
-使用 Mem0 官方 self-hosted Docker Compose 部署 API Server。SlimGuard 只需要访问它的 REST API，
-不需要把 Mem0 Dashboard 暴露到公网。生产环境应启用 Mem0 API Key。官方 Compose 映射到宿主机的
-端口可以是 8888，但同一 Docker 网络中的 SlimGuard 应访问 Mem0 容器内部的 8000 端口。
+SlimGuard 的统一生产 Compose 运行 Mem0 API Server。它不部署 Dashboard，也不把 Mem0 和 pgvector
+端口发布到宿主机；SlimGuard 只通过内部服务名 `http://mem0:8000` 访问它。生产环境始终启用
+Mem0 API Key。
 
 官方部署说明：<https://docs.mem0.ai/open-source/setup>
 
-如果 Mem0 和 SlimGuard 位于不同 Compose 项目，可把两个服务加入同一个 external Docker network；
-也可以把 `MEM0_BASE_URL` 配置成服务器内网地址。不要为 Mem0 单独增加公网 Nginx location。
+腾讯云服务器不再使用跨 Compose external network，也不要为 Mem0 增加公网 Nginx location。
 
 ## SlimGuard 配置
 
@@ -55,13 +57,10 @@ MEMORY_INDEX_SYNC_MAX_ATTEMPTS=10
 发送给 Mem0 的用户标识会使用 namespace 加 SHA-256 派生，避免暴露 SlimGuard 内部用户 ID，也避免
 多个应用共用同一 Mem0 时发生命名冲突。修改已上线的 namespace 会形成一套新索引，不应随意变更。
 
-## 升级
+## SlimGuard 升级
 
 ```bash
-docker compose build app admin-web
-docker compose run --rm app python -m slim_guard.db.migrate
-docker compose up -d
-docker compose logs -f app
+./deploy.sh
 ```
 
 迁移会新增 `memory_index_outbox`。关闭 Mem0 时只需设置

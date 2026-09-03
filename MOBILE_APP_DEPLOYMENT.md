@@ -1,23 +1,22 @@
 # SlimGuard 双端 App 部署与构建
 
+> 腾讯云后端、Mem0、数据库和宿主机 Nginx 的统一部署以
+> [单机生产部署说明](./SERVER_DEPLOYMENT.md) 和 `./deploy.sh` 为准。本文保留移动端构建、签名、
+> 商店发布及客户端验收说明。
+
 这份文档覆盖腾讯云后端升级、短信登录、Nginx、Mem0、iOS/Android 构建以及上线前验收。
 App 不直接连接数据库或 Mem0，只通过 FastAPI 的 `/api/mobile/v1/*` 使用现有 Harness Agent；
 管理后台认证、移动端认证和企业微信回调都由后端统一负责。
 
 ## 1. 服务器升级
 
-SlimGuard 主库现已使用 PostgreSQL。第一次从旧 SQLite 测试环境切换时不会复制旧数据；先配置
-PostgreSQL，再更新和建表：
-
-```bash
-cd /home/ubuntu/slim-guard
-git pull --ff-only
-```
+服务器端只维护 `deploy/.env.server`，只运行 `slim-guard-prod` 这一套生产 Compose。首次切换、
+数据库、Mem0、备份和回滚均按 [单机生产部署说明](./SERVER_DEPLOYMENT.md) 操作。
 
 ### 1.1 当前远程测试环境
 
 如果当前服务器只用于你自己的 App 联调，可以暂时启用 5 个隔离的测试账号，同时保留手机号登录
-入口。服务器 `.env` 使用：
+入口。服务器 `deploy/.env.server` 使用：
 
 ```dotenv
 APP_ENV=development
@@ -35,16 +34,18 @@ MOBILE_TEST_ACCOUNT_PASSWORD=123456
 这个配置面向临时测试。测试账号凭据公开且会消耗模型调用额度，不要在这个模式下存真实健康数据，
 也不要把它当作正式生产认证。测试结束后按下一节切回 `APP_ENV=production`，关闭测试账号并接入短信。
 
-服务器更新步骤：
+首次统一切换：
 
 ```bash
 cd /home/ubuntu/slim-guard
-git pull --ff-only
-docker compose build app
-docker compose up -d postgres
-docker compose run --rm app python -m slim_guard.db.migrate
-docker compose up -d app admin-web
-docker compose ps
+./deploy.sh bootstrap --cutover
+```
+
+之后每次更新只执行：
+
+```bash
+cd /home/ubuntu/slim-guard
+./deploy.sh
 ```
 
 验证后端已经公开测试账号能力：
@@ -65,14 +66,11 @@ Metro；不需要在 Mac 启动 SlimGuard 后端或 PostgreSQL。
 openssl rand -hex 32
 ```
 
-把结果填进服务器 `/home/ubuntu/slim-guard/.env`。不要复用管理员密码、智谱 Key 或 Mem0 Key：
+把结果填进服务器 `/home/ubuntu/slim-guard/deploy/.env.server`。不要复用管理员密码、智谱 Key 或
+Mem0 Key：
 
 ```dotenv
 APP_ENV=production
-POSTGRES_DB=slim_guard
-POSTGRES_USER=slim_guard
-POSTGRES_PASSWORD=使用openssl-rand-hex-32生成
-POSTGRES_HOST_PORT=15432
 MOBILE_API_ENABLED=true
 MOBILE_AUTH_SECRET=粘贴上面生成的64位十六进制随机值
 MOBILE_ACCESS_TOKEN_TTL_MINUTES=15
@@ -104,15 +102,10 @@ Webhook 发送：
 其他状态会让 App 得到“验证码发送失败”。建议用腾讯云短信实现这个很薄的适配服务，并在模板中
 标注验证码有效期。SlimGuard 自身已经做了 60 秒重发限制、每手机号每小时 5 次限制和 5 次错误锁定。
 
-构建、迁移、启动：
+修改配置后执行统一部署，它会自动备份、迁移和验证：
 
 ```bash
-docker compose build app
-docker compose up -d postgres
-docker compose run --rm app python -m slim_guard.db.migrate
-docker compose up -d app
-docker compose ps
-docker compose logs --tail=100 app
+./deploy.sh
 ```
 
 空库迁移会创建完整表结构，包括移动登录、Session、幂等请求、设备和微信绑定表。数据库细节、
@@ -120,22 +113,9 @@ docker compose logs --tail=100 app
 
 ## 2. Nginx
 
-App 使用与现有域名相同的 HTTPS 后端即可。将下面的 location 放进当前 `listen 443 ssl`
-的 `server` 块；如果已经有一个覆盖所有路径的 `location /` 转发到 18083，则无需重复添加。
-
-```nginx
-client_max_body_size 12m;
-
-location ^~ /api/mobile/ {
-    proxy_pass http://127.0.0.1:18083;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 90s;
-}
-```
+App 使用与现有域名相同的 HTTPS 后端。宿主机 Nginx 安装并 include
+[`deploy/nginx/slim-guard.locations.conf`](./deploy/nginx/slim-guard.locations.conf)，其中已包含移动 API
+和图片上传大小限制；不要再手工复制另一份 location。
 
 Nginx 不做 Basic Auth，也不保存移动端密钥。Access Token、Refresh Session、限流和用户隔离
 都由 FastAPI 处理。`client_max_body_size` 要放在对应 `server` 或更高层，否则饮食照片可能先被
@@ -155,19 +135,18 @@ curl -i https://你的-api-域名/api/mobile/v1/me
 
 ## 3. Mem0
 
-继续使用已经验证成功的私有 Mem0：
+统一 Compose 内继续使用已经验证成功的私有 Mem0：
 
 ```dotenv
 MEMORY_SEMANTIC_ENABLED=true
-MEM0_BASE_URL=http://你的Mem0可达地址:8888
+MEM0_BASE_URL=http://mem0:8000
 MEM0_API_KEY=你的ADMIN_API_KEY
 MEM0_NAMESPACE=slim_guard
 ```
 
-若 Mem0 和 SlimGuard 不在同一个 Compose 网络，容器里的 `127.0.0.1` 指向 SlimGuard 容器自身，
-不能用作 Mem0 地址。可以使用宿主机内网地址，或把两个服务加入同一个 Docker network 后用
-服务名访问。智谱 `embedding-3` 是 1024 维时，Mem0 的 `vector_store.config.embedding_model_dims`
-也必须保持 1024。Mem0 不可用时，本地关系型记忆仍是权威数据源；语义召回会降级，不应阻断聊天。
+Mem0 不再暴露宿主机 `8888`，也不需要手工维护 external network。智谱 `embedding-3` 是 1024 维时，
+Mem0 的 `vector_store.config.embedding_model_dims` 也必须保持 1024。统一部署脚本会幂等配置并验证；
+Mem0 不可用时，本地关系型记忆仍是权威数据源，语义召回会降级而不阻断聊天。
 
 ## 4. 配置移动端
 

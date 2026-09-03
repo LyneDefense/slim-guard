@@ -1,0 +1,176 @@
+name: slim-guard-prod
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  slim-guard-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${SLIM_GUARD_POSTGRES_DB:-slim_guard}
+      POSTGRES_USER: ${SLIM_GUARD_POSTGRES_USER:-slim_guard}
+      POSTGRES_PASSWORD: ${SLIM_GUARD_POSTGRES_PASSWORD:?Set SLIM_GUARD_POSTGRES_PASSWORD}
+    volumes:
+      - slim_guard_db_data:/var/lib/postgresql/data
+    networks:
+      - slim_guard_data
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging: *default-logging
+
+  mem0-db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: ${MEM0_POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${MEM0_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${MEM0_POSTGRES_PASSWORD:?Set MEM0_POSTGRES_PASSWORD}
+    volumes:
+      - mem0_db_data:/var/lib/postgresql/data
+      - ./mem0/init-db.sh:/docker-entrypoint-initdb.d/10-create-mem0-app.sh:ro
+    networks:
+      - mem0_data
+    restart: unless-stopped
+    init: true
+    shm_size: "128mb"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging: *default-logging
+
+  mem0:
+    image: ${MEM0_IMAGE:-slim-guard/mem0:2.0.19-sg1}
+    environment:
+      POSTGRES_HOST: mem0-db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${MEM0_POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${MEM0_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${MEM0_POSTGRES_PASSWORD:?Set MEM0_POSTGRES_PASSWORD}
+      POSTGRES_COLLECTION_NAME: ${MEM0_POSTGRES_COLLECTION_NAME:-memories}
+      APP_DB_NAME: mem0_app
+      ADMIN_API_KEY: ${MEM0_API_KEY:?Set MEM0_API_KEY}
+      JWT_SECRET: ${MEM0_JWT_SECRET:?Set MEM0_JWT_SECRET}
+      AUTH_DISABLED: "false"
+      DASHBOARD_URL: ${MEM0_DASHBOARD_URL:-http://127.0.0.1}
+      OPENAI_API_KEY: ${ZHIPU_API_KEY:?Set ZHIPU_API_KEY}
+      ZHIPU_BASE_URL: ${ZHIPU_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      MEM0_LLM_MODEL: ${MEM0_LLM_MODEL:-glm-5.2}
+      MEM0_EMBEDDER_MODEL: ${MEM0_EMBEDDER_MODEL:-embedding-3}
+      MEM0_EMBEDDING_DIMS: ${MEM0_EMBEDDING_DIMS:-1024}
+      MEM0_TELEMETRY: ${MEM0_TELEMETRY:-false}
+      REQUEST_LOG_RETENTION_DAYS: ${MEM0_REQUEST_LOG_RETENTION_DAYS:-30}
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./mem0/configure.py:/opt/slim-guard/configure.py:ro
+      - ./mem0/export-history.py:/opt/slim-guard/export-history.py:ro
+      - mem0_history_data:/app/history
+    depends_on:
+      mem0-db:
+        condition: service_healthy
+    networks:
+      - mem0_data
+      - service_net
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/auth/setup-status', timeout=3)
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    logging: *default-logging
+
+  app:
+    image: ${SLIM_GUARD_APP_IMAGE_REPOSITORY:-slim-guard/app}:${RELEASE_TAG:-development}
+    env_file:
+      - path: ${SLIM_GUARD_ENV_FILE:-./.env.server}
+        required: true
+    environment:
+      DATABASE_URL: postgresql+psycopg://${SLIM_GUARD_POSTGRES_USER:-slim_guard}:${SLIM_GUARD_POSTGRES_PASSWORD:?Set SLIM_GUARD_POSTGRES_PASSWORD}@slim-guard-db:5432/${SLIM_GUARD_POSTGRES_DB:-slim_guard}
+      MEM0_BASE_URL: http://mem0:8000
+      MEM0_API_KEY: ${MEM0_API_KEY:?Set MEM0_API_KEY}
+      AGENT_CODE_REVISION: ${RELEASE_TAG:-development}
+    depends_on:
+      slim-guard-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-18083}:8000"
+    networks:
+      - slim_guard_data
+      - service_net
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)
+      interval: 20s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    logging: *default-logging
+
+  admin-web:
+    image: ${SLIM_GUARD_ADMIN_IMAGE_REPOSITORY:-slim-guard/admin-web}:${RELEASE_TAG:-development}
+    ports:
+      - "127.0.0.1:${ADMIN_WEB_HOST_PORT:-18084}:80"
+    networks:
+      - service_net
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://127.0.0.1/
+      interval: 20s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    logging: *default-logging
+
+networks:
+  slim_guard_data:
+    internal: true
+  mem0_data:
+    internal: true
+  service_net:
+    driver: bridge
+
+volumes:
+  slim_guard_db_data:
+    name: ${SLIM_GUARD_DB_VOLUME:-slim-guard-prod-db}
+    external: true
+  mem0_db_data:
+    name: ${MEM0_DB_VOLUME:-slim-guard-prod-mem0-db}
+    external: true
+  mem0_history_data:
+    name: ${MEM0_HISTORY_VOLUME:-slim-guard-prod-mem0-history}
+    external: true

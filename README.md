@@ -9,6 +9,10 @@ Agent、健康记录和记忆数据库，提供手机号登录、对话与饮食
 [`MOBILE_APP_DEPLOYMENT.md`](MOBILE_APP_DEPLOYMENT.md)，交付范围见
 [`MOBILE_MVP_REPORT.md`](MOBILE_MVP_REPORT.md)。
 
+腾讯云服务器统一使用 [单机生产部署说明](./SERVER_DEPLOYMENT.md)：宿主机 Nginx、单一
+`slim-guard-prod` Compose、一份 `deploy/.env.server` 和日常一键命令 `./deploy.sh`。仓库根目录
+`compose.yaml` 只用于本地开发，不再作为服务器生产部署入口。
+
 当前 Harness 版本支持普通微信用户用自然语言或图片记录体重、体脂、饮食和运动，调用智谱
 GLM 完成理解与回复，并把业务事实按用户隔离、幂等地保存。Agent 每轮只读取紧凑的用户
 资料、当前有效的个性化记忆、近期权威记录、最近有限对话和当天打卡状态，不依赖无限增长的
@@ -278,13 +282,16 @@ uv run pytest
 
 测试会模拟企业微信服务器，不需要真实 Corp ID 或 Secret。
 
-## Docker
+## Docker（仅本地开发）
 
 ```bash
 docker compose up --build
 ```
 
-Compose 会读取当前目录的 `.env`，并把 PostgreSQL 数据保存在 Docker 命名卷
+根目录 Compose 只用于本地开发。腾讯云生产环境不要执行这组命令，应使用
+[`SERVER_DEPLOYMENT.md`](./SERVER_DEPLOYMENT.md) 中的 `./deploy.sh`。
+
+本地 Compose 会读取当前目录的 `.env`，并把 PostgreSQL 数据保存在 Docker 命名卷
 `slim_guard_postgres_data`。数据库只绑定宿主机 `127.0.0.1:15432`，应用只绑定
 `127.0.0.1:18083`，供本机维护和 Nginx 反向代理，不直接暴露公网端口。
 
@@ -297,10 +304,12 @@ Compose 会读取当前目录的 `.env`，并把 PostgreSQL 数据保存在 Dock
 后台认证统一由 FastAPI 负责：登录页提交 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 后，后端签发
 短时、签名的 `HttpOnly` Session Cookie；Nginx 不保存密码，也不需要 htpasswd。React 容器
 默认绑定 `127.0.0.1:18084`，API 继续使用 `127.0.0.1:18083`。完整的首次部署、PostgreSQL 备份、
-迁移、Nginx 配置和验证步骤见 [管理后台部署说明](./ADMIN_WEB_DEPLOYMENT.md)，可合并的配置示例
-见 [`deploy/nginx/slim-guard.conf.example`](./deploy/nginx/slim-guard.conf.example)。
+迁移、Nginx 配置和验证步骤见 [管理后台部署说明](./ADMIN_WEB_DEPLOYMENT.md)。宿主机 Nginx
+的版本化 location 片段见
+[`deploy/nginx/slim-guard.locations.conf`](./deploy/nginx/slim-guard.locations.conf)。
 
-数据库升级由版本化迁移账本管理，也可以在启动前显式执行：
+数据库升级由版本化迁移账本管理。生产部署脚本会在启动应用前自动、幂等地执行迁移；下面的命令
+只用于本地开发环境：
 
 ```bash
 docker compose run --rm app python -m slim_guard.db.migrate

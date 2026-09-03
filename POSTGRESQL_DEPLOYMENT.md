@@ -1,5 +1,9 @@
 # SlimGuard PostgreSQL 部署
 
+> 本文保留数据库原理和人工恢复说明。腾讯云服务器的统一编排、备份与日常发布以
+> [单机生产部署说明](./SERVER_DEPLOYMENT.md) 和 `./deploy.sh` 为准；不要再在服务器直接运行本文的
+> 旧版根目录 Compose 发布命令。
+
 SlimGuard 的部署数据库已经切换为 PostgreSQL 16。SQLite 只保留给快速单元测试使用；Compose、
 默认应用配置和服务器部署均使用 `postgresql+psycopg`。本次切换不复制旧 SQLite 数据，首次启动
 会在空 PostgreSQL 数据库中创建完整表结构。
@@ -8,15 +12,16 @@ Mem0 的 PostgreSQL/pgvector 与 SlimGuard 主业务库是两个独立边界。�
 Mem0 自带的数据库：主库保存用户、对话、权威健康记录、关系型记忆和 Trace，Mem0 只保存可重建的
 语义索引。
 
-## 首次从 SQLite 切换
+## 首次从 SQLite 或旧 Compose 切换
 
-在 `/home/ubuntu/slim-guard/.env` 增加以下配置。请在第一次启动 PostgreSQL 容器之前确定密码：
+在 `/home/ubuntu/slim-guard/deploy/.env.server` 设置下列变量。请在第一次初始化新数据卷之前确定
+密码：
 
 ```dotenv
-POSTGRES_DB=slim_guard
-POSTGRES_USER=slim_guard
-POSTGRES_PASSWORD=替换为openssl-rand-hex-32生成的值
-POSTGRES_HOST_PORT=15432
+SLIM_GUARD_POSTGRES_DB=slim_guard
+SLIM_GUARD_POSTGRES_USER=slim_guard
+SLIM_GUARD_POSTGRES_PASSWORD=替换为openssl-rand-hex-32生成的值
+SLIM_GUARD_DB_VOLUME=slim-guard-prod-db
 ```
 
 生成 URL 安全的密码：
@@ -25,65 +30,56 @@ POSTGRES_HOST_PORT=15432
 openssl rand -hex 32
 ```
 
-`POSTGRES_HOST_PORT` 只绑定服务器 `127.0.0.1`，不需要在安全组开放。Compose 会根据上面四项
-为 App 构造容器内连接地址，因此无需再手写 `DATABASE_URL`。如果 `.env` 里还留着旧的 SQLite
-`DATABASE_URL`，Compose 的显式 PostgreSQL 地址会覆盖它；建议删除旧行，避免人工排查时误解。
+生产 Compose 不把数据库端口发布到宿主机或公网。它会为 App 构造容器内连接地址，因此无需手写
+`DATABASE_URL`。
 
-然后执行：
+若当前服务器已经使用 `slim-guard_slim_guard_postgres_data`，首次统一切换必须把
+`SLIM_GUARD_DB_VOLUME` 改成这个现有卷名，并保持旧数据库密码不变。切换脚本会检查卷名、先备份、
+停止旧容器再挂载同一数据卷；它不会删除数据。
+
+配置完整后执行统一切换：
 
 ```bash
 cd /home/ubuntu/slim-guard
-git pull --ff-only
-docker compose pull postgres
-docker compose build app
-docker compose up -d postgres
-docker compose ps postgres
-docker compose run --rm app python -m slim_guard.db.migrate
-docker compose up -d app admin-web
-docker compose ps
+./deploy.sh bootstrap --cutover
 ```
 
-预期迁移输出包含 `Applied migrations:`；应用启动时也会幂等检查迁移。确认数据库和应用：
+脚本会幂等迁移并执行健康检查。确认数据库和应用：
 
 ```bash
-docker compose exec postgres sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version FROM schema_migrations ORDER BY version;"'
-docker compose exec postgres sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'
+./deploy.sh status
 curl -i http://127.0.0.1:18083/health/ready
-docker compose logs --tail=150 postgres app
+./deploy.sh logs
 ```
 
 `/health/ready` 为 200 表示数据库、用户通道和模型配置都已就绪。如果它因为其他通道配置返回
-503，可以先检查日志，再单独用上面的 `psql` 命令确认数据库。
+503，可以先通过 `./deploy.sh logs` 检查具体依赖。
 
-旧的 `slim_guard_data` Docker 卷不会被新 Compose 自动删除，所以旧 SQLite 文件暂时仍可恢复，
-但新版本不会再读它。确认不需要回滚后再自行清理；切换过程不要求执行 `down -v`。
+旧的 SQLite 文件和旧容器不会被自动删除。确认不需要回滚后再自行清理；任何部署或切换过程都不
+执行 `down -v`。
 
 ## 日常备份
 
-创建压缩格式备份：
+日常部署会自动备份 SlimGuard 与 Mem0 两个数据库。也可以单独执行：
 
 ```bash
 cd /home/ubuntu/slim-guard
-mkdir -p backups
-docker compose exec -T postgres sh -c \
-  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
-  > "backups/slim-guard-$(date +%F-%H%M%S).dump"
+./deploy.sh backup
 ```
 
-确认备份文件不是空文件，并将其同步到另一台机器或对象存储。恢复演练应在独立数据库完成，不能
-直接覆盖线上库。
+脚本会拒绝空备份，默认写到 `/home/ubuntu/backups/slim-guard` 并保留 14 天。仍应将备份同步到
+另一台机器或对象存储；恢复演练必须在独立数据库完成，不能直接覆盖线上库。
 
 ## 密码变更注意事项
 
-PostgreSQL 数据卷初始化后，单纯修改 `.env` 的 `POSTGRES_PASSWORD` 不会修改库内已有用户密码。
-需要先在数据库内执行 `ALTER ROLE`，再修改 `.env` 并重启 App。测试阶段如果数据库没有任何价值，
-也可以明确删除 PostgreSQL 卷后按新密码重新初始化，但这会永久清空全部数据。
+PostgreSQL 数据卷初始化后，单纯修改 `.env.server` 的 `SLIM_GUARD_POSTGRES_PASSWORD` 不会修改
+库内已有用户密码。需要先在数据库内执行 `ALTER ROLE`，再修改配置并运行 `./deploy.sh`。测试阶段
+即使数据不重要，也不要让自动部署脚本删除数据卷；若确需清空，应先明确核对目标卷并人工操作。
 
-## 宿主机直接运行
+## 本地开发时宿主机直接运行
 
-Compose 将 PostgreSQL 映射到 `127.0.0.1:15432`。在宿主机直接运行 Python 时显式配置：
+仓库根目录的本地开发 Compose 会将 PostgreSQL 映射到 `127.0.0.1:15432`。在 Mac 上直接运行
+Python 时显式配置：
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://slim_guard:URL编码后的密码@127.0.0.1:15432/slim_guard
