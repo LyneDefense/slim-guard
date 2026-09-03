@@ -68,8 +68,8 @@ class MealRepository:
                 return MealRecordCreation(record=self._ref(existing), created=False)
 
     async def recent(self, user_id: str, *, limit: int = 10) -> tuple[MealRecordRef, ...]:
-        if not 1 <= limit <= 31:
-            raise ValueError("Meal record limit must be between 1 and 31")
+        if not 1 <= limit <= 100:
+            raise ValueError("Meal record limit must be between 1 and 100")
         async with self.database.session() as session:
             rows = await session.scalars(
                 select(MealRecord)

@@ -73,8 +73,8 @@ class WeightRepository:
             return self._ref(row) if row is not None else None
 
     async def recent_trend(self, user_id: str, *, limit: int = 7) -> WeightTrend:
-        if not 1 <= limit <= 31:
-            raise ValueError("Weight trend limit must be between 1 and 31")
+        if not 1 <= limit <= 100:
+            raise ValueError("Weight trend limit must be between 1 and 100")
         async with self.database.session() as session:
             rows = await session.scalars(
                 select(WeightRecord)

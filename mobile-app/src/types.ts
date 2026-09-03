@@ -20,6 +20,17 @@ export type OtpChallenge = {
   debug_code: string | null;
 };
 
+export type TestAccountOption = {
+  username: string;
+  default_nickname: string;
+};
+
+export type AuthOptions = {
+  phone_login_enabled: boolean;
+  test_account_login_enabled: boolean;
+  test_accounts: TestAccountOption[];
+};
+
 export type ChatPayload = {
   text?: string;
   image_base64?: string;

@@ -483,7 +483,7 @@ class MobileAuthIdentityRecord(Base):
     __table_args__ = (
         UniqueConstraint("provider", "subject_hash", name="uq_mobile_identity_subject"),
         CheckConstraint(
-            "provider IN ('phone','apple')",
+            "provider IN ('phone','apple','test_account')",
             name="ck_mobile_identity_provider",
         ),
         Index("ix_mobile_identity_user", "user_id"),

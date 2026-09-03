@@ -45,6 +45,29 @@ async def _add_memory_evidence_item(connection: AsyncConnection) -> None:
     )
 
 
+async def _allow_mobile_test_account_identity(connection: AsyncConnection) -> None:
+    """Allow the development-only test account identity provider on PostgreSQL."""
+
+    await _create_application_tables(connection)
+    if connection.dialect.name != "postgresql":
+        # Test databases are created from current metadata. SlimGuard production
+        # deployments use PostgreSQL, where an existing constraint must be replaced.
+        return
+    await connection.execute(
+        text(
+            "ALTER TABLE mobile_auth_identities "
+            "DROP CONSTRAINT IF EXISTS ck_mobile_identity_provider"
+        )
+    )
+    await connection.execute(
+        text(
+            "ALTER TABLE mobile_auth_identities "
+            "ADD CONSTRAINT ck_mobile_identity_provider "
+            "CHECK (provider IN ('phone','apple','test_account'))"
+        )
+    )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -52,6 +75,10 @@ MIGRATIONS = (
     SchemaMigration("20260902_03_memory_index_outbox", _create_application_tables),
     SchemaMigration("20260903_01_mobile_accounts", _create_application_tables),
     SchemaMigration("20260903_02_mobile_devices_and_bindings", _create_application_tables),
+    SchemaMigration(
+        "20260903_03_mobile_test_accounts",
+        _allow_mobile_test_account_identity,
+    ),
 )
 
 

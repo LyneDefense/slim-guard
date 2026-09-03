@@ -8,6 +8,7 @@ import { ApiError, mobileApi } from '../lib/api';
 import { enqueueChat, hydratePendingChat, listPendingChats, removePendingChat } from '../lib/offlineQueue';
 import { syncRoutineNotifications } from '../lib/notifications';
 import type {
+  AuthOptions,
   AuthTokens,
   ChatMessage,
   ChatPayload,
@@ -23,6 +24,7 @@ type ImageInput = { uri: string; mimeType: 'image/jpeg' | 'image/png' | 'image/w
 type AppContextValue = {
   booting: boolean;
   authenticated: boolean;
+  authOptions: AuthOptions;
   data: DashboardData | null;
   pending: PendingChat[];
   online: boolean;
@@ -30,6 +32,7 @@ type AppContextValue = {
   error: string | null;
   requestOtp: (phone: string) => Promise<OtpChallenge>;
   verifyOtp: (challengeId: string, code: string) => Promise<void>;
+  loginWithPassword: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   sendMessage: (text: string, image?: ImageInput) => Promise<'sent' | 'queued'>;
@@ -43,6 +46,12 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+const PHONE_ONLY_AUTH: AuthOptions = {
+  phone_login_enabled: true,
+  test_account_login_enabled: false,
+  test_accounts: [],
+};
+
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError || error instanceof Error) return error.message;
   return '刚才没有成功，请稍后再试';
@@ -51,6 +60,7 @@ function errorMessage(error: unknown): string {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [booting, setBooting] = useState(true);
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
+  const [authOptions, setAuthOptions] = useState<AuthOptions>(PHONE_ONLY_AUTH);
   const [data, setData] = useState<DashboardData | null>(null);
   const [pending, setPending] = useState<PendingChat[]>([]);
   const [online, setOnline] = useState(true);
@@ -78,10 +88,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     void (async () => {
-      const [restored, queued] = await Promise.all([mobileApi.restore(), listPendingChats()]);
+      const [restored, queued, options] = await Promise.all([
+        mobileApi.restore(),
+        listPendingChats(),
+        mobileApi.authOptions().catch(() => PHONE_ONLY_AUTH),
+      ]);
       if (!active) return;
       setTokens(restored);
       setPending(queued);
+      setAuthOptions(options);
       if (restored) {
         try {
           setData(await mobileApi.dashboard());
@@ -131,6 +146,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     try {
       const issued = await mobileApi.verifyOtp(challengeId, code, `${Platform.OS} · SlimGuard`);
+      setTokens(issued);
+      setData(await mobileApi.dashboard());
+      setError(null);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      throw caught;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loginWithPassword = useCallback(async (username: string, password: string) => {
+    setLoading(true);
+    try {
+      const issued = await mobileApi.loginWithPassword(
+        username,
+        password,
+        `${Platform.OS} · SlimGuard`,
+      );
       setTokens(issued);
       setData(await mobileApi.dashboard());
       setError(null);
@@ -240,6 +274,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     booting,
     authenticated: tokens !== null,
+    authOptions,
     data,
     pending,
     online,
@@ -247,6 +282,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     error,
     requestOtp,
     verifyOtp,
+    loginWithPassword,
     logout,
     refresh,
     sendMessage,
@@ -256,7 +292,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getWeComBinding,
     deleteAccount,
     clearError: () => setError(null),
-  }), [booting, tokens, data, pending, online, loading, error, requestOtp, verifyOtp, logout, refresh, sendMessage, updateProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
+  }), [booting, tokens, authOptions, data, pending, online, loading, error, requestOtp, verifyOtp, loginWithPassword, logout, refresh, sendMessage, updateProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

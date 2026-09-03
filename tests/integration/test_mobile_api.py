@@ -9,6 +9,7 @@ from slim_guard.config import Settings
 from slim_guard.db.models import (
     InteractionTraceRecord,
     MobileAgentRequestRecord,
+    MobileAuthIdentityRecord,
     MobileDeviceRecord,
     SlimGuardUser,
 )
@@ -155,3 +156,86 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
             deleted_user = await session.get(SlimGuardUser, login.json()["user"]["id"])
         assert deleted_user is None
     await model.close()
+
+
+async def test_mobile_test_accounts_login_and_keep_edited_nickname(tmp_path) -> None:
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'mobile-test-login.sqlite3'}",
+        mobile_api_enabled=True,
+        mobile_auth_secret="mobile-api-test-secret-with-at-least-32-characters",
+        mobile_test_accounts_enabled=True,
+        mobile_test_account_password="123456",
+        memory_ingestion_enabled=False,
+        memory_recall_enabled=False,
+        routine_scheduler_enabled=False,
+        log_level="WARNING",
+    )
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="https://test",
+        ) as http:
+            options = await http.get("/api/mobile/v1/auth/options")
+            invalid = await http.post(
+                "/api/mobile/v1/auth/password/login",
+                json={"username": "test2", "password": "wrong"},
+            )
+            login = await http.post(
+                "/api/mobile/v1/auth/password/login",
+                json={
+                    "username": "test2",
+                    "password": "123456",
+                    "device_label": "iPhone Simulator",
+                },
+            )
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            renamed = await http.patch(
+                "/api/mobile/v1/me",
+                headers=headers,
+                json={"nickname": "模拟器里的小林"},
+            )
+            progress = await http.get(
+                "/api/mobile/v1/progress?limit=60",
+                headers=headers,
+            )
+            second_login = await http.post(
+                "/api/mobile/v1/auth/password/login",
+                json={"username": "test2", "password": "123456"},
+            )
+
+        assert options.status_code == 200
+        assert options.json() == {
+            "phone_login_enabled": True,
+            "test_account_login_enabled": True,
+            "test_accounts": [
+                {"username": f"test{index}", "default_nickname": f"测试用户 {index}"}
+                for index in range(1, 6)
+            ],
+        }
+        assert invalid.status_code == 401
+        assert invalid.json()["detail"]["code"] == "invalid_credentials"
+        assert login.status_code == 200
+        assert login.json()["user"]["identity_hint"] == "测试账号 test2"
+        assert renamed.json()["nickname"] == "模拟器里的小林"
+        assert progress.status_code == 200
+        assert progress.json() == {
+            "weights": [],
+            "body_fat": [],
+            "meals": [],
+            "exercise": [],
+        }
+        assert second_login.json()["user"]["nickname"] == "模拟器里的小林"
+
+        async with app.state.database.session() as session:
+            users = list(await session.scalars(select(SlimGuardUser)))
+            identities = list(
+                await session.scalars(
+                    select(MobileAuthIdentityRecord).where(
+                        MobileAuthIdentityRecord.provider == "test_account"
+                    )
+                )
+            )
+        assert len(users) == 5
+        assert len(identities) == 5

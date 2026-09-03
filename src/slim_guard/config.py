@@ -55,6 +55,8 @@ class Settings(DatabaseSettings):
     mobile_otp_resend_seconds: int = Field(default=60, ge=30, le=600)
     mobile_otp_hourly_limit: int = Field(default=5, ge=1, le=20)
     mobile_dev_otp_enabled: bool = True
+    mobile_test_accounts_enabled: bool = False
+    mobile_test_account_password: str = "123456"
     mobile_sms_webhook_url: str = ""
     mobile_sms_webhook_token: str = ""
     mobile_wecom_binding_ttl_minutes: int = Field(default=10, ge=2, le=60)
@@ -136,6 +138,16 @@ class Settings(DatabaseSettings):
             and self.mobile_dev_otp_enabled
         ):
             raise ValueError("MOBILE_DEV_OTP_ENABLED must be false in production")
+        if self.mobile_test_accounts_enabled and not self.mobile_api_enabled:
+            raise ValueError(
+                "MOBILE_TEST_ACCOUNTS_ENABLED requires MOBILE_API_ENABLED"
+            )
+        if self.mobile_test_accounts_enabled and not self.mobile_test_account_password:
+            raise ValueError(
+                "MOBILE_TEST_ACCOUNT_PASSWORD is required when test accounts are enabled"
+            )
+        if self.mobile_test_accounts_enabled and self.app_env == "production":
+            raise ValueError("MOBILE_TEST_ACCOUNTS_ENABLED must be false in production")
         if (
             self.mobile_api_enabled
             and self.app_env == "production"

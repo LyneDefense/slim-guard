@@ -35,6 +35,41 @@ class OtpVerifyRequest(BaseModel):
         return normalized or None
 
 
+class TestAccountView(BaseModel):
+    username: str
+    default_nickname: str
+
+
+class AuthOptionsView(BaseModel):
+    phone_login_enabled: bool = True
+    test_account_login_enabled: bool
+    test_accounts: list[TestAccountView]
+
+
+class PasswordLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+    device_label: str | None = Field(default=None, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("Username must not be blank")
+        return normalized
+
+    @field_validator("device_label")
+    @classmethod
+    def normalize_password_login_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
 class RefreshRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

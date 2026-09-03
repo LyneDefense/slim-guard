@@ -67,8 +67,8 @@ class BodyFatRepository:
                 return BodyFatRecordCreation(record=self._ref(existing), created=False)
 
     async def recent_trend(self, user_id: str, *, limit: int = 7) -> BodyFatTrend:
-        if not 1 <= limit <= 31:
-            raise ValueError("Body-fat trend limit must be between 1 and 31")
+        if not 1 <= limit <= 100:
+            raise ValueError("Body-fat trend limit must be between 1 and 100")
         async with self.database.session() as session:
             rows = await session.scalars(
                 select(BodyFatRecord)

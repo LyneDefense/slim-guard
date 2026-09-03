@@ -83,6 +83,28 @@ def test_mobile_api_requires_a_real_secret_and_production_sms_provider() -> None
     assert settings.mobile_is_configured is True
 
 
+def test_mobile_test_accounts_are_development_only() -> None:
+    with pytest.raises(ValidationError, match="requires MOBILE_API_ENABLED"):
+        Settings(mobile_test_accounts_enabled=True)
+
+    with pytest.raises(ValidationError, match="must be false in production"):
+        Settings(
+            app_env="production",
+            mobile_api_enabled=True,
+            mobile_auth_secret="x" * 32,
+            mobile_dev_otp_enabled=False,
+            mobile_sms_webhook_url="https://sms.internal/send",
+            mobile_test_accounts_enabled=True,
+        )
+
+    settings = Settings(
+        mobile_api_enabled=True,
+        mobile_auth_secret="x" * 32,
+        mobile_test_accounts_enabled=True,
+    )
+    assert settings.mobile_test_account_password == "123456"
+
+
 def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
     settings = Settings()
 

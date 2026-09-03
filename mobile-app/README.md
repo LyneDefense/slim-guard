@@ -7,6 +7,7 @@ SlimGuard Mobile 是同一套后端的 iOS/Android 客户端，使用 Expo SDK 5
 ## 功能
 
 - 手机号验证码登录，短期 Access Token + 可轮换 Refresh Token；
+- 开发环境可启用 5 个隔离的账号密码测试用户，正式环境强制关闭；
 - “今天 / 教练 / 趋势 / 我的”四个原生页面；
 - 自然语言和相机/相册饮食图片对话；
 - 体重、体脂、饮食、运动记录与趋势；
@@ -43,9 +44,13 @@ APP_ENV=development
 MOBILE_API_ENABLED=true
 MOBILE_AUTH_SECRET=至少32字符且不要提交到Git的随机值
 MOBILE_DEV_OTP_ENABLED=true
+MOBILE_TEST_ACCOUNTS_ENABLED=true
+MOBILE_TEST_ACCOUNT_PASSWORD=123456
 ```
 
 开发验证码会直接显示在登录页。生产环境必须关闭这个能力并接入短信 Webhook。
+测试账号是 `test1` 到 `test5`，密码统一为 `123456`；每个账号有独立数据，登录后可以在
+“我的 → 称呼”修改名字。`APP_ENV=production` 会拒绝启用测试账号。
 
 ## 静态校验
 
@@ -57,3 +62,6 @@ npm run bundle:android
 
 完整部署和 EAS 构建步骤见仓库根目录的
 [`MOBILE_APP_DEPLOYMENT.md`](../MOBILE_APP_DEPLOYMENT.md)。
+
+第一次在 Mac 上安装 Expo、通过 Xcode 图形界面启动 iPhone Simulator、调试并构建双端包，见
+[`MOBILE_APP_MAC_GUIDE.md`](../MOBILE_APP_MAC_GUIDE.md)。

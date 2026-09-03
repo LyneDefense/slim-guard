@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, Request, Response
 
@@ -252,7 +252,10 @@ def create_app(
                     seconds=app_settings.mobile_otp_resend_seconds
                 ),
                 hourly_limit=app_settings.mobile_otp_hourly_limit,
+                test_accounts_enabled=app_settings.mobile_test_accounts_enabled,
+                test_account_password=app_settings.mobile_test_account_password,
             )
+            await mobile_auth.ensure_test_accounts(now=datetime.now(UTC))
             mobile_service = MobileApplicationService(
                 database=database,
                 runtime=active_runtime,

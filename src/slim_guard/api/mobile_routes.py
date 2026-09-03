@@ -15,6 +15,7 @@ from slim_guard.mobile.auth import (
 )
 from slim_guard.mobile.contracts import (
     AccountDeletionRequest,
+    AuthOptionsView,
     AuthTokenView,
     ChatHistoryView,
     ChatRequest,
@@ -26,11 +27,13 @@ from slim_guard.mobile.contracts import (
     OtpChallengeView,
     OtpRequest,
     OtpVerifyRequest,
+    PasswordLoginRequest,
     ProfileUpdateRequest,
     ProgressView,
     RefreshRequest,
     RoutineUpdateRequest,
     RoutineView,
+    TestAccountView,
     TodayView,
     WeComBindingView,
 )
@@ -95,6 +98,38 @@ async def _principal(
 
 
 Principal = Annotated[MobilePrincipal, Depends(_principal)]
+
+
+@router.get("/auth/options", response_model=AuthOptionsView)
+async def auth_options(request: Request) -> AuthOptionsView:
+    accounts = _auth(request).test_accounts
+    return AuthOptionsView(
+        test_account_login_enabled=bool(accounts),
+        test_accounts=[
+            TestAccountView(
+                username=account.username,
+                default_nickname=account.default_nickname,
+            )
+            for account in accounts
+        ],
+    )
+
+
+@router.post("/auth/password/login", response_model=AuthTokenView)
+async def password_login(
+    payload: PasswordLoginRequest,
+    request: Request,
+) -> AuthTokenView:
+    try:
+        issued = await _auth(request).login_test_account(
+            username=payload.username,
+            password=payload.password,
+            device_label=payload.device_label,
+            now=datetime.now(UTC),
+        )
+    except MobileAuthError as exc:
+        raise _auth_http_error(exc) from exc
+    return await _token_view(issued, _mobile(request))
 
 
 @router.post("/auth/otp/request", response_model=OtpChallengeView)
@@ -346,6 +381,8 @@ def _auth_http_error(exc: MobileAuthError) -> HTTPException:
         "otp_invalid": status.HTTP_401_UNAUTHORIZED,
         "otp_expired": status.HTTP_401_UNAUTHORIZED,
         "otp_not_active": status.HTTP_401_UNAUTHORIZED,
+        "invalid_credentials": status.HTTP_401_UNAUTHORIZED,
+        "test_login_disabled": status.HTTP_404_NOT_FOUND,
         "invalid_access_token": status.HTTP_401_UNAUTHORIZED,
         "access_token_expired": status.HTTP_401_UNAUTHORIZED,
         "session_inactive": status.HTTP_401_UNAUTHORIZED,

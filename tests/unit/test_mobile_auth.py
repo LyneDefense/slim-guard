@@ -9,6 +9,7 @@ from slim_guard.db.models import (
     MobileAuthIdentityRecord,
     MobileOtpChallengeRecord,
     MobileSessionRecord,
+    SlimGuardUser,
 )
 from slim_guard.db.session import Database
 from slim_guard.mobile.auth import MobileAuthError, MobileAuthService, NullMobileOtpSender
@@ -102,5 +103,71 @@ async def test_mobile_otp_failed_attempts_are_persisted_and_locked(tmp_path) -> 
                 now=NOW,
             )
         assert locked.value.code == "otp_not_active"
+    finally:
+        await database.close()
+
+
+async def test_development_accounts_are_seeded_and_issue_normal_sessions(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'test-accounts.sqlite3'}")
+    await database.create_schema()
+    auth = MobileAuthService(
+        database=database,
+        secret=SECRET,
+        sender=NullMobileOtpSender(),
+        test_accounts_enabled=True,
+        test_account_password="123456",
+    )
+    try:
+        await auth.ensure_test_accounts(now=NOW)
+        await auth.ensure_test_accounts(now=NOW)
+        issued = await auth.login_test_account(
+            username=" TEST3 ",
+            password="123456",
+            device_label="iOS Simulator",
+            now=NOW,
+        )
+        principal = await auth.authenticate(issued.access_token, now=NOW)
+
+        async with database.session() as session:
+            identities = list(
+                await session.scalars(
+                    select(MobileAuthIdentityRecord)
+                    .where(MobileAuthIdentityRecord.provider == "test_account")
+                    .order_by(MobileAuthIdentityRecord.display_hint)
+                )
+            )
+            users = list(await session.scalars(select(SlimGuardUser)))
+
+        assert [account.username for account in auth.test_accounts] == [
+            "test1",
+            "test2",
+            "test3",
+            "test4",
+            "test5",
+        ]
+        assert len(identities) == 5
+        assert len(users) == 5
+        assert issued.identity_hint == "测试账号 test3"
+        assert principal.user_id == issued.user_id
+        assert all(identity.subject_hash not in {"test1", "test3"} for identity in identities)
+        assert all("123456" not in repr(identity.__dict__) for identity in identities)
+
+        with pytest.raises(MobileAuthError) as invalid_password:
+            await auth.login_test_account(
+                username="test3",
+                password="incorrect",
+                device_label=None,
+                now=NOW,
+            )
+        assert invalid_password.value.code == "invalid_credentials"
+
+        with pytest.raises(MobileAuthError) as invalid_account:
+            await auth.login_test_account(
+                username="unknown",
+                password="123456",
+                device_label=None,
+                now=NOW,
+            )
+        assert invalid_account.value.code == "invalid_credentials"
     finally:
         await database.close()

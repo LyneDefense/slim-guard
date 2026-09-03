@@ -14,6 +14,51 @@ cd /home/ubuntu/slim-guard
 git pull --ff-only
 ```
 
+### 1.1 当前远程测试环境
+
+如果当前服务器只用于你自己的 App 联调，可以暂时启用 5 个隔离的测试账号，同时保留手机号登录
+入口。服务器 `.env` 使用：
+
+```dotenv
+APP_ENV=development
+MOBILE_API_ENABLED=true
+MOBILE_AUTH_SECRET=使用openssl-rand-hex-32生成的64位随机值
+MOBILE_DEV_OTP_ENABLED=true
+MOBILE_TEST_ACCOUNTS_ENABLED=true
+MOBILE_TEST_ACCOUNT_PASSWORD=123456
+```
+
+可登录账号是 `test1`、`test2`、`test3`、`test4`、`test5`，密码统一为 `123456`。每个账号对应
+独立用户、对话、记录和记忆；登录后可在“我的 → 称呼”修改显示名称。`MOBILE_AUTH_SECRET` 不要填写
+示例文本，也不要在重新部署时随意更换，否则现有 App 登录会话会失效。
+
+这个配置面向临时测试。测试账号凭据公开且会消耗模型调用额度，不要在这个模式下存真实健康数据，
+也不要把它当作正式生产认证。测试结束后按下一节切回 `APP_ENV=production`，关闭测试账号并接入短信。
+
+服务器更新步骤：
+
+```bash
+cd /home/ubuntu/slim-guard
+git pull --ff-only
+docker compose build app
+docker compose up -d postgres
+docker compose run --rm app python -m slim_guard.db.migrate
+docker compose up -d app admin-web
+docker compose ps
+```
+
+验证后端已经公开测试账号能力：
+
+```bash
+curl -fsS https://你的-api-域名/api/mobile/v1/auth/options
+```
+
+返回结果应包含 `"test_account_login_enabled":true` 和 5 个账号。若这里正常，iOS 模拟器只需把
+`mobile-app/.env.local` 中的 `EXPO_PUBLIC_API_BASE_URL` 指向同一个 HTTPS 域名，然后完全重启
+Metro；不需要在 Mac 启动 SlimGuard 后端或 PostgreSQL。
+
+### 1.2 正式生产环境
+
 为生产环境生成独立密钥：
 
 ```bash
@@ -36,12 +81,14 @@ MOBILE_OTP_TTL_SECONDS=300
 MOBILE_OTP_RESEND_SECONDS=60
 MOBILE_OTP_HOURLY_LIMIT=5
 MOBILE_DEV_OTP_ENABLED=false
+MOBILE_TEST_ACCOUNTS_ENABLED=false
 MOBILE_SMS_WEBHOOK_URL=https://你的短信适配服务/slimguard/otp
 MOBILE_SMS_WEBHOOK_TOKEN=短信适配服务使用的随机Bearer密钥
 MOBILE_WECOM_BINDING_TTL_MINUTES=10
 ```
 
-`APP_ENV=production` 会强制要求关闭开发验证码并配置短信 Webhook。服务端向 Webhook 发送：
+`APP_ENV=production` 会强制要求关闭开发验证码和测试账号，并配置短信 Webhook。服务端向
+Webhook 发送：
 
 ```json
 {

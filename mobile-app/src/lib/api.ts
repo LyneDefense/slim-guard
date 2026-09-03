@@ -1,4 +1,5 @@
 import type {
+  AuthOptions,
   AuthTokens,
   ChatMessage,
   ChatPayload,
@@ -47,6 +48,23 @@ class MobileApi {
       method: 'POST',
       body: JSON.stringify({ phone }),
     });
+  }
+
+  authOptions(): Promise<AuthOptions> {
+    return this.raw('/api/mobile/v1/auth/options', { method: 'GET' });
+  }
+
+  async loginWithPassword(
+    username: string,
+    password: string,
+    deviceLabel: string,
+  ): Promise<AuthTokens> {
+    const tokens = await this.raw<AuthTokens>('/api/mobile/v1/auth/password/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, device_label: deviceLabel }),
+    });
+    await this.acceptTokens(tokens);
+    return tokens;
   }
 
   async verifyOtp(challengeId: string, code: string, deviceLabel: string): Promise<AuthTokens> {

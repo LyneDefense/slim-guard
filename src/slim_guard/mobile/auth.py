@@ -13,6 +13,7 @@ from typing import Protocol
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from slim_guard.db.models import (
     MobileAuthIdentityRecord,
@@ -52,6 +53,18 @@ class OtpChallenge:
     code: str
     expires_in_seconds: int
     retry_after_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class TestAccount:
+    username: str
+    default_nickname: str
+
+
+TEST_ACCOUNTS = tuple(
+    TestAccount(username=f"test{index}", default_nickname=f"测试用户 {index}")
+    for index in range(1, 6)
+)
 
 
 class MobileOtpSender(Protocol):
@@ -169,11 +182,15 @@ class MobileAuthService:
         resend_after: timedelta = timedelta(minutes=1),
         hourly_limit: int = 5,
         code_factory: Callable[[], str] | None = None,
+        test_accounts_enabled: bool = False,
+        test_account_password: str = "",
     ) -> None:
         if refresh_ttl <= timedelta(0) or otp_ttl <= timedelta(0):
             raise ValueError("Mobile authentication TTLs must be positive")
         if resend_after <= timedelta(0) or hourly_limit < 1:
             raise ValueError("Mobile OTP limits must be positive")
+        if test_accounts_enabled and not test_account_password:
+            raise ValueError("Test account password is required when test login is enabled")
         self._database = database
         self._key = secret.encode()
         self._sender = sender
@@ -183,10 +200,70 @@ class MobileAuthService:
         self._resend_after = resend_after
         self._hourly_limit = hourly_limit
         self._code_factory = code_factory or self._random_code
+        self._test_accounts_enabled = test_accounts_enabled
+        self._test_account_password = test_account_password
 
     @property
     def codec(self) -> MobileTokenCodec:
         return self._codec
+
+    @property
+    def test_accounts(self) -> tuple[TestAccount, ...]:
+        return TEST_ACCOUNTS if self._test_accounts_enabled else ()
+
+    async def ensure_test_accounts(self, *, now: datetime) -> None:
+        if not self._test_accounts_enabled:
+            return
+        current = self._aware(now)
+        async with self._database.session() as session, session.begin():
+            for account in TEST_ACCOUNTS:
+                await self._ensure_test_account(session, account, current=current)
+
+    async def login_test_account(
+        self,
+        *,
+        username: str,
+        password: str,
+        device_label: str | None,
+        now: datetime,
+    ) -> IssuedMobileTokens:
+        if not self._test_accounts_enabled:
+            raise MobileAuthError("test_login_disabled", "Test account login is unavailable")
+        normalized_username = username.strip().lower()
+        account = next(
+            (item for item in TEST_ACCOUNTS if item.username == normalized_username),
+            None,
+        )
+        password_matches = hmac.compare_digest(
+            password.encode(),
+            self._test_account_password.encode(),
+        )
+        if account is None or not password_matches:
+            raise MobileAuthError("invalid_credentials", "Account or password is incorrect")
+
+        current = self._aware(now)
+        async with self._database.session() as session, session.begin():
+            user, identity = await self._ensure_test_account(
+                session,
+                account,
+                current=current,
+            )
+            user.last_seen_at = current
+            identity.last_authenticated_at = current
+            session_id, refresh_token = self._add_session(
+                session,
+                user_id=user.id,
+                device_label=device_label,
+                current=current,
+            )
+        principal = MobilePrincipal(user_id=user.id, session_id=session_id)
+        return IssuedMobileTokens(
+            access_token=self._codec.issue(principal, now=current),
+            access_expires_in_seconds=self._codec.access_ttl_seconds,
+            refresh_token=refresh_token,
+            user_id=user.id,
+            identity_hint=identity.display_hint,
+        )
 
     async def request_otp(self, phone: str, *, now: datetime) -> OtpChallenge:
         current = self._aware(now)
@@ -307,18 +384,11 @@ class MobileAuthService:
                     identity.last_authenticated_at = current
                     user.last_seen_at = current
 
-                refresh_token = self._new_refresh_token()
-                session_id, _ = refresh_token.split(".", 1)
-                session.add(
-                    MobileSessionRecord(
-                        id=session_id,
-                        user_id=user.id,
-                        refresh_token_hash=self._token_hash(refresh_token),
-                        device_label=device_label,
-                        expires_at=current + self._refresh_ttl,
-                        created_at=current,
-                        last_used_at=current,
-                    )
+                session_id, refresh_token = self._add_session(
+                    session,
+                    user_id=user.id,
+                    device_label=device_label,
+                    current=current,
                 )
                 challenge.status = "consumed"
                 challenge.consumed_at = current
@@ -422,6 +492,68 @@ class MobileAuthService:
 
     def _token_hash(self, token: str) -> str:
         return hmac.new(self._key, f"refresh:{token}".encode(), hashlib.sha256).hexdigest()
+
+    async def _ensure_test_account(
+        self,
+        session: AsyncSession,
+        account: TestAccount,
+        *,
+        current: datetime,
+    ) -> tuple[SlimGuardUser, MobileAuthIdentityRecord]:
+        subject_hash = self._subject_hash("test_account", account.username)
+        identity = await session.scalar(
+            select(MobileAuthIdentityRecord).where(
+                MobileAuthIdentityRecord.provider == "test_account",
+                MobileAuthIdentityRecord.subject_hash == subject_hash,
+            )
+        )
+        if identity is not None:
+            user = await session.get(SlimGuardUser, identity.user_id)
+            if user is None:
+                raise MobileAuthError("account_unavailable", "Account is unavailable")
+            return user, identity
+
+        user = SlimGuardUser(
+            nickname=account.default_nickname,
+            first_seen_at=current,
+            last_seen_at=current,
+        )
+        session.add(user)
+        await session.flush()
+        identity = MobileAuthIdentityRecord(
+            user_id=user.id,
+            provider="test_account",
+            subject_hash=subject_hash,
+            display_hint=f"测试账号 {account.username}",
+            created_at=current,
+            last_authenticated_at=current,
+        )
+        session.add(identity)
+        await session.flush()
+        return user, identity
+
+    def _add_session(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        device_label: str | None,
+        current: datetime,
+    ) -> tuple[str, str]:
+        refresh_token = self._new_refresh_token()
+        session_id, _ = refresh_token.split(".", 1)
+        session.add(
+            MobileSessionRecord(
+                id=session_id,
+                user_id=user_id,
+                refresh_token_hash=self._token_hash(refresh_token),
+                device_label=device_label,
+                expires_at=current + self._refresh_ttl,
+                created_at=current,
+                last_used_at=current,
+            )
+        )
+        return session_id, refresh_token
 
     @staticmethod
     def normalize_phone(value: str) -> str:
