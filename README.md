@@ -2,6 +2,13 @@
 
 SlimGuard 是一个 Python 编写的企业微信“微信客服”减脂助手。
 
+仓库现在也包含基于 Expo/React Native 的 iOS 与 Android 客户端。它复用同一套 Harness
+Agent、健康记录和记忆数据库，提供手机号登录、对话与饮食图片、今日概览、趋势、目标与记忆、
+本地提醒、离线可靠发送、微信身份绑定和账号删除。开发入口见
+[`mobile-app/README.md`](mobile-app/README.md)，服务器与双端构建步骤见
+[`MOBILE_APP_DEPLOYMENT.md`](MOBILE_APP_DEPLOYMENT.md)，交付范围见
+[`MOBILE_MVP_REPORT.md`](MOBILE_MVP_REPORT.md)。
+
 当前 Harness 版本支持普通微信用户用自然语言或图片记录体重、体脂、饮食和运动，调用智谱
 GLM 完成理解与回复，并把业务事实按用户隔离、幂等地保存。Agent 每轮只读取紧凑的用户
 资料、当前有效的个性化记忆、近期权威记录、最近有限对话和当天打卡状态，不依赖无限增长的

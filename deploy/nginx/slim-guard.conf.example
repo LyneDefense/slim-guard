@@ -34,6 +34,18 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location ^~ /api/mobile/ {
+        # Mobile access/refresh tokens are verified by FastAPI. Nginx does not
+        # keep another credential or authentication policy.
+        proxy_pass http://127.0.0.1:18083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 90s;
+    }
+
     # These existing public application routes remain independent of admin sessions.
     location /callbacks/wecom/kf {
         proxy_pass http://127.0.0.1:18083;

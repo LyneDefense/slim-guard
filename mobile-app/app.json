@@ -25,11 +25,6 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "splash": {
-      "image": "./assets/adaptive-foreground-brand.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F6F3EC"
-    },
     "plugins": [
       [
         "expo-secure-store",
@@ -45,7 +40,17 @@
           "microphonePermission": false
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/adaptive-foreground-brand.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#F6F3EC"
+        }
+      ],
+      "expo-font"
     ]
   }
 }

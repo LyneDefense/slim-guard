@@ -11,6 +11,7 @@ from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from slim_guard.db.models import (
+    AdminAuditEventRecord,
     AgentItemRecord,
     AgentItemRedactionRecord,
     AgentThreadRecord,
@@ -332,7 +333,23 @@ class MobilePlatformService:
                 )
             if trace_ids:
                 await session.execute(
+                    update(AdminAuditEventRecord)
+                    .where(
+                        or_(
+                            AdminAuditEventRecord.user_id == user_id,
+                            AdminAuditEventRecord.trace_id.in_(trace_ids),
+                        )
+                    )
+                    .values(user_id=None, trace_id=None)
+                )
+                await session.execute(
                     delete(TraceSpanRecord).where(TraceSpanRecord.trace_id.in_(trace_ids))
+                )
+            else:
+                await session.execute(
+                    update(AdminAuditEventRecord)
+                    .where(AdminAuditEventRecord.user_id == user_id)
+                    .values(user_id=None)
                 )
             if routine_job_ids:
                 await session.execute(
