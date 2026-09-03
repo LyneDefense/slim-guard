@@ -55,6 +55,7 @@ class Settings(DatabaseSettings):
     mobile_dev_otp_enabled: bool = True
     mobile_sms_webhook_url: str = ""
     mobile_sms_webhook_token: str = ""
+    mobile_wecom_binding_ttl_minutes: int = Field(default=10, ge=2, le=60)
     callback_body_limit_bytes: int = Field(default=1_048_576, ge=1024)
     wecom_http_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     wecom_media_max_bytes: int = Field(default=10_485_760, ge=1024, le=20_971_520)

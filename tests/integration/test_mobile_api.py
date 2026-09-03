@@ -6,7 +6,12 @@ from sqlalchemy import func, select
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import MessageRole, ModelMessage, ModelResponse
 from slim_guard.config import Settings
-from slim_guard.db.models import InteractionTraceRecord, MobileAgentRequestRecord
+from slim_guard.db.models import (
+    InteractionTraceRecord,
+    MobileAgentRequestRecord,
+    MobileDeviceRecord,
+    SlimGuardUser,
+)
 from slim_guard.main import create_app
 
 
@@ -33,9 +38,7 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
     model = ScriptedModelGateway((reply("记下了，我们慢慢来。"),))
     app = create_app(settings, model_gateway=model)
     async with app.router.lifespan_context(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="https://test"
-        ) as http:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as http:
             unauthorized = await http.get("/api/mobile/v1/me")
             challenge = await http.post(
                 "/api/mobile/v1/auth/otp/request",
@@ -82,6 +85,24 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
                 },
             )
             today = await http.get("/api/mobile/v1/today", headers=headers)
+            device = await http.put(
+                "/api/mobile/v1/devices/current",
+                headers=headers,
+                json={
+                    "installation_id": "integration-installation-1",
+                    "platform": "ios",
+                    "push_provider": "expo",
+                    "push_token": "ExponentPushToken[integration-test]",
+                    "app_version": "1.0.0",
+                    "timezone": "Asia/Shanghai",
+                    "locale": "zh-CN",
+                },
+            )
+            binding = await http.post("/api/mobile/v1/bindings/wecom", headers=headers)
+            binding_status = await http.get(
+                "/api/mobile/v1/bindings/wecom",
+                headers=headers,
+            )
             ready = await http.get("/health/ready")
 
         assert unauthorized.status_code == 401
@@ -102,16 +123,35 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
         assert routine.json()["weight_reminder_time"] == "08:00"
         assert today.status_code == 200
         assert today.json()["routine"]["daily_review_time"] == "21:00"
+        assert device.status_code == 200
+        assert "push_token" not in device.json()
+        assert binding.status_code == 200
+        assert binding.json()["code"] is not None
+        assert binding_status.json()["code_hint"] == binding.json()["code"][-4:]
         assert ready.status_code == 200
 
         async with app.state.database.session() as session:
-            request_count = await session.scalar(
-                select(func.count(MobileAgentRequestRecord.id))
-            )
+            request_count = await session.scalar(select(func.count(MobileAgentRequestRecord.id)))
             trace = await session.scalar(select(InteractionTraceRecord))
+            stored_device = await session.scalar(select(MobileDeviceRecord))
         assert request_count == 1
         assert trace is not None
         assert trace.channel_id == "mobile"
         assert trace.generation_status == "succeeded"
         assert trace.delivery_status == "accepted"
+        assert stored_device is not None
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as http:
+            deleted = await http.request(
+                "DELETE",
+                "/api/mobile/v1/me",
+                headers=headers,
+                json={"confirmation": "DELETE"},
+            )
+            after_delete = await http.get("/api/mobile/v1/me", headers=headers)
+        assert deleted.status_code == 204
+        assert after_delete.status_code == 401
+        async with app.state.database.session() as session:
+            deleted_user = await session.get(SlimGuardUser, login.json()["user"]["id"])
+        assert deleted_user is None
     await model.close()

@@ -596,6 +596,77 @@ class MobileAgentRequestRecord(Base):
     )
 
 
+class MobileDeviceRecord(Base):
+    """One app installation eligible for local/remote notification coordination."""
+
+    __tablename__ = "mobile_devices"
+    __table_args__ = (
+        UniqueConstraint("installation_id", name="uq_mobile_device_installation"),
+        UniqueConstraint("push_provider", "push_token", name="uq_mobile_device_push_token"),
+        CheckConstraint("platform IN ('ios','android')", name="ck_mobile_device_platform"),
+        CheckConstraint(
+            "push_provider IN ('expo','apns','fcm')",
+            name="ck_mobile_device_push_provider",
+        ),
+        Index("ix_mobile_device_user_active", "user_id", "revoked_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    push_provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    push_token: Mapped[str] = mapped_column(String(512), nullable=False)
+    app_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MobileWeComBindingRecord(Base):
+    """Short-lived proof that an app account controls a WeCom conversation."""
+
+    __tablename__ = "mobile_wecom_bindings"
+    __table_args__ = (
+        UniqueConstraint("code_hash", name="uq_mobile_wecom_binding_code"),
+        CheckConstraint(
+            "status IN ('pending','claimed','expired','revoked','conflict')",
+            name="ck_mobile_wecom_binding_status",
+        ),
+        Index("ix_mobile_wecom_binding_user_created", "mobile_user_id", "created_at"),
+        Index("ix_mobile_wecom_binding_status_expiry", "status", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    mobile_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    target_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_hint: Mapped[str] = mapped_column(String(4), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_user_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class UserMemoryFactRecord(Base):
     __tablename__ = "user_memory_facts"
     __table_args__ = (

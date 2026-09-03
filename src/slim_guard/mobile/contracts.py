@@ -176,3 +176,42 @@ class TodayView(BaseModel):
     exercise_logged: int
     memories: list[MemoryView]
     routine: RoutineView
+
+
+class DeviceRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    installation_id: str = Field(min_length=8, max_length=128)
+    platform: Literal["ios", "android"]
+    push_provider: Literal["expo", "apns", "fcm"] = "expo"
+    push_token: str = Field(min_length=16, max_length=512)
+    app_version: str | None = Field(default=None, max_length=64)
+    timezone: str | None = Field(default=None, max_length=64)
+    locale: str | None = Field(default=None, max_length=32)
+
+
+class DeviceView(BaseModel):
+    id: str
+    installation_id: str
+    platform: Literal["ios", "android"]
+    push_provider: Literal["expo", "apns", "fcm"]
+    app_version: str | None
+    timezone: str | None
+    locale: str | None
+    active: bool
+    last_seen_at: datetime
+
+
+class WeComBindingView(BaseModel):
+    id: str
+    status: Literal["pending", "claimed", "expired", "revoked", "conflict"]
+    code: str | None = None
+    code_hint: str
+    expires_at: datetime
+    claimed_at: datetime | None
+
+
+class AccountDeletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: Literal["DELETE"]

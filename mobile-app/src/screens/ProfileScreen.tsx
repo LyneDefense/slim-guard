@@ -8,19 +8,25 @@ import { useApp } from '../context/AppContext';
 import { memoryLabel, memoryText } from '../lib/memoryFormat';
 import { colors, radius, spacing } from '../theme';
 import type { Routine } from '../types';
+import type { WeComBinding } from '../types';
 
 export function ProfileScreen({ openCoach }: { openCoach: (draft?: string) => void }) {
-  const { data, updateProfile, updateRoutine, logout, loading } = useApp();
+  const { data, updateProfile, updateRoutine, logout, loading, createWeComBinding, getWeComBinding, deleteAccount } = useApp();
   const [nickname, setNickname] = useState('');
   const [routine, setRoutine] = useState<Routine | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingRoutine, setSavingRoutine] = useState(false);
+  const [binding, setBinding] = useState<WeComBinding | null>(null);
+  const [bindingBusy, setBindingBusy] = useState(false);
 
   useEffect(() => {
     if (!data) return;
     setNickname(data.user.nickname || '');
     setRoutine(data.routine);
   }, [data]);
+  useEffect(() => {
+    void getWeComBinding().then(setBinding).catch(() => undefined);
+  }, [getWeComBinding]);
   if (!data || !routine) return null;
 
   async function saveName() {
@@ -52,6 +58,48 @@ export function ProfileScreen({ openCoach }: { openCoach: (draft?: string) => vo
     } finally {
       setSavingRoutine(false);
     }
+  }
+
+  async function startBinding() {
+    setBindingBusy(true);
+    try {
+      setBinding(await createWeComBinding());
+    } catch (caught) {
+      Alert.alert('暂时不能生成绑定码', caught instanceof Error ? caught.message : '请稍后再试');
+    } finally {
+      setBindingBusy(false);
+    }
+  }
+
+  async function refreshBinding() {
+    setBindingBusy(true);
+    try {
+      setBinding(await getWeComBinding());
+    } finally {
+      setBindingBusy(false);
+    }
+  }
+
+  function confirmDeleteAccount() {
+    Alert.alert(
+      '永久删除账号？',
+      '你的对话、身体记录、目标、记忆和登录方式都会被删除，无法恢复。',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '我知道，继续',
+          style: 'destructive',
+          onPress: () => Alert.alert(
+            '最后确认',
+            '删除后会立即退出 SlimGuard。',
+            [
+              { text: '不删除', style: 'cancel' },
+              { text: '永久删除', style: 'destructive', onPress: () => void deleteAccount() },
+            ],
+          ),
+        },
+      ],
+    );
   }
 
   return (
@@ -105,12 +153,35 @@ export function ProfileScreen({ openCoach }: { openCoach: (draft?: string) => vo
           <Button title="保存提醒" variant="secondary" loading={savingRoutine} onPress={() => void saveReminders()} style={{ marginTop: spacing.lg }} />
         </Card>
 
+        <SectionTitle title="连接微信" />
+        <Card>
+          {binding?.status === 'claimed' ? (
+            <View style={styles.bindingSuccess}>
+              <View style={styles.bindingSuccessIcon}><Ionicons name="checkmark" size={20} color={colors.white} /></View>
+              <View style={{ flex: 1 }}><Text style={styles.infoTitle}>已经连接</Text><Text style={styles.infoBody}>App 和微信客服现在使用同一份记录与记忆。</Text></View>
+            </View>
+          ) : binding?.status === 'pending' && binding.code ? (
+            <View>
+              <Text style={styles.help}>在 10 分钟内，把下面整行文字发送给微信里的 SlimGuard：</Text>
+              <Text selectable style={styles.bindingCode}>SG-{binding.code}</Text>
+              <Text style={styles.bindingHint}>绑定码一次有效。发送成功后回到这里检查状态。</Text>
+              <Button title="我已发送，检查状态" variant="secondary" loading={bindingBusy} onPress={() => void refreshBinding()} />
+            </View>
+          ) : (
+            <View>
+              <InfoRow icon="chatbubbles-outline" title="继续使用原来的微信记录" body={binding?.status === 'conflict' ? '两边都有历史，系统没有擅自覆盖。请联系管理员安全合并。' : '用一次性绑定码证明微信身份，不需要提供微信密码。'} />
+              <Button title={binding?.status === 'conflict' ? '重新检查' : '生成绑定码'} variant="secondary" loading={bindingBusy} onPress={() => void (binding?.status === 'conflict' ? refreshBinding() : startBinding())} />
+            </View>
+          )}
+        </Card>
+
         <SectionTitle title="账号与说明" />
         <Card>
           <InfoRow icon="shield-checkmark-outline" title="资料安全" body="登录凭证保存在系统安全区，健康资料以服务端记录为准。" />
           <View style={styles.rowBorder} />
           <InfoRow icon="medkit-outline" title="健康边界" body="SlimGuard 用于日常减脂管理，不替代医生、营养师的诊断或治疗。" />
           <Button title="退出登录" variant="ghost" loading={loading} onPress={() => Alert.alert('退出登录？', '离线待发送的消息会保留在这台设备上。', [{ text: '取消', style: 'cancel' }, { text: '退出', style: 'destructive', onPress: () => void logout() }])} style={{ marginTop: spacing.md }} />
+          <Button title="永久删除账号" variant="danger" loading={loading} onPress={confirmDeleteAccount} />
         </Card>
       </ScrollView>
     </SafeAreaView>
@@ -162,4 +233,8 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: 'row', gap: spacing.md, paddingVertical: spacing.md },
   infoTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
   infoBody: { color: colors.inkMuted, fontSize: 12, lineHeight: 18, marginTop: 3 },
+  bindingCode: { color: colors.primaryDark, backgroundColor: colors.primarySoft, fontSize: 25, fontWeight: '800', letterSpacing: 2, textAlign: 'center', paddingVertical: spacing.lg, borderRadius: radius.md, marginVertical: spacing.md },
+  bindingHint: { color: colors.inkMuted, fontSize: 11, textAlign: 'center', marginBottom: spacing.md },
+  bindingSuccess: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  bindingSuccessIcon: { width: 38, height: 38, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
 });

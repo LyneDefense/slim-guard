@@ -15,6 +15,7 @@ import type {
   OtpChallenge,
   PendingChat,
   Routine,
+  WeComBinding,
 } from '../types';
 
 type ImageInput = { uri: string; mimeType: 'image/jpeg' | 'image/png' | 'image/webp' };
@@ -34,6 +35,9 @@ type AppContextValue = {
   sendMessage: (text: string, image?: ImageInput) => Promise<'sent' | 'queued'>;
   updateProfile: (nickname: string) => Promise<void>;
   updateRoutine: (routine: Routine) => Promise<boolean>;
+  createWeComBinding: () => Promise<WeComBinding>;
+  getWeComBinding: () => Promise<WeComBinding | null>;
+  deleteAccount: () => Promise<void>;
   clearError: () => void;
 };
 
@@ -220,6 +224,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return syncRoutineNotifications(saved);
   }, []);
 
+  const createWeComBinding = useCallback(() => mobileApi.createWeComBinding(), []);
+  const getWeComBinding = useCallback(() => mobileApi.getWeComBinding(), []);
+  const deleteAccount = useCallback(async () => {
+    setLoading(true);
+    try {
+      await mobileApi.deleteAccount();
+      setTokens(null);
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const value = useMemo<AppContextValue>(() => ({
     booting,
     authenticated: tokens !== null,
@@ -235,8 +252,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     sendMessage,
     updateProfile,
     updateRoutine,
+    createWeComBinding,
+    getWeComBinding,
+    deleteAccount,
     clearError: () => setError(null),
-  }), [booting, tokens, data, pending, online, loading, error, requestOtp, verifyOtp, logout, refresh, sendMessage, updateProfile, updateRoutine]);
+  }), [booting, tokens, data, pending, online, loading, error, requestOtp, verifyOtp, logout, refresh, sendMessage, updateProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

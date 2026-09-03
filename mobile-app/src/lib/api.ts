@@ -10,6 +10,8 @@ import type {
   Progress,
   Routine,
   Today,
+  DeviceRegistration,
+  WeComBinding,
 } from '../types';
 import { clearRefreshToken, readRefreshToken, saveRefreshToken } from './session';
 
@@ -114,6 +116,29 @@ class MobileApi {
         daily_review: setting(routine.daily_review_time),
       }),
     });
+  }
+
+  registerDevice(device: DeviceRegistration): Promise<void> {
+    return this.authorized('/api/mobile/v1/devices/current', {
+      method: 'PUT',
+      body: JSON.stringify(device),
+    });
+  }
+
+  createWeComBinding(): Promise<WeComBinding> {
+    return this.authorized('/api/mobile/v1/bindings/wecom', { method: 'POST' });
+  }
+
+  getWeComBinding(): Promise<WeComBinding | null> {
+    return this.authorized('/api/mobile/v1/bindings/wecom');
+  }
+
+  async deleteAccount(): Promise<void> {
+    await this.authorized<void>('/api/mobile/v1/me', {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+    await this.clearSession();
   }
 
   private async authorized<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {

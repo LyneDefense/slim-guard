@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "scheme": "slimguard",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-brand.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
@@ -17,15 +17,18 @@
     "android": {
       "package": "com.slimguard.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#2F6F52",
+        "foregroundImage": "./assets/adaptive-foreground-brand.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "splash": {
+      "image": "./assets/adaptive-foreground-brand.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F6F3EC"
     },
     "plugins": [
       [

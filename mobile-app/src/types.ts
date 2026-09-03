@@ -99,3 +99,22 @@ export type PendingChat = {
   previewUri?: string;
   createdAt: string;
 };
+
+export type DeviceRegistration = {
+  installation_id: string;
+  platform: 'ios' | 'android';
+  push_provider: 'expo';
+  push_token: string;
+  app_version: string | null;
+  timezone: string;
+  locale: string | null;
+};
+
+export type WeComBinding = {
+  id: string;
+  status: 'pending' | 'claimed' | 'expired' | 'revoked' | 'conflict';
+  code: string | null;
+  code_hint: string;
+  expires_at: string;
+  claimed_at: string | null;
+};

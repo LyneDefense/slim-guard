@@ -11,6 +11,7 @@ from slim_guard.db.repositories import ConversationRef, MessageRepository, Outbo
 from slim_guard.integrations.wecom_kf.client import WeComClientProtocol
 from slim_guard.integrations.wecom_kf.errors import WeComAPIError, WeComTransportError
 from slim_guard.integrations.wecom_kf.service_state import WeComServiceState
+from slim_guard.mobile.platform import MobilePlatformService
 from slim_guard.observability.tracing import (
     InteractionTraceRepository,
     TraceSpanRef,
@@ -39,6 +40,7 @@ class AgentReplySyncService:
         outbox_recovery_interval_seconds: int = 30,
         outbox_send_stale_seconds: int = 120,
         traces: InteractionTraceRepository | None = None,
+        mobile_platform: MobilePlatformService | None = None,
     ) -> None:
         self.client = client
         self.repository = repository
@@ -53,6 +55,7 @@ class AgentReplySyncService:
         self.outbox_recovery_interval_seconds = outbox_recovery_interval_seconds
         self.outbox_send_stale = timedelta(seconds=outbox_send_stale_seconds)
         self.traces = traces or InteractionTraceRepository(repository.database)
+        self.mobile_platform = mobile_platform
         self._locks: defaultdict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
         self._allowed_message_types = frozenset({"text", "image"})
 
@@ -347,6 +350,30 @@ class AgentReplySyncService:
             if plan.trace_id is not None:
                 await self.traces.mark_generation_unknown_if_pending(trace_id=plan.trace_id)
             return plan
+        if self.mobile_platform is not None and plan.image_media_id is None:
+            binding = await self.mobile_platform.claim_wecom_message(
+                channel_id=plan.channel_id,
+                external_userid=plan.external_userid,
+                text=plan.input_text,
+                now=plan.occurred_at or datetime.now(UTC),
+            )
+            if binding is not None:
+                await self.repository.update_outbound_content(
+                    plan.idempotency_key,
+                    binding.message,
+                )
+                if plan.trace_id is not None:
+                    await self.traces.mark_generation(
+                        trace_id=plan.trace_id,
+                        status="succeeded",
+                        reply_kind="identity_binding",
+                    )
+                return replace(
+                    plan,
+                    content=binding.message,
+                    input_text=None,
+                    image_media_id=None,
+                )
         generation_span = await self._start_span(
             plan,
             component="agent",

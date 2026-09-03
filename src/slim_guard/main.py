@@ -40,6 +40,7 @@ from slim_guard.mobile.auth import (
     NullMobileOtpSender,
     WebhookMobileOtpSender,
 )
+from slim_guard.mobile.platform import MobilePlatformService
 from slim_guard.mobile.service import MobileApplicationService
 from slim_guard.observability.logging import configure_logging
 from slim_guard.observability.tracing import InteractionTraceRepository
@@ -225,6 +226,7 @@ def create_app(
 
         mobile_auth: MobileAuthService | None = None
         mobile_service: MobileApplicationService | None = None
+        mobile_platform: MobilePlatformService | None = None
         if app_settings.mobile_is_configured:
             otp_sender = (
                 WebhookMobileOtpSender(
@@ -256,6 +258,14 @@ def create_app(
                 runtime=active_runtime,
                 traces=traces,
                 max_image_bytes=app_settings.wecom_media_max_bytes,
+            )
+            mobile_platform = MobilePlatformService(
+                database=database,
+                secret=app_settings.mobile_auth_secret,
+                binding_ttl=timedelta(
+                    minutes=app_settings.mobile_wecom_binding_ttl_minutes
+                ),
+                memory_engine=active_memory_engine,
             )
 
         crypto: WeComCallbackCrypto | None = None
@@ -302,6 +312,7 @@ def create_app(
                 ),
                 outbox_send_stale_seconds=app_settings.wecom_outbox_send_stale_seconds,
                 traces=traces,
+                mobile_platform=mobile_platform,
             )
             watchdog_stop = asyncio.Event()
             watchdog_task = asyncio.create_task(
@@ -411,6 +422,7 @@ def create_app(
         app.state.memory_engine = active_memory_engine
         app.state.mobile_auth = mobile_auth
         app.state.mobile_service = mobile_service
+        app.state.mobile_platform = mobile_platform
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
         try:
@@ -479,6 +491,7 @@ def create_app(
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
     application.state.mobile_auth = None
     application.state.mobile_service = None
+    application.state.mobile_platform = None
     return application
 
 

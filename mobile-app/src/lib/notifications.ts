@@ -1,7 +1,12 @@
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
+import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 
 import type { Routine } from '../types';
+import { mobileApi } from './api';
+import { readInstallationId, saveInstallationId } from './session';
 
 const ids = {
   weight: 'slimguard-routine-weight',
@@ -50,5 +55,27 @@ export async function syncRoutineNotifications(routine: Routine): Promise<boolea
       },
     });
   }
+  await registerRemotePush().catch(() => undefined);
   return true;
+}
+
+async function registerRemotePush(): Promise<void> {
+  if (!Device.isDevice || Platform.OS === 'web') return;
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+  if (!projectId) return;
+  const pushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+  let installationId = await readInstallationId();
+  if (!installationId) {
+    installationId = Crypto.randomUUID();
+    await saveInstallationId(installationId);
+  }
+  await mobileApi.registerDevice({
+    installation_id: installationId,
+    platform: Platform.OS as 'ios' | 'android',
+    push_provider: 'expo',
+    push_token: pushToken,
+    app_version: Constants.expoConfig?.version || null,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
+    locale: Intl.DateTimeFormat().resolvedOptions().locale || null,
+  });
 }
