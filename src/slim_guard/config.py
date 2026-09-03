@@ -15,7 +15,9 @@ class DatabaseSettings(BaseSettings):
         case_sensitive=False,
     )
 
-    database_url: str = "sqlite+aiosqlite:///./data/slim_guard.sqlite3"
+    database_url: str = (
+        "postgresql+psycopg://slim_guard:slim_guard-local-only@127.0.0.1:15432/slim_guard"
+    )
 
 
 class Settings(DatabaseSettings):

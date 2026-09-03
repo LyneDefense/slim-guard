@@ -6,15 +6,11 @@ App 不直接连接数据库或 Mem0，只通过 FastAPI 的 `/api/mobile/v1/*` 
 
 ## 1. 服务器升级
 
-先在应用停止后备份 SQLite，再更新代码：
+SlimGuard 主库现已使用 PostgreSQL。第一次从旧 SQLite 测试环境切换时不会复制旧数据；先配置
+PostgreSQL，再更新和建表：
 
 ```bash
 cd /home/ubuntu/slim-guard
-mkdir -p backups
-docker compose stop app
-docker compose cp app:/app/data/slim_guard.sqlite3 \
-  "backups/slim_guard-$(date +%F-%H%M%S).sqlite3"
-docker compose start app
 git pull --ff-only
 ```
 
@@ -28,6 +24,10 @@ openssl rand -hex 32
 
 ```dotenv
 APP_ENV=production
+POSTGRES_DB=slim_guard
+POSTGRES_USER=slim_guard
+POSTGRES_PASSWORD=使用openssl-rand-hex-32生成
+POSTGRES_HOST_PORT=15432
 MOBILE_API_ENABLED=true
 MOBILE_AUTH_SECRET=粘贴上面生成的64位十六进制随机值
 MOBILE_ACCESS_TOKEN_TTL_MINUTES=15
@@ -61,13 +61,15 @@ MOBILE_WECOM_BINDING_TTL_MINUTES=10
 
 ```bash
 docker compose build app
+docker compose up -d postgres
 docker compose run --rm app python -m slim_guard.db.migrate
 docker compose up -d app
 docker compose ps
 docker compose logs --tail=100 app
 ```
 
-迁移会新增移动登录、Session、幂等请求、设备和微信绑定表，不会删除现有健康记录与记忆。
+空库迁移会创建完整表结构，包括移动登录、Session、幂等请求、设备和微信绑定表。数据库细节、
+备份和验证命令见 [`POSTGRESQL_DEPLOYMENT.md`](POSTGRESQL_DEPLOYMENT.md)。
 
 ## 2. Nginx
 

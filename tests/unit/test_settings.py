@@ -114,6 +114,16 @@ def test_database_settings_ignore_unrelated_invalid_app_configuration(
     assert settings.database_url.endswith("migration.sqlite3")
 
 
+def test_database_settings_default_to_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    settings = DatabaseSettings(_env_file=None)
+
+    assert settings.database_url.startswith("postgresql+psycopg://")
+
+
 def test_agent_runtime_rejects_unknown_mode() -> None:
     with pytest.raises(ValidationError):
         Settings(agent_runtime_mode="unknown")

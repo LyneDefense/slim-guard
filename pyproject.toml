@@ -9,11 +9,11 @@ description = "A WeCom Customer Service bridge for the SlimGuard agent"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "aiosqlite>=0.20,<1",
   "cryptography>=44,<47",
   "defusedxml>=0.7,<1",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy[asyncio]>=2.0,<3",
   "uvicorn[standard]>=0.34,<1",
@@ -21,6 +21,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "aiosqlite>=0.20,<1",
   "mypy>=1.14,<2",
   "pytest>=8.3,<10",
   "pytest-asyncio>=0.25,<2",

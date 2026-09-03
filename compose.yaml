@@ -1,14 +1,35 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-slim_guard}
+      POSTGRES_USER: ${POSTGRES_USER:-slim_guard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-slim_guard-local-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
+    volumes:
+      - slim_guard_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   app:
     build: .
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: sqlite+aiosqlite:///./data/slim_guard.sqlite3
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-slim_guard}:${POSTGRES_PASSWORD:-slim_guard-local-only}@postgres:5432/${POSTGRES_DB:-slim_guard}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${APP_HOST_PORT:-18083}:8000"
-    volumes:
-      - slim_guard_data:/app/data
     restart: unless-stopped
     healthcheck:
       test:
@@ -41,4 +62,4 @@ services:
       retries: 3
 
 volumes:
-  slim_guard_data:
+  slim_guard_postgres_data:

@@ -28,6 +28,7 @@ GLM 完成理解与回复，并把业务事实按用户隔离、幂等地保存�
 
 ```bash
 cp .env.example .env
+docker compose up -d postgres
 uv sync --dev
 uv run uvicorn slim_guard.main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -159,18 +160,14 @@ https://你的公网域名/callbacks/wecom/kf
 
 ## 数据
 
-默认 SQLite 文件位于：
-
-```text
-data/slim_guard.sqlite3
-```
-
-保存同步 cursor、消息 ID、消息类型、用户身份与客户资料、会话状态、权威打卡记录、Agent
+生产和 Compose 部署使用 PostgreSQL 16，SQLite 只保留为快速单元测试后端。主库保存同步
+cursor、消息 ID、消息类型、用户身份与客户资料、会话状态、权威打卡记录、Agent
 运行轨迹、个性化记忆、跨轮 Handoff、日程 Job 和出站回复。Harness 运行轨迹中的用户/助手正文、
 模型可见上下文、Tool 参数和结果默认保留 30 天，之后由后台维护任务原位替换为不可逆 SHA-256
 哈希和必要审计元数据；领域记录与消息幂等账本不依赖这些正文。下载图片会加密链路传输并作为用户隔离的短期数据库资产保存，
-默认七天后不可读取并可清理。新增表会在启动时自动创建，已有 SQLite 文件无需删除。删除 SQLite
-文件会丢失用户、记录、记忆、日程、去重和会话状态，真机环境不要随意删除。
+默认七天后不可读取并可清理。新增表由版本化迁移幂等创建。PostgreSQL 首次部署、空库建表、备份
+和密码变更见 [PostgreSQL 部署说明](./POSTGRESQL_DEPLOYMENT.md)。Mem0 的 pgvector 数据库只是可重建的
+语义索引，不替代这个权威主库。
 
 ## 用户记忆
 
@@ -287,8 +284,9 @@ uv run pytest
 docker compose up --build
 ```
 
-Compose 会读取当前目录的 `.env`，并把 SQLite 数据保存在 Docker 命名卷 `slim_guard_data`。
-默认只把服务绑定到宿主机的 `127.0.0.1:18083`，供同机 Nginx 反向代理，不直接暴露公网端口。
+Compose 会读取当前目录的 `.env`，并把 PostgreSQL 数据保存在 Docker 命名卷
+`slim_guard_postgres_data`。数据库只绑定宿主机 `127.0.0.1:15432`，应用只绑定
+`127.0.0.1:18083`，供本机维护和 Nginx 反向代理，不直接暴露公网端口。
 
 ## 用户级 Trace 管理后台
 
@@ -298,7 +296,7 @@ Compose 会读取当前目录的 `.env`，并把 SQLite 数据保存在 Docker �
 
 后台认证统一由 FastAPI 负责：登录页提交 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 后，后端签发
 短时、签名的 `HttpOnly` Session Cookie；Nginx 不保存密码，也不需要 htpasswd。React 容器
-默认绑定 `127.0.0.1:18084`，API 继续使用 `127.0.0.1:18083`。完整的首次部署、SQLite 备份、
+默认绑定 `127.0.0.1:18084`，API 继续使用 `127.0.0.1:18083`。完整的首次部署、PostgreSQL 备份、
 迁移、Nginx 配置和验证步骤见 [管理后台部署说明](./ADMIN_WEB_DEPLOYMENT.md)，可合并的配置示例
 见 [`deploy/nginx/slim-guard.conf.example`](./deploy/nginx/slim-guard.conf.example)。
 
@@ -310,6 +308,7 @@ docker compose run --rm app python -m slim_guard.db.migrate
 
 ## 设计文档
 
+- [PostgreSQL 部署说明](./POSTGRESQL_DEPLOYMENT.md)
 - [Phase 1 实现设计](./PHASE1_PYTHON_CHANNEL_SPIKE.md)
 - [完整技术设计](./TECHNICAL_DESIGN.md)
 - [Agent Harness 设计与实施计划](./AGENT_HARNESS_IMPLEMENTATION_PLAN.md)

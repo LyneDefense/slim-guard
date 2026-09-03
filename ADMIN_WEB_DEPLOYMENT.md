@@ -18,21 +18,11 @@
 
 ## 首次部署
 
-在拉取代码之前先备份正在使用的 SQLite。下面的复制在停止应用后执行，避免复制到不一致的
-SQLite/WAL 状态：
+主业务库现已使用 PostgreSQL。如果这是从旧 SQLite 测试环境首次切换且不保留数据，请先更新代码，
+再按照 [PostgreSQL 部署说明](./POSTGRESQL_DEPLOYMENT.md) 设置数据库密码并创建空库：
 
 ```bash
 cd /home/ubuntu/slim-guard
-mkdir -p backups
-docker compose stop app
-docker compose cp app:/app/data/slim_guard.sqlite3 \
-  "backups/slim_guard-$(date +%F-%H%M%S).sqlite3"
-docker compose start app
-```
-
-然后更新代码：
-
-```bash
 git pull --ff-only
 ```
 
@@ -58,13 +48,13 @@ ADMIN_SESSION_TTL_HOURS=12
 
 ```bash
 docker compose build
+docker compose up -d postgres
 docker compose run --rm app python -m slim_guard.db.migrate
 docker compose up -d
 docker compose ps
 ```
 
-迁移是幂等的；应用启动时也会自动执行一次。首次升级会创建 `schema_migrations`、
-`interaction_traces`、`trace_spans` 和 `admin_audit_events`，不会删除现有记录。
+迁移是幂等的；应用启动时也会自动执行一次。空 PostgreSQL 会创建完整业务表结构。
 
 验证并加载 Nginx：
 
@@ -88,12 +78,13 @@ https://你的域名/admin/login
 
 ## 日常升级
 
-涉及数据库模型的升级仍建议先执行上述 SQLite 备份。一般升级命令：
+涉及数据库模型的升级应先用 `pg_dump` 备份。一般升级命令：
 
 ```bash
 cd /home/ubuntu/slim-guard
 git pull --ff-only
 docker compose build
+docker compose up -d postgres
 docker compose run --rm app python -m slim_guard.db.migrate
 docker compose up -d
 docker compose ps

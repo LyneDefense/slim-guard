@@ -14,7 +14,6 @@ RUN python -m pip install --no-cache-dir \
 
 RUN addgroup --system slimguard \
     && adduser --system --ingroup slimguard slimguard \
-    && mkdir -p /app/data \
     && chown -R slimguard:slimguard /app
 
 USER slimguard
