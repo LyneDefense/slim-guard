@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -15,7 +16,13 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, TurnTrigger
+from slim_guard.harness.events import (
+    ItemStatus,
+    ItemType,
+    TurnStatus,
+    TurnTrigger,
+    WorkflowTraceEvent,
+)
 from slim_guard.harness.failures import HarnessFailure
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
@@ -113,6 +120,142 @@ async def test_persistent_recorder_saves_final_response_and_completes_turn(tmp_p
         assert stored_turn.step_count == 1
     finally:
         await database.close()
+
+
+async def test_workflow_events_are_privacy_minimized_and_json_serializable(tmp_path) -> None:
+    database, repository, turn = await prepare_turn(tmp_path)
+    recorder = PersistentHarnessRunRecorder(repository)
+    started_at = datetime(2026, 9, 4, 8, 0, tzinfo=UTC)
+    completed_at = datetime(2026, 9, 4, 8, 0, 1, tzinfo=UTC)
+    sensitive_text = "用户原话：我的健康详情不应复制到工作流事件"
+    try:
+        await recorder.record_workflow_event(
+            turn_id=turn.id,
+            event_type=ItemType.INVOCATION_STARTED,
+            payload={
+                "invocation_id": "invocation-1",
+                "agent_role": "nutrition_expert",
+                "agent_version": "nutrition-v1",
+                "attempt": 1,
+                "parent_invocation_id": None,
+                "input_artifact_ids": ("artifact-input",),
+                "allowed_tool_names": ("lookup_nutrition_guidance",),
+                "privacy_scopes": ("health_records",),
+                "reason_summary": "需要核对已形成的饮食结论",
+                "started_at": started_at,
+                "prompt": sensitive_text,
+                "messages": [{"content": sensitive_text}],
+                "chain_of_thought": sensitive_text,
+            },
+        )
+        await recorder.record_workflow_event(
+            turn_id=turn.id,
+            event_type=ItemType.INVOCATION_RESULT,
+            payload={
+                "invocation_id": "invocation-1",
+                "status": "succeeded",
+                "output_artifact_id": "artifact-output",
+                "model_call_count": 1,
+                "tool_call_count": 0,
+                "total_token_count": 42,
+                "failure_code": None,
+                "completed_at": completed_at,
+                "raw_output": sensitive_text,
+            },
+        )
+        await recorder.record_workflow_event(
+            turn_id=turn.id,
+            event_type=ItemType.ARTIFACT_CREATED,
+            payload={
+                "artifact_id": "artifact-output",
+                "artifact_type": "assessment",
+                "producer_role": "nutrition_expert",
+                "schema_version": "1",
+                "parent_artifact_ids": ["artifact-input"],
+                "payload_sha256": "a" * 64,
+                "payload": {"assessment": sensitive_text},
+            },
+        )
+        await recorder.record_workflow_event(
+            turn_id=turn.id,
+            event_type=ItemType.WORKFLOW_TRANSITION,
+            payload={
+                "from_node": "nutrition_expert",
+                "to_node": "response_style",
+                "transition_type": "route",
+                "reason_code": "assessment_ready",
+                "attempt": 1,
+            },
+        )
+        await recorder.record_workflow_event(
+            turn_id=turn.id,
+            event_type=ItemType.RESPONSE_ADOPTED,
+            payload={
+                "artifact_id": "artifact-output",
+                "mode": "shadow",
+                "final": False,
+            },
+        )
+        await recorder.record_workflow_event(
+            turn_id=turn.id,
+            event_type=ItemType.RESPONSE_DEGRADED,
+            payload={
+                "artifact_id": None,
+                "reason_code": "style_timeout",
+                "fallback_type": "legacy_response",
+            },
+        )
+
+        items = await repository.list_items(turn.id)
+
+        assert [item.item_type for item in items] == [
+            ItemType.INVOCATION_STARTED,
+            ItemType.INVOCATION_RESULT,
+            ItemType.ARTIFACT_CREATED,
+            ItemType.WORKFLOW_TRANSITION,
+            ItemType.RESPONSE_ADOPTED,
+            ItemType.RESPONSE_DEGRADED,
+        ]
+        assert all(item.status is ItemStatus.COMPLETED for item in items)
+        assert items[0].payload["started_at"] == "2026-09-04T08:00:00+00:00"
+        assert items[0].payload["input_artifact_ids"] == ["artifact-input"]
+        assert items[1].payload["completed_at"] == "2026-09-04T08:00:01+00:00"
+        assert items[2].payload["payload_sha256"] == "a" * 64
+        serialized = json.dumps([item.payload for item in items], ensure_ascii=False)
+        assert sensitive_text not in serialized
+        assert "prompt" not in serialized
+        assert "messages" not in serialized
+        assert "chain_of_thought" not in serialized
+        assert '"payload"' not in serialized
+    finally:
+        await database.close()
+
+
+def test_workflow_event_schema_rejects_missing_and_malformed_fields() -> None:
+    with pytest.raises(ValueError, match="Missing invocation_started trace fields"):
+        WorkflowTraceEvent.build(
+            event_type=ItemType.INVOCATION_STARTED,
+            payload={"invocation_id": "invocation-1"},
+        )
+
+    with pytest.raises(ValueError, match="payload_sha256"):
+        WorkflowTraceEvent.build(
+            event_type=ItemType.ARTIFACT_CREATED,
+            payload={
+                "artifact_id": "artifact-1",
+                "artifact_type": "assessment",
+                "producer_role": "nutrition_expert",
+                "schema_version": "1",
+                "parent_artifact_ids": [],
+                "payload_sha256": "not-a-digest",
+            },
+        )
+
+    with pytest.raises(ValueError, match="Not a workflow trace event type"):
+        WorkflowTraceEvent.build(
+            event_type=ItemType.USER_MESSAGE,
+            payload={"text": "legacy payload"},
+        )
 
 
 async def test_tool_result_reserved_before_wait_can_finish_after_pause(tmp_path) -> None:

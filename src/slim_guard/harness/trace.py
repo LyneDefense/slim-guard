@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
 from slim_guard.harness.errors import TurnStateConflict
-from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus
+from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, WorkflowTraceEvent
 from slim_guard.harness.failures import HarnessFailure
 from slim_guard.harness.state_repository import HarnessRunStore
 from slim_guard.harness.termination import HarnessTermination
@@ -20,6 +20,15 @@ class ToolTrace:
 
 
 class HarnessRunRecorder(Protocol):
+    async def record_workflow_event(
+        self,
+        *,
+        turn_id: str,
+        event_type: ItemType | str,
+        payload: Mapping[str, Any],
+        status: ItemStatus | str = ItemStatus.COMPLETED,
+    ) -> None: ...
+
     async def record_memory_ingestion(
         self,
         *,
@@ -91,6 +100,21 @@ class HarnessRunRecorder(Protocol):
 
 class NullHarnessRunRecorder:
     """Keeps the core loop usable in deterministic unit tests without persistence."""
+
+    async def record_workflow_event(
+        self,
+        *,
+        turn_id: str,
+        event_type: ItemType | str,
+        payload: Mapping[str, Any],
+        status: ItemStatus | str = ItemStatus.COMPLETED,
+    ) -> None:
+        WorkflowTraceEvent.build(
+            event_type=event_type,
+            payload=payload,
+            status=status,
+        )
+        return None
 
     async def record_memory_ingestion(
         self,
@@ -174,6 +198,26 @@ class PersistentHarnessRunRecorder:
 
     def __init__(self, store: HarnessRunStore) -> None:
         self._store = store
+
+    async def record_workflow_event(
+        self,
+        *,
+        turn_id: str,
+        event_type: ItemType | str,
+        payload: Mapping[str, Any],
+        status: ItemStatus | str = ItemStatus.COMPLETED,
+    ) -> None:
+        event = WorkflowTraceEvent.build(
+            event_type=event_type,
+            payload=payload,
+            status=status,
+        )
+        await self._store.append_item(
+            turn_id=turn_id,
+            item_type=event.item_type,
+            status=event.status,
+            payload=event.payload,
+        )
 
     async def record_memory_ingestion(
         self,
@@ -377,9 +421,7 @@ class PersistentHarnessRunRecorder:
         await self._store.transition_turn(
             turn_id=turn_id,
             target=(
-                TurnStatus.SUSPENDED
-                if failure is None or failure.retryable
-                else TurnStatus.FAILED
+                TurnStatus.SUSPENDED if failure is None or failure.retryable else TurnStatus.FAILED
             ),
             expected=TurnStatus.RUNNING,
             step_count=model_call_count + tool_call_count,

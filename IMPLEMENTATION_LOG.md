@@ -371,3 +371,14 @@ curl -i https://enceladus.online/health/ready
 
 - `deploy/mem0/Dockerfile` → 国内服务器可复现构建 → 改由清华 PyPI 镜像安装固定的 `psycopg[binary]==3.3.5`，不再等待腾讯云连接缓慢的 Debian apt 索引；二进制 wheel 自带 libpq 实现，并与旧 Mem0 当前运行版本一致。
 - 首次服务器验证 → 兼容测试环境已初始化数据卷中的短数据库密码，仅在 `APP_ENV=production` 强制数据库密码至少 16 位，避免新配置与旧库内角色密码不一致。
+
+### `feat: freeze multi-agent workflow contracts`
+
+- `src/slim_guard/agents/contracts.py` → 多 Agent 边界契约 → 新增 Invocation、Artifact、Directive、ResponsePlan、ProfessionalAssessment、KnowledgeCitation、StyledResponse 与 ReviewerVerdict 的严格不可变 Schema，并校验证据、引用、Action、风险和 required block 的交叉关系。
+- `src/slim_guard/orchestration/graph.py`、`artifacts.py` → Coordinator 确定性控制面 → 冻结允许边、有限返回边、Tool/Privacy/调用预算授权、全 Turn 循环预算，以及带 canonical SHA-256、append-only、同 Turn 血缘检查的 Artifact Ledger。
+- `src/slim_guard/agent_models/` → 供应商无关结构化输出能力 → 增加 orchestrator、nutrition、style、reviewer 用途和显式 `json_object` 响应模式；智谱适配器只请求 JSON 模式，业务 Schema 仍由本地 Pydantic 验证。
+- `src/slim_guard/harness/manifest.py` → 完整工作流版本冻结 → 新增 Graph/Node Manifest，固定各节点模型、Prompt 指纹、输出 Schema、工具、隐私范围和调用预算，并生成稳定内容版本 ID。
+- `src/slim_guard/harness/events.py`、`trace.py` → 多 Agent 可审计事件 → 新增调用开始/结果、Artifact、状态转换、回复采用/降级事件；通过字段白名单拒绝保存 Prompt、原始模型输出、Artifact 正文和隐藏思维链。
+- `src/slim_guard/admin/presentation.py`、`frontend/src/types.ts` → 管理台兼容基础 → 六类新事件提供中文白话说明与安全 facts，前端新增可判别 Trace 类型，不改变现有页面行为。
+- `MULTI_AGENT_ARCHITECTURE.md`、`MULTI_AGENT_IMPLEMENTATION_PLAN.md` → 实施基线 → 架构升级为 v1.2 并标记计划进入实施，明确 JSON 终点、Graph Manifest 和 Trace 隐私契约。
+- `tests/unit/test_multi_agent_contracts.py`、`test_orchestration_graph.py`、`test_artifact_ledger.py`、`test_agent_graph_manifest.py` 及现有 Trace/Presentation/Gateway 测试 → Increment 0 验收 → 覆盖非法边、越权、伪造引用、循环上限、敏感字段脱敏、结构化模型请求和旧 API 兼容。

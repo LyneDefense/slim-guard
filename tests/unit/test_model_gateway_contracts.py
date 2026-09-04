@@ -10,6 +10,7 @@ from slim_guard.agent_models.gateway import (
     ModelRequest,
     ModelResponse,
     NormalizedToolCall,
+    ResponseFormat,
     ToolChoice,
     ToolDefinition,
 )
@@ -85,3 +86,24 @@ def test_model_request_preserves_versioned_tool_schema() -> None:
 def test_model_response_rejects_a_non_assistant_message() -> None:
     with pytest.raises(ValidationError, match="assistant message"):
         ModelResponse(message=ModelMessage(role=MessageRole.USER, content="invalid"))
+
+
+def test_structured_request_requires_json_response_format() -> None:
+    with pytest.raises(ValidationError, match="output_schema_name requires"):
+        ModelRequest(
+            purpose=ModelPurpose.ORCHESTRATOR,
+            model="glm-5.2",
+            messages=(ModelMessage(role=MessageRole.USER, content="生成计划"),),
+            output_schema_name="TurnDirective",
+        )
+
+    request = ModelRequest(
+        purpose=ModelPurpose.ORCHESTRATOR,
+        model="glm-5.2",
+        messages=(ModelMessage(role=MessageRole.USER, content="生成计划"),),
+        response_format=ResponseFormat.JSON_OBJECT,
+        output_schema_name="TurnDirective",
+    )
+
+    assert request.response_format is ResponseFormat.JSON_OBJECT
+    assert request.output_schema_name == "TurnDirective"

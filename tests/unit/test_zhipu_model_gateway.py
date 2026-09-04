@@ -17,6 +17,7 @@ from slim_guard.agent_models.gateway import (
     ModelPurpose,
     ModelRequest,
     NormalizedToolCall,
+    ResponseFormat,
     ToolChoice,
     ToolDefinition,
 )
@@ -176,6 +177,39 @@ async def test_gateway_serializes_assistant_call_and_tool_result() -> None:
     }
     assert response.message.content == "已记录77.6kg。"
     assert response.message.tool_calls == ()
+
+
+async def test_gateway_requests_json_object_response_explicitly() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"response_path":"direct"}'}}]},
+        )
+
+    gateway = ZhipuModelGateway(
+        api_key="secret-key",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        request = request_with(ModelMessage(role=MessageRole.USER, content="你好"))
+        await gateway.complete(
+            request.model_copy(
+                update={
+                    "purpose": ModelPurpose.ORCHESTRATOR,
+                    "response_format": ResponseFormat.JSON_OBJECT,
+                    "output_schema_name": "TurnDirective",
+                }
+            )
+        )
+    finally:
+        await gateway.close()
+
+    assert captured["response_format"] == {"type": "json_object"}
 
 
 async def test_gateway_rejects_tool_arguments_that_are_not_an_object() -> None:

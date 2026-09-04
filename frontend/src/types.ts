@@ -61,7 +61,76 @@ export interface TraceSummary {
   duration_ms: number | null;
 }
 
-export interface TimelineEvent {
+export type AgentRole =
+  | "orchestrator"
+  | "nutrition_expert"
+  | "response_style"
+  | "response_reviewer";
+
+export type AgentInvocationStatus = "succeeded" | "degraded" | "failed";
+
+export interface InvocationStartedDetails {
+  invocation_id: string;
+  agent_role: AgentRole;
+  agent_version: string;
+  attempt: number;
+  parent_invocation_id: string | null;
+  input_artifact_ids: string[];
+  allowed_tool_names: string[];
+  privacy_scopes: string[];
+  reason_summary: string;
+  started_at: string;
+}
+
+export interface InvocationResultDetails {
+  invocation_id: string;
+  status: AgentInvocationStatus;
+  output_artifact_id: string | null;
+  model_call_count: number;
+  tool_call_count: number;
+  total_token_count: number;
+  failure_code: string | null;
+  completed_at: string;
+}
+
+export interface ArtifactCreatedDetails {
+  artifact_id: string;
+  artifact_type: string;
+  producer_role: string;
+  schema_version: string;
+  parent_artifact_ids: string[];
+  payload_sha256: string;
+}
+
+export interface WorkflowTransitionDetails {
+  from_node: string;
+  to_node: string;
+  transition_type: string;
+  reason_code: string;
+  attempt: number;
+}
+
+export interface ResponseAdoptedDetails {
+  artifact_id: string;
+  mode: string;
+  final: boolean;
+}
+
+export interface ResponseDegradedDetails {
+  artifact_id: string | null;
+  reason_code: string;
+  fallback_type: string;
+}
+
+export type MultiAgentTraceOperation =
+  | "invocation_started"
+  | "invocation_result"
+  | "artifact_created"
+  | "workflow_transition"
+  | "response_adopted"
+  | "response_degraded";
+
+export interface TimelineEvent<TDetails = unknown> {
   event_type: string;
   id: string;
   parent_span_id?: string | null;
@@ -69,7 +138,7 @@ export interface TimelineEvent {
   component: string;
   operation: string;
   status: string;
-  details: unknown;
+  details: TDetails;
   error_code?: string | null;
   error_detail?: string | null;
   redacted?: boolean;
@@ -84,6 +153,14 @@ export interface TimelineEvent {
     facts: Array<{ label: string; value: string }>;
   };
 }
+
+export type MultiAgentTimelineEvent =
+  | (TimelineEvent<InvocationStartedDetails> & { operation: "invocation_started" })
+  | (TimelineEvent<InvocationResultDetails> & { operation: "invocation_result" })
+  | (TimelineEvent<ArtifactCreatedDetails> & { operation: "artifact_created" })
+  | (TimelineEvent<WorkflowTransitionDetails> & { operation: "workflow_transition" })
+  | (TimelineEvent<ResponseAdoptedDetails> & { operation: "response_adopted" })
+  | (TimelineEvent<ResponseDegradedDetails> & { operation: "response_degraded" });
 
 export interface TraceDetail {
   trace: TraceSummary;

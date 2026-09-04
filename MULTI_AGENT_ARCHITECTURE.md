@@ -1,9 +1,13 @@
 # SlimGuard 多 Agent 架构与编排设计
 
-> 版本：v1.1
+> 版本：v1.2
 > 日期：2026-09-04
 > 状态：目标架构与实施基线
 > 适用范围：减脂记录、饮食与进度专业分析、医生风格表达、记忆、图片理解和安全审查
+
+v1.2 冻结了首个可实施契约：模型请求显式区分文本与 JSON Object 终点；完整 Graph Manifest 冻结
+节点模型、Prompt、Schema、工具权限、隐私范围与预算；工作流 Trace 使用字段白名单，只记录可审计
+摘要、引用和哈希，不保存隐藏思维链或 Artifact 敏感正文。
 
 v1.1 针对架构复审做了四项关键修正：营养 Agent 增加独立专业工具与 RAG；医生语气抽象为通用
 Response Style Agent；记忆摄取重新定义为集中治理的 Memory Plane Worker；补全 Agent Invocation、

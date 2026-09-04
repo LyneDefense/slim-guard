@@ -10,6 +10,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     ModelUsage,
     NormalizedToolCall,
+    ResponseFormat,
     ToolChoice,
     ToolDefinition,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ModelResponse",
     "ModelUsage",
     "NormalizedToolCall",
+    "ResponseFormat",
     "ScriptedModelGateway",
     "ToolChoice",
     "ToolDefinition",

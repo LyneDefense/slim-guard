@@ -20,6 +20,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     ModelUsage,
     NormalizedToolCall,
+    ResponseFormat,
     ToolChoice,
 )
 
@@ -80,6 +81,8 @@ class ZhipuModelGateway:
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        if request.response_format is ResponseFormat.JSON_OBJECT:
+            payload["response_format"] = {"type": "json_object"}
         if request.tool_choice is ToolChoice.AUTO and request.tools:
             payload["tools"] = [
                 {

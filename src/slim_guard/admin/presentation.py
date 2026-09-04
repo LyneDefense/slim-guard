@@ -77,6 +77,61 @@ OPERATION_LABELS = {
     "turn_finished": ("output", "Harness Agent 回合结束"),
 }
 
+AGENT_ROLE_LABELS = {
+    "memory_ingestion": "长期记忆核对模块",
+    "memory_recall": "记忆召回模块",
+    "orchestrator": "对话编排 Agent",
+    "business_tool": "业务工具",
+    "evidence_builder": "证据整理模块",
+    "nutrition_expert": "营养专业 Agent",
+    "nutrition_tool": "营养只读工具",
+    "style_resolver": "风格配置模块",
+    "response_style": "表达风格 Agent",
+    "response_reviewer": "回复审查 Agent",
+    "coordinator": "工作流协调器",
+}
+
+ARTIFACT_TYPE_LABELS = {
+    "directive": "工作流指令",
+    "turn_directive": "工作流指令",
+    "response_plan": "回复内容计划",
+    "assessment": "专业评估",
+    "nutrition_assessment": "营养专业评估",
+    "citation": "资料引用",
+    "knowledge_citation": "专业资料引用",
+    "styled_response": "风格化回复",
+    "reviewer_verdict": "回复审查结论",
+}
+
+WORKFLOW_NODE_LABELS = {
+    "initialized": "工作流初始化",
+    "input_guarded": "输入安全检查",
+    "safety_rendered": "安全回复生成",
+    "memory_ingested": "长期记忆核对",
+    "memory_recall": "相关记忆召回",
+    "context_ready": "上下文准备完成",
+    "orchestrator": "对话编排",
+    "orchestrator_running": "对话编排",
+    "business_tool_running": "业务工具执行",
+    "response_rendering": "回复内容整理",
+    "evidence_ready": "证据准备完成",
+    "nutrition_expert": "营养专业判断",
+    "expert_running": "营养专业判断",
+    "expert_tool_running": "营养只读工具执行",
+    "style_resolved": "表达风格配置完成",
+    "response_style": "表达风格处理",
+    "style_running": "表达风格处理",
+    "style_tool_running": "风格示例检索",
+    "response_reviewer": "回复审查",
+    "review_running": "回复审查",
+    "neutral_fallback": "中性回复降级",
+    "final_guard": "最终安全检查",
+    "output_guarded": "最终安全检查",
+    "legacy_response": "现有回复链路",
+    "completed": "工作流完成",
+    "delivery": "渠道发送",
+}
+
 
 def present_event(event: Mapping[str, Any]) -> dict[str, Any]:
     operation = str(event.get("operation") or "unknown")
@@ -200,6 +255,18 @@ def context_sources(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
 
 
 def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str, Any]:
+    if operation == "invocation_started":
+        return _invocation_started_presentation(details)
+    if operation == "invocation_result":
+        return _invocation_result_presentation(details)
+    if operation == "artifact_created":
+        return _artifact_created_presentation(details)
+    if operation == "workflow_transition":
+        return _workflow_transition_presentation(details)
+    if operation == "response_adopted":
+        return _response_adopted_presentation(details)
+    if operation == "response_degraded":
+        return _response_degraded_presentation(details)
     if operation == "user_message":
         text = details.get("text")
         return _presentation(
@@ -285,20 +352,181 @@ def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str,
     )
 
 
+def _invocation_started_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    role = str(details.get("agent_role") or "unknown")
+    role_label = _agent_role_label(role)
+    reason = str(details.get("reason_summary") or "工作流需要这个 Agent 处理下一步。")
+    artifact_ids = _string_rows(details.get("input_artifact_ids"))
+    tool_names = _string_rows(details.get("allowed_tool_names"))
+    privacy_scopes = _string_rows(details.get("privacy_scopes"))
+    parent_id = details.get("parent_invocation_id")
+    facts = [
+        {"label": "Agent 角色", "value": role_label},
+        {"label": "Agent 版本", "value": _display(details.get("agent_version"))},
+        {"label": "执行次数", "value": f"第 {_display(details.get('attempt'))} 次"},
+        {"label": "输入产物", "value": f"{len(artifact_ids)} 个引用"},
+        {
+            "label": "允许的工具",
+            "value": "、".join(tool_label(name) for name in tool_names) or "无",
+        },
+        {
+            "label": "可见信息范围",
+            "value": "、".join(_privacy_scope_label(scope) for scope in privacy_scopes) or "未声明",
+        },
+    ]
+    if parent_id:
+        facts.append({"label": "上游调用", "value": _short_reference(parent_id)})
+    return {
+        **_presentation(
+            "decision",
+            f"启动{role_label}",
+            f"调用原因：{reason} 系统只提供已声明的信息范围、产物引用和工具权限。",
+        ),
+        "facts": facts,
+    }
+
+
+def _invocation_result_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    status = str(details.get("status") or "unknown")
+    status_label = _invocation_status_label(status)
+    failure_code = details.get("failure_code")
+    output_artifact_id = details.get("output_artifact_id")
+    if status in {"succeeded", "completed", "passed"}:
+        summary = "这次 Agent 调用已正常结束"
+        if output_artifact_id:
+            summary += "，并交付了一个经过类型校验的结构化产物。"
+        else:
+            summary += "，没有生成新的结构化产物。"
+    else:
+        summary = "这次 Agent 调用没有正常产出"
+        summary += (
+            f"，失败代码为 {_humanize_identifier(str(failure_code))}。"
+            if failure_code
+            else "；工作流会根据策略决定跳过、重试或降级。"
+        )
+    facts = [
+        {"label": "调用状态", "value": status_label},
+        {"label": "模型调用", "value": f"{_display(details.get('model_call_count'))} 次"},
+        {"label": "工具调用", "value": f"{_display(details.get('tool_call_count'))} 次"},
+        {"label": "总 Token", "value": _display(details.get("total_token_count"))},
+    ]
+    if output_artifact_id:
+        facts.append({"label": "输出产物", "value": _short_reference(output_artifact_id)})
+    if failure_code:
+        facts.append({"label": "失败代码", "value": _humanize_identifier(str(failure_code))})
+    return {
+        **_presentation("observation", f"Agent 调用结果：{status_label}", summary),
+        "facts": facts,
+    }
+
+
+def _artifact_created_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    artifact_type = str(details.get("artifact_type") or "unknown")
+    producer_role = str(details.get("producer_role") or "unknown")
+    parents = _string_rows(details.get("parent_artifact_ids"))
+    digest = str(details.get("payload_sha256") or "")
+    return {
+        **_presentation(
+            "observation",
+            f"生成结构化产物：{_artifact_type_label(artifact_type)}",
+            (
+                f"{_agent_role_label(producer_role)}生成了经过 Schema 校验的产物。"
+                "Trace 只保存类型、来源引用和内容指纹，不复制敏感正文。"
+            ),
+        ),
+        "facts": [
+            {"label": "产物引用", "value": _short_reference(details.get("artifact_id"))},
+            {"label": "Schema 版本", "value": _display(details.get("schema_version"))},
+            {"label": "上游产物", "value": f"{len(parents)} 个引用"},
+            {"label": "内容指纹", "value": _short_digest(digest)},
+        ],
+    }
+
+
+def _workflow_transition_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    from_node = str(details.get("from_node") or "unknown")
+    to_node = str(details.get("to_node") or "unknown")
+    transition_type = str(details.get("transition_type") or "unknown")
+    reason_code = str(details.get("reason_code") or "unknown")
+    return {
+        **_presentation(
+            "decision",
+            f"工作流进入：{_workflow_node_label(to_node)}",
+            (
+                f"系统从“{_workflow_node_label(from_node)}”转到"
+                f"“{_workflow_node_label(to_node)}”。类型为"
+                f"{_transition_type_label(transition_type)}，原因代码为"
+                f"{_humanize_identifier(reason_code)}。"
+            ),
+        ),
+        "facts": [
+            {"label": "上一阶段", "value": _workflow_node_label(from_node)},
+            {"label": "下一阶段", "value": _workflow_node_label(to_node)},
+            {"label": "流转类型", "value": _transition_type_label(transition_type)},
+            {"label": "执行次数", "value": f"第 {_display(details.get('attempt'))} 次"},
+        ],
+    }
+
+
+def _response_adopted_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    mode = str(details.get("mode") or "unknown")
+    final = details.get("final") is True
+    mode_label = _response_mode_label(mode)
+    return {
+        **_presentation(
+            "output",
+            "采用最终回复" if final else "采用候选回复",
+            (
+                f"Harness 在{mode_label}下采用了这个产物"
+                + (
+                    "，它将继续进入最终安全检查和发送流程。"
+                    if final
+                    else "，但尚未作为最终回复发送。"
+                )
+            ),
+        ),
+        "facts": [
+            {"label": "回复产物", "value": _short_reference(details.get("artifact_id"))},
+            {"label": "运行模式", "value": mode_label},
+            {"label": "是否最终采用", "value": "是" if final else "否"},
+        ],
+    }
+
+
+def _response_degraded_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    reason_code = str(details.get("reason_code") or "unknown")
+    fallback_type = str(details.get("fallback_type") or "unknown")
+    artifact_id = details.get("artifact_id")
+    facts = [
+        {"label": "降级原因", "value": _humanize_identifier(reason_code)},
+        {"label": "回退方式", "value": _fallback_type_label(fallback_type)},
+    ]
+    if artifact_id:
+        facts.append({"label": "原候选产物", "value": _short_reference(artifact_id)})
+    return {
+        **_presentation(
+            "output",
+            "回复进入降级路径",
+            (
+                f"候选回复因 {_humanize_identifier(reason_code)} 未被直接采用；"
+                f"系统改用{_fallback_type_label(fallback_type)}，并保留本次降级记录。"
+            ),
+        ),
+        "facts": facts,
+    }
+
+
 def _context_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
     request = _mapping(details.get("request"))
     messages = request.get("messages")
     message_rows = messages if isinstance(messages, list) else []
     contents = [
-        str(message.get("content") or "")
-        for message in message_rows
-        if isinstance(message, dict)
+        str(message.get("content") or "") for message in message_rows if isinstance(message, dict)
     ]
     has_authoritative = any(content.startswith("权威用户事实") for content in contents)
     has_working_memory = any(content.startswith("近期对话工作记忆") for content in contents)
     has_memory_receipt = any(
-        content.startswith("权威用户事实")
-        and "current_turn_memory_receipt" in content
+        content.startswith("权威用户事实") and "current_turn_memory_receipt" in content
         for content in contents
     )
     context_parts = []
@@ -381,9 +609,7 @@ def _model_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
                 "数据库记忆保持不变。"
                 if purpose == "memory_ingestion"
                 else (
-                    _quote(content)
-                    if isinstance(content, str)
-                    else "模型结束本轮判断并返回文本。"
+                    _quote(content) if isinstance(content, str) else "模型结束本轮判断并返回文本。"
                 )
             ),
         ),
@@ -489,6 +715,92 @@ def _span_summary(operation: str, details: Mapping[str, Any], status: str) -> st
     return "系统完成了这个运行步骤。"
 
 
+def _agent_role_label(role: str) -> str:
+    return AGENT_ROLE_LABELS.get(role, _humanize_identifier(role))
+
+
+def _artifact_type_label(artifact_type: str) -> str:
+    return ARTIFACT_TYPE_LABELS.get(artifact_type, _humanize_identifier(artifact_type))
+
+
+def _workflow_node_label(node: str) -> str:
+    return WORKFLOW_NODE_LABELS.get(node, _humanize_identifier(node))
+
+
+def _privacy_scope_label(scope: str) -> str:
+    return {
+        "current_user_message": "当前用户消息",
+        "working_memory": "近期对话",
+        "durable_memory": "相关长期记忆",
+        "health_records": "相关健康记录",
+        "image_observations": "图片观察结果",
+        "knowledge_sources": "专业资料",
+        "style_examples": "脱敏风格示例",
+    }.get(scope, _humanize_identifier(scope))
+
+
+def _invocation_status_label(status: str) -> str:
+    return {
+        "started": "执行中",
+        "succeeded": "成功",
+        "completed": "完成",
+        "passed": "通过",
+        "failed": "失败",
+        "timed_out": "超时",
+        "cancelled": "已取消",
+        "skipped": "已跳过",
+    }.get(status, _humanize_identifier(status))
+
+
+def _transition_type_label(transition_type: str) -> str:
+    return {
+        "route": "正常流转",
+        "retry": "重试",
+        "repair": "返回修复",
+        "skip": "跳过",
+        "fallback": "进入降级",
+        "complete": "完成",
+    }.get(transition_type, _humanize_identifier(transition_type))
+
+
+def _response_mode_label(mode: str) -> str:
+    return {
+        "legacy": "现有单 Agent 模式",
+        "shadow": "影子模式",
+        "canary": "灰度模式",
+        "multi_agent": "多 Agent 模式",
+        "on": "多 Agent 模式",
+    }.get(mode, _humanize_identifier(mode))
+
+
+def _fallback_type_label(fallback_type: str) -> str:
+    return {
+        "legacy_response": "现有回复",
+        "neutral_renderer": "中性模板回复",
+        "safe_response": "安全兜底回复",
+        "no_response": "不发送回复",
+    }.get(fallback_type, _humanize_identifier(fallback_type))
+
+
+def _string_rows(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def _short_reference(value: Any) -> str:
+    rendered = str(value or "")
+    if not rendered:
+        return "—"
+    return rendered if len(rendered) <= 24 else rendered[:12] + "…" + rendered[-6:]
+
+
+def _short_digest(value: str) -> str:
+    if not value:
+        return "—"
+    return value if len(value) <= 18 else value[:16] + "…"
+
+
 def tool_label(name: str) -> str:
     return TOOL_LABELS.get(name, _humanize_identifier(name))
 
@@ -573,11 +885,7 @@ def _memory_change_source_item(row: Mapping[str, Any]) -> dict[str, str]:
     }
     return {
         "label": _memory_label(key),
-        "value": (
-            f"{previous} → {current}"
-            if action == "updated" and previous
-            else current
-        ),
+        "value": (f"{previous} → {current}" if action == "updated" and previous else current),
         "detail": details.get(action, _humanize_identifier(action)),
     }
 
@@ -605,9 +913,7 @@ def _memory_value_display(key: str, value: Mapping[str, Any]) -> str:
         return f"{float(value['millimeters']) / 10:g} cm"
     if key == "goal.target_weight" and isinstance(value.get("grams"), (int, float)):
         return f"{float(value['grams']) / 1000:g} kg"
-    if key == "goal.target_body_fat" and isinstance(
-        value.get("basis_points"), (int, float)
-    ):
+    if key == "goal.target_body_fat" and isinstance(value.get("basis_points"), (int, float)):
         return f"{float(value['basis_points']) / 100:g}%"
     return _display(value)
 

@@ -8,6 +8,124 @@ from slim_guard.admin.repository import AdminQueryRepository
 from slim_guard.db.models import AgentItemRecord
 
 
+def test_workflow_trace_events_are_presented_in_plain_language() -> None:
+    cases = [
+        (
+            "invocation_started",
+            {
+                "invocation_id": "invocation-1",
+                "agent_role": "nutrition_expert",
+                "agent_version": "nutrition-v1",
+                "attempt": 1,
+                "parent_invocation_id": "invocation-parent",
+                "input_artifact_ids": ["artifact-input"],
+                "allowed_tool_names": ["lookup_nutrition_guidance"],
+                "privacy_scopes": ["health_records"],
+                "reason_summary": "需要核对饮食结论",
+                "started_at": "2026-09-04T08:00:00+00:00",
+            },
+            "decision",
+            "启动营养专业 Agent",
+            "只提供已声明的信息范围",
+        ),
+        (
+            "invocation_result",
+            {
+                "invocation_id": "invocation-1",
+                "status": "succeeded",
+                "output_artifact_id": "artifact-output",
+                "model_call_count": 1,
+                "tool_call_count": 0,
+                "total_token_count": 42,
+                "failure_code": None,
+                "completed_at": "2026-09-04T08:00:01+00:00",
+            },
+            "observation",
+            "Agent 调用结果：成功",
+            "类型校验",
+        ),
+        (
+            "artifact_created",
+            {
+                "artifact_id": "artifact-output",
+                "artifact_type": "assessment",
+                "producer_role": "nutrition_expert",
+                "schema_version": "1",
+                "parent_artifact_ids": ["artifact-input"],
+                "payload_sha256": "a" * 64,
+            },
+            "observation",
+            "生成结构化产物：专业评估",
+            "不复制敏感正文",
+        ),
+        (
+            "workflow_transition",
+            {
+                "from_node": "nutrition_expert",
+                "to_node": "response_style",
+                "transition_type": "route",
+                "reason_code": "assessment_ready",
+                "attempt": 1,
+            },
+            "decision",
+            "工作流进入：表达风格处理",
+            "营养专业判断",
+        ),
+        (
+            "response_adopted",
+            {"artifact_id": "artifact-output", "mode": "shadow", "final": False},
+            "output",
+            "采用候选回复",
+            "尚未作为最终回复发送",
+        ),
+        (
+            "response_degraded",
+            {
+                "artifact_id": "artifact-output",
+                "reason_code": "style_timeout",
+                "fallback_type": "legacy_response",
+            },
+            "output",
+            "回复进入降级路径",
+            "现有回复",
+        ),
+    ]
+
+    for operation, details, stage, title, summary_text in cases:
+        presentation = present_event(
+            {
+                "event_type": "agent_item",
+                "operation": operation,
+                "details": details,
+            }
+        )
+
+        assert presentation["stage"] == stage
+        assert presentation["title"] == title
+        assert summary_text in presentation["summary"]
+
+
+def test_artifact_presentation_never_exposes_an_unexpected_payload() -> None:
+    sensitive_text = "用户的完整健康信息"
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "artifact_created",
+            "details": {
+                "artifact_id": "artifact-output",
+                "artifact_type": "assessment",
+                "producer_role": "nutrition_expert",
+                "schema_version": "1",
+                "parent_artifact_ids": [],
+                "payload_sha256": "a" * 64,
+                "payload": {"raw_response": sensitive_text},
+            },
+        }
+    )
+
+    assert sensitive_text not in json.dumps(presentation, ensure_ascii=False)
+
+
 def test_model_tool_choice_is_presented_as_an_explicit_decision() -> None:
     presentation = present_event(
         {
@@ -17,9 +135,7 @@ def test_model_tool_choice_is_presented_as_an_explicit_decision() -> None:
                 "call_index": 1,
                 "finish_reason": "tool_calls",
                 "message": {
-                    "tool_calls": [
-                        {"name": "record_weight", "arguments": {"weight_kg": 77.6}}
-                    ]
+                    "tool_calls": [{"name": "record_weight", "arguments": {"weight_kg": 77.6}}]
                 },
                 "usage": {"input_tokens": 120, "output_tokens": 20},
             },
@@ -42,9 +158,7 @@ def test_memory_ingestion_model_is_presented_as_a_separate_stage() -> None:
                 "call_index": 0,
                 "finish_reason": "tool_calls",
                 "message": {
-                    "tool_calls": [
-                        {"name": "set_body_profile", "arguments": {"height_value": 179}}
-                    ]
+                    "tool_calls": [{"name": "set_body_profile", "arguments": {"height_value": 179}}]
                 },
                 "usage": {"input_tokens": 200, "output_tokens": 30},
             },
@@ -53,9 +167,7 @@ def test_memory_ingestion_model_is_presented_as_a_separate_stage() -> None:
 
     assert presentation["title"] == "模型提取需要写入的长期记忆"
     assert "保存身高档案" in presentation["summary"]
-    assert {"label": "调用用途", "value": "提取并核对长期记忆"} in presentation[
-        "facts"
-    ]
+    assert {"label": "调用用途", "value": "提取并核对长期记忆"} in presentation["facts"]
 
 
 def test_memory_recall_is_presented_in_plain_language() -> None:
@@ -251,9 +363,7 @@ def test_context_sources_show_current_turn_memory_receipt() -> None:
         ]
     )
 
-    receipt = next(
-        source for source in sources if source["kind"] == "current_turn_memory_receipt"
-    )
+    receipt = next(source for source in sources if source["kind"] == "current_turn_memory_receipt")
     assert receipt["title"] == "本轮记忆变更"
     assert receipt["items"] == [
         {

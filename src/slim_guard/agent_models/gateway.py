@@ -15,6 +15,10 @@ class MessageRole(StrEnum):
 
 class ModelPurpose(StrEnum):
     HARNESS_TURN = "harness_turn"
+    ORCHESTRATOR = "orchestrator"
+    NUTRITION = "nutrition"
+    RESPONSE_STYLE = "response_style"
+    RESPONSE_REVIEWER = "response_reviewer"
     MEMORY_INGESTION = "memory_ingestion"
     MEMORY_RECALL = "memory_recall"
     VISION_INSPECTION = "vision_inspection"
@@ -26,6 +30,11 @@ class ToolChoice(StrEnum):
     AUTO = "auto"
     NONE = "none"
     REQUIRED = "required"
+
+
+class ResponseFormat(StrEnum):
+    TEXT = "text"
+    JSON_OBJECT = "json_object"
 
 
 class NormalizedToolCall(BaseModel):
@@ -81,6 +90,13 @@ class ModelRequest(BaseModel):
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     tools: tuple[ToolDefinition, ...] = ()
     tool_choice: ToolChoice = ToolChoice.AUTO
+    response_format: ResponseFormat = ResponseFormat.TEXT
+    output_schema_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$",
+    )
     max_output_tokens: int = Field(default=1024, ge=1)
     temperature: float | None = Field(default=None, ge=0, le=2)
     metadata: dict[str, str] = Field(default_factory=dict)
@@ -89,6 +105,8 @@ class ModelRequest(BaseModel):
     def validate_tool_choice(self) -> Self:
         if self.tool_choice is ToolChoice.REQUIRED and not self.tools:
             raise ValueError("tool_choice=required requires at least one tool")
+        if self.response_format is ResponseFormat.TEXT and self.output_schema_name:
+            raise ValueError("output_schema_name requires response_format=json_object")
         return self
 
 
