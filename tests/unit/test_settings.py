@@ -35,6 +35,15 @@ def test_agent_runtime_defaults_to_harness() -> None:
     settings = Settings()
 
     assert settings.agent_runtime_mode == "harness"
+    assert settings.multi_agent_mode == "off"
+    assert settings.multi_agent_canary_users == frozenset()
+    assert settings.multi_agent_graph_version == "typed-supervisor-v1"
+    assert settings.default_style_profile == "slimguard_default_v1"
+    assert settings.style_render_all_normal_replies is True
+    assert settings.nutrition_agent_enabled is False
+    assert settings.nutrition_rag_enabled is False
+    assert settings.nutrition_require_rag_citations is True
+    assert settings.response_reviewer_enabled is False
     assert settings.memory_health_review_days == 180
     assert settings.memory_recent_turn_count == 3
     assert settings.memory_recent_dialogue_max_chars == 1500
@@ -151,11 +160,37 @@ def test_agent_runtime_rejects_unknown_mode() -> None:
         Settings(agent_runtime_mode="unknown")
 
 
+def test_multi_agent_canary_users_are_normalized() -> None:
+    settings = Settings(
+        multi_agent_mode="canary",
+        multi_agent_canary_user_ids=" user-2,user-1,user-2, ",
+    )
+
+    assert settings.multi_agent_canary_users == frozenset({"user-1", "user-2"})
+    assert settings.multi_agent_executes_for("user-1") is True
+    assert settings.multi_agent_executes_for("user-3") is False
+    assert settings.multi_agent_adopts_for("user-1") is True
+    assert settings.multi_agent_adopts_for("user-3") is False
+
+    shadow = Settings(multi_agent_mode="shadow")
+    assert shadow.multi_agent_executes_for("any-user") is True
+    assert shadow.multi_agent_adopts_for("any-user") is False
+
+    with pytest.raises(ValidationError):
+        Settings(multi_agent_mode="unknown")
+
+
 def test_unimplemented_shadow_runtime_mode_fails_fast() -> None:
     settings = Settings(agent_runtime_mode="shadow")
 
     with pytest.raises(ValueError, match="not implemented yet"):
         create_app(settings)
+
+
+def test_multi_agent_adoption_modes_fail_closed_until_rollout() -> None:
+    for mode in ("canary", "on"):
+        with pytest.raises(ValueError, match="later adoption rollout"):
+            create_app(Settings(multi_agent_mode=mode))  # type: ignore[arg-type]
 
 
 def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
@@ -167,6 +202,8 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     app = create_app(settings)
 
     assert app.state.agent_runtime_mode == "harness"
+    assert app.state.multi_agent_mode == "off"
+    assert app.state.multi_agent_graph_version == "typed-supervisor-v1"
     assert dict(app.state.agent_manifest.tool_versions) == {
         "get_recent_weight_trend": "v1",
         "record_body_fat": "v1",
@@ -197,6 +234,13 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "resolve_pending_user_action": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
+    assert app.state.agent_graph_manifest.graph_version == "typed-supervisor-v1"
+    assert [role for role, _node in app.state.agent_graph_manifest.nodes] == [
+        "nutrition_expert",
+        "orchestrator",
+        "response_reviewer",
+        "response_style",
+    ]
 
 
 def test_create_app_exposes_current_agent_manifest() -> None:

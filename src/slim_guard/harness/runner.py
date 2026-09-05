@@ -28,6 +28,12 @@ from slim_guard.harness.tool_calls import ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.memory.ingestion import MemoryIngestionResult, MemoryIngestor
 from slim_guard.memory.recall import MemoryRecaller, MemoryRecallResult
+from slim_guard.observability.tracing import current_trace_id
+from slim_guard.orchestration.coordinator import (
+    AgentWorkflowCoordinator,
+    ShadowWorkflowRequest,
+    ShadowWorkflowResult,
+)
 from slim_guard.tools.policy import ToolAuthorization
 
 
@@ -49,6 +55,7 @@ class HarnessTurnRunResult:
     loop: HarnessLoopResult
     memory_ingestion: MemoryIngestionResult | None = None
     memory_recall: MemoryRecallResult | None = None
+    shadow_workflow: ShadowWorkflowResult | None = None
 
     @property
     def final_text(self) -> str | None:
@@ -72,6 +79,8 @@ class HarnessTurnRunner:
         memory_recaller: MemoryRecaller | None = None,
         input_safety: InputSafetyPolicy | None = None,
         output_guard: OutputGuard | None = None,
+        shadow_workflow: AgentWorkflowCoordinator | None = None,
+        shadow_enabled_for: Callable[[str], bool] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._initializer = initializer
@@ -81,6 +90,8 @@ class HarnessTurnRunner:
         self._memory_ingestor = memory_ingestor
         self._memory_recaller = memory_recaller
         self._input_safety = input_safety or DefaultInputSafetyPolicy()
+        self._shadow_workflow = shadow_workflow
+        self._shadow_enabled_for = shadow_enabled_for or (lambda _user_id: False)
         self._clock = clock or self._utc_now
         self._loop = HarnessLoop(
             model=model,
@@ -202,6 +213,21 @@ class HarnessTurnRunner:
                 },
             },
         )
+        shadow_result: ShadowWorkflowResult | None = None
+        if (
+            self._shadow_workflow is not None
+            and self._shadow_enabled_for(initialized.context.user_id)
+            and not safety_assessment.blocks_tools
+        ):
+            shadow_result = await self._shadow_workflow.run_shadow(
+                ShadowWorkflowRequest(
+                    trace_id=current_trace_id() or initialized.turn.id,
+                    turn_id=initialized.turn.id,
+                    thread_id=initialized.thread.id,
+                    context=compiled.request.messages,
+                    deadline_at=initialized.turn.deadline_at,
+                )
+            )
         loop_result = await self._loop.run(
             request=compiled.request,
             context=initialized.context,
@@ -217,6 +243,7 @@ class HarnessTurnRunner:
             loop=loop_result,
             memory_ingestion=ingestion_result,
             memory_recall=recall_result,
+            shadow_workflow=shadow_result,
         )
 
     @staticmethod

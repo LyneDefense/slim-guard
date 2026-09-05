@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,7 +23,7 @@ from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.context_data import AuthoritativeContextDataProvider
 from slim_guard.harness.initialization import TurnInitializer
 from slim_guard.harness.limits import HarnessLimits
-from slim_guard.harness.manifest import AgentManifest
+from slim_guard.harness.manifest import AgentGraphManifest, AgentGraphNodeManifest, AgentManifest
 from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.pending_resume import PendingActionResumeCoordinator
 from slim_guard.harness.repository import AgentVersionRepository
@@ -39,6 +39,12 @@ from slim_guard.memory.recall import ModelFirstMemoryRecaller
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
+from slim_guard.orchestration.coordinator import (
+    SHADOW_ORCHESTRATOR_PROMPT,
+    SHADOW_ORCHESTRATOR_PROMPT_VERSION,
+    AgentWorkflowCoordinator,
+)
+from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
@@ -86,6 +92,18 @@ class AgentRuntimeDefinition(BaseModel):
     memory_ingestion_history_max_chars: int = Field(default=6000, ge=100, le=20_000)
     memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
     memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
+    multi_agent_mode: Literal["off", "shadow"] = "off"
+    multi_agent_graph_version: str = Field(
+        default="typed-supervisor-v1",
+        min_length=1,
+        max_length=128,
+    )
+    multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    default_style_profile: str = Field(
+        default="slimguard_default_v1",
+        min_length=1,
+        max_length=128,
+    )
 
 
 def build_agent_runtime(
@@ -245,6 +263,21 @@ def build_agent_runtime(
         memory_ingestor=memory_ingestor,
         memory_recaller=memory_recaller,
         output_guard=SlimGuardOutputGuard(),
+        shadow_workflow=(
+            AgentWorkflowCoordinator(
+                model=model,
+                recorder=recorder,
+                model_name=definition.text_model,
+                graph_version=definition.multi_agent_graph_version,
+                timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
+                max_output_tokens=definition.vision_max_output_tokens,
+                persistence=OrchestrationRepository(database),
+                clock=clock,
+            )
+            if definition.multi_agent_mode == "shadow"
+            else None
+        ),
+        shadow_enabled_for=lambda _user_id: definition.multi_agent_mode == "shadow",
         clock=clock,
     )
     return AgentRuntime(
@@ -283,5 +316,64 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
         memory_policy_version=MEMORY_POLICY_VERSION,
         compaction_policy_version="bounded-working-images-handoff-redaction-v3",
         safety_policy_version="health-output-guard-v2",
+        code_revision=definition.code_revision,
+    )
+
+
+def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraphManifest:
+    """Freeze all planned roles even while only the Shadow orchestrator is enabled."""
+
+    disabled_prompt = "This workflow role is disabled in the current rollout increment."
+    nodes = {
+        "orchestrator": AgentGraphNodeManifest.build(
+            role="orchestrator",
+            model=definition.text_model,
+            prompt_version=SHADOW_ORCHESTRATOR_PROMPT_VERSION,
+            prompt=SHADOW_ORCHESTRATOR_PROMPT,
+            output_schema="TurnDirective",
+            privacy_scopes=("current_user_message", "trusted_context"),
+            max_model_calls=2,
+            max_tool_calls=0,
+            max_total_tokens=definition.vision_max_output_tokens * 2,
+        ),
+        "nutrition_expert": AgentGraphNodeManifest.build(
+            role="nutrition_expert",
+            model=definition.text_model,
+            prompt_version="disabled-v1",
+            prompt=disabled_prompt,
+            output_schema="ProfessionalAssessment",
+            max_model_calls=1,
+            max_tool_calls=0,
+            max_total_tokens=definition.vision_max_output_tokens,
+        ),
+        "response_style": AgentGraphNodeManifest.build(
+            role="response_style",
+            model=definition.text_model,
+            prompt_version="disabled-v1",
+            prompt=disabled_prompt,
+            output_schema="StyledResponse",
+            max_model_calls=1,
+            max_tool_calls=0,
+            max_total_tokens=definition.vision_max_output_tokens,
+        ),
+        "response_reviewer": AgentGraphNodeManifest.build(
+            role="response_reviewer",
+            model=definition.text_model,
+            prompt_version="disabled-v1",
+            prompt=disabled_prompt,
+            output_schema="ReviewerVerdict",
+            max_model_calls=1,
+            max_tool_calls=0,
+            max_total_tokens=definition.vision_max_output_tokens,
+        ),
+    }
+    return AgentGraphManifest.build(
+        graph_version=definition.multi_agent_graph_version,
+        nodes=nodes,
+        style_profile_version=definition.default_style_profile,
+        routing_policy_version="model-directed-code-validated-v1",
+        evidence_policy_version="typed-provenance-v1",
+        safety_policy_version="health-output-guard-v2",
+        business_tool_versions=dict(build_agent_manifest(definition).tool_versions),
         code_revision=definition.code_revision,
     )

@@ -32,6 +32,16 @@ class Settings(DatabaseSettings):
     wecom_callback_aes_key: str = ""
     agent_runtime_mode: Literal["legacy", "harness", "shadow"] = "harness"
     agent_code_revision: str = "development"
+    multi_agent_mode: Literal["off", "shadow", "canary", "on"] = "off"
+    multi_agent_canary_user_ids: str = ""
+    multi_agent_graph_version: str = "typed-supervisor-v1"
+    multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    default_style_profile: str = "slimguard_default_v1"
+    style_render_all_normal_replies: bool = True
+    nutrition_agent_enabled: bool = False
+    nutrition_rag_enabled: bool = False
+    nutrition_require_rag_citations: bool = True
+    response_reviewer_enabled: bool = False
     agent_fallback_reply_text: str = "抱歉，我刚才没有成功分析这条记录，请稍后再发一次。"
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
     wecom_human_idle_timeout_seconds: int = Field(default=600, ge=60, le=86_400)
@@ -167,6 +177,26 @@ class Settings(DatabaseSettings):
     @cached_property
     def admin_is_configured(self) -> bool:
         return bool(self.admin_username and self.admin_password)
+
+    @cached_property
+    def multi_agent_canary_users(self) -> frozenset[str]:
+        return frozenset(
+            user_id
+            for entry in self.multi_agent_canary_user_ids.split(",")
+            if (user_id := entry.strip())
+        )
+
+    def multi_agent_executes_for(self, user_id: str) -> bool:
+        if self.multi_agent_mode == "off":
+            return False
+        if self.multi_agent_mode == "canary":
+            return user_id in self.multi_agent_canary_users
+        return True
+
+    def multi_agent_adopts_for(self, user_id: str) -> bool:
+        return self.multi_agent_mode in {"canary", "on"} and (
+            self.multi_agent_mode == "on" or user_id in self.multi_agent_canary_users
+        )
 
     @cached_property
     def mobile_is_configured(self) -> bool:

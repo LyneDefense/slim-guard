@@ -26,6 +26,11 @@ from slim_guard.harness.state_repository import HarnessStateRepository, TurnRef
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
+from slim_guard.orchestration.coordinator import (
+    AgentWorkflowCoordinator,
+    direct_shadow_directive,
+)
+from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
@@ -190,6 +195,7 @@ def build_runner(
     model: ScriptedModelGateway,
     tool_calls,
     current_time: datetime,
+    shadow_workflow: AgentWorkflowCoordinator | None = None,
 ) -> HarnessTurnRunner:
     recorder = PersistentHarnessRunRecorder(repository)
     return HarnessTurnRunner(
@@ -203,6 +209,8 @@ def build_runner(
         tool_calls=tool_calls,
         recorder=recorder,
         limits=HarnessLimits(),
+        shadow_workflow=shadow_workflow,
+        shadow_enabled_for=lambda _user_id: shadow_workflow is not None,
         clock=lambda: current_time,
     )
 
@@ -254,6 +262,83 @@ async def test_runner_executes_and_persists_one_complete_turn(tmp_path) -> None:
         }
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
+    finally:
+        await database.close()
+
+
+async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_path) -> None:
+    database, user = await prepare_database(tmp_path)
+    manifest = build_manifest()
+    await AgentVersionRepository(database).register(manifest)
+    repository = HarnessStateRepository(database)
+    directive = direct_shadow_directive("影子候选回复，不应发送。")
+    model = ScriptedModelGateway(
+        (
+            final_response(directive.model_dump_json()),
+            final_response("当前 Harness 的真实回复。"),
+        )
+    )
+    current_time = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
+    recorder = PersistentHarnessRunRecorder(repository)
+    shadow = AgentWorkflowCoordinator(
+        model=model,
+        recorder=recorder,
+        model_name="glm-5.2",
+        graph_version="typed-supervisor-v1",
+        persistence=OrchestrationRepository(database),
+        clock=lambda: current_time,
+    )
+    runner = build_runner(
+        repository=repository,
+        manifest=manifest,
+        registry=ToolRegistry(()),
+        model=model,
+        tool_calls=NoToolRunner(),
+        current_time=current_time,
+        shadow_workflow=shadow,
+    )
+    try:
+        result = await runner.run(
+            request=initialization_request(
+                user_id=user.id,
+                agent_version_id=manifest.version_id,
+                deadline_at=current_time + timedelta(seconds=30),
+            )
+        )
+
+        assert result.final_text == "当前 Harness 的真实回复。"
+        assert result.shadow_workflow is not None
+        assert result.shadow_workflow.shadow_candidate == "影子候选回复，不应发送。"
+        assert result.shadow_workflow.delivered is False
+        assert result.shadow_workflow.business_write_count == 0
+
+        invocations = await OrchestrationRepository(database).list_turn_invocations(
+            result.initialized.turn.id
+        )
+        artifacts = await OrchestrationRepository(database).list_artifacts(
+            result.initialized.turn.id
+        )
+        items = await repository.list_items(result.initialized.turn.id)
+
+        assert [(item.agent_role, item.status) for item in invocations] == [
+            ("orchestrator", "succeeded")
+        ]
+        assert {item.artifact_type for item in artifacts} == {
+            "directive",
+            "response_plan",
+            "styled_response",
+        }
+        assert sum(item.item_type is ItemType.AGENT_MESSAGE for item in items) == 1
+        adopted = [item for item in items if item.item_type is ItemType.RESPONSE_ADOPTED]
+        styled_artifact = next(
+            item for item in artifacts if item.artifact_type == "styled_response"
+        )
+        assert len(adopted) == 1
+        assert adopted[0].payload == {
+            "artifact_id": styled_artifact.artifact_id,
+            "mode": "shadow",
+            "final": False,
+        }
     finally:
         await database.close()
 

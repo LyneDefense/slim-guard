@@ -63,15 +63,24 @@ ZHIPU_API_KEY=智谱 API Key
 Agent Runtime 默认使用 `harness`：企业微信文字和图片消息会进入新版 Harness，并可调用
 图片检查、体重、体脂、饮食、运动、纠错和提醒日程工具。图片作为用户隔离的短期资产默认保留
 7 天，可通过 `AGENT_IMAGE_RETENTION_SECONDS` 调整；后台默认每 6 小时物理清理过期图片。
-`shadow` 尚未开放，设置后会拒绝启动：
+多 Agent 使用独立开关，默认 `off`，不会改变当前生产回复；`shadow` 会运行无写权限的候选工作流并
+在管理台展示对比，但候选不会发送：
 
 ```dotenv
 # harness：新版 Agent Harness；legacy：仅供回滚的旧版单次回复
 AGENT_RUNTIME_MODE=harness
 # 部署流水线可以写入 Git commit；未设置时为 development
 AGENT_CODE_REVISION=development
+MULTI_AGENT_MODE=off
+MULTI_AGENT_CANARY_USER_IDS=
+MULTI_AGENT_GRAPH_VERSION=typed-supervisor-v1
+MULTI_AGENT_SHADOW_TIMEOUT_SECONDS=20
+DEFAULT_STYLE_PROFILE=slimguard_default_v1
 ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
+
+`MULTI_AGENT_MODE` 支持 `off → shadow → canary → on`。首次部署保持 `off`；完成 Shadow 验证前不要
+直接进入 Canary 或全量。关闭该开关不影响现有 Harness、用户 Thread 或已经写入的健康记录。
 
 智谱可选配置：
 

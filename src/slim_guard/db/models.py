@@ -59,9 +59,7 @@ class AgentThreadRecord(Base):
     __table_args__ = (UniqueConstraint("user_id", name="uq_agent_thread_user_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
@@ -82,9 +80,7 @@ class AgentTurnRecord(Base):
     thread_id: Mapped[str] = mapped_column(
         ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
     )
-    agent_version_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_versions.id"), nullable=False
-    )
+    agent_version_id: Mapped[str] = mapped_column(ForeignKey("agent_versions.id"), nullable=False)
     trigger_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="running")
     step_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -161,9 +157,7 @@ class WeightRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     weight_grams: Mapped[int] = mapped_column(Integer, nullable=False)
     original_value: Mapped[str] = mapped_column(String(32), nullable=False)
     original_unit: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -184,9 +178,7 @@ class WeightRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
-    superseded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BodyFatRecord(Base):
@@ -206,9 +198,7 @@ class BodyFatRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     body_fat_basis_points: Mapped[int] = mapped_column(Integer, nullable=False)
     original_value: Mapped[str] = mapped_column(String(32), nullable=False)
     measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -244,9 +234,7 @@ class ImageAssetRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -276,9 +264,7 @@ class MealRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     meal_type: Mapped[str] = mapped_column(String(32), nullable=False)
     foods_json: Mapped[str] = mapped_column(Text, nullable=False)
     note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -326,9 +312,7 @@ class ExerciseRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     activity_name: Mapped[str] = mapped_column(String(128), nullable=False)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -490,9 +474,7 @@ class MobileAuthIdentityRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     display_hint: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -522,9 +504,7 @@ class MobileOtpChallengeRecord(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    consumed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
@@ -539,15 +519,11 @@ class MobileSessionRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     device_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
@@ -574,9 +550,7 @@ class MobileAgentRequestRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
@@ -591,9 +565,7 @@ class MobileAgentRequestRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MobileDeviceRecord(Base):
@@ -612,9 +584,7 @@ class MobileDeviceRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     installation_id: Mapped[str] = mapped_column(String(128), nullable=False)
     platform: Mapped[str] = mapped_column(String(16), nullable=False)
     push_provider: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -710,9 +680,7 @@ class UserMemoryFactRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     memory_key: Mapped[str] = mapped_column(String(128), nullable=False)
     slot_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -761,9 +729,7 @@ class UserMemoryEventRecord(Base):
     memory_id: Mapped[str] = mapped_column(
         ForeignKey("user_memory_facts.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     turn_id: Mapped[str | None] = mapped_column(
         ForeignKey("agent_turns.id", ondelete="SET NULL"), nullable=True
@@ -799,9 +765,7 @@ class MemoryIndexOutboxRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     operation_key: Mapped[str] = mapped_column(String(256), nullable=False)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     memory_id: Mapped[str | None] = mapped_column(
         ForeignKey("user_memory_facts.id", ondelete="CASCADE"), nullable=True
     )
@@ -811,9 +775,7 @@ class MemoryIndexOutboxRecord(Base):
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
-    lease_until: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -822,9 +784,7 @@ class MemoryIndexOutboxRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MemoryBulkOperationRecord(Base):
@@ -832,9 +792,7 @@ class MemoryBulkOperationRecord(Base):
     __table_args__ = (Index("ix_memory_bulk_user_created", "user_id", "created_at"),)
 
     operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     scope: Mapped[str] = mapped_column(String(64), nullable=False)
     memory_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
     revoked_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -869,9 +827,7 @@ class MemoryHandoffRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     thread_id: Mapped[str] = mapped_column(
         ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
     )
@@ -933,9 +889,7 @@ class RoutineJobRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     job_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     local_date: Mapped[str] = mapped_column(String(10), nullable=False)
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1083,9 +1037,7 @@ class InteractionTraceRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     trigger_type: Mapped[str] = mapped_column(String(64), nullable=False)
     channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     inbound_msgid: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -1100,12 +1052,8 @@ class InteractionTraceRecord(Base):
     )
     agent_version_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reply_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
-    generation_status: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="pending"
-    )
-    delivery_status: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="planned"
-    )
+    generation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    delivery_status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
     failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -1145,6 +1093,145 @@ class TraceSpanRecord(Base):
         DateTime(timezone=True), nullable=False, default=utc_now
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentInvocationRecord(Base):
+    """A coordinator-issued, bounded agent invocation and its terminal result.
+
+    The input payload is retained for deterministic recovery, but is deliberately not
+    exposed by the admin query layer.  Coordinator-owned limits and grants live in
+    first-class columns so they cannot be confused with model-generated output.
+    """
+
+    __tablename__ = "agent_invocations"
+    __table_args__ = (
+        UniqueConstraint("id", "turn_id", name="uq_agent_invocation_id_turn"),
+        UniqueConstraint(
+            "turn_id",
+            "agent_role",
+            "attempt",
+            name="uq_agent_invocation_turn_role_attempt",
+        ),
+        ForeignKeyConstraint(
+            ["parent_invocation_id", "turn_id"],
+            ["agent_invocations.id", "agent_invocations.turn_id"],
+            name="fk_agent_invocation_parent_same_turn",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("attempt >= 1", name="ck_agent_invocation_attempt"),
+        CheckConstraint(
+            "status IN ('started','succeeded','degraded','failed')",
+            name="ck_agent_invocation_status",
+        ),
+        CheckConstraint("max_model_calls >= 1", name="ck_agent_invocation_model_budget"),
+        CheckConstraint("max_tool_calls >= 0", name="ck_agent_invocation_tool_budget"),
+        CheckConstraint("max_total_tokens >= 1", name="ck_agent_invocation_token_budget"),
+        Index("ix_agent_invocation_trace_started", "trace_id", "started_at"),
+        Index("ix_agent_invocation_turn_started", "turn_id", "started_at"),
+        Index("ix_agent_invocation_role_status", "agent_role", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # A shadow run can start before an InteractionTrace row exists (for example in
+    # an isolated harness test).  Keep the coordinator's causal identifier without
+    # requiring the delivery trace to have been materialized first.
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    graph_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    agent_role: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    caller: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent_invocation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_artifact_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    input_schema: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    allowed_tools_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    privacy_scopes_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    max_model_calls: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_tool_calls: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_total_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    reason_summary: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="started")
+    output_schema: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    output_schema_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    output_artifact_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tool_receipt_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    model_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentArtifactRecord(Base):
+    """Immutable, digest-verified structured output exchanged by workflow agents."""
+
+    __tablename__ = "agent_artifacts"
+    __table_args__ = (
+        UniqueConstraint("id", "turn_id", name="uq_agent_artifact_id_turn"),
+        ForeignKeyConstraint(
+            ["invocation_id", "turn_id"],
+            ["agent_invocations.id", "agent_invocations.turn_id"],
+            name="fk_agent_artifact_invocation_same_turn",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(payload_sha256) = 64",
+            name="ck_agent_artifact_sha256_length",
+        ),
+        Index("ix_agent_artifact_turn_created", "turn_id", "created_at"),
+        Index("ix_agent_artifact_type_created", "artifact_type", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    invocation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    producer_role: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    parent_artifact_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentArtifactParentRecord(Base):
+    """Normalized lineage edge; both sides are forced to belong to the same Turn."""
+
+    __tablename__ = "agent_artifact_parents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["artifact_id", "turn_id"],
+            ["agent_artifacts.id", "agent_artifacts.turn_id"],
+            name="fk_agent_artifact_parent_child",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["parent_artifact_id", "turn_id"],
+            ["agent_artifacts.id", "agent_artifacts.turn_id"],
+            name="fk_agent_artifact_parent_same_turn",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "artifact_id <> parent_artifact_id",
+            name="ck_agent_artifact_parent_not_self",
+        ),
+        Index("ix_agent_artifact_parent_parent", "parent_artifact_id"),
+    )
+
+    artifact_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    parent_artifact_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(String(36), nullable=False)
 
 
 class AdminAuditEventRecord(Base):

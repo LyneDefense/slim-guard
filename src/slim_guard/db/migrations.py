@@ -28,8 +28,7 @@ async def _add_memory_evidence_item(connection: AsyncConnection) -> None:
     await _create_application_tables(connection)
     columns = await connection.run_sync(
         lambda sync_connection: {
-            column["name"]
-            for column in inspect(sync_connection).get_columns("user_memory_facts")
+            column["name"] for column in inspect(sync_connection).get_columns("user_memory_facts")
         }
     )
     if "evidence_item_id" in columns:
@@ -79,6 +78,7 @@ MIGRATIONS = (
         "20260903_03_mobile_test_accounts",
         _allow_mobile_test_account_identity,
     ),
+    SchemaMigration("20260904_01_multi_agent_audit", _create_application_tables),
 )
 
 
@@ -99,8 +99,6 @@ async def migrate(connection: AsyncConnection) -> tuple[str, ...]:
         if migration.version in applied:
             continue
         await migration.apply(connection)
-        await connection.execute(
-            insert(SchemaMigrationRecord).values(version=migration.version)
-        )
+        await connection.execute(insert(SchemaMigrationRecord).values(version=migration.version))
         completed.append(migration.version)
     return tuple(completed)

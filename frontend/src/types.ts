@@ -122,6 +122,68 @@ export interface ResponseDegradedDetails {
   fallback_type: string;
 }
 
+export interface TraceWorkflowSummary {
+  mode: string;
+  graph_version: string;
+  status: string;
+  model_call_count: number;
+  tool_call_count: number;
+  total_token_count: number;
+  repair_count: number;
+  degraded: boolean;
+}
+
+export interface TraceAgentInvocation {
+  invocation_id: string;
+  agent_role: AgentRole;
+  agent_version: string;
+  attempt: number;
+  parent_invocation_id: string | null;
+  input_artifact_ids: string[];
+  output_artifact_id: string | null;
+  status: string;
+  model_call_count: number;
+  tool_call_count: number;
+  total_token_count: number;
+  failure_code: string | null;
+  failure_reason: string | null;
+  reason_summary: string | null;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface TraceAgentArtifact extends ArtifactCreatedDetails {
+  invocation_id: string | null;
+  payload: Record<string, unknown> | null;
+  integrity_status: string;
+  created_at: string | null;
+}
+
+export type TraceWorkflowTransition = WorkflowTransitionDetails;
+
+export interface TraceComparedResponse {
+  artifact_id: string | null;
+  content: string | null;
+  status: string | null;
+}
+
+export interface TraceShadowComparison {
+  mode: string;
+  delivery_status: string;
+  business_writes: string;
+  legacy: TraceComparedResponse;
+  candidate: TraceComparedResponse;
+}
+
+export interface TraceWorkflow {
+  summary: TraceWorkflowSummary;
+  invocations: TraceAgentInvocation[];
+  artifacts: TraceAgentArtifact[];
+  transitions: TraceWorkflowTransition[];
+  shadow_comparison: TraceShadowComparison | null;
+}
+
 export type MultiAgentTraceOperation =
   | "invocation_started"
   | "invocation_result"
@@ -178,6 +240,11 @@ export interface TraceDetail {
     tool_count: number;
   } | null;
   timeline: TimelineEvent[];
+  workflow?: TraceWorkflow | null;
+  invocations?: TraceAgentInvocation[];
+  artifacts?: TraceAgentArtifact[];
+  transitions?: TraceWorkflowTransition[];
+  shadow_comparison?: TraceShadowComparison | null;
   execution_summary: {
     architecture: string;
     model_call_count: number;

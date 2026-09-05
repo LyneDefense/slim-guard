@@ -17,9 +17,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
                 )
             )
             await connection.execute(
-                insert(SchemaMigrationRecord).values(
-                    version="20260831_01_interaction_tracing"
-                )
+                insert(SchemaMigrationRecord).values(version="20260831_01_interaction_tracing")
             )
 
         completed = await database.migrate()
@@ -35,6 +33,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260903_01_mobile_accounts",
             "20260903_02_mobile_devices_and_bindings",
             "20260903_03_mobile_test_accounts",
+            "20260904_01_multi_agent_audit",
         )
         assert "body_fat_records" in table_names
     finally:
@@ -67,25 +66,18 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
                 "20260831_01_interaction_tracing",
                 "20260902_01_body_fat_records",
             ):
-                await connection.execute(
-                    insert(SchemaMigrationRecord).values(version=version)
-                )
+                await connection.execute(insert(SchemaMigrationRecord).values(version=version))
 
         completed = await database.migrate()
         async with database.engine.connect() as connection:
             columns = await connection.run_sync(
                 lambda sync_connection: {
                     column["name"]
-                    for column in inspect(sync_connection).get_columns(
-                        "user_memory_facts"
-                    )
+                    for column in inspect(sync_connection).get_columns("user_memory_facts")
                 }
             )
             evidence_item_id = await connection.scalar(
-                text(
-                    "SELECT evidence_item_id FROM user_memory_facts "
-                    "WHERE id = 'memory-1'"
-                )
+                text("SELECT evidence_item_id FROM user_memory_facts WHERE id = 'memory-1'")
             )
 
         assert completed == (
@@ -94,6 +86,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260903_01_mobile_accounts",
             "20260903_02_mobile_devices_and_bindings",
             "20260903_03_mobile_test_accounts",
+            "20260904_01_multi_agent_audit",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

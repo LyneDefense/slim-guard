@@ -382,3 +382,14 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/admin/presentation.py`、`frontend/src/types.ts` → 管理台兼容基础 → 六类新事件提供中文白话说明与安全 facts，前端新增可判别 Trace 类型，不改变现有页面行为。
 - `MULTI_AGENT_ARCHITECTURE.md`、`MULTI_AGENT_IMPLEMENTATION_PLAN.md` → 实施基线 → 架构升级为 v1.2 并标记计划进入实施，明确 JSON 终点、Graph Manifest 和 Trace 隐私契约。
 - `tests/unit/test_multi_agent_contracts.py`、`test_orchestration_graph.py`、`test_artifact_ledger.py`、`test_agent_graph_manifest.py` 及现有 Trace/Presentation/Gateway 测试 → Increment 0 验收 → 覆盖非法边、越权、伪造引用、循环上限、敏感字段脱敏、结构化模型请求和旧 API 兼容。
+
+### `feat: add observable shadow workflow`
+
+- `src/slim_guard/agents/structured_runner.py`、`orchestration/coordinator.py` → 有界 Shadow 执行 → 实现无 Tool 的 JSON Schema 调用、一次结构修复、Deadline/Token 预算及失败隔离；候选结果永不投递且业务写入数固定为零。
+- `src/slim_guard/harness/runner.py`、`agent/composition.py` → Harness 兼容接入 → 在记忆摄取、召回和权威上下文完成后运行只读 Shadow，再无条件沿用原 Harness 模型与最终回复。
+- `src/slim_guard/db/models.py`、`db/migrations.py`、`orchestration/repository.py` → 工作流持久化 → 新增 Invocation、不可变 Artifact 与同 Turn 血缘表，校验父调用、输入/输出引用、摘要哈希、预算和终态幂等。
+- `src/slim_guard/admin/repository.py` → 工作流 Trace API → 返回工作流摘要、调用、Artifact、实际转换与 Shadow 对比；只展示隐私过滤后的结构化结果，并明确候选未发送、无业务写入。
+- `frontend/src/components/trace/`、`App.tsx`、`styles.css`、`types.ts` → Increment 1 管理台 → 展示实际节点图、按 Invocation 折叠时间线、角色/状态/修复筛选和 Shadow 对比，同时保留 Legacy Trace 回退展示。
+- `src/slim_guard/config.py`、`main.py`、`.env.example`、`deploy/env.server.example`、`README.md` → 安全发布开关 → 增加 off/shadow/canary/on 配置契约；本 Increment 仅允许 off/shadow 启动，canary/on 在采用链路完成前 fail closed。
+- `tests/unit/test_structured_agent_runner.py`、`test_orchestration_repository.py`、`test_harness_runner.py`、`tests/integration/test_admin_api.py` 及迁移/配置测试 → Increment 1 验收 → 覆盖修复与预算、Shadow 故障隔离、持久血缘、同 Turn 集成、管理台 API、旧回复不被替换及候选不发送。
+- 最终验证 → Ruff、Mypy strict（139 个源码文件）、前端 TypeScript 与生产构建通过；Pytest 全仓结果见本提交验证记录。

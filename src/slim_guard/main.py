@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 
 from slim_guard.agent.composition import (
     AgentRuntimeDefinition,
+    build_agent_graph_manifest,
     build_agent_manifest,
     build_agent_runtime,
 )
@@ -79,6 +80,11 @@ def create_app(
         raise ValueError(
             f"AGENT_RUNTIME_MODE={app_settings.agent_runtime_mode!r} is not implemented yet"
         )
+    if app_settings.multi_agent_mode not in {"off", "shadow"}:
+        raise ValueError(
+            "MULTI_AGENT_MODE canary/on requires the later adoption rollout; "
+            "use off or shadow"
+        )
     model_parameters = {
         "thinking": {"type": "disabled"},
         "do_sample": False,
@@ -107,7 +113,16 @@ def create_app(
         ),
         memory_recall_search_limit=app_settings.memory_recall_search_limit,
         memory_recall_max_selected=app_settings.memory_recall_max_selected,
+        multi_agent_mode=(
+            "shadow" if app_settings.multi_agent_mode == "shadow" else "off"
+        ),
+        multi_agent_graph_version=app_settings.multi_agent_graph_version,
+        multi_agent_shadow_timeout_seconds=(
+            app_settings.multi_agent_shadow_timeout_seconds
+        ),
+        default_style_profile=app_settings.default_style_profile,
     )
+    agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
     agent_manifest = (
         build_agent_manifest(runtime_definition)
         if app_settings.agent_runtime_mode == "harness"
@@ -490,8 +505,11 @@ def create_app(
     application.include_router(admin_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
+    application.state.agent_graph_manifest = agent_graph_manifest
     application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
+    application.state.multi_agent_mode = app_settings.multi_agent_mode
+    application.state.multi_agent_graph_version = app_settings.multi_agent_graph_version
     application.state.mobile_auth = None
     application.state.mobile_service = None
     application.state.mobile_platform = None

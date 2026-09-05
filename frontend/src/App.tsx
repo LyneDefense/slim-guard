@@ -13,6 +13,14 @@ import {
 } from "react-router-dom";
 
 import { api, UnauthorizedError } from "./api";
+import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
+import { ShadowComparison } from "./components/trace/ShadowComparison";
+import { WorkflowGraph } from "./components/trace/WorkflowGraph";
+import {
+  AGENT_ROLE_LABELS,
+  buildWorkflowTrace,
+  type WorkflowTraceView,
+} from "./components/trace/model";
 import type { MemoryRecord, TimelineEvent, TraceDetail, TraceSummary, UserDetail } from "./types";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -20,6 +28,7 @@ const STATUS_LABELS: Record<string, string> = {
   completed: "完成",
   succeeded: "成功",
   running: "处理中",
+  started: "处理中",
   sending: "发送中",
   planned: "已计划",
   pending: "等待中",
@@ -328,6 +337,7 @@ function TracePage() {
   if (query.isLoading) return <Loading label="正在重建输出链路" />;
   if (query.error || !query.data) return <Failure error={query.error} />;
   const data = query.data;
+  const workflow = buildWorkflowTrace(data);
   return (
     <section>
       <Link to={`/users/${user.id}`} className="back-link">← 返回该用户的链路</Link>
@@ -338,15 +348,92 @@ function TracePage() {
       {data.trace.failure_code && <div className="alert"><strong>{data.trace.failure_code}</strong><span>{data.trace.error_detail}</span></div>}
       {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
       <ExecutionOverview data={data} />
+      {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
+      {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
       <ContextSources data={data} />
-      <div className="section-heading"><div><h2>Agent 是怎么完成这次回复的</h2><p>按 Harness 的真实事件解释上下文、模型动作、工具观察和投递过程。</p></div><span>{data.timeline.length} 个步骤</span></div>
-      <div className="trace-boundary"><strong>关于“思考”</strong><span>这里展示模型明确输出的工具选择和可验证观察，不展示、补写或猜测模型隐藏的逐字思维。</span></div>
-      <div className="timeline">{data.timeline.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
+      {workflow.hasMultiAgentTrace
+        ? <MultiAgentTimeline workflow={workflow} />
+        : <LegacyTimeline timeline={data.timeline} />}
       {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
       {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
       <p className="privacy-footnote">敏感健康数据 · 已脱敏事件 {data.privacy.redacted_item_count} 条 · 本次查看已写入审计记录</p>
     </section>
   );
+}
+
+function LegacyTimeline({ timeline }: { timeline: TimelineEvent[] }) {
+  return (
+    <>
+      <div className="section-heading"><div><h2>Agent 是怎么完成这次回复的</h2><p>按 Harness 的真实事件解释上下文、模型动作、工具观察和投递过程。</p></div><span>{timeline.length} 个步骤</span></div>
+      <TraceBoundary />
+      <div className="timeline">{timeline.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
+    </>
+  );
+}
+
+function MultiAgentTimeline({ workflow }: { workflow: WorkflowTraceView }) {
+  const [role, setRole] = useState("");
+  const [status, setStatus] = useState("");
+  const [repair, setRepair] = useState("");
+  const invocations = workflow.invocations.filter((invocation) =>
+    (!role || invocation.agent_role === role) &&
+    (!status || invocation.status === status) &&
+    (!repair || invocation.repaired === (repair === "yes")),
+  );
+  const roles = [...new Set(workflow.invocations.map((invocation) => invocation.agent_role))];
+  const statuses = [...new Set(workflow.invocations.map((invocation) => invocation.status))];
+
+  return (
+    <>
+      <section className="invocation-section">
+        <div className="section-heading">
+          <div><h2>按 Agent Invocation 查看</h2><p>每组对应一次有边界的 Agent 调用，可展开核对输入类型、动作、结果和失败原因。</p></div>
+          <span>{invocations.length} / {workflow.invocations.length} 次调用</span>
+        </div>
+        <div className="filters invocation-filters">
+          <label>Agent 角色
+            <select value={role} onChange={(event) => setRole(event.target.value)}>
+              <option value="">全部</option>
+              {roles.map((value) => <option value={value} key={value}>{AGENT_ROLE_LABELS[value]}</option>)}
+            </select>
+          </label>
+          <label>运行状态
+            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="">全部</option>
+              {statuses.map((value) => <option value={value} key={value}>{STATUS_LABELS[value] ?? value}</option>)}
+            </select>
+          </label>
+          <label>是否修复
+            <select value={repair} onChange={(event) => setRepair(event.target.value)}>
+              <option value="">全部</option>
+              <option value="yes">有修复</option>
+              <option value="no">无修复</option>
+            </select>
+          </label>
+        </div>
+        <TraceBoundary />
+        <div className="invocation-list">
+          {invocations.map((invocation, index) => (
+            <AgentInvocationCard invocation={invocation} index={index + 1} key={invocation.invocation_id} />
+          ))}
+          {invocations.length === 0 && <div className="state-card">没有符合当前筛选条件的 Agent 调用</div>}
+        </div>
+      </section>
+      {workflow.turnEvents.length > 0 && (
+        <section className="turn-events">
+          <div className="section-heading"><div><h2>Turn 级公共事件</h2><p>这些步骤发生在具体 Agent Invocation 之外，例如输入、安全、记忆与最终投递。</p></div><span>{workflow.turnEvents.length} 个步骤</span></div>
+          <div className="timeline">{workflow.turnEvents.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
+        </section>
+      )}
+      {workflow.artifacts.length > 0 && (
+        <section className="detail-block"><h3>工作流 Artifact 索引</h3><p>这里只展示经过管理端隐私过滤的结构与引用关系。</p><JsonView value={workflow.artifacts} label="展开 Artifact 技术数据" /></section>
+      )}
+    </>
+  );
+}
+
+function TraceBoundary() {
+  return <div className="trace-boundary"><strong>关于“思考”</strong><span>这里展示结构化决策、工具动作和可验证观察，不展示、补写或猜测模型隐藏的逐字思维。</span></div>;
 }
 
 function ContextSources({ data }: { data: TraceDetail }) {

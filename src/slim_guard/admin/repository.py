@@ -8,8 +8,11 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 
 from slim_guard.admin.presentation import context_sources, execution_summary, present_event
+from slim_guard.agents.contracts import payload_sha256
 from slim_guard.db.models import (
     AdminAuditEventRecord,
+    AgentArtifactRecord,
+    AgentInvocationRecord,
     AgentItemRecord,
     AgentItemRedactionRecord,
     AgentTurnRecord,
@@ -65,9 +68,7 @@ class AdminQueryRepository:
             total = int(await session.scalar(count_statement) or 0)
             users = tuple(
                 await session.scalars(
-                    statement.order_by(
-                        SlimGuardUser.last_seen_at.desc(), SlimGuardUser.id
-                    )
+                    statement.order_by(SlimGuardUser.last_seen_at.desc(), SlimGuardUser.id)
                     .offset(offset)
                     .limit(limit)
                 )
@@ -167,15 +168,12 @@ class AdminQueryRepository:
                 ("exercise_count", ExerciseRecord),
                 ("memory_count", UserMemoryFactRecord),
             ):
-                count_query = select(func.count()).select_from(model).where(
-                    model.user_id == user_id
+                count_query = (
+                    select(func.count()).select_from(model).where(model.user_id == user_id)
                 )
                 if model is UserMemoryFactRecord:
                     count_query = count_query.where(UserMemoryFactRecord.status == "active")
-                counts[key] = int(
-                    await session.scalar(count_query)
-                    or 0
-                )
+                counts[key] = int(await session.scalar(count_query) or 0)
             active_handoff = await session.scalar(
                 select(MemoryHandoffRecord).where(
                     MemoryHandoffRecord.user_id == user_id,
@@ -236,15 +234,11 @@ class AdminQueryRepository:
                 return None
             filters = [InteractionTraceRecord.user_id == user_id]
             if generation_status:
-                filters.append(
-                    InteractionTraceRecord.generation_status == generation_status
-                )
+                filters.append(InteractionTraceRecord.generation_status == generation_status)
             if delivery_status:
                 filters.append(InteractionTraceRecord.delivery_status == delivery_status)
             total = int(
-                await session.scalar(
-                    select(func.count(InteractionTraceRecord.id)).where(*filters)
-                )
+                await session.scalar(select(func.count(InteractionTraceRecord.id)).where(*filters))
                 or 0
             )
             traces = tuple(
@@ -290,6 +284,8 @@ class AdminQueryRepository:
             )
             item_rows: list[tuple[AgentItemRecord, AgentItemRedactionRecord | None]] = []
             tool_rows: tuple[ToolExecutionRecord, ...] = ()
+            invocation_rows: tuple[AgentInvocationRecord, ...] = ()
+            artifact_rows: tuple[AgentArtifactRecord, ...] = ()
             if turn is not None:
                 results = await session.execute(
                     select(AgentItemRecord, AgentItemRedactionRecord)
@@ -308,6 +304,26 @@ class AdminQueryRepository:
                         .order_by(ToolExecutionRecord.created_at)
                     )
                 )
+                invocation_rows = tuple(
+                    await session.scalars(
+                        select(AgentInvocationRecord)
+                        .where(AgentInvocationRecord.turn_id == turn.id)
+                        .order_by(
+                            AgentInvocationRecord.started_at,
+                            AgentInvocationRecord.id,
+                        )
+                    )
+                )
+                artifact_rows = tuple(
+                    await session.scalars(
+                        select(AgentArtifactRecord)
+                        .where(AgentArtifactRecord.turn_id == turn.id)
+                        .order_by(
+                            AgentArtifactRecord.created_at,
+                            AgentArtifactRecord.id,
+                        )
+                    )
+                )
             outbound = (
                 await session.get(OutboundMessage, trace.outbound_idempotency_key)
                 if trace.outbound_idempotency_key is not None
@@ -319,12 +335,40 @@ class AdminQueryRepository:
                 else None
             )
             timeline: list[dict[str, Any]] = [self._span_view(span) for span in spans]
-            timeline.extend(
-                self._item_view(item, redaction) for item, redaction in item_rows
-            )
+            timeline.extend(self._item_view(item, redaction) for item, redaction in item_rows)
             timeline.sort(key=lambda event: (self._aware(event["started_at"]), event["sequence"]))
             for event in timeline:
                 event["presentation"] = present_event(event)
+            output = (
+                {
+                    "kind": "outbound",
+                    "content": outbound.content,
+                    "status": outbound.status,
+                    "platform_msgid": outbound.platform_msgid,
+                    "last_error": outbound.last_error,
+                    "attempt_started_at": outbound.attempt_started_at,
+                    "completed_at": outbound.completed_at,
+                }
+                if outbound is not None
+                else {
+                    "kind": "proactive",
+                    "content": proactive.content,
+                    "status": proactive.status,
+                    "platform_msgid": proactive.platform_msgid,
+                    "last_error": proactive.last_error,
+                    "attempt_started_at": proactive.attempt_started_at,
+                    "completed_at": proactive.completed_at,
+                }
+                if proactive is not None
+                else None
+            )
+            workflow = self._workflow_view(
+                trace=trace,
+                invocation_rows=invocation_rows,
+                artifact_rows=artifact_rows,
+                timeline=timeline,
+                output=output,
+            )
             return {
                 "trace": self._trace_summary(trace),
                 "turn": (
@@ -347,29 +391,13 @@ class AdminQueryRepository:
                 "execution_summary": execution_summary(timeline),
                 "context_sources": context_sources(timeline),
                 "tool_executions": [self._tool_view(tool) for tool in tool_rows],
-                "output": (
-                    {
-                        "kind": "outbound",
-                        "content": outbound.content,
-                        "status": outbound.status,
-                        "platform_msgid": outbound.platform_msgid,
-                        "last_error": outbound.last_error,
-                        "attempt_started_at": outbound.attempt_started_at,
-                        "completed_at": outbound.completed_at,
-                    }
-                    if outbound is not None
-                    else {
-                        "kind": "proactive",
-                        "content": proactive.content,
-                        "status": proactive.status,
-                        "platform_msgid": proactive.platform_msgid,
-                        "last_error": proactive.last_error,
-                        "attempt_started_at": proactive.attempt_started_at,
-                        "completed_at": proactive.completed_at,
-                    }
-                    if proactive is not None
-                    else None
-                ),
+                "output": output,
+                "workflow": workflow,
+                # Top-level aliases keep early Increment 1 clients compatible.
+                "invocations": workflow["invocations"],
+                "artifacts": workflow["artifacts"],
+                "transitions": workflow["transitions"],
+                "shadow_comparison": workflow["shadow_comparison"],
                 "privacy": {
                     "contains_sensitive_health_data": True,
                     "redacted_item_count": sum(
@@ -589,6 +617,357 @@ class AdminQueryRepository:
             )
 
     @classmethod
+    def _workflow_view(
+        cls,
+        *,
+        trace: InteractionTraceRecord,
+        invocation_rows: tuple[AgentInvocationRecord, ...],
+        artifact_rows: tuple[AgentArtifactRecord, ...],
+        timeline: list[dict[str, Any]],
+        output: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        started_events = cls._workflow_events(timeline, "invocation_started")
+        result_events = cls._workflow_events(timeline, "invocation_result")
+        started_by_id = {
+            event["details"].get("invocation_id"): event
+            for event in started_events
+            if isinstance(event.get("details"), dict)
+        }
+        result_by_id = {
+            event["details"].get("invocation_id"): event
+            for event in result_events
+            if isinstance(event.get("details"), dict)
+        }
+
+        invocations = [
+            cls._invocation_view(
+                row,
+                started_event=started_by_id.get(row.id),
+            )
+            for row in invocation_rows
+        ]
+        persisted_ids = {item["invocation_id"] for item in invocations}
+        for event in started_events:
+            details = event.get("details")
+            if not isinstance(details, dict):
+                continue
+            invocation_id = details.get("invocation_id")
+            if not isinstance(invocation_id, str) or invocation_id in persisted_ids:
+                continue
+            invocations.append(
+                cls._event_invocation_view(
+                    event,
+                    result_by_id.get(invocation_id),
+                )
+            )
+        invocations.sort(
+            key=lambda item: (
+                cls._aware(cls._parse_datetime(item["started_at"]) or trace.created_at),
+                item["invocation_id"],
+            )
+        )
+
+        artifacts = [cls._artifact_view(row) for row in artifact_rows]
+        persisted_artifact_ids = {item["artifact_id"] for item in artifacts}
+        for event in cls._workflow_events(timeline, "artifact_created"):
+            details = event.get("details")
+            if not isinstance(details, dict):
+                continue
+            artifact_id = details.get("artifact_id")
+            if not isinstance(artifact_id, str) or artifact_id in persisted_artifact_ids:
+                continue
+            artifacts.append(
+                {
+                    "artifact_id": artifact_id,
+                    "invocation_id": None,
+                    "artifact_type": details.get("artifact_type"),
+                    "producer_role": details.get("producer_role"),
+                    "schema_version": details.get("schema_version"),
+                    "parent_artifact_ids": cls._string_list(details.get("parent_artifact_ids")),
+                    "payload_sha256": details.get("payload_sha256"),
+                    "payload": None,
+                    "integrity_status": "metadata_only",
+                    "created_at": event.get("started_at"),
+                }
+            )
+
+        transitions = [
+            {
+                "from_node": event["details"].get("from_node"),
+                "to_node": event["details"].get("to_node"),
+                "transition_type": event["details"].get("transition_type"),
+                "reason_code": event["details"].get("reason_code"),
+                "attempt": event["details"].get("attempt"),
+            }
+            for event in cls._workflow_events(timeline, "workflow_transition")
+            if isinstance(event.get("details"), dict)
+        ]
+        adopted_events = cls._workflow_events(timeline, "response_adopted")
+        degraded_events = cls._workflow_events(timeline, "response_degraded")
+        adopted = adopted_events[-1]["details"] if adopted_events else {}
+        mode_value = adopted.get("mode") if isinstance(adopted, dict) else None
+        mode = mode_value if isinstance(mode_value, str) else "shadow" if invocations else "legacy"
+        degraded = bool(degraded_events) or any(
+            item["status"] == "degraded" for item in invocations
+        )
+        statuses = {item["status"] for item in invocations}
+        if not invocations:
+            workflow_status = "legacy"
+        elif degraded:
+            workflow_status = "degraded"
+        elif "started" in statuses:
+            workflow_status = "running"
+        elif "failed" in statuses:
+            workflow_status = "failed"
+        elif statuses == {"succeeded"}:
+            workflow_status = "succeeded"
+        else:
+            workflow_status = trace.generation_status
+
+        graph_version = next(
+            (row.graph_version for row in invocation_rows if row.graph_version),
+            "legacy",
+        )
+        repair_count = sum(
+            1
+            for transition in transitions
+            if "repair" in str(transition["transition_type"]).lower()
+            or "return" in str(transition["transition_type"]).lower()
+            or "repair" in str(transition["reason_code"]).lower()
+        )
+        summary = {
+            "mode": mode,
+            "graph_version": graph_version,
+            "status": workflow_status,
+            "model_call_count": sum(int(item["model_call_count"] or 0) for item in invocations),
+            "tool_call_count": sum(int(item["tool_call_count"] or 0) for item in invocations),
+            "total_token_count": sum(int(item["total_token_count"] or 0) for item in invocations),
+            "repair_count": repair_count,
+            "degraded": degraded,
+        }
+        shadow_comparison = (
+            cls._shadow_comparison(
+                mode=mode,
+                adopted=adopted if isinstance(adopted, dict) else {},
+                artifacts=artifacts,
+                invocations=invocations,
+                output=output,
+            )
+            if mode == "shadow"
+            else None
+        )
+        return {
+            "summary": summary,
+            "invocations": invocations,
+            "artifacts": artifacts,
+            "transitions": transitions,
+            "shadow_comparison": shadow_comparison,
+        }
+
+    @classmethod
+    def _invocation_view(
+        cls,
+        row: AgentInvocationRecord,
+        *,
+        started_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        started_at = cls._aware(row.started_at)
+        completed_at = cls._aware(row.completed_at) if row.completed_at is not None else None
+        reason_summary = None
+        if started_event is not None and isinstance(started_event.get("details"), dict):
+            reason_summary = started_event["details"].get("reason_summary")
+        return {
+            "invocation_id": row.id,
+            "agent_role": row.agent_role,
+            "agent_version": row.agent_version,
+            "attempt": row.attempt,
+            "parent_invocation_id": row.parent_invocation_id,
+            "input_artifact_ids": cls._string_list(cls._json_load(row.input_artifact_ids_json)),
+            "output_artifact_id": row.output_artifact_id,
+            "status": row.status,
+            "model_call_count": row.model_call_count,
+            "tool_call_count": row.tool_call_count,
+            "total_token_count": row.total_token_count,
+            "failure_code": row.failure_code,
+            "failure_reason": row.failure_code,
+            "reason_summary": reason_summary or row.reason_summary,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": cls._duration_ms(started_at, completed_at),
+        }
+
+    @classmethod
+    def _event_invocation_view(
+        cls,
+        started_event: dict[str, Any],
+        result_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        started = started_event["details"]
+        result = (
+            result_event["details"]
+            if result_event is not None and isinstance(result_event.get("details"), dict)
+            else {}
+        )
+        started_at = cls._parse_datetime(started.get("started_at"))
+        completed_at = cls._parse_datetime(result.get("completed_at"))
+        return {
+            "invocation_id": started.get("invocation_id"),
+            "agent_role": started.get("agent_role"),
+            "agent_version": started.get("agent_version"),
+            "attempt": started.get("attempt"),
+            "parent_invocation_id": started.get("parent_invocation_id"),
+            "input_artifact_ids": cls._string_list(started.get("input_artifact_ids")),
+            "output_artifact_id": result.get("output_artifact_id"),
+            "status": result.get("status") or "started",
+            "model_call_count": int(result.get("model_call_count") or 0),
+            "tool_call_count": int(result.get("tool_call_count") or 0),
+            "total_token_count": int(result.get("total_token_count") or 0),
+            "failure_code": result.get("failure_code"),
+            "failure_reason": result.get("failure_code"),
+            "reason_summary": started.get("reason_summary"),
+            "started_at": started_at or started_event.get("started_at"),
+            "completed_at": completed_at,
+            "duration_ms": cls._duration_ms(started_at, completed_at),
+        }
+
+    @classmethod
+    def _artifact_view(cls, row: AgentArtifactRecord) -> dict[str, Any]:
+        payload = cls._json_load(row.payload_json)
+        parents = cls._string_list(cls._json_load(row.parent_artifact_ids_json))
+        verified = isinstance(payload, dict)
+        if verified:
+            try:
+                verified = payload_sha256(payload) == row.payload_sha256
+            except ValueError:
+                verified = False
+        return {
+            "artifact_id": row.id,
+            "invocation_id": row.invocation_id,
+            "artifact_type": row.artifact_type,
+            "producer_role": row.producer_role,
+            "schema_version": row.schema_version,
+            "parent_artifact_ids": parents,
+            "payload_sha256": row.payload_sha256,
+            "payload": cls._admin_safe(payload) if verified else None,
+            "integrity_status": "verified" if verified else "mismatch",
+            "created_at": row.created_at,
+        }
+
+    @classmethod
+    def _shadow_comparison(
+        cls,
+        *,
+        mode: str,
+        adopted: dict[str, Any],
+        artifacts: list[dict[str, Any]],
+        invocations: list[dict[str, Any]],
+        output: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        artifact_id = adopted.get("artifact_id")
+        candidate_artifact = next(
+            (artifact for artifact in artifacts if artifact["artifact_id"] == artifact_id),
+            None,
+        )
+        candidate_status = next(
+            (
+                invocation["status"]
+                for invocation in reversed(invocations)
+                if invocation["output_artifact_id"] == artifact_id
+            ),
+            "generated" if candidate_artifact is not None else None,
+        )
+        candidate_payload = (
+            candidate_artifact.get("payload") if candidate_artifact is not None else None
+        )
+        return {
+            "mode": mode,
+            "delivery_status": "not_sent",
+            "business_writes": "no_business_writes",
+            "legacy": {
+                "artifact_id": None,
+                "content": output.get("content") if output is not None else None,
+                "status": output.get("status") if output is not None else None,
+            },
+            "candidate": {
+                "artifact_id": artifact_id if isinstance(artifact_id, str) else None,
+                "content": cls._artifact_content(candidate_payload),
+                "status": candidate_status,
+            },
+        }
+
+    @staticmethod
+    def _artifact_content(payload: object) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        for key in ("content", "text"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+        for key in ("response", "styled_response", "candidate"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                for content_key in ("content", "text"):
+                    content = value.get(content_key)
+                    if isinstance(content, str):
+                        return content
+        return None
+
+    @staticmethod
+    def _workflow_events(
+        timeline: list[dict[str, Any]],
+        operation: str,
+    ) -> list[dict[str, Any]]:
+        return [
+            event
+            for event in timeline
+            if event.get("event_type") == "agent_item" and event.get("operation") == operation
+        ]
+
+    @staticmethod
+    def _string_list(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, str)]
+
+    @classmethod
+    def _admin_safe(cls, value: Any) -> Any:
+        blocked = {
+            "chain_of_thought",
+            "developer_prompt",
+            "hidden_reasoning",
+            "messages",
+            "prompt",
+            "prompts",
+            "reasoning",
+            "reasoning_content",
+            "system_prompt",
+            "thought",
+            "thoughts",
+        }
+        if isinstance(value, dict):
+            return {
+                key: cls._admin_safe(item)
+                for key, item in value.items()
+                if str(key).lower() not in blocked
+            }
+        if isinstance(value, list):
+            return [cls._admin_safe(item) for item in value]
+        return value
+
+    @classmethod
+    def _duration_ms(
+        cls,
+        started_at: datetime | None,
+        completed_at: datetime | None,
+    ) -> int | None:
+        if started_at is None or completed_at is None:
+            return None
+        return max(
+            0,
+            int((cls._aware(completed_at) - cls._aware(started_at)).total_seconds() * 1000),
+        )
+
+    @classmethod
     def _trace_summary(cls, trace: InteractionTraceRecord) -> dict[str, Any]:
         duration_ms = None
         if trace.completed_at is not None:
@@ -619,8 +998,7 @@ class AdminQueryRepository:
         duration_ms = None
         if span.completed_at is not None:
             duration_ms = int(
-                (cls._aware(span.completed_at) - cls._aware(span.started_at)).total_seconds()
-                * 1000
+                (cls._aware(span.completed_at) - cls._aware(span.started_at)).total_seconds() * 1000
             )
         return {
             "event_type": "span",
@@ -644,7 +1022,7 @@ class AdminQueryRepository:
         item: AgentItemRecord,
         redaction: AgentItemRedactionRecord | None,
     ) -> dict[str, Any]:
-        details = cls._json_load(item.payload_json)
+        details = cls._admin_safe(cls._json_load(item.payload_json))
         started_at = item.created_at
         completed_at = None
         if isinstance(details, dict):
@@ -657,10 +1035,7 @@ class AdminQueryRepository:
         if completed_at is not None:
             duration_ms = max(
                 0,
-                int(
-                    (cls._aware(completed_at) - cls._aware(started_at)).total_seconds()
-                    * 1000
-                ),
+                int((cls._aware(completed_at) - cls._aware(started_at)).total_seconds() * 1000),
             )
         return {
             "event_type": "agent_item",
