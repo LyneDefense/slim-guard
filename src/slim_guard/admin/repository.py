@@ -398,6 +398,7 @@ class AdminQueryRepository:
                 "artifacts": workflow["artifacts"],
                 "transitions": workflow["transitions"],
                 "shadow_comparison": workflow["shadow_comparison"],
+                "evidence": workflow["evidence"],
                 "privacy": {
                     "contains_sensitive_health_data": True,
                     "redacted_item_count": sum(
@@ -785,6 +786,7 @@ class AdminQueryRepository:
             if mode == "shadow"
             else None
         )
+        evidence = cls._evidence_summary(artifacts)
         return {
             "summary": summary,
             "invocations": invocations,
@@ -792,6 +794,7 @@ class AdminQueryRepository:
             "transitions": transitions,
             "shadow_comparison": shadow_comparison,
             "style": style,
+            "evidence": evidence,
         }
 
     @classmethod
@@ -892,11 +895,7 @@ class AdminQueryRepository:
                 "used_block_ids",
                 "used_claim_ids",
             }
-            safe_payload = {
-                key: value
-                for key, value in safe_payload.items()
-                if key in safe_fields
-            }
+            safe_payload = {key: value for key, value in safe_payload.items() if key in safe_fields}
         if isinstance(safe_payload, dict) and row.artifact_type.lower() == "response_plan":
             blocks = safe_payload.get("content_blocks")
             safe_payload = {
@@ -911,15 +910,19 @@ class AdminQueryRepository:
                     "prohibited_transformations",
                 }
             }
-            safe_payload["content_blocks"] = [
-                {
-                    key: value
-                    for key, value in block.items()
-                    if key in {"block_id", "kind", "source_refs", "required"}
-                }
-                for block in blocks
-                if isinstance(block, dict)
-            ] if isinstance(blocks, list) else []
+            safe_payload["content_blocks"] = (
+                [
+                    {
+                        key: value
+                        for key, value in block.items()
+                        if key in {"block_id", "kind", "source_refs", "required"}
+                    }
+                    for block in blocks
+                    if isinstance(block, dict)
+                ]
+                if isinstance(blocks, list)
+                else []
+            )
         if isinstance(safe_payload, dict) and row.artifact_type.lower() == "directive":
             safe_payload = {
                 key: value
@@ -934,6 +937,18 @@ class AdminQueryRepository:
                     "requested_detail",
                 }
             }
+        if isinstance(safe_payload, dict):
+            safe_payload = cls._professional_artifact_payload(
+                artifact_type=row.artifact_type,
+                payload=safe_payload,
+            )
+        professional_body_redacted = cls._normalized_artifact_type(row.artifact_type) in {
+            "evidencepacket",
+            "nutritionobservations",
+            "nutritionobservation",
+            "professionalassessment",
+            "conservativeassessment",
+        }
         return {
             "artifact_id": row.id,
             "invocation_id": row.invocation_id,
@@ -944,10 +959,342 @@ class AdminQueryRepository:
             "payload_sha256": row.payload_sha256,
             "payload": safe_payload,
             "style_profile_version": style_profile_version,
-            "body_redacted": has_response_body,
+            "body_redacted": has_response_body or professional_body_redacted,
             "integrity_status": "verified" if verified else "mismatch",
             "created_at": row.created_at,
         }
+
+    @classmethod
+    def _professional_artifact_payload(
+        cls,
+        *,
+        artifact_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = cls._normalized_artifact_type(artifact_type)
+        if normalized == "evidencepacket":
+            return cls._safe_evidence_packet(payload)
+        if normalized in {"nutritionobservations", "nutritionobservation"}:
+            return cls._safe_nutrition_observations(payload)
+        if normalized in {"professionalassessment", "conservativeassessment"}:
+            return cls._safe_professional_assessment(payload)
+        return payload
+
+    @classmethod
+    def _safe_evidence_packet(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_items = payload.get("items", payload.get("evidence", []))
+        return {
+            "schema_version": payload.get("schema_version"),
+            "turn_id": payload.get("turn_id"),
+            # Questions and user text remain available to the invoked agent but do
+            # not need to be echoed into an administrative timeline.
+            "user_request": None,
+            "professional_question": None,
+            "items": [cls._safe_evidence_item(item) for item in raw_items if isinstance(item, dict)]
+            if isinstance(raw_items, list)
+            else [],
+            "missing_information": cls._safe_string_values(payload.get("missing_information")),
+        }
+
+    @classmethod
+    def _safe_evidence_item(cls, item: dict[str, Any]) -> dict[str, Any]:
+        content = item.get("content")
+        content_fields = (
+            sorted(
+                str(key)
+                for key in content
+                if str(key).lower()
+                not in {
+                    "chain_of_thought",
+                    "developer_prompt",
+                    "hidden_reasoning",
+                    "messages",
+                    "prompt",
+                    "reasoning",
+                    "reasoning_content",
+                    "system_prompt",
+                }
+            )[:32]
+            if isinstance(content, dict)
+            else []
+        )
+        # Keeping null-valued keys lets the UI explain which evidence dimensions
+        # were present without disclosing user text, notes, food names, or metrics.
+        return {
+            "evidence_id": item.get("evidence_id") or item.get("id"),
+            "source_type": item.get("source_type") or item.get("kind") or item.get("type"),
+            "authority": item.get("authority"),
+            "occurred_at": item.get("occurred_at"),
+            "content": {key: None for key in content_fields},
+            "confidence": item.get("confidence"),
+            "uncertainty": "present" if item.get("uncertainty") else None,
+            "source_ref": item.get("source_ref"),
+        }
+
+    @classmethod
+    def _safe_nutrition_observations(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_evidence = payload.get("evidence", payload.get("items", []))
+        raw_calculations = payload.get(
+            "calculations",
+            payload.get(
+                "calculation_results",
+                payload.get("calculation_observations", payload.get("observations", [])),
+            ),
+        )
+        knowledge = payload.get("knowledge", payload.get("knowledge_status"))
+        return {
+            "schema_version": payload.get("schema_version"),
+            "evidence": [
+                cls._safe_evidence_item(item) for item in raw_evidence if isinstance(item, dict)
+            ]
+            if isinstance(raw_evidence, list)
+            else [],
+            "calculations": [
+                cls._safe_calculation(item) for item in raw_calculations if isinstance(item, dict)
+            ]
+            if isinstance(raw_calculations, list)
+            else [],
+            "knowledge": cls._safe_knowledge(knowledge),
+        }
+
+    @staticmethod
+    def _safe_calculation(item: dict[str, Any]) -> dict[str, Any]:
+        inputs = item.get("inputs")
+        return {
+            "observation_id": item.get("observation_id") or item.get("evidence_id"),
+            "calculation_type": item.get("calculation_type") or item.get("tool_name"),
+            "value": item.get("value"),
+            "unit": item.get("unit"),
+            "inputs": (
+                {str(key): None for key in sorted(inputs, key=str)[:32]}
+                if isinstance(inputs, dict)
+                else {}
+            ),
+            "evidence_refs": AdminQueryRepository._safe_string_values(
+                item.get("evidence_refs") or item.get("source_ids")
+            ),
+        }
+
+    @classmethod
+    def _safe_professional_assessment(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        findings = payload.get("findings", payload.get("claims", []))
+        actions = payload.get("actions", [])
+        citations = payload.get("citations", [])
+        return {
+            "schema_version": payload.get("schema_version"),
+            "assessment_type": payload.get("assessment_type"),
+            "overall": None,
+            "findings": [
+                {
+                    "claim_id": finding.get("claim_id"),
+                    "category": finding.get("category"),
+                    "statement": None,
+                    "basis_types": cls._safe_string_values(finding.get("basis_types")),
+                    "evidence_refs": cls._safe_string_values(finding.get("evidence_refs")),
+                    "knowledge_refs": cls._safe_string_values(finding.get("knowledge_refs")),
+                    "confidence": finding.get("confidence"),
+                }
+                for finding in findings
+                if isinstance(finding, dict)
+            ]
+            if isinstance(findings, list)
+            else [],
+            "priority_problem": None,
+            "actions": [
+                {
+                    "action_id": action.get("action_id"),
+                    "statement": None,
+                    "basis_claim_ids": cls._safe_string_values(action.get("basis_claim_ids")),
+                }
+                for action in actions
+                if isinstance(action, dict)
+            ]
+            if isinstance(actions, list)
+            else [],
+            "questions": [],
+            "risk_flags": cls._safe_string_values(payload.get("risk_flags")),
+            "uncertainty_note": "present" if payload.get("uncertainty_note") else None,
+            "citations": [
+                cls._safe_citation(citation) for citation in citations if isinstance(citation, dict)
+            ]
+            if isinstance(citations, list)
+            else [],
+        }
+
+    @staticmethod
+    def _safe_citation(citation: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "citation_id": citation.get("citation_id"),
+            "source_id": citation.get("source_id"),
+            "chunk_id": citation.get("chunk_id"),
+            "publisher": citation.get("publisher"),
+            "published_at": citation.get("published_at"),
+            "version": citation.get("version"),
+            "section_or_page": citation.get("section_or_page"),
+            "source_url": citation.get("source_url"),
+            "review_status": citation.get("review_status"),
+            "retrieved_in_invocation_id": citation.get("retrieved_in_invocation_id"),
+        }
+
+    @classmethod
+    def _safe_knowledge(cls, value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        citations = value.get("citations", [])
+        return {
+            "corpus_status": value.get("corpus_status", value.get("status")),
+            "citations": [
+                cls._safe_citation(citation) for citation in citations if isinstance(citation, dict)
+            ]
+            if isinstance(citations, list)
+            else [],
+            # Query wording can contain sensitive user context.  The status and
+            # citation identities are sufficient for audit.
+            "query_summary": None,
+        }
+
+    @classmethod
+    def _evidence_summary(cls, artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+        packet = cls._latest_artifact(artifacts, {"evidencepacket"})
+        observations = cls._latest_artifact(
+            artifacts,
+            {"nutritionobservations", "nutritionobservation"},
+        )
+        assessment = cls._latest_artifact(
+            artifacts,
+            {"professionalassessment", "conservativeassessment"},
+        )
+        packet_payload = packet.get("payload") if packet is not None else None
+        observation_payload = observations.get("payload") if observations is not None else None
+        assessment_payload = assessment.get("payload") if assessment is not None else None
+        packet_payload = packet_payload if isinstance(packet_payload, dict) else {}
+        observation_payload = observation_payload if isinstance(observation_payload, dict) else {}
+        assessment_payload = assessment_payload if isinstance(assessment_payload, dict) else {}
+
+        items: list[dict[str, Any]] = []
+        for raw_items in (
+            packet_payload.get("items"),
+            observation_payload.get("evidence"),
+        ):
+            if not isinstance(raw_items, list):
+                continue
+            for item in raw_items:
+                if isinstance(item, dict):
+                    items.append(item)
+        calculations = observation_payload.get("calculations")
+        calculations = calculations if isinstance(calculations, list) else []
+        deduplicated_items: dict[str, dict[str, Any]] = {}
+        for item in items:
+            item_id = item.get("evidence_id")
+            if isinstance(item_id, str):
+                deduplicated_items[item_id] = item
+        known_evidence = set(deduplicated_items)
+        for calculation in calculations:
+            if isinstance(calculation, dict):
+                observation_id = calculation.get("observation_id")
+                if isinstance(observation_id, str):
+                    known_evidence.add(observation_id)
+
+        claims = assessment_payload.get("findings")
+        claims = claims if isinstance(claims, list) else []
+        actions = assessment_payload.get("actions")
+        actions = actions if isinstance(actions, list) else []
+        citations = assessment_payload.get("citations")
+        citations = citations if isinstance(citations, list) else []
+        known_knowledge = {
+            value
+            for citation in citations
+            if isinstance(citation, dict)
+            for value in (
+                citation.get("citation_id"),
+                citation.get("source_id"),
+                citation.get("chunk_id"),
+            )
+            if isinstance(value, str)
+        }
+        known_claims = {
+            claim.get("claim_id")
+            for claim in claims
+            if isinstance(claim, dict) and isinstance(claim.get("claim_id"), str)
+        }
+        unresolved_evidence = sorted(
+            {
+                ref
+                for claim in claims
+                if isinstance(claim, dict)
+                for ref in cls._safe_string_values(claim.get("evidence_refs"))
+                if ref not in known_evidence
+            }
+        )
+        unresolved_knowledge = sorted(
+            {
+                ref
+                for claim in claims
+                if isinstance(claim, dict)
+                for ref in cls._safe_string_values(claim.get("knowledge_refs"))
+                if ref not in known_knowledge
+            }
+        )
+        unresolved_claims = sorted(
+            {
+                ref
+                for action in actions
+                if isinstance(action, dict)
+                for ref in cls._safe_string_values(action.get("basis_claim_ids"))
+                if ref not in known_claims
+            }
+        )
+        knowledge = observation_payload.get("knowledge")
+        if not isinstance(knowledge, dict):
+            knowledge = None
+        return {
+            "packet_artifact_id": packet.get("artifact_id") if packet else None,
+            "observations_artifact_id": observations.get("artifact_id") if observations else None,
+            "assessment_artifact_id": assessment.get("artifact_id") if assessment else None,
+            "items": list(deduplicated_items.values()),
+            "calculations": [item for item in calculations if isinstance(item, dict)],
+            "missing_information": cls._safe_string_values(
+                packet_payload.get("missing_information")
+            ),
+            "claims": [item for item in claims if isinstance(item, dict)],
+            "actions": [item for item in actions if isinstance(item, dict)],
+            "knowledge": knowledge,
+            "unresolved_evidence_refs": unresolved_evidence,
+            "unresolved_knowledge_refs": unresolved_knowledge,
+            "unresolved_claim_refs": unresolved_claims,
+            "visual_uncertainty_count": sum(
+                1
+                for item in deduplicated_items.values()
+                if item.get("source_type") == "vision_observation"
+                and item.get("uncertainty") is not None
+            ),
+        }
+
+    @classmethod
+    def _latest_artifact(
+        cls,
+        artifacts: list[dict[str, Any]],
+        artifact_types: set[str],
+    ) -> dict[str, Any] | None:
+        return next(
+            (
+                artifact
+                for artifact in reversed(artifacts)
+                if cls._normalized_artifact_type(str(artifact.get("artifact_type", "")))
+                in artifact_types
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _normalized_artifact_type(value: str) -> str:
+        return "".join(character for character in value.lower() if character.isalnum())
+
+    @staticmethod
+    def _safe_string_values(value: Any) -> list[str]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [item for item in value if isinstance(item, str)]
 
     @staticmethod
     def _style_summary(
@@ -994,8 +1341,7 @@ class AdminQueryRepository:
             (
                 transition
                 for transition in transitions
-                if transition.get("reason_code")
-                in {"style_failed", "budget_exhausted"}
+                if transition.get("reason_code") in {"style_failed", "budget_exhausted"}
                 and transition.get("from_node") == "style_running"
             ),
             None,
@@ -1011,14 +1357,11 @@ class AdminQueryRepository:
         ]
         degraded_detail = (
             style_degraded_events[-1].get("details")
-            if style_degraded_events
-            and isinstance(style_degraded_events[-1].get("details"), dict)
+            if style_degraded_events and isinstance(style_degraded_events[-1].get("details"), dict)
             else {}
         )
         degraded_reason = (
-            degraded_detail.get("reason_code")
-            if isinstance(degraded_detail, dict)
-            else None
+            degraded_detail.get("reason_code") if isinstance(degraded_detail, dict) else None
         )
         adopted_id = adopted.get("artifact_id")
         adopted_style = next(
@@ -1050,23 +1393,15 @@ class AdminQueryRepository:
             "status": status,
             "bypassed": bypassed,
             "bypass_reason": (
-                bypass_transition.get("reason_code")
-                if bypass_transition is not None
-                else None
+                bypass_transition.get("reason_code") if bypass_transition is not None else None
             ),
             "degraded": degraded,
             "degraded_reason": (
                 degraded_reason
-                or (
-                    style_failure.get("reason_code")
-                    if style_failure is not None
-                    else None
-                )
+                or (style_failure.get("reason_code") if style_failure is not None else None)
             ),
             "adopted": adopted_flag,
-            "adopted_artifact_id": (
-                adopted_id if isinstance(adopted_id, str) else None
-            ),
+            "adopted_artifact_id": (adopted_id if isinstance(adopted_id, str) else None),
             "adoption_mode": (
                 adopted.get("mode") if isinstance(adopted.get("mode"), str) else None
             ),

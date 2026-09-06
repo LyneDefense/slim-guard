@@ -10,6 +10,12 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
+from slim_guard.agents.nutrition import (
+    DEFAULT_NUTRITION_PROMPT_VERSION,
+    NUTRITION_AGENT_ALLOWED_TOOLS,
+    NUTRITION_AGENT_PROMPT,
+)
+from slim_guard.agents.nutrition.tools import NutritionToolRegistry
 from slim_guard.agents.style import RESPONSE_STYLE_PROMPT, RESPONSE_STYLE_PROMPT_VERSION
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
@@ -107,6 +113,9 @@ class AgentRuntimeDefinition(BaseModel):
         max_length=128,
     )
     style_render_all_normal_replies: bool = True
+    nutrition_agent_enabled: bool = False
+    nutrition_rag_enabled: bool = False
+    nutrition_require_rag_citations: bool = True
 
 
 def build_agent_runtime(
@@ -277,6 +286,7 @@ def build_agent_runtime(
                 persistence=OrchestrationRepository(database),
                 style_profiles=StyleProfileRepository(database),
                 style_enabled=definition.style_render_all_normal_replies,
+                nutrition_enabled=definition.nutrition_agent_enabled,
                 clock=clock,
             )
             if definition.multi_agent_mode == "shadow"
@@ -326,7 +336,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
 
 
 def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraphManifest:
-    """Freeze all planned roles even while only the Shadow orchestrator is enabled."""
+    """Freeze active and planned roles for the typed workflow."""
 
     disabled_prompt = "This workflow role is disabled in the current rollout increment."
     nodes = {
@@ -344,12 +354,14 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
         "nutrition_expert": AgentGraphNodeManifest.build(
             role="nutrition_expert",
             model=definition.text_model,
-            prompt_version="disabled-v1",
-            prompt=disabled_prompt,
+            prompt_version=DEFAULT_NUTRITION_PROMPT_VERSION,
+            prompt=NUTRITION_AGENT_PROMPT,
             output_schema="ProfessionalAssessment",
-            max_model_calls=1,
+            allowed_tool_names=NUTRITION_AGENT_ALLOWED_TOOLS,
+            privacy_scopes=("evidence_packet", "nutrition_observations"),
+            max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens,
+            max_total_tokens=definition.vision_max_output_tokens * 2,
         ),
         "response_style": AgentGraphNodeManifest.build(
             role="response_style",
@@ -381,5 +393,6 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
         evidence_policy_version="typed-provenance-v1",
         safety_policy_version="health-output-guard-v2",
         business_tool_versions=dict(build_agent_manifest(definition).tool_versions),
+        nutrition_tool_versions=NutritionToolRegistry().versions,
         code_revision=definition.code_revision,
     )

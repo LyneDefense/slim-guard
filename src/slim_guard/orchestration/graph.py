@@ -134,7 +134,10 @@ _TRANSITION_REASONS: dict[tuple[GraphNode, GraphNode], frozenset[TransitionReaso
         {TransitionReason.CONTEXT_SUPPLIED}
     ),
     (GraphNode.EXPERT_RUNNING, GraphNode.RESPONSE_RENDERING): frozenset(
-        {TransitionReason.INSUFFICIENT_EVIDENCE}
+        {
+            TransitionReason.INSUFFICIENT_EVIDENCE,
+            TransitionReason.ASSESSMENT_READY,
+        }
     ),
     (GraphNode.EXPERT_RUNNING, GraphNode.STYLE_RESOLVED): frozenset(
         {TransitionReason.ASSESSMENT_READY}

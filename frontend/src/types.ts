@@ -204,6 +204,76 @@ export interface StyleBypassDetails {
   artifact_id?: string | null;
 }
 
+export interface TraceEvidenceItem {
+  evidence_id: string;
+  source_type: string;
+  authority: "authoritative" | "user_reported" | "observation" | string;
+  occurred_at?: string | null;
+  content?: Record<string, unknown> | null;
+  confidence?: "high" | "medium" | "low" | string | null;
+  uncertainty?: string | null;
+  source_ref?: string | null;
+}
+
+export interface TraceEvidencePacketPayload {
+  schema_version?: string;
+  turn_id?: string;
+  user_request?: string;
+  professional_question?: string;
+  items?: TraceEvidenceItem[];
+  missing_information?: string[];
+}
+
+export interface TraceNutritionCalculation {
+  observation_id: string;
+  calculation_type: string;
+  value: number | string;
+  unit?: string | null;
+  inputs?: Record<string, unknown> | null;
+}
+
+export interface TraceNutritionKnowledgeStatus {
+  corpus_status: "empty" | "available" | "unavailable" | "error" | string;
+  citations?: unknown[];
+  query_summary?: string | null;
+}
+
+export interface TraceNutritionObservationsPayload {
+  evidence?: TraceEvidenceItem[];
+  calculations?: TraceNutritionCalculation[];
+  calculation_observations?: TraceNutritionCalculation[];
+  knowledge?: TraceNutritionKnowledgeStatus | null;
+}
+
+export interface TraceProfessionalClaim {
+  claim_id: string;
+  category: string;
+  statement?: string | null;
+  basis_types?: string[];
+  evidence_refs?: string[];
+  knowledge_refs?: string[];
+  confidence?: string;
+}
+
+export interface TraceProfessionalAction {
+  action_id: string;
+  statement?: string | null;
+  basis_claim_ids?: string[];
+}
+
+export interface TraceProfessionalAssessmentPayload {
+  schema_version?: string;
+  assessment_type?: string;
+  overall?: string;
+  findings?: TraceProfessionalClaim[];
+  priority_problem?: string | null;
+  actions?: TraceProfessionalAction[];
+  questions?: string[];
+  risk_flags?: string[];
+  uncertainty_note?: string | null;
+  citations?: unknown[];
+}
+
 export type TraceWorkflowTransition = WorkflowTransitionDetails;
 
 export interface TraceComparedResponse {

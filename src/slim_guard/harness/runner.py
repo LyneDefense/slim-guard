@@ -225,6 +225,16 @@ class HarnessTurnRunner:
                     turn_id=initialized.turn.id,
                     thread_id=initialized.thread.id,
                     context=compiled.request.messages,
+                    user_request=self._user_request(initialized),
+                    current_items=tuple(
+                        {
+                            "id": item.id,
+                            "item_type": item.item_type.value,
+                            "payload": item.payload,
+                        }
+                        for item in initialized.input_items
+                    ),
+                    authoritative_context=authoritative_context,
                     deadline_at=initialized.turn.deadline_at,
                 )
             )
@@ -245,6 +255,17 @@ class HarnessTurnRunner:
             memory_recall=recall_result,
             shadow_workflow=shadow_result,
         )
+
+    @staticmethod
+    def _user_request(initialized: InitializedTurn) -> str:
+        texts = [
+            str(item.payload["text"]).strip()
+            for item in initialized.input_items
+            if item.item_type.value == "user_message"
+            and isinstance(item.payload.get("text"), str)
+            and str(item.payload["text"]).strip()
+        ]
+        return "\n".join(texts) or f"定期任务：{initialized.turn.trigger.value}"
 
     @staticmethod
     def _utc_now() -> datetime:

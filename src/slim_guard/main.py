@@ -127,6 +127,9 @@ def create_app(
         ),
         default_style_profile=app_settings.default_style_profile,
         style_render_all_normal_replies=app_settings.style_render_all_normal_replies,
+        nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
+        nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
+        nutrition_require_rag_citations=app_settings.nutrition_require_rag_citations,
     )
     agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
     agent_manifest = (

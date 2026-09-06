@@ -403,3 +403,14 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/admin/repository.py`、`frontend/src/components/trace/StyleTracePanel.tsx` → Style 可观测闭环 → 展示 Profile、块类型/来源数量、渲染/降级/采用血缘与安全/操作旁路；ResponsePlan 块正文及 StyledResponse 正文默认从 Artifact 技术视图脱敏。
 - `tests/unit/test_response_style_agent.py`、`test_style_profile_repository.py`、`test_admin_style_trace.py`、Harness/Coordinator/Admin/Graph 测试 → Increment 2 验收 → 覆盖数字/事实/记录状态/疾病建议篡改、一次修复、中性降级、版本不可覆盖、Profile 种子、Shadow 故障不影响 Legacy 回复和 UI 数据契约。
 - 最终验证 → Ruff 全仓、Mypy strict（146 个源码文件）、Python compileall、前端 TypeScript/生产构建及 321 项 Pytest 全部通过。
+
+### `feat: add nutrition evidence shadow path`
+
+- `src/slim_guard/orchestration/evidence.py`、`agents/nutrition/context.py` → 最小证据面 → 只从当前 Turn 和权威上下文白名单构造有界 EvidencePacket，保留来源、时间、authority、confidence 与 uncertainty；NutritionContext 不接收完整历史或用户全库。
+- `src/slim_guard/agents/nutrition/agent.py`、`contracts.py` → 营养专业 Agent → 生成结构化 ProfessionalAssessment，程序校验 Claim→Evidence、Action→Claim、Citation、视觉置信度和高风险 model-prior；失败或一次修复仍不合法时返回无虚构事实的保守 Assessment。
+- `src/slim_guard/agents/nutrition/tools.py` → 独立只读专业工具 → 提供 BMI、体重趋势和打卡完成度确定性计算，以及默认空实现的知识检索/来源查询；所有工具固定 read-only，空 corpus 不生成文章或引用。
+- `src/slim_guard/orchestration/coordinator.py`、`graph.py`、`harness/runner.py` → Shadow 专业路径 → Orchestrator 只引用目录中的 Evidence ID，Coordinator 构造证据、预计算只读 observation、运行零 Tool 权限的 Nutrition Agent，再将 Assessment 交给全局 Style；任何失败均不替换 Legacy 回复、不中断原始记录确认。
+- `src/slim_guard/agent/composition.py`、`main.py` → 生产装配与版本冻结 → 增加 Nutrition 开关，将真实 Prompt、Schema、隐私范围和独立工具版本写入 Graph Manifest；默认仍关闭且 Multi-Agent 仍为 Shadow。
+- `src/slim_guard/admin/repository.py`、`frontend/src/components/trace/EvidencePanel.tsx` → Evidence/Claim 管理台 → 按用户原话、Working Memory、长期记忆、数据库、图片和计算分组，展示 authority/confidence、Claim/Action 引用链与知识库空态；敏感正文和计算输入默认脱敏/收起，无实际 Nutrition invocation 时不伪造面板。
+- `tests/unit/test_evidence_plane.py`、`test_nutrition_agent.py`、`test_structured_agent_runner.py` 及 Admin/Harness/Graph 回归 → Increment 3 验收 → 覆盖证据边界、只读 Registry、空知识库、引用伪造、视觉不确定性、完整专业链和 Nutrition 失败不影响 Legacy。
+- 最终验证 → Ruff 全仓、Mypy strict（152 个源码文件）、Python compileall、前端 TypeScript/生产构建及 346 项 Pytest 全部通过。
