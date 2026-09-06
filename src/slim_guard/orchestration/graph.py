@@ -66,6 +66,8 @@ class TransitionReason(StrEnum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     ASSESSMENT_READY = "assessment_ready"
     STYLE_RESOLVED = "style_resolved"
+    STYLE_BYPASSED = "style_bypassed"
+    STYLE_FAILED = "style_failed"
     RENDERED = "rendered"
     REVIEW_PASSED = "review_passed"
     REVIEW_REPAIR = "review_repair"
@@ -140,6 +142,9 @@ _TRANSITION_REASONS: dict[tuple[GraphNode, GraphNode], frozenset[TransitionReaso
     (GraphNode.RESPONSE_RENDERING, GraphNode.STYLE_RESOLVED): frozenset(
         {TransitionReason.STYLE_RESOLVED}
     ),
+    (GraphNode.RESPONSE_RENDERING, GraphNode.OUTPUT_GUARDED): frozenset(
+        {TransitionReason.STYLE_BYPASSED}
+    ),
     (GraphNode.STYLE_RESOLVED, GraphNode.STYLE_RUNNING): frozenset(
         {TransitionReason.STYLE_RESOLVED}
     ),
@@ -151,6 +156,12 @@ _TRANSITION_REASONS: dict[tuple[GraphNode, GraphNode], frozenset[TransitionReaso
     ),
     (GraphNode.STYLE_RUNNING, GraphNode.REVIEW_RUNNING): frozenset(
         {TransitionReason.RENDERED}
+    ),
+    (GraphNode.STYLE_RUNNING, GraphNode.OUTPUT_GUARDED): frozenset(
+        {TransitionReason.RENDERED}
+    ),
+    (GraphNode.STYLE_RUNNING, GraphNode.NEUTRAL_FALLBACK): frozenset(
+        {TransitionReason.STYLE_FAILED, TransitionReason.BUDGET_EXHAUSTED}
     ),
     (GraphNode.REVIEW_RUNNING, GraphNode.OUTPUT_GUARDED): frozenset(
         {TransitionReason.REVIEW_PASSED}

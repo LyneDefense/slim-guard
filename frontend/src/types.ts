@@ -156,8 +156,52 @@ export interface TraceAgentInvocation {
 export interface TraceAgentArtifact extends ArtifactCreatedDetails {
   invocation_id: string | null;
   payload: Record<string, unknown> | null;
+  style_profile_version?: string | null;
+  body_redacted?: boolean;
   integrity_status: string;
   created_at: string | null;
+}
+
+export interface TraceResponsePlanBlock {
+  block_id: string;
+  kind: string;
+  source_refs: string[];
+  required: boolean;
+}
+
+export interface TraceResponsePlanPayload {
+  schema_version?: string;
+  communication_act?: string;
+  requested_detail?: string;
+  content_blocks?: TraceResponsePlanBlock[];
+  citation_refs?: string[];
+  prohibited_transformations?: string[];
+}
+
+export interface TraceStyledResponsePayload {
+  schema_version?: string;
+  text?: string;
+  used_block_ids?: string[];
+  used_claim_ids?: string[];
+  used_action_ids?: string[];
+  preserved_risk_flags?: string[];
+  preserved_citation_refs?: string[];
+  style_profile_version?: string;
+}
+
+export interface TraceResolvedStyleProfilePayload {
+  profile_id?: string;
+  profile_name?: string;
+  display_name?: string;
+  name?: string;
+  version?: string;
+  style_profile_version?: string;
+}
+
+export interface StyleBypassDetails {
+  reason_code: string;
+  bypass_type?: string;
+  artifact_id?: string | null;
 }
 
 export type TraceWorkflowTransition = WorkflowTransitionDetails;

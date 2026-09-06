@@ -66,6 +66,10 @@ Agent Runtime 默认使用 `harness`：企业微信文字和图片消息会进�
 多 Agent 使用独立开关，默认 `off`，不会改变当前生产回复；`shadow` 会运行无写权限的候选工作流并
 在管理台展示对比，但候选不会发送：
 
+Shadow 候选的所有正常沟通会经过版本化 `slimguard_default_v1` Style Profile。Style Agent 只能调整
+表达，required 内容块、数字、记录状态、专业结论、风险与引用均由代码校验；模型或校验失败时使用
+中性渲染器，安全与操作模板明确绕过普通风格层。
+
 ```dotenv
 # harness：新版 Agent Harness；legacy：仅供回滚的旧版单次回复
 AGENT_RUNTIME_MODE=harness

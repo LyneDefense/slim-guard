@@ -1,13 +1,47 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import Table, insert, inspect, select, text
+from sqlalchemy import Table, insert, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from slim_guard.db.models import Base, SchemaMigrationRecord
+from slim_guard.db.models import (
+    Base,
+    SchemaMigrationRecord,
+    StyleProfileRecord,
+    StyleProfileVersionRecord,
+)
+
+_DEFAULT_STYLE_PROFILE_ID = "slimguard_default"
+_DEFAULT_STYLE_PROFILE_VERSION = "slimguard_default_v1"
+_DEFAULT_STYLE_PROFILE_VERSION_ID = "style-default-v1"
+_DEFAULT_STYLE_PROFILE_PROMPT = (
+    "Write clear, concise and supportive SlimGuard replies. Preserve every fact, "
+    "record status, risk, uncertainty and citation. Never shame, frighten, impersonate "
+    "a person, or add medical conclusions."
+)
+# Frozen with the migration: future profile edits must append a new version.
+_DEFAULT_STYLE_SPEC = {
+    "display_name": "SlimGuard 默认简洁语气",
+    "description": "接近现有微信回复体验：自然、简洁、明确，不冒充真人或新增判断。",
+    "tone_rules": [
+        "使用自然简洁的中文微信语气",
+        "先准确表达既定内容，再给必要的下一步",
+        "普通确认保持短句，不堆叠标题或口号",
+        "直接但不羞辱、不恐吓、不冒充医生或其他真人",
+    ],
+    "prohibited_phrases": [
+        "作为章医生",
+        "我是章医生",
+        "保证瘦",
+        "一定能瘦",
+    ],
+    "preferred_max_paragraphs": 3,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +101,61 @@ async def _allow_mobile_test_account_identity(connection: AsyncConnection) -> No
     )
 
 
+async def _create_and_seed_style_profiles(connection: AsyncConnection) -> None:
+    """Create the versioned profile tables and install the conservative default."""
+
+    await _create_application_tables(connection)
+    profile_id = await connection.scalar(
+        select(StyleProfileRecord.id).where(
+            StyleProfileRecord.stable_name == _DEFAULT_STYLE_PROFILE_ID
+        )
+    )
+    if profile_id is None:
+        profile_id = _DEFAULT_STYLE_PROFILE_ID
+        await connection.execute(
+            insert(StyleProfileRecord).values(
+                id=profile_id,
+                stable_name=_DEFAULT_STYLE_PROFILE_ID,
+                active_version_id=None,
+                is_default=True,
+            )
+        )
+    version_id = await connection.scalar(
+        select(StyleProfileVersionRecord.id).where(
+            StyleProfileVersionRecord.version == _DEFAULT_STYLE_PROFILE_VERSION
+        )
+    )
+    if version_id is None:
+        version_id = _DEFAULT_STYLE_PROFILE_VERSION_ID
+        await connection.execute(
+            insert(StyleProfileVersionRecord).values(
+                id=version_id,
+                profile_id=profile_id,
+                version=_DEFAULT_STYLE_PROFILE_VERSION,
+                style_spec_json=json.dumps(
+                    _DEFAULT_STYLE_SPEC,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                prompt_sha256=hashlib.sha256(
+                    _DEFAULT_STYLE_PROFILE_PROMPT.encode()
+                ).hexdigest(),
+                source_corpus_sha256=None,
+                status="active",
+            )
+        )
+    await connection.execute(
+        update(StyleProfileRecord)
+        .where(
+            StyleProfileRecord.id == profile_id,
+            StyleProfileRecord.active_version_id.is_(None),
+        )
+        .values(active_version_id=version_id)
+    )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -79,6 +168,7 @@ MIGRATIONS = (
         _allow_mobile_test_account_identity,
     ),
     SchemaMigration("20260904_01_multi_agent_audit", _create_application_tables),
+    SchemaMigration("20260905_01_style_profiles", _create_and_seed_style_profiles),
 )
 
 

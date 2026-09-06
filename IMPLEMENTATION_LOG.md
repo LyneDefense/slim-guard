@@ -393,3 +393,13 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/config.py`、`main.py`、`.env.example`、`deploy/env.server.example`、`README.md` → 安全发布开关 → 增加 off/shadow/canary/on 配置契约；本 Increment 仅允许 off/shadow 启动，canary/on 在采用链路完成前 fail closed。
 - `tests/unit/test_structured_agent_runner.py`、`test_orchestration_repository.py`、`test_harness_runner.py`、`tests/integration/test_admin_api.py` 及迁移/配置测试 → Increment 1 验收 → 覆盖修复与预算、Shadow 故障隔离、持久血缘、同 Turn 集成、管理台 API、旧回复不被替换及候选不发送。
 - 最终验证 → Ruff、Mypy strict（139 个源码文件）、前端 TypeScript 与生产构建通过；Pytest 全仓结果见本提交验证记录。
+
+### `feat: add faithful response style agent`
+
+- `src/slim_guard/agents/style/` → 通用表达风格边界 → 新增版本化 StyleProfile、最小化 StyleContext、默认 `slimguard_default_v1`、无 Tool 的 ResponseStyleAgent、一次结构/完整性修复与确定性 NeutralRenderer。
+- `src/slim_guard/agents/style/validation.py` → 表达忠实度硬约束 → 校验 required/protected block、数字、Claim/Action/Risk/Citation 引用集合、Profile 版本、禁用短语及新增记录/疾病/建议等高后果内容。
+- `src/slim_guard/style_profiles.py`、`db/models.py`、`db/migrations.py` → Style 资产事实源 → 持久化稳定 Profile 与 append-only 版本，保存 Prompt/语料哈希、审核状态与 active alias，并幂等发布默认资产。
+- `src/slim_guard/orchestration/coordinator.py`、`graph.py`、`agent/composition.py` → 全局 Shadow Style 路径 → 所有正常 Shadow 回复形成 ResponsePlan 并经过 Profile 解析、Style Agent 和确定性校验；模型、Profile 或校验失败进入中性渲染，关闭 Style 时记录明确旁路。
+- `src/slim_guard/admin/repository.py`、`frontend/src/components/trace/StyleTracePanel.tsx` → Style 可观测闭环 → 展示 Profile、块类型/来源数量、渲染/降级/采用血缘与安全/操作旁路；ResponsePlan 块正文及 StyledResponse 正文默认从 Artifact 技术视图脱敏。
+- `tests/unit/test_response_style_agent.py`、`test_style_profile_repository.py`、`test_admin_style_trace.py`、Harness/Coordinator/Admin/Graph 测试 → Increment 2 验收 → 覆盖数字/事实/记录状态/疾病建议篡改、一次修复、中性降级、版本不可覆盖、Profile 种子、Shadow 故障不影响 Legacy 回复和 UI 数据契约。
+- 最终验证 → Ruff 全仓、Mypy strict（146 个源码文件）、Python compileall、前端 TypeScript/生产构建及 321 项 Pytest 全部通过。

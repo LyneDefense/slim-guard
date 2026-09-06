@@ -62,6 +62,7 @@ from slim_guard.services.reply_agent import (
     ZhipuReplyAgent,
 )
 from slim_guard.services.routine_scheduler import RoutineSchedulerService
+from slim_guard.style_profiles import StyleProfileRepository
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,10 @@ def create_app(
         raise ValueError(
             "MULTI_AGENT_MODE canary/on requires the later adoption rollout; "
             "use off or shadow"
+        )
+    if app_settings.default_style_profile != "slimguard_default_v1":
+        raise ValueError(
+            "DEFAULT_STYLE_PROFILE is not published; use slimguard_default_v1"
         )
     model_parameters = {
         "thinking": {"type": "disabled"},
@@ -121,6 +126,7 @@ def create_app(
             app_settings.multi_agent_shadow_timeout_seconds
         ),
         default_style_profile=app_settings.default_style_profile,
+        style_render_all_normal_replies=app_settings.style_render_all_normal_replies,
     )
     agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
     agent_manifest = (
@@ -154,6 +160,7 @@ def create_app(
         database = Database(app_settings.database_url)
         await database.create_schema()
         await AgentVersionRepository(database).register(agent_manifest)
+        await StyleProfileRepository(database).ensure_default()
         repository = MessageRepository(database)
         traces = InteractionTraceRepository(database)
         await repository.backfill_users_from_messages()

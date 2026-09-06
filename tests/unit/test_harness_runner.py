@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from slim_guard.agent_models.fake import ScriptedModelGateway
@@ -275,6 +276,21 @@ async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_pat
     model = ScriptedModelGateway(
         (
             final_response(directive.model_dump_json()),
+            final_response(
+                json.dumps(
+                    {
+                        "schema_version": "1",
+                        "text": "影子候选回复，不应发送。",
+                        "used_block_ids": ["direct-response"],
+                        "used_claim_ids": [],
+                        "used_action_ids": [],
+                        "preserved_risk_flags": [],
+                        "preserved_citation_refs": [],
+                        "style_profile_version": "slimguard_default_v1",
+                    },
+                    ensure_ascii=False,
+                )
+            ),
             final_response("当前 Harness 的真实回复。"),
         )
     )
@@ -320,12 +336,14 @@ async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_pat
         )
         items = await repository.list_items(result.initialized.turn.id)
 
-        assert [(item.agent_role, item.status) for item in invocations] == [
-            ("orchestrator", "succeeded")
+        assert sorted((item.agent_role, item.status) for item in invocations) == [
+            ("orchestrator", "succeeded"),
+            ("response_style", "succeeded"),
         ]
         assert {item.artifact_type for item in artifacts} == {
             "directive",
             "response_plan",
+            "style_resolution",
             "styled_response",
         }
         assert sum(item.item_type is ItemType.AGENT_MESSAGE for item in items) == 1
@@ -339,6 +357,64 @@ async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_pat
             "mode": "shadow",
             "final": False,
         }
+    finally:
+        await database.close()
+
+
+async def test_style_failure_uses_neutral_candidate_and_legacy_reply_continues(tmp_path) -> None:
+    database, user = await prepare_database(tmp_path)
+    manifest = build_manifest()
+    await AgentVersionRepository(database).register(manifest)
+    repository = HarnessStateRepository(database)
+    directive = direct_shadow_directive("只保留这条既定内容。")
+    model = ScriptedModelGateway(
+        (
+            final_response(directive.model_dump_json()),
+            final_response("{}"),
+            final_response("{}"),
+            final_response("线上回复仍正常。"),
+        )
+    )
+    current_time = datetime(2026, 9, 6, 9, 0, tzinfo=UTC)
+    shadow = AgentWorkflowCoordinator(
+        model=model,
+        recorder=PersistentHarnessRunRecorder(repository),
+        model_name="glm-5.2",
+        graph_version="typed-supervisor-v1",
+        persistence=OrchestrationRepository(database),
+        clock=lambda: current_time,
+    )
+    runner = build_runner(
+        repository=repository,
+        manifest=manifest,
+        registry=ToolRegistry(()),
+        model=model,
+        tool_calls=NoToolRunner(),
+        current_time=current_time,
+        shadow_workflow=shadow,
+    )
+    try:
+        result = await runner.run(
+            request=initialization_request(
+                user_id=user.id,
+                agent_version_id=manifest.version_id,
+                deadline_at=current_time + timedelta(seconds=30),
+            )
+        )
+
+        assert result.final_text == "线上回复仍正常。"
+        assert result.shadow_workflow is not None
+        assert result.shadow_workflow.status.value == "degraded"
+        assert result.shadow_workflow.shadow_candidate == "只保留这条既定内容。"
+        assert result.shadow_workflow.failure_code == "structured_output_invalid"
+        assert "neutral_fallback" in result.shadow_workflow.actual_nodes
+        invocations = await OrchestrationRepository(database).list_turn_invocations(
+            result.initialized.turn.id
+        )
+        assert sorted((item.agent_role, item.status) for item in invocations) == [
+            ("orchestrator", "succeeded"),
+            ("response_style", "degraded"),
+        ]
     finally:
         await database.close()
 

@@ -1095,6 +1095,75 @@ class TraceSpanRecord(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class StyleProfileRecord(Base):
+    """Stable profile identity whose active version can move without rewriting history."""
+
+    __tablename__ = "style_profiles"
+    __table_args__ = (
+        UniqueConstraint("stable_name", name="uq_style_profile_stable_name"),
+        Index("ix_style_profile_default", "is_default"),
+        Index(
+            "uq_style_profile_single_default",
+            "is_default",
+            unique=True,
+            sqlite_where=text("is_default = 1"),
+            postgresql_where=text("is_default"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    stable_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    active_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class StyleProfileVersionRecord(Base):
+    """Append-only Style Profile asset; activation only updates the stable alias."""
+
+    __tablename__ = "style_profile_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "version",
+            name="uq_style_profile_version",
+        ),
+        UniqueConstraint("version", name="uq_style_profile_global_version"),
+        CheckConstraint(
+            "status IN ('draft','evaluated','active','retired')",
+            name="ck_style_profile_version_status",
+        ),
+        CheckConstraint(
+            "length(prompt_sha256) = 64",
+            name="ck_style_profile_prompt_sha256_length",
+        ),
+        CheckConstraint(
+            "source_corpus_sha256 IS NULL OR length(source_corpus_sha256) = 64",
+            name="ck_style_profile_source_sha256_length",
+        ),
+        Index("ix_style_profile_version_profile_created", "profile_id", "created_at"),
+        Index("ix_style_profile_version_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("style_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    style_spec_json: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_corpus_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class AgentInvocationRecord(Base):
     """A coordinator-issued, bounded agent invocation and its terminal result.
 

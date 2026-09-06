@@ -10,6 +10,7 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
+from slim_guard.agents.style import RESPONSE_STYLE_PROMPT, RESPONSE_STYLE_PROMPT_VERSION
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.body_fat.repository import BodyFatRepository
@@ -45,6 +46,7 @@ from slim_guard.orchestration.coordinator import (
     AgentWorkflowCoordinator,
 )
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.style_profiles import StyleProfileRepository
 from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
@@ -104,6 +106,7 @@ class AgentRuntimeDefinition(BaseModel):
         min_length=1,
         max_length=128,
     )
+    style_render_all_normal_replies: bool = True
 
 
 def build_agent_runtime(
@@ -272,6 +275,8 @@ def build_agent_runtime(
                 timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
                 max_output_tokens=definition.vision_max_output_tokens,
                 persistence=OrchestrationRepository(database),
+                style_profiles=StyleProfileRepository(database),
+                style_enabled=definition.style_render_all_normal_replies,
                 clock=clock,
             )
             if definition.multi_agent_mode == "shadow"
@@ -349,12 +354,13 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
         "response_style": AgentGraphNodeManifest.build(
             role="response_style",
             model=definition.text_model,
-            prompt_version="disabled-v1",
-            prompt=disabled_prompt,
+            prompt_version=RESPONSE_STYLE_PROMPT_VERSION,
+            prompt=RESPONSE_STYLE_PROMPT,
             output_schema="StyledResponse",
-            max_model_calls=1,
+            privacy_scopes=("response_plan", "style_profile"),
+            max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens,
+            max_total_tokens=definition.vision_max_output_tokens * 2,
         ),
         "response_reviewer": AgentGraphNodeManifest.build(
             role="response_reviewer",

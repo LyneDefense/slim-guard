@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from slim_guard.agent_models.fake import ScriptedModelGateway
@@ -106,7 +107,19 @@ async def test_structured_runner_rejects_tool_calls_and_expired_deadline() -> No
 
 async def test_shadow_coordinator_returns_unadopted_no_write_candidate() -> None:
     directive = direct_shadow_directive("收到，先按现在的节奏继续。")
-    model = ScriptedModelGateway((response(directive.model_dump_json()),))
+    styled = {
+        "schema_version": "1",
+        "text": "收到，先按现在的节奏继续。",
+        "used_block_ids": ["direct-response"],
+        "used_claim_ids": [],
+        "used_action_ids": [],
+        "preserved_risk_flags": [],
+        "preserved_citation_refs": [],
+        "style_profile_version": "slimguard_default_v1",
+    }
+    model = ScriptedModelGateway(
+        (response(directive.model_dump_json()), response(json.dumps(styled)))
+    )
     coordinator = AgentWorkflowCoordinator(
         model=model,
         recorder=NullHarnessRunRecorder(),
@@ -134,9 +147,10 @@ async def test_shadow_coordinator_returns_unadopted_no_write_candidate() -> None
     assert [artifact.artifact_type for artifact in result.artifacts] == [
         "directive",
         "response_plan",
+        "style_resolution",
         "styled_response",
     ]
-    assert result.invocations[0].allowed_tools == ()
+    assert all(invocation.allowed_tools == () for invocation in result.invocations)
 
 
 async def test_shadow_coordinator_contains_model_failure() -> None:
@@ -161,3 +175,35 @@ async def test_shadow_coordinator_contains_model_failure() -> None:
     assert result.status is InvocationStatus.FAILED
     assert result.shadow_candidate is None
     assert result.failure_code == "structured_output_invalid"
+
+
+async def test_shadow_coordinator_can_bypass_style_with_neutral_rendering() -> None:
+    directive = direct_shadow_directive("保留原始内容。")
+    model = ScriptedModelGateway((response(directive.model_dump_json()),))
+    coordinator = AgentWorkflowCoordinator(
+        model=model,
+        recorder=NullHarnessRunRecorder(),
+        model_name="glm-5.2",
+        graph_version="typed-supervisor-v1",
+        style_enabled=False,
+        clock=lambda: NOW,
+    )
+
+    result = await coordinator.run_shadow(
+        ShadowWorkflowRequest(
+            trace_id="trace-1",
+            turn_id="turn-1",
+            context=(ModelMessage(role=MessageRole.USER, content="你好"),),
+            deadline_at=NOW + timedelta(seconds=30),
+        )
+    )
+
+    assert result.status is InvocationStatus.SUCCEEDED
+    assert result.shadow_candidate == "保留原始内容。"
+    assert [item.agent_role.value for item in result.invocations] == ["orchestrator"]
+    assert [item.artifact_type for item in result.artifacts] == [
+        "directive",
+        "response_plan",
+        "neutral_response",
+    ]
+    assert result.transitions[-1].reason.value == "style_bypassed"

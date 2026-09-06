@@ -52,6 +52,7 @@ export interface WorkflowTraceView {
   artifacts: TraceAgentArtifact[];
   transitions: TraceWorkflowTransition[];
   shadowComparison: ShadowComparisonView | null;
+  timeline: TimelineEvent[];
   turnEvents: TimelineEvent[];
   hasMultiAgentTrace: boolean;
 }
@@ -98,6 +99,7 @@ export function buildWorkflowTrace(data: TraceDetail): WorkflowTraceView {
     artifacts,
     transitions,
     shadowComparison: buildShadowComparison(data, apiComparison, artifacts, mode, adopted),
+    timeline: data.timeline,
     turnEvents: grouped.turnEvents,
     hasMultiAgentTrace:
       invocations.length > 0 ||

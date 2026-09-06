@@ -15,6 +15,7 @@ import {
 import { api, UnauthorizedError } from "./api";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
 import { ShadowComparison } from "./components/trace/ShadowComparison";
+import { StyleTracePanel } from "./components/trace/StyleTracePanel";
 import { WorkflowGraph } from "./components/trace/WorkflowGraph";
 import {
   AGENT_ROLE_LABELS,
@@ -349,6 +350,7 @@ function TracePage() {
       {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
       <ExecutionOverview data={data} />
       {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
+      <StyleTracePanel workflow={workflow} />
       {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
       <ContextSources data={data} />
       {workflow.hasMultiAgentTrace

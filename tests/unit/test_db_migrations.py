@@ -34,6 +34,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260903_02_mobile_devices_and_bindings",
             "20260903_03_mobile_test_accounts",
             "20260904_01_multi_agent_audit",
+            "20260905_01_style_profiles",
         )
         assert "body_fat_records" in table_names
     finally:
@@ -87,6 +88,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260903_02_mobile_devices_and_bindings",
             "20260903_03_mobile_test_accounts",
             "20260904_01_multi_agent_audit",
+            "20260905_01_style_profiles",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

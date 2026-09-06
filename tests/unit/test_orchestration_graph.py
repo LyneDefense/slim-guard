@@ -65,6 +65,24 @@ def test_transition_reason_must_be_valid_for_the_edge() -> None:
         )
 
 
+def test_style_can_finish_without_reviewer_or_fall_back_deterministically() -> None:
+    assert is_transition_allowed(
+        GraphNode.STYLE_RUNNING,
+        GraphNode.OUTPUT_GUARDED,
+        TransitionReason.RENDERED,
+    )
+    assert is_transition_allowed(
+        GraphNode.STYLE_RUNNING,
+        GraphNode.NEUTRAL_FALLBACK,
+        TransitionReason.STYLE_FAILED,
+    )
+    assert is_transition_allowed(
+        GraphNode.RESPONSE_RENDERING,
+        GraphNode.OUTPUT_GUARDED,
+        TransitionReason.STYLE_BYPASSED,
+    )
+
+
 def test_invocation_tools_and_scopes_cannot_exceed_trusted_grant() -> None:
     grant = InvocationGrant(
         agent_role="nutrition_expert",

@@ -735,6 +735,29 @@ class AdminQueryRepository:
             or "return" in str(transition["transition_type"]).lower()
             or "repair" in str(transition["reason_code"]).lower()
         )
+        style = cls._style_summary(
+            artifacts=artifacts,
+            transitions=transitions,
+            adopted=adopted if isinstance(adopted, dict) else {},
+            degraded_events=degraded_events,
+        )
+        adopted_artifact_id = style["adopted_artifact_id"]
+        for artifact in artifacts:
+            if str(artifact["artifact_type"]).lower() not in {
+                "styledresponse",
+                "styled_response",
+                "neutral_response",
+            }:
+                continue
+            artifact["adoption"] = {
+                "status": (
+                    style["status"]
+                    if artifact["artifact_id"] == adopted_artifact_id
+                    else "not_adopted"
+                ),
+                "mode": style["adoption_mode"],
+                "final": style["final"],
+            }
         summary = {
             "mode": mode,
             "graph_version": graph_version,
@@ -744,12 +767,18 @@ class AdminQueryRepository:
             "total_token_count": sum(int(item["total_token_count"] or 0) for item in invocations),
             "repair_count": repair_count,
             "degraded": degraded,
+            "style_profile_version": style["style_profile_version"],
+            "style_status": style["status"],
+            "style_bypassed": style["bypassed"],
+            "style_degraded": style["degraded"],
+            "style_adopted": style["adopted"],
         }
         shadow_comparison = (
             cls._shadow_comparison(
                 mode=mode,
                 adopted=adopted if isinstance(adopted, dict) else {},
                 artifacts=artifacts,
+                artifact_rows=artifact_rows,
                 invocations=invocations,
                 output=output,
             )
@@ -762,6 +791,7 @@ class AdminQueryRepository:
             "artifacts": artifacts,
             "transitions": transitions,
             "shadow_comparison": shadow_comparison,
+            "style": style,
         }
 
     @classmethod
@@ -840,6 +870,70 @@ class AdminQueryRepository:
                 verified = payload_sha256(payload) == row.payload_sha256
             except ValueError:
                 verified = False
+        safe_payload = cls._admin_safe(payload) if verified else None
+        style_profile_version = (
+            safe_payload.get("style_profile_version")
+            if isinstance(safe_payload, dict)
+            and isinstance(safe_payload.get("style_profile_version"), str)
+            else None
+        )
+        has_response_body = row.artifact_type.lower() in {
+            "styledresponse",
+            "styled_response",
+            "neutral_response",
+        }
+        if isinstance(safe_payload, dict) and has_response_body:
+            safe_fields = {
+                "preserved_citation_refs",
+                "preserved_risk_flags",
+                "schema_version",
+                "style_profile_version",
+                "used_action_ids",
+                "used_block_ids",
+                "used_claim_ids",
+            }
+            safe_payload = {
+                key: value
+                for key, value in safe_payload.items()
+                if key in safe_fields
+            }
+        if isinstance(safe_payload, dict) and row.artifact_type.lower() == "response_plan":
+            blocks = safe_payload.get("content_blocks")
+            safe_payload = {
+                key: value
+                for key, value in safe_payload.items()
+                if key
+                in {
+                    "schema_version",
+                    "communication_act",
+                    "requested_detail",
+                    "citation_refs",
+                    "prohibited_transformations",
+                }
+            }
+            safe_payload["content_blocks"] = [
+                {
+                    key: value
+                    for key, value in block.items()
+                    if key in {"block_id", "kind", "source_refs", "required"}
+                }
+                for block in blocks
+                if isinstance(block, dict)
+            ] if isinstance(blocks, list) else []
+        if isinstance(safe_payload, dict) and row.artifact_type.lower() == "directive":
+            safe_payload = {
+                key: value
+                for key, value in safe_payload.items()
+                if key
+                in {
+                    "schema_version",
+                    "response_path",
+                    "interaction_kind",
+                    "evidence_refs",
+                    "voice_act",
+                    "requested_detail",
+                }
+            }
         return {
             "artifact_id": row.id,
             "invocation_id": row.invocation_id,
@@ -848,9 +942,135 @@ class AdminQueryRepository:
             "schema_version": row.schema_version,
             "parent_artifact_ids": parents,
             "payload_sha256": row.payload_sha256,
-            "payload": cls._admin_safe(payload) if verified else None,
+            "payload": safe_payload,
+            "style_profile_version": style_profile_version,
+            "body_redacted": has_response_body,
             "integrity_status": "verified" if verified else "mismatch",
             "created_at": row.created_at,
+        }
+
+    @staticmethod
+    def _style_summary(
+        *,
+        artifacts: list[dict[str, Any]],
+        transitions: list[dict[str, Any]],
+        adopted: dict[str, Any],
+        degraded_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        style_artifacts = [
+            artifact
+            for artifact in artifacts
+            if str(artifact.get("artifact_type", "")).lower()
+            in {
+                "style_resolution",
+                "styledresponse",
+                "styled_response",
+                "neutral_response",
+            }
+        ]
+        response_artifacts = [
+            artifact
+            for artifact in style_artifacts
+            if str(artifact.get("artifact_type", "")).lower()
+            in {"styledresponse", "styled_response", "neutral_response"}
+        ]
+        style_profile_version = next(
+            (
+                artifact.get("style_profile_version")
+                for artifact in reversed(style_artifacts)
+                if isinstance(artifact.get("style_profile_version"), str)
+            ),
+            None,
+        )
+        bypass_transition = next(
+            (
+                transition
+                for transition in transitions
+                if transition.get("reason_code") == "style_bypassed"
+            ),
+            None,
+        )
+        style_failure = next(
+            (
+                transition
+                for transition in transitions
+                if transition.get("reason_code")
+                in {"style_failed", "budget_exhausted"}
+                and transition.get("from_node") == "style_running"
+            ),
+            None,
+        )
+        style_degraded_events = [
+            event
+            for event in degraded_events
+            if isinstance(event.get("details"), dict)
+            and (
+                "style" in str(event["details"].get("reason_code", "")).lower()
+                or "neutral" in str(event["details"].get("fallback_type", "")).lower()
+            )
+        ]
+        degraded_detail = (
+            style_degraded_events[-1].get("details")
+            if style_degraded_events
+            and isinstance(style_degraded_events[-1].get("details"), dict)
+            else {}
+        )
+        degraded_reason = (
+            degraded_detail.get("reason_code")
+            if isinstance(degraded_detail, dict)
+            else None
+        )
+        adopted_id = adopted.get("artifact_id")
+        adopted_style = next(
+            (
+                artifact
+                for artifact in response_artifacts
+                if artifact.get("artifact_id") == adopted_id
+            ),
+            None,
+        )
+        bypassed = bypass_transition is not None
+        degraded = style_failure is not None or bool(style_degraded_events)
+        adopted_flag = adopted_style is not None
+        final = adopted.get("final") if isinstance(adopted.get("final"), bool) else None
+        if bypassed:
+            status = "bypassed"
+        elif degraded:
+            status = "degraded"
+        elif adopted_flag and final is True:
+            status = "adopted"
+        elif adopted_flag:
+            status = "shadow_candidate"
+        elif response_artifacts:
+            status = "generated"
+        else:
+            status = "not_run"
+        return {
+            "style_profile_version": style_profile_version,
+            "status": status,
+            "bypassed": bypassed,
+            "bypass_reason": (
+                bypass_transition.get("reason_code")
+                if bypass_transition is not None
+                else None
+            ),
+            "degraded": degraded,
+            "degraded_reason": (
+                degraded_reason
+                or (
+                    style_failure.get("reason_code")
+                    if style_failure is not None
+                    else None
+                )
+            ),
+            "adopted": adopted_flag,
+            "adopted_artifact_id": (
+                adopted_id if isinstance(adopted_id, str) else None
+            ),
+            "adoption_mode": (
+                adopted.get("mode") if isinstance(adopted.get("mode"), str) else None
+            ),
+            "final": final,
         }
 
     @classmethod
@@ -860,6 +1080,7 @@ class AdminQueryRepository:
         mode: str,
         adopted: dict[str, Any],
         artifacts: list[dict[str, Any]],
+        artifact_rows: tuple[AgentArtifactRecord, ...],
         invocations: list[dict[str, Any]],
         output: dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -876,8 +1097,9 @@ class AdminQueryRepository:
             ),
             "generated" if candidate_artifact is not None else None,
         )
-        candidate_payload = (
-            candidate_artifact.get("payload") if candidate_artifact is not None else None
+        candidate_row = next(
+            (row for row in artifact_rows if row.id == artifact_id),
+            None,
         )
         return {
             "mode": mode,
@@ -890,10 +1112,27 @@ class AdminQueryRepository:
             },
             "candidate": {
                 "artifact_id": artifact_id if isinstance(artifact_id, str) else None,
-                "content": cls._artifact_content(candidate_payload),
+                "content": cls._stored_artifact_content(candidate_row),
                 "status": candidate_status,
             },
         }
+
+    @classmethod
+    def _stored_artifact_content(
+        cls,
+        row: AgentArtifactRecord | None,
+    ) -> str | None:
+        if row is None:
+            return None
+        payload = cls._json_load(row.payload_json)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            if payload_sha256(payload) != row.payload_sha256:
+                return None
+        except ValueError:
+            return None
+        return cls._artifact_content(payload)
 
     @staticmethod
     def _artifact_content(payload: object) -> str | None:

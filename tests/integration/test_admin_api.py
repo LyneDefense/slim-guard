@@ -122,6 +122,7 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             )
             candidate_payload = {
                 "text": "Shadow 候选回复",
+                "style_profile_version": "slimguard_default_v1",
                 "prompt": "不得展示的系统提示词",
                 "chain_of_thought": "不得展示的隐藏推理",
             }
@@ -169,6 +170,7 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                     payload_json=(
                         '{"chain_of_thought":"不得展示的隐藏推理",'
                         '"prompt":"不得展示的系统提示词",'
+                        '"style_profile_version":"slimguard_default_v1",'
                         '"text":"Shadow 候选回复"}'
                     ),
                     created_at=now,
@@ -276,9 +278,29 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             "total_token_count": 12,
             "repair_count": 0,
             "degraded": False,
+            "style_profile_version": "slimguard_default_v1",
+            "style_status": "shadow_candidate",
+            "style_bypassed": False,
+            "style_degraded": False,
+            "style_adopted": True,
         }
         assert detail.json()["invocations"][0]["invocation_id"] == "invocation-1"
-        assert detail.json()["artifacts"][0]["payload"] == {"text": "Shadow 候选回复"}
+        assert detail.json()["artifacts"][0]["payload"] == {
+            "style_profile_version": "slimguard_default_v1"
+        }
+        assert detail.json()["artifacts"][0]["body_redacted"] is True
+        assert detail.json()["workflow"]["style"] == {
+            "style_profile_version": "slimguard_default_v1",
+            "status": "shadow_candidate",
+            "bypassed": False,
+            "bypass_reason": None,
+            "degraded": False,
+            "degraded_reason": None,
+            "adopted": True,
+            "adopted_artifact_id": "artifact-1",
+            "adoption_mode": "shadow",
+            "final": False,
+        }
         assert detail.json()["transitions"][0]["to_node"] == "response_style"
         assert detail.json()["shadow_comparison"] == {
             "mode": "shadow",
