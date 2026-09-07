@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
 from slim_guard.agent.runtime import AgentRuntime
@@ -46,6 +46,10 @@ from slim_guard.memory.recall import ModelFirstMemoryRecaller
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
+from slim_guard.nutrition_knowledge import (
+    NutritionKnowledgeRepository,
+    NutritionKnowledgeService,
+)
 from slim_guard.orchestration.coordinator import (
     SHADOW_ORCHESTRATOR_PROMPT,
     SHADOW_ORCHESTRATOR_PROMPT_VERSION,
@@ -116,6 +120,14 @@ class AgentRuntimeDefinition(BaseModel):
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
+
+    @model_validator(mode="after")
+    def validate_nutrition_rag(self) -> AgentRuntimeDefinition:
+        if self.nutrition_rag_enabled and not self.nutrition_agent_enabled:
+            raise ValueError("Nutrition RAG requires the Nutrition Agent")
+        if self.nutrition_rag_enabled and not self.nutrition_require_rag_citations:
+            raise ValueError("Nutrition RAG citations cannot be disabled")
+        return self
 
 
 def build_agent_runtime(
@@ -287,6 +299,15 @@ def build_agent_runtime(
                 style_profiles=StyleProfileRepository(database),
                 style_enabled=definition.style_render_all_normal_replies,
                 nutrition_enabled=definition.nutrition_agent_enabled,
+                nutrition_tools=NutritionToolRegistry(
+                    knowledge_repository=(
+                        NutritionKnowledgeService(
+                            NutritionKnowledgeRepository(database)
+                        )
+                        if definition.nutrition_rag_enabled
+                        else None
+                    )
+                ),
                 clock=clock,
             )
             if definition.multi_agent_mode == "shadow"

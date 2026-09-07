@@ -232,9 +232,38 @@ export interface TraceNutritionCalculation {
   inputs?: Record<string, unknown> | null;
 }
 
+export interface TraceKnowledgeCitation {
+  rank?: number | null;
+  citation_id?: string | null;
+  source_id?: string | null;
+  chunk_id?: string | null;
+  title?: string | null;
+  publisher?: string | null;
+  published_at?: string | null;
+  version?: string | null;
+  section_or_page?: string | null;
+  source_url?: string | null;
+  applicability?: string[];
+  review_status?: "draft" | "approved" | "retired" | string | null;
+  retrieved_in_invocation_id?: string | null;
+  keyword_score?: number | null;
+  vector_score?: number | null;
+  rerank_score?: number | null;
+  match_reasons?: string[];
+  adoption_status?: string | null;
+  excerpt?: string | null;
+  snippet?: string | null;
+  content?: string | null;
+}
+
 export interface TraceNutritionKnowledgeStatus {
   corpus_status: "empty" | "available" | "unavailable" | "error" | string;
-  citations?: unknown[];
+  citations?: TraceKnowledgeCitation[];
+  candidates?: TraceKnowledgeCitation[];
+  candidate_citations?: TraceKnowledgeCitation[];
+  retrieved_candidates?: TraceKnowledgeCitation[];
+  adopted_citations?: TraceKnowledgeCitation[];
+  final_citations?: TraceKnowledgeCitation[];
   query_summary?: string | null;
 }
 
@@ -271,7 +300,7 @@ export interface TraceProfessionalAssessmentPayload {
   questions?: string[];
   risk_flags?: string[];
   uncertainty_note?: string | null;
-  citations?: unknown[];
+  citations?: TraceKnowledgeCitation[];
 }
 
 export type TraceWorkflowTransition = WorkflowTransitionDetails;

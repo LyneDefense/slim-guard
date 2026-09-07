@@ -80,11 +80,35 @@ MULTI_AGENT_CANARY_USER_IDS=
 MULTI_AGENT_GRAPH_VERSION=typed-supervisor-v1
 MULTI_AGENT_SHADOW_TIMEOUT_SECONDS=20
 DEFAULT_STYLE_PROFILE=slimguard_default_v1
+NUTRITION_AGENT_ENABLED=false
+NUTRITION_RAG_ENABLED=false
+NUTRITION_REQUIRE_RAG_CITATIONS=true
 ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
 
 `MULTI_AGENT_MODE` 支持 `off → shadow → canary → on`。首次部署保持 `off`；完成 Shadow 验证前不要
 直接进入 Canary 或全量。关闭该开关不影响现有 Harness、用户 Thread 或已经写入的健康记录。
+
+Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。资料必须先离线导入为 `draft`，再经过
+“审核”和“发布”两个独立操作，才会被新 Turn 检索；资料退休后立即退出新检索，历史 Artifact 中已经
+冻结的 Citation 仍可审计。线上 Nutrition 工具全部只读，也不会自动把网页写入知识库。
+
+导入清单可以是 JSON 数组，也可以是包含 `documents` 数组的对象。每项至少包含 `source_key`、
+`version`、`title`、`publisher` 和 `content`；也可用 `content_path` 代替 `content`，引用相对清单文件
+的 UTF-8 文本或 Markdown 文件。运维命令如下：
+
+```bash
+uv run python -m slim_guard.tools.manage_nutrition_knowledge import ./knowledge-manifest.json --actor importer@example
+uv run python -m slim_guard.tools.manage_nutrition_knowledge approve SOURCE_ID --reviewer reviewer@example
+uv run python -m slim_guard.tools.manage_nutrition_knowledge publish SOURCE_ID --reviewer publisher@example
+uv run python -m slim_guard.tools.manage_nutrition_knowledge search "成年人膳食多样性" --limit 5
+uv run python -m slim_guard.tools.manage_nutrition_knowledge retire SOURCE_ID --reviewer reviewer@example --reason "资料已被新版本替代"
+uv run python -m slim_guard.tools.manage_nutrition_knowledge show SOURCE_ID
+```
+
+完成资料审核后，才在 Shadow 模式打开 `NUTRITION_AGENT_ENABLED=true` 和
+`NUTRITION_RAG_ENABLED=true`。RAG 打开时不能关闭 `NUTRITION_REQUIRE_RAG_CITATIONS`；每条知识性
+Claim 都必须保留当前 Nutrition invocation 的 Citation，并完整通过 Style 渲染。
 
 智谱可选配置：
 

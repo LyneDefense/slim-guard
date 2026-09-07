@@ -35,8 +35,15 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260903_03_mobile_test_accounts",
             "20260904_01_multi_agent_audit",
             "20260905_01_style_profiles",
+            "20260906_01_nutrition_knowledge",
         )
         assert "body_fat_records" in table_names
+        assert {
+            "nutrition_knowledge_import_batches",
+            "nutrition_knowledge_sources",
+            "nutrition_knowledge_chunks",
+            "nutrition_knowledge_reviews",
+        }.issubset(table_names)
     finally:
         await database.close()
 
@@ -89,6 +96,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260903_03_mobile_test_accounts",
             "20260904_01_multi_agent_audit",
             "20260905_01_style_profiles",
+            "20260906_01_nutrition_knowledge",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

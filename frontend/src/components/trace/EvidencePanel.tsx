@@ -4,6 +4,7 @@ import type {
   TraceNutritionKnowledgeStatus,
 } from "../../types";
 import type { WorkflowTraceView } from "./model";
+import { claimAnchorId, RagCitationPanel } from "./RagCitationPanel";
 
 interface EvidenceViewItem {
   id: string;
@@ -82,6 +83,14 @@ export function EvidencePanel({ workflow }: { workflow: WorkflowTraceView }) {
         <div className="evidence-empty">该 Nutrition Invocation 没有可展示的 Evidence Packet。</div>
       )}
       <KnowledgeState knowledge={knowledge} assessment={assessment} />
+      <RagCitationPanel
+        assessment={assessment}
+        claims={findings.map((claim) => ({
+          claimId: claim.claimId,
+          knowledgeRefs: claim.knowledgeRefs,
+        }))}
+        knowledge={knowledge}
+      />
       <ClaimPanel
         assessmentArtifact={assessmentArtifact}
         assessment={assessment}
@@ -201,7 +210,11 @@ function ClaimPanel({
             const missingEvidence = claim.evidenceRefs.filter((reference) => !knownEvidence.has(reference));
             const missingKnowledge = claim.knowledgeRefs.filter((reference) => !knownKnowledge.has(reference));
             return (
-              <article className={`claim-card confidence-${claim.confidence}`} key={claim.claimId}>
+              <article
+                className={`claim-card confidence-${claim.confidence}`}
+                id={claimAnchorId(claim.claimId)}
+                key={claim.claimId}
+              >
                 <header>
                   <div><span>{claim.category}</span><strong>{claim.statement ?? "Claim 正文已隐藏"}</strong></div>
                   <EvidenceBadge value={claim.confidence} kind="confidence" />
@@ -398,6 +411,11 @@ function knowledgeStatus(artifact: TraceAgentArtifact | null): TraceNutritionKno
   return {
     corpus_status: corpusStatus,
     citations: Array.isArray(source.citations) ? source.citations : [],
+    ...(Array.isArray(source.candidates) ? { candidates: source.candidates } : {}),
+    ...(Array.isArray(source.candidate_citations) ? { candidate_citations: source.candidate_citations } : {}),
+    ...(Array.isArray(source.retrieved_candidates) ? { retrieved_candidates: source.retrieved_candidates } : {}),
+    ...(Array.isArray(source.adopted_citations) ? { adopted_citations: source.adopted_citations } : {}),
+    ...(Array.isArray(source.final_citations) ? { final_citations: source.final_citations } : {}),
     query_summary: nullableString(source.query_summary),
   };
 }

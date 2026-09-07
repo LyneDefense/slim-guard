@@ -90,6 +90,15 @@ def create_app(
         raise ValueError(
             "DEFAULT_STYLE_PROFILE is not published; use slimguard_default_v1"
         )
+    if app_settings.nutrition_rag_enabled and not app_settings.nutrition_agent_enabled:
+        raise ValueError("NUTRITION_RAG_ENABLED requires NUTRITION_AGENT_ENABLED")
+    if (
+        app_settings.nutrition_rag_enabled
+        and not app_settings.nutrition_require_rag_citations
+    ):
+        raise ValueError(
+            "NUTRITION_REQUIRE_RAG_CITATIONS must stay enabled when Nutrition RAG is enabled"
+        )
     model_parameters = {
         "thinking": {"type": "disabled"},
         "do_sample": False,

@@ -193,6 +193,33 @@ def test_multi_agent_adoption_modes_fail_closed_until_rollout() -> None:
             create_app(Settings(multi_agent_mode=mode))  # type: ignore[arg-type]
 
 
+def test_nutrition_rag_requires_agent_and_mandatory_citations() -> None:
+    with pytest.raises(ValueError, match="requires NUTRITION_AGENT_ENABLED"):
+        create_app(Settings(nutrition_rag_enabled=True))
+
+    with pytest.raises(ValueError, match="must stay enabled"):
+        create_app(
+            Settings(
+                nutrition_agent_enabled=True,
+                nutrition_rag_enabled=True,
+                nutrition_require_rag_citations=False,
+            )
+        )
+
+
+def test_nutrition_rag_fails_closed_without_agent_and_citations() -> None:
+    with pytest.raises(ValueError, match="requires NUTRITION_AGENT_ENABLED"):
+        create_app(Settings(nutrition_rag_enabled=True))
+    with pytest.raises(ValueError, match="must stay enabled"):
+        create_app(
+            Settings(
+                nutrition_agent_enabled=True,
+                nutrition_rag_enabled=True,
+                nutrition_require_rag_citations=False,
+            )
+        )
+
+
 def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     settings = Settings(
         agent_runtime_mode="harness",
@@ -241,6 +268,15 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "response_reviewer",
         "response_style",
     ]
+    graph_nodes = dict(app.state.agent_graph_manifest.nodes)
+    assert graph_nodes["nutrition_expert"].prompt_version == "nutrition-assessment-v1"
+    assert dict(app.state.agent_graph_manifest.nutrition_tool_versions) == {
+        "calculate_bmi": "1",
+        "calculate_weight_trend": "1",
+        "compare_checkin_adherence": "1",
+        "get_nutrition_source": "1",
+        "search_nutrition_knowledge": "1",
+    }
 
 
 def test_create_app_exposes_current_agent_manifest() -> None:

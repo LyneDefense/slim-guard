@@ -230,6 +230,55 @@ button:disabled { cursor: default; }
 .knowledge-state { display: flex; gap: 10px; margin-top: 12px; padding: 11px 13px; border-radius: 10px; color: #49616a; background: #e9f1f3; font-size: 10px; }
 .knowledge-state strong { white-space: nowrap; }
 .knowledge-empty, .knowledge-unavailable, .knowledge-error { color: #89512d; background: #fff0df; }
+.rag-panel { margin-top: 14px; padding-top: 15px; border-top: 1px solid #dbe5e7; }
+.rag-panel > header { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+.rag-panel > header h3 { margin: 0 0 3px; font-size: 14px; }
+.rag-panel > header p { margin: 0; color: var(--muted); font-size: 9px; }
+.rag-counts { display: flex; gap: 5px; flex-wrap: wrap; }
+.rag-counts span { padding: 4px 7px; border-radius: 6px; color: #3f6674; background: #e5eff1; font-size: 8px; font-weight: 800; white-space: nowrap; }
+.rag-broken-reference { display: flex; gap: 9px; margin-bottom: 10px; padding: 9px 11px; border-radius: 8px; color: var(--red); background: #fff0ee; font-size: 9px; }
+.rag-broken-reference strong { white-space: nowrap; }
+.rag-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.rag-column { min-width: 0; padding: 12px; border: 1px solid #dce5e7; border-radius: 12px; background: #f3f7f8; }
+.rag-column-adopted { border-color: #bcdacc; background: #f1f8f4; }
+.rag-column > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.rag-column > header h4 { margin: 0; font-size: 12px; }
+.rag-column > header span { min-width: 21px; height: 21px; display: grid; place-items: center; border-radius: 6px; color: #456874; background: #e1ecee; font-size: 8px; font-weight: 900; }
+.rag-column-adopted > header span { color: #286348; background: #dcefe5; }
+.citation-list { display: grid; gap: 8px; }
+.citation-card { min-width: 0; padding: 12px; border: 1px solid #dce6e8; border-left: 3px solid #658997; border-radius: 10px; background: white; }
+.citation-adopted { border-left-color: #33815f; }
+.citation-retired { border-left-color: #a36969; background: #fff9f8; }
+.citation-card > header { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.citation-card > header > div { min-width: 0; }
+.citation-card > header span:first-child { display: block; overflow: hidden; color: #698087; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card h5 { margin: 4px 0 0; font-size: 11px; line-height: 1.45; }
+.citation-review { flex-shrink: 0; padding: 3px 6px; border-radius: 999px; color: #65716c; background: #e7ece9; font-size: 8px; white-space: nowrap; }
+.citation-review-approved { color: #176744; background: #dcefe4; }
+.citation-review-draft { color: #815c25; background: #ffedcf; }
+.citation-review-retired { color: #914c4c; background: #f7dede; }
+.citation-warning { margin-top: 8px; padding: 7px 8px; border-radius: 6px; color: #8f4646; background: #fbe5e3; font-size: 8px; }
+.citation-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 10px 0; }
+.citation-card dt { color: var(--muted); font-size: 7px; }
+.citation-card dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 9px; }
+.citation-applicability, .citation-claims { display: grid; grid-template-columns: 70px 1fr; gap: 8px; margin-top: 8px; }
+.citation-applicability > span, .citation-claims > span { color: var(--muted); font-size: 8px; }
+.citation-applicability > div, .citation-claims > div { display: flex; gap: 4px; flex-wrap: wrap; }
+.citation-applicability code, .citation-claims a { padding: 3px 6px; border-radius: 5px; color: #3c6270; background: #edf3f4; font-size: 8px; text-decoration: none; }
+.citation-claims a:hover { color: #174a5c; background: #dcebee; }
+.citation-applicability small, .citation-claims small { color: var(--muted); font-size: 8px; }
+.citation-match-details { margin-top: 8px; color: #66787f; font-size: 8px; }
+.citation-match-details summary { cursor: pointer; font-weight: 800; }
+.citation-match-details p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.citation-link { margin-top: 9px; font-size: 8px; }
+.citation-link a { color: #246a82; font-weight: 800; }
+.citation-link span { color: #9a6154; }
+.citation-body { margin-top: 9px; border-top: 1px solid #e2e9ea; color: #65757a; font-size: 8px; }
+.citation-body summary { padding-top: 8px; cursor: pointer; font-weight: 800; }
+.citation-body p { max-height: 210px; margin: 7px 0 0; padding: 9px; overflow: auto; border-radius: 7px; color: #42565e; background: #edf2f3; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.citation-card footer { display: flex; gap: 4px 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e6ebec; }
+.citation-card footer code { color: #7b898d; font-size: 7px; overflow-wrap: anywhere; }
+.citation-empty { padding: 20px 12px; border: 1px dashed #c9d6d9; border-radius: 9px; color: var(--muted); text-align: center; font-size: 9px; line-height: 1.55; }
 .claim-panel { margin-top: 14px; padding-top: 15px; border-top: 1px solid #dbe5e7; }
 .claim-panel > header { display: flex; align-items: end; justify-content: space-between; gap: 15px; margin-bottom: 10px; }
 .claim-panel > header h3 { margin: 0 0 3px; font-size: 14px; }
@@ -237,6 +286,7 @@ button:disabled { cursor: default; }
 .claim-panel > header code { max-width: 290px; overflow: hidden; color: #718087; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .claim-list { display: grid; gap: 8px; }
 .claim-card { padding: 13px 14px; border: 1px solid #dce5e7; border-left: 4px solid #4f8191; border-radius: 11px; background: white; }
+.claim-card:target { outline: 3px solid #9fc4ce; outline-offset: 2px; }
 .claim-card.confidence-high { border-left-color: #318263; }
 .claim-card.confidence-medium { border-left-color: #bd833d; }
 .claim-card.confidence-low { border-left-color: #a66070; }
@@ -421,7 +471,7 @@ button:disabled { cursor: default; }
   .execution-overview { grid-template-columns: 1fr; }
   .agent-manifest { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .source-grid { grid-template-columns: 1fr; }
-  .evidence-groups { grid-template-columns: 1fr; }
+  .evidence-groups, .rag-columns { grid-template-columns: 1fr; }
   .style-artifact-flow { grid-template-columns: 1fr; }
   .style-flow-arrow { justify-self: center; transform: rotate(90deg); }
   .shadow-comparison > header { align-items: start; flex-direction: column; }
@@ -445,7 +495,7 @@ button:disabled { cursor: default; }
   .trace-boundary { margin-left: 0; flex-direction: column; }
   .workflow-heading { align-items: start; flex-direction: column; gap: 10px; }
   .workflow-summary-badges { justify-content: flex-start; }
-  .evidence-heading, .claim-panel > header { align-items: start; flex-direction: column; gap: 9px; }
+  .evidence-heading, .rag-panel > header, .claim-panel > header { align-items: start; flex-direction: column; gap: 9px; }
   .evidence-heading-meta { justify-content: flex-start; }
   .evidence-privacy-note, .knowledge-state { flex-direction: column; }
   .claim-panel > header code { max-width: 100%; }

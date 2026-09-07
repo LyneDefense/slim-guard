@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 from typing import Any, Literal, Protocol
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, HttpUrl, field_validator, model_validator
 
 from slim_guard.agent_models.gateway import ModelResponse
 from slim_guard.agents.contracts import (
@@ -15,6 +18,7 @@ from slim_guard.agents.contracts import (
     ContractModel,
     InvocationStatus,
     KnowledgeCitation,
+    KnowledgeReviewStatus,
     ProfessionalAssessment,
 )
 
@@ -30,6 +34,106 @@ class KnowledgeCorpusStatus(StrEnum):
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
     ERROR = "error"
+
+
+class KnowledgeAdoptionStatus(StrEnum):
+    """Repository ranking disposition; only selected values may reach the model."""
+
+    ADOPTED = "adopted"
+    SELECTED = "selected"
+    CANDIDATE_ONLY = "candidate_only"
+    CANDIDATE = "candidate"
+
+
+class KnowledgeCandidate(ContractModel):
+    """Unbound, content-verified repository result; never authored by the model."""
+
+    candidate_id: str = Field(min_length=1, max_length=128)
+    citation_id: str = Field(min_length=1, max_length=128)
+    source_id: str = Field(min_length=1, max_length=128)
+    chunk_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=512)
+    publisher: str = Field(min_length=1, max_length=256)
+    published_at: date | None = None
+    version: str = Field(min_length=1, max_length=128)
+    section_or_page: str | None = Field(default=None, min_length=1, max_length=512)
+    source_url: HttpUrl | None = None
+    applicability: tuple[str, ...] = Field(default=(), max_length=32)
+    review_status: KnowledgeReviewStatus
+    active: bool
+    content: str = Field(min_length=1, max_length=16_000)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rank: int | None = Field(default=None, ge=1, le=10_000, strict=True)
+    keyword_score: float | None = Field(default=None, ge=0)
+    vector_score: float | None = Field(default=None, ge=0)
+    rerank_score: float | None = Field(default=None, ge=0)
+    match_reasons: tuple[str, ...] = Field(default=(), max_length=32)
+    adoption_status: KnowledgeAdoptionStatus = KnowledgeAdoptionStatus.CANDIDATE_ONLY
+
+    @field_validator("applicability", "match_reasons")
+    @classmethod
+    def validate_applicability(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(item.strip() for item in value)
+        if any(not item for item in normalized):
+            raise ValueError("Knowledge candidate list values cannot be blank")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Knowledge candidate list values must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_content_hash(self) -> KnowledgeCandidate:
+        expected = hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(expected, self.content_sha256):
+            raise ValueError("Knowledge candidate content hash does not match")
+        return self
+
+    @classmethod
+    def create(cls, **values: Any) -> KnowledgeCandidate:
+        content = values.get("content")
+        if not isinstance(content, str):
+            raise ValueError("Knowledge candidate content must be a string")
+        values.pop("content_sha256", None)
+        return cls(
+            **values,
+            content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        )
+
+    def bind(self, invocation_id: str) -> KnowledgeCitation:
+        """Create trusted invocation provenance; repository values cannot override it."""
+
+        return KnowledgeCitation(
+            citation_id=self.citation_id,
+            source_id=self.source_id,
+            chunk_id=self.chunk_id,
+            title=self.title,
+            publisher=self.publisher,
+            published_at=self.published_at,
+            version=self.version,
+            section_or_page=self.section_or_page,
+            source_url=self.source_url,
+            applicability=self.applicability,
+            review_status=self.review_status,
+            retrieved_in_invocation_id=invocation_id,
+        )
+
+    @property
+    def selected_for_adoption(self) -> bool:
+        return self.adoption_status in {
+            KnowledgeAdoptionStatus.ADOPTED,
+            KnowledgeAdoptionStatus.SELECTED,
+        }
+
+
+class CandidateRejectionReason(StrEnum):
+    INACTIVE = "inactive"
+    NOT_APPROVED = "not_approved"
+    INAPPLICABLE = "inapplicable"
+    NOT_SELECTED = "not_selected"
+
+
+class RejectedKnowledgeCandidate(ContractModel):
+    candidate_id: str = Field(min_length=1, max_length=128)
+    reason: CandidateRejectionReason
 
 
 class EvidencePacketLike(Protocol):
@@ -103,21 +207,84 @@ class CalculationObservation(ContractModel):
 
 class KnowledgeRetrieval(ContractModel):
     corpus_status: KnowledgeCorpusStatus
+    required_applicability: tuple[str, ...] = Field(default=(), max_length=32)
+    candidates: tuple[KnowledgeCandidate, ...] = Field(default=(), max_length=128)
     citations: tuple[KnowledgeCitation, ...] = Field(default=(), max_length=128)
+    rejected_candidates: tuple[RejectedKnowledgeCandidate, ...] = Field(
+        default=(),
+        max_length=128,
+    )
     query_summary: str | None = Field(default=None, min_length=1, max_length=1000)
 
     @model_validator(mode="after")
     def validate_status(self) -> KnowledgeRetrieval:
+        if any(not item.strip() for item in self.required_applicability):
+            raise ValueError("Required applicability cannot contain blank values")
+        if len(self.required_applicability) != len(set(self.required_applicability)):
+            raise ValueError("Required applicability values must be unique")
         citation_ids = tuple(citation.citation_id for citation in self.citations)
         if len(citation_ids) != len(set(citation_ids)):
             raise ValueError("Knowledge retrieval citation IDs must be unique")
-        if self.corpus_status is KnowledgeCorpusStatus.EMPTY and self.citations:
-            raise ValueError("An empty knowledge corpus cannot contain citations")
+        candidate_ids = tuple(candidate.candidate_id for candidate in self.candidates)
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("Knowledge retrieval candidate IDs must be unique")
+        candidate_citation_ids = tuple(
+            candidate.citation_id for candidate in self.candidates
+        )
+        if len(candidate_citation_ids) != len(set(candidate_citation_ids)):
+            raise ValueError("Knowledge candidate citation IDs must be unique")
+        rejected_ids = tuple(item.candidate_id for item in self.rejected_candidates)
+        if len(rejected_ids) != len(set(rejected_ids)):
+            raise ValueError("Rejected candidate IDs must be unique")
+        if self.corpus_status is KnowledgeCorpusStatus.EMPTY and (
+            self.candidates or self.citations or self.rejected_candidates
+        ):
+            raise ValueError("An empty knowledge corpus cannot contain candidates")
         if self.corpus_status in {
             KnowledgeCorpusStatus.UNAVAILABLE,
             KnowledgeCorpusStatus.ERROR,
-        } and self.citations:
-            raise ValueError("An unavailable knowledge result cannot contain citations")
+        } and (self.candidates or self.citations or self.rejected_candidates):
+            raise ValueError("An unavailable knowledge result cannot contain candidates")
+        if not set(citation_ids).issubset(candidate_citation_ids):
+            raise ValueError("Bound citations must come from retrieved candidates")
+        rejection_by_candidate_id = {
+            rejection.candidate_id: rejection.reason
+            for rejection in self.rejected_candidates
+        }
+        eligible_candidate_ids = {
+            candidate.candidate_id
+            for candidate in self.candidates
+            if candidate.citation_id in citation_ids
+        }
+        if set(rejection_by_candidate_id) != set(candidate_ids).difference(
+            eligible_candidate_ids
+        ):
+            raise ValueError("Every ineligible candidate requires one rejection reason")
+        for candidate in self.candidates:
+            rejection_reason: CandidateRejectionReason | None = None
+            if not candidate.active:
+                rejection_reason = CandidateRejectionReason.INACTIVE
+            elif candidate.review_status is not KnowledgeReviewStatus.APPROVED:
+                rejection_reason = CandidateRejectionReason.NOT_APPROVED
+            elif not set(self.required_applicability).issubset(
+                candidate.applicability
+            ):
+                rejection_reason = CandidateRejectionReason.INAPPLICABLE
+            elif not candidate.selected_for_adoption:
+                rejection_reason = CandidateRejectionReason.NOT_SELECTED
+
+            if candidate.citation_id not in citation_ids:
+                if rejection_by_candidate_id[candidate.candidate_id] is not rejection_reason:
+                    raise ValueError("Knowledge candidate rejection reason is incorrect")
+                continue
+            if rejection_reason is not None:
+                raise ValueError("Bound knowledge citations must pass every eligibility rule")
+            citation = next(
+                item for item in self.citations if item.citation_id == candidate.citation_id
+            )
+            expected = candidate.bind(citation.retrieved_in_invocation_id)
+            if expected.model_dump(mode="json") != citation.model_dump(mode="json"):
+                raise ValueError("Bound citation metadata does not match its candidate")
         return self
 
     @classmethod
@@ -175,6 +342,11 @@ class NutritionValidationIssueCode(StrEnum):
     CITATION_INVOCATION_MISMATCH = "citation_invocation_mismatch"
     EMPTY_CORPUS_CITED = "empty_corpus_cited"
     HIGH_RISK_MODEL_PRIOR_ONLY = "high_risk_model_prior_only"
+    RAG_CLAIM_UNCOVERED = "rag_claim_uncovered"
+    NON_RAG_CITATION = "non_rag_citation"
+    UNUSED_CITATION = "unused_citation"
+    CITATION_INACTIVE = "citation_inactive"
+    CITATION_INAPPLICABLE = "citation_inapplicable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +394,9 @@ __all__ = [
     "EvidenceAuthority",
     "EvidencePacketInput",
     "EvidencePacketLike",
+    "CandidateRejectionReason",
+    "KnowledgeCandidate",
+    "KnowledgeAdoptionStatus",
     "KnowledgeCorpusStatus",
     "KnowledgeInput",
     "KnowledgeRetrieval",
@@ -231,4 +406,5 @@ __all__ = [
     "NutritionValidationIssue",
     "NutritionValidationIssueCode",
     "NutritionValidationReport",
+    "RejectedKnowledgeCandidate",
 ]

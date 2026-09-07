@@ -414,3 +414,14 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/admin/repository.py`、`frontend/src/components/trace/EvidencePanel.tsx` → Evidence/Claim 管理台 → 按用户原话、Working Memory、长期记忆、数据库、图片和计算分组，展示 authority/confidence、Claim/Action 引用链与知识库空态；敏感正文和计算输入默认脱敏/收起，无实际 Nutrition invocation 时不伪造面板。
 - `tests/unit/test_evidence_plane.py`、`test_nutrition_agent.py`、`test_structured_agent_runner.py` 及 Admin/Harness/Graph 回归 → Increment 3 验收 → 覆盖证据边界、只读 Registry、空知识库、引用伪造、视觉不确定性、完整专业链和 Nutrition 失败不影响 Legacy。
 - 最终验证 → Ruff 全仓、Mypy strict（152 个源码文件）、Python compileall、前端 TypeScript/生产构建及 346 项 Pytest 全部通过。
+
+### `feat: add governed nutrition knowledge rag`
+
+- `src/slim_guard/nutrition_knowledge.py`、`db/models.py`、`db/migrations.py` → 独立 Nutrition Knowledge Plane → 新增 Import Batch、Source、Chunk 与 append-only Review 表；不带 `user_id`，不与用户 Memory/Mem0 混用，并实现内容哈希去重、稳定分块和候选 ID。
+- `src/slim_guard/tools/manage_nutrition_knowledge.py`、`README.md` → 离线资料治理 → 支持 manifest 导入、approve/reject、publish、retire、search 与完整历史审计；线上 adapter 只允许 published source 进入搜索或读取正文。
+- `src/slim_guard/nutrition_knowledge.py` → 检索流水线 → 提供 metadata filter、关键词召回、可插拔向量分数和确定性重排；完整保留候选、分数、匹配原因与采用状态，不把 candidate-only 结果伪装成最终引用。
+- `src/slim_guard/agents/nutrition/knowledge.py`、`contracts.py`、`agent.py` → 引用绑定与硬校验 → 仓储候选在当前 Nutrition invocation 内重新绑定，只有 active、approved、适用且 selected/adopted 的候选可进入模型；每个 RAG Claim 必须 100% 覆盖同一调用的未篡改 Citation，失败只修复一次后保守降级。
+- `src/slim_guard/orchestration/coordinator.py`、`agent/composition.py`、`main.py` → Shadow RAG 闭环 → 在 Nutrition 调用前执行只读检索，保存候选与采用结果，专业 Claim 渲染紧凑 `[来源N]` 标记；非法开关组合启动时 fail closed，Legacy 回复与业务写入保持不变。
+- `src/slim_guard/admin/repository.py`、`frontend/src/components/trace/RagCitationPanel.tsx` → RAG 可观测管理台 → 分栏展示检索候选与最终采用 Citation、资料版本/章节/适用范围、排序分数以及 Citation→Claim 锚点；查询正文、候选片段和敏感内容默认不返回。
+- `tests/unit/test_nutrition_knowledge.py`、`test_nutrition_rag.py`、`test_structured_agent_runner.py` 及迁移/配置/Admin 回归 → Increment 4 验收 → 覆盖治理状态机、去重与稳定检索、draft/retired 隔离、候选拒绝原因、引用哈希/元数据/调用归属、一次修复以及完整 RAG Shadow 路径。
+- 最终验证 → Ruff 全仓、Mypy strict（155 个源码文件）、Python compileall、前端 TypeScript/生产构建及 367 项 Pytest 全部通过。

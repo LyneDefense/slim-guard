@@ -19,12 +19,10 @@ from slim_guard.agents.contracts import (
     ClaimBasis,
     Confidence,
     InvocationStatus,
-    KnowledgeReviewStatus,
     ProfessionalAssessment,
 )
 from slim_guard.agents.nutrition.contracts import (
     EvidenceAuthority,
-    KnowledgeCorpusStatus,
     NutritionAgentResult,
     NutritionContext,
     NutritionEvidence,
@@ -32,6 +30,7 @@ from slim_guard.agents.nutrition.contracts import (
     NutritionValidationIssueCode,
     NutritionValidationReport,
 )
+from slim_guard.agents.nutrition.knowledge import NutritionCitationValidator
 from slim_guard.agents.structured_runner import StructuredAgentRunner, StructuredRunResult
 from slim_guard.orchestration.graph import InvocationGrant
 
@@ -60,6 +59,12 @@ NUTRITION_AGENT_PROMPT = (
 
 class NutritionAssessmentValidator:
     """Prove that every specialist output reference came from its invocation context."""
+
+    def __init__(
+        self,
+        citation_validator: NutritionCitationValidator | None = None,
+    ) -> None:
+        self._citation_validator = citation_validator or NutritionCitationValidator()
 
     def validate(
         self,
@@ -134,49 +139,12 @@ class NutritionAssessmentValidator:
                     )
                 )
 
-        context_citations = {
-            citation.citation_id: citation for citation in context.knowledge.citations
-        }
-        if (
-            context.knowledge.corpus_status is KnowledgeCorpusStatus.EMPTY
-            and assessment.citations
-        ):
-            issues.append(
-                NutritionValidationIssue(
-                    NutritionValidationIssueCode.EMPTY_CORPUS_CITED,
-                    "citations",
-                )
-            )
-        for citation in assessment.citations:
-            expected = context_citations.get(citation.citation_id)
-            if expected is None:
-                issues.append(
-                    NutritionValidationIssue(
-                        NutritionValidationIssueCode.UNKNOWN_CITATION,
-                        citation.citation_id,
-                    )
-                )
-            elif expected.model_dump(mode="json") != citation.model_dump(mode="json"):
-                issues.append(
-                    NutritionValidationIssue(
-                        NutritionValidationIssueCode.CITATION_CHANGED,
-                        citation.citation_id,
-                    )
-                )
-            if citation.retrieved_in_invocation_id != invocation_id:
-                issues.append(
-                    NutritionValidationIssue(
-                        NutritionValidationIssueCode.CITATION_INVOCATION_MISMATCH,
-                        citation.citation_id,
-                    )
-                )
-            if citation.review_status is not KnowledgeReviewStatus.APPROVED:
-                issues.append(
-                    NutritionValidationIssue(
-                        NutritionValidationIssueCode.CITATION_NOT_APPROVED,
-                        citation.citation_id,
-                    )
-                )
+        citation_report = self._citation_validator.validate(
+            invocation_id=invocation_id,
+            context=context,
+            assessment=assessment,
+        )
+        issues.extend(citation_report.issues)
 
         return NutritionValidationReport(issues=tuple(issues))
 
@@ -369,7 +337,7 @@ class NutritionAgent:
             model=self._model,
             messages=(
                 system,
-                ModelMessage(role=MessageRole.USER, content=context.model_dump_json()),
+                ModelMessage(role=MessageRole.USER, content=self._model_context_json(context)),
             ),
             tools=(),
             tool_choice=ToolChoice.NONE,
@@ -383,6 +351,22 @@ class NutritionAgent:
                 "corpus_status": context.knowledge.corpus_status.value,
             },
         )
+
+    @staticmethod
+    def _model_context_json(context: NutritionContext) -> str:
+        """Do not expose rejected draft, inactive, or inapplicable candidate text."""
+
+        payload = context.model_dump(mode="json")
+        knowledge = payload["knowledge"]
+        allowed_ids = {
+            citation.citation_id for citation in context.knowledge.citations
+        }
+        knowledge["candidates"] = [
+            candidate.model_dump(mode="json")
+            for candidate in context.knowledge.candidates
+            if candidate.citation_id in allowed_ids
+        ]
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def _repair_request(

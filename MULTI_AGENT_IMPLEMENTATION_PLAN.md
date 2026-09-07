@@ -266,7 +266,8 @@ Shadow 页面并排显示现有线上结果和新工作流候选结果，并明�
 ## 6. 分阶段实施
 
 实施进度：Increment 0 已于 2026-09-04 完成，Increment 1 已于 2026-09-05 完成，
-Increment 2 和 Increment 3 已于 2026-09-06 完成；其余 Increment 按顺序实施中。
+Increment 2 和 Increment 3 已于 2026-09-06 完成，Increment 4 已于 2026-09-07 完成；
+其余 Increment 按顺序实施中。
 
 ### Increment 0：设计冻结、契约和 Trace 规范
 

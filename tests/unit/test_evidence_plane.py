@@ -283,3 +283,51 @@ def test_admin_evidence_summary_reports_broken_reference_edges() -> None:
     assert summary["unresolved_evidence_refs"] == ["evidence-missing"]
     assert summary["unresolved_knowledge_refs"] == ["citation-missing"]
     assert summary["unresolved_claim_refs"] == ["claim-missing"]
+
+
+def test_admin_rag_view_keeps_audit_metadata_but_hides_candidate_content() -> None:
+    safe = AdminQueryRepository._professional_artifact_payload(
+        artifact_type="nutrition_observations",
+        payload={
+            "observations": [],
+            "knowledge": {
+                "corpus_status": "available",
+                "query_summary": "敏感用户查询",
+                "candidates": [
+                    {
+                        "candidate_id": "candidate-1",
+                        "citation_id": "citation-1",
+                        "source_id": "source-1",
+                        "chunk_id": "chunk-1",
+                        "title": "中国居民膳食指南",
+                        "publisher": "权威机构",
+                        "version": "2026",
+                        "section_or_page": "第二章",
+                        "source_url": "https://example.test/guide",
+                        "applicability": ["adult", "china"],
+                        "review_status": "approved",
+                        "active": True,
+                        "content_sha256": "a" * 64,
+                        "content": "不应默认展示的完整专业片段",
+                        "rank": 1,
+                        "keyword_score": 0.8,
+                        "vector_score": 0.6,
+                        "rerank_score": 0.9,
+                        "match_reasons": ["content_token_match"],
+                        "adoption_status": "adopted",
+                    }
+                ],
+                "citations": [],
+            },
+        },
+    )
+
+    assert safe["knowledge"]["query_summary"] is None
+    candidate = safe["knowledge"]["candidates"][0]
+    assert candidate["title"] == "中国居民膳食指南"
+    assert candidate["applicability"] == ["adult", "china"]
+    assert candidate["rerank_score"] == 0.9
+    assert candidate["content"] is None
+    serialized = json.dumps(safe, ensure_ascii=False)
+    assert "敏感用户查询" not in serialized
+    assert "不应默认展示的完整专业片段" not in serialized

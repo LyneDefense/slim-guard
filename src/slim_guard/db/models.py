@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -1159,6 +1160,178 @@ class StyleProfileVersionRecord(Base):
     prompt_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     source_corpus_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionKnowledgeImportBatchRecord(Base):
+    """Auditable lifecycle of one offline corpus import attempt."""
+
+    __tablename__ = "nutrition_knowledge_import_batches"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running','completed','failed')",
+            name="ck_nutrition_knowledge_import_status",
+        ),
+        CheckConstraint(
+            "length(manifest_sha256) = 64",
+            name="ck_nutrition_knowledge_import_manifest_sha256",
+        ),
+        CheckConstraint("source_count >= 0", name="ck_nutrition_import_source_count"),
+        CheckConstraint("duplicate_count >= 0", name="ck_nutrition_import_duplicate_count"),
+        Index("ix_nutrition_knowledge_import_created", "created_at"),
+        Index("ix_nutrition_knowledge_import_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    imported_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionKnowledgeSourceRecord(Base):
+    """Immutable source content with a governed publication state."""
+
+    __tablename__ = "nutrition_knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_key",
+            "version",
+            name="uq_nutrition_knowledge_source_version",
+        ),
+        UniqueConstraint(
+            "content_sha256",
+            name="uq_nutrition_knowledge_source_content_sha256",
+        ),
+        CheckConstraint(
+            "status IN ('draft','approved','rejected','published','retired')",
+            name="ck_nutrition_knowledge_source_status",
+        ),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="ck_nutrition_knowledge_source_sha256",
+        ),
+        CheckConstraint("char_count > 0", name="ck_nutrition_knowledge_source_char_count"),
+        Index("ix_nutrition_knowledge_source_status", "status"),
+        Index("ix_nutrition_knowledge_source_publisher", "publisher"),
+        Index("ix_nutrition_knowledge_source_published", "published_at"),
+        Index("ix_nutrition_knowledge_source_import", "import_batch_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    import_batch_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_import_batches.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    publisher: Mapped[str] = mapped_column(String(256), nullable=False)
+    published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    published_for_retrieval_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionKnowledgeChunkRecord(Base):
+    """Deterministically derived source segment; content is append-only."""
+
+    __tablename__ = "nutrition_knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "ordinal",
+            name="uq_nutrition_knowledge_chunk_ordinal",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_nutrition_knowledge_chunk_ordinal"),
+        CheckConstraint("start_char >= 0", name="ck_nutrition_knowledge_chunk_start"),
+        CheckConstraint("end_char > start_char", name="ck_nutrition_knowledge_chunk_end"),
+        CheckConstraint("char_count > 0", name="ck_nutrition_knowledge_chunk_char_count"),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="ck_nutrition_knowledge_chunk_sha256",
+        ),
+        Index("ix_nutrition_knowledge_chunk_source", "source_id", "ordinal"),
+        Index("ix_nutrition_knowledge_chunk_sha256", "content_sha256"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    embedding_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionKnowledgeReviewRecord(Base):
+    """Append-only approval, publication, rejection, and retirement decision."""
+
+    __tablename__ = "nutrition_knowledge_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('approve','reject','publish','retire')",
+            name="ck_nutrition_knowledge_review_decision",
+        ),
+        CheckConstraint(
+            "status_from IN ('draft','approved','rejected','published','retired')",
+            name="ck_nutrition_knowledge_review_status_from",
+        ),
+        CheckConstraint(
+            "status_to IN ('draft','approved','rejected','published','retired')",
+            name="ck_nutrition_knowledge_review_status_to",
+        ),
+        CheckConstraint(
+            "length(source_content_sha256) = 64",
+            name="ck_nutrition_knowledge_review_source_sha256",
+        ),
+        Index("ix_nutrition_knowledge_review_source", "source_id", "created_at"),
+        Index("ix_nutrition_knowledge_review_reviewer", "reviewer", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    reviewer: Mapped[str] = mapped_column(String(128), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_from: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_to: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    source_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

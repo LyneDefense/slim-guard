@@ -139,9 +139,7 @@ async def _create_and_seed_style_profiles(connection: AsyncConnection) -> None:
                     separators=(",", ":"),
                     sort_keys=True,
                 ),
-                prompt_sha256=hashlib.sha256(
-                    _DEFAULT_STYLE_PROFILE_PROMPT.encode()
-                ).hexdigest(),
+                prompt_sha256=hashlib.sha256(_DEFAULT_STYLE_PROFILE_PROMPT.encode()).hexdigest(),
                 source_corpus_sha256=None,
                 status="active",
             )
@@ -169,6 +167,7 @@ MIGRATIONS = (
     ),
     SchemaMigration("20260904_01_multi_agent_audit", _create_application_tables),
     SchemaMigration("20260905_01_style_profiles", _create_and_seed_style_profiles),
+    SchemaMigration("20260906_01_nutrition_knowledge", _create_application_tables),
 )
 
 

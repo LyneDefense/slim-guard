@@ -1121,19 +1121,44 @@ class AdminQueryRepository:
             else [],
         }
 
-    @staticmethod
-    def _safe_citation(citation: dict[str, Any]) -> dict[str, Any]:
+    @classmethod
+    def _safe_citation(cls, citation: dict[str, Any]) -> dict[str, Any]:
         return {
+            "rank": citation.get("rank"),
+            "candidate_id": citation.get("candidate_id"),
             "citation_id": citation.get("citation_id"),
             "source_id": citation.get("source_id"),
             "chunk_id": citation.get("chunk_id"),
+            "title": citation.get("title"),
             "publisher": citation.get("publisher"),
             "published_at": citation.get("published_at"),
             "version": citation.get("version"),
             "section_or_page": citation.get("section_or_page"),
             "source_url": citation.get("source_url"),
+            "applicability": cls._safe_string_values(citation.get("applicability")),
             "review_status": citation.get("review_status"),
+            "publication_status": citation.get("publication_status"),
             "retrieved_in_invocation_id": citation.get("retrieved_in_invocation_id"),
+            "keyword_score": citation.get(
+                "keyword_score",
+                citation.get("lexical_score"),
+            ),
+            "lexical_score": citation.get(
+                "lexical_score",
+                citation.get("keyword_score"),
+            ),
+            "vector_score": citation.get("vector_score"),
+            "rerank_score": citation.get("rerank_score"),
+            "match_reasons": cls._safe_string_values(citation.get("match_reasons")),
+            "adoption_status": citation.get("adoption_status"),
+            "active": citation.get("active"),
+            "content_sha256": citation.get("content_sha256"),
+            "source_content_sha256": citation.get("source_content_sha256"),
+            # Knowledge snippets can contain sensitive query-adjacent material and
+            # are not required for the default administrative timeline.
+            "excerpt": None,
+            "snippet": None,
+            "content": None,
         }
 
     @classmethod
@@ -1141,12 +1166,29 @@ class AdminQueryRepository:
         if not isinstance(value, dict):
             return None
         citations = value.get("citations", [])
+        candidates = value.get(
+            "candidates",
+            value.get("candidate_citations", value.get("retrieved_candidates", [])),
+        )
+        adopted = value.get("adopted_citations", value.get("final_citations", []))
         return {
             "corpus_status": value.get("corpus_status", value.get("status")),
             "citations": [
                 cls._safe_citation(citation) for citation in citations if isinstance(citation, dict)
             ]
             if isinstance(citations, list)
+            else [],
+            "candidates": [
+                cls._safe_citation(candidate)
+                for candidate in candidates
+                if isinstance(candidate, dict)
+            ]
+            if isinstance(candidates, list)
+            else [],
+            "adopted_citations": [
+                cls._safe_citation(citation) for citation in adopted if isinstance(citation, dict)
+            ]
+            if isinstance(adopted, list)
             else [],
             # Query wording can contain sensitive user context.  The status and
             # citation identities are sufficient for audit.
@@ -1259,6 +1301,9 @@ class AdminQueryRepository:
             "claims": [item for item in claims if isinstance(item, dict)],
             "actions": [item for item in actions if isinstance(item, dict)],
             "knowledge": knowledge,
+            "adopted_citations": [
+                cls._safe_citation(item) for item in citations if isinstance(item, dict)
+            ],
             "unresolved_evidence_refs": unresolved_evidence,
             "unresolved_knowledge_refs": unresolved_knowledge,
             "unresolved_claim_refs": unresolved_claims,

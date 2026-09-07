@@ -18,11 +18,13 @@ from slim_guard.agents.contracts import (
 from slim_guard.agents.nutrition import (
     NUTRITION_AGENT_PROMPT,
     ConservativeNutritionFallback,
+    KnowledgeCandidate,
     NutritionAgent,
     NutritionAssessmentValidator,
     NutritionContext,
     NutritionContextCompiler,
     NutritionValidationIssueCode,
+    bind_candidates,
 )
 from slim_guard.agents.structured_runner import StructuredAgentRunner
 
@@ -350,7 +352,8 @@ def test_validator_rejects_citations_when_corpus_is_empty() -> None:
 
 
 def test_validator_accepts_an_approved_citation_from_the_same_invocation() -> None:
-    citation = KnowledgeCitation(
+    candidate = KnowledgeCandidate.create(
+        candidate_id="candidate-1",
         citation_id="citation-1",
         source_id="source-1",
         chunk_id="chunk-1",
@@ -358,15 +361,15 @@ def test_validator_accepts_an_approved_citation_from_the_same_invocation() -> No
         publisher="测试机构",
         version="2026",
         review_status="approved",
-        retrieved_in_invocation_id="nutrition-invocation-1",
+        active=True,
+        content="已审核的体重管理资料内容。",
+        adoption_status="adopted",
     )
+    retrieval = bind_candidates("nutrition-invocation-1", (candidate,))
+    citation = retrieval.citations[0]
     compiled = NutritionContextCompiler().compile(
         packet(),
-        knowledge={
-            "corpus_status": "available",
-            "citations": [citation.model_dump(mode="json")],
-            "query_summary": "体重管理",
-        },
+        knowledge=retrieval,
     )
     cited = ProfessionalAssessment(
         assessment_type="general",

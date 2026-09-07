@@ -42,6 +42,10 @@ from slim_guard.agents.nutrition import (
     NutritionAgent,
     NutritionContextCompiler,
 )
+from slim_guard.agents.nutrition.knowledge import (
+    CitationValidationPolicy,
+    KnowledgeCandidateBinder,
+)
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry, NutritionToolResult
 from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.agents.style import (
@@ -161,6 +165,7 @@ class AgentWorkflowCoordinator:
         nutrition_agent: NutritionAgent | None = None,
         nutrition_compiler: NutritionContextCompiler | None = None,
         nutrition_tools: NutritionToolRegistry | None = None,
+        nutrition_citation_policy: CitationValidationPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if timeout <= timedelta(0):
@@ -190,6 +195,10 @@ class AgentWorkflowCoordinator:
         )
         self._nutrition_compiler = nutrition_compiler or NutritionContextCompiler()
         self._nutrition_tools = nutrition_tools or NutritionToolRegistry()
+        self._nutrition_candidate_binder = KnowledgeCandidateBinder()
+        self._nutrition_citation_policy = (
+            nutrition_citation_policy or CitationValidationPolicy()
+        )
         self._neutral_renderer = NeutralRenderer()
 
     async def run_shadow(self, request: ShadowWorkflowRequest) -> ShadowWorkflowResult:
@@ -352,8 +361,10 @@ class AgentWorkflowCoordinator:
                     completed_at=self._aware_now(),
                 )
 
+                nutrition_invocation_id = f"inv-{uuid4()}"
                 observations, knowledge, tool_receipts = await self._nutrition_inputs(
-                    evidence_packet
+                    evidence_packet,
+                    invocation_id=nutrition_invocation_id,
                 )
                 observation_artifact = self._artifact(
                     turn_id=request.turn_id,
@@ -371,7 +382,7 @@ class AgentWorkflowCoordinator:
                 )
                 await self._persist_artifact(ledger, observation_artifact, None)
                 nutrition_invocation = AgentInvocation(
-                    invocation_id=f"inv-{uuid4()}",
+                    invocation_id=nutrition_invocation_id,
                     trace_id=request.trace_id,
                     thread_id=request.thread_id,
                     turn_id=request.turn_id,
@@ -929,6 +940,11 @@ class AgentWorkflowCoordinator:
         directive: TurnDirective,
         assessment: ProfessionalAssessment,
     ) -> ResponsePlan:
+        citation_positions = {
+            reference: index
+            for index, citation in enumerate(assessment.citations, start=1)
+            for reference in (citation.citation_id, citation.chunk_id)
+        }
         blocks: list[ResponseContentBlock] = [
             ResponseContentBlock(
                 block_id="assessment-overall",
@@ -948,7 +964,17 @@ class AgentWorkflowCoordinator:
             ResponseContentBlock(
                 block_id=f"finding-{index}",
                 kind=ContentBlockKind.CLAIM,
-                text=finding.statement,
+                text=(
+                    finding.statement
+                    + "".join(
+                        f" [来源{position}]"
+                        for position in dict.fromkeys(
+                            citation_positions[reference]
+                            for reference in finding.knowledge_refs
+                            if reference in citation_positions
+                        )
+                    )
+                ),
                 source_refs=(finding.claim_id,),
             )
             for index, finding in enumerate(assessment.findings, start=1)
@@ -1008,6 +1034,8 @@ class AgentWorkflowCoordinator:
     async def _nutrition_inputs(
         self,
         packet: EvidencePacket,
+        *,
+        invocation_id: str,
     ) -> tuple[
         tuple[CalculationObservation, ...],
         KnowledgeRetrieval,
@@ -1089,7 +1117,11 @@ class AgentWorkflowCoordinator:
             )
         )
         knowledge = (
-            KnowledgeRetrieval.model_validate(knowledge_result.output)
+            self._nutrition_candidate_binder.bind_search_result(
+                invocation_id=invocation_id,
+                result=knowledge_result.output,
+                policy=self._nutrition_citation_policy,
+            )
             if knowledge_result.status.value == "succeeded"
             else KnowledgeRetrieval(corpus_status="unavailable")
         )
