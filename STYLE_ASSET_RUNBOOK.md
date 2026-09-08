@@ -55,8 +55,9 @@
 不得导入；后续只使用 bundle SHA-256
 `409df5d0ace5b18fde0597f558a213c2f8c5977aa8442edb5860ef053fe0e528` 对应的 `comparison.v5.json`。
 
-人工 A/B 评分仍未发生，资产未导入目标应用数据库、未发布、未灰度、未启用。当前 `.env` 指向的
-本机 PostgreSQL 在本次检查中不可达，管理员账号也未配置；不要改用一份临时 SQLite 冒充实际管理台。
+最终 A/B 已用 source ID `doctor-strict-review-final-v1` 导入 `.env` 指向的本地 PostgreSQL：
+`doctor_strict_v1` 共 12 个 Case，已评分 0、待评分 12。人工评分仍未发生，资产未发布、未灰度、
+未启用。数据库容器已按项目 Compose 启动；管理员账号尚未配置，不能冒充审核人或代填评分。
 
 ## 1. 本地准备与隐私核对
 
