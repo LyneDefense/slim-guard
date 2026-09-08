@@ -1318,6 +1318,49 @@ class StyleABHumanReviewRecord(Base):
     )
 
 
+class StyleCorrectionFeedbackRecord(Base):
+    """Append-only, named corrections captured during real style testing."""
+
+    __tablename__ = "style_correction_feedback"
+    __table_args__ = (
+        CheckConstraint(
+            "communication_act IS NULL OR communication_act IN "
+            "('acknowledge','correct','remind','encourage','explain','ask')",
+            name="ck_style_feedback_communication_act",
+        ),
+        CheckConstraint(
+            "deidentified_confirmed = true",
+            name="ck_style_feedback_deidentified",
+        ),
+        CheckConstraint(
+            "expression_only_confirmed = true",
+            name="ck_style_feedback_expression_only",
+        ),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="ck_style_feedback_content_sha256",
+        ),
+        Index("ix_style_feedback_profile_created", "profile_version", "created_at"),
+        Index("ix_style_feedback_actor_created", "actor", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    communication_act: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scenario: Mapped[str] = mapped_column(String(2000), nullable=False)
+    user_message: Mapped[str] = mapped_column(String(4000), nullable=False)
+    agent_response: Mapped[str] = mapped_column(String(4000), nullable=False)
+    desired_response: Mapped[str] = mapped_column(String(4000), nullable=False)
+    guidance_note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    deidentified_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    expression_only_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class NutritionKnowledgeImportBatchRecord(Base):
     """Auditable lifecycle of one offline corpus import attempt."""
 

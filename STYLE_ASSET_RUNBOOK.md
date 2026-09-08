@@ -74,8 +74,9 @@
 日期追问“你记录的是哪一天的”，并为提醒、纠正和解释增加只使用上游已确认事实的边界。
 首轮 v2 真实生成因一条受保护事实被模型改写而降级，第二轮虽 12/12 通过但基线和候选区分不足；
 两份报告均保留为失败/诊断审计。最终 `comparison.v3.json` 的两侧 12/12 均真实生成成功、自动评估
-12/12 通过，并已导入目标 PostgreSQL：`doctor_strict_v2` 共 12 条，已评分 0、待评分 12。
-它仍是待人工判断的候选版本，未发布、未灰度、未启用。
+12/12 通过，并已导入目标 PostgreSQL：`doctor_strict_v2` 共 12 条，用户已完成第二轮实名评分，
+最新结论为接受 7、拒绝 5。它仍未通过整套人工门槛，未发布、未灰度、未启用；拒绝项与后续真实测试
+纠正只作为 v3 的输入，不会改写 v2 历史。
 
 ## 1. 本地准备与隐私核对
 
@@ -191,6 +192,12 @@ uv run python -m slim_guard.tools.manage_style_assets \
 评分前先核对场景、已确认上下文与回复目标；它们是合成审核语境，不是微信群原文，也不代表新增用户事实。
 审核人由登录会话确定；改评分追加记录，不覆盖审计历史。模型分数与人类评分明确分离。
 
+管理台另提供“风格纠正”（`/admin/style-feedback`），用于真实开发测试中记录场景、已脱敏用户消息、
+当前 Agent 回复、期望回复和可选说明。沟通行为允许留空，因此可以收集默认 12 个合成 Case 之外的场景。
+每次提交必须重新确认已脱敏且只学习表达，actor 取自登录会话；记录及内容 Hash 均 append-only。
+这些反馈不会即时修改运行中 Profile，不进入用户 Memory 或营养知识库。构建下一版本时按反馈 ID/Hash
+冻结选中集合，将规则和例句去事实化，再重新执行本章的 A/B、自动评估和实名人评。
+
 ## 6. 发布、灰度与回滚
 
 先从离线库导出与当前批准集合完全一致且真实 Eval 通过的资产：
@@ -212,7 +219,7 @@ uv run python -m slim_guard.tools.manage_style_assets \
 发布还必须找到应用数据库中同一 bundle/evaluation/version 的合格人工 A/B 审核记录。
 布尔确认参数不能代替这条数据库审核证据。发布仅生成 evaluated 版本，不自动激活或切流。
 
-后续经用户明确批准灰度，再在部署配置中选择：
+生产环境后续经用户明确批准灰度，再在部署配置中选择：
 
 ```dotenv
 DEFAULT_STYLE_PROFILE=slimguard_default_v1
@@ -230,12 +237,18 @@ workflow canary 名单。先 shadow 检查，再经批准使用 canary，不能�
 名单可保留。停止整个新工作流则使用既有 `MULTI_AGENT_MODE=off`。
 本流程不运行任何部署、切流或自动批准命令。
 
+当前单人开发阶段采用已明确批准的直接全量策略：只有某一候选版本的精确 Case 集全部人工接受、完成
+上述 publish 并成为 evaluated 资产后，跳过 Style Canary，把 `DEFAULT_STYLE_PROFILE` 直接改成该精确版本，
+清空 `STYLE_CANARY_PROFILE` / `STYLE_CANARY_USER_IDS`，再重启服务。v3 尚未全部验收前不得提前切换。
+回退时把 `DEFAULT_STYLE_PROFILE` 改回 `slimguard_default_v1` 并重启；这不会删除已发布版本或反馈历史。
+该开发便利不取消自动评估、实名 A/B 人评、精确 Hash 绑定或启动时的已发布版本校验，也不自动延伸到生产。
+
 ## 实现验证
 
-2026-09-08 最终资产修正后的后端完整回归：`uv run pytest -q` 共收集并通过 696 项；`ruff check src tests`、
-`mypy src/slim_guard`（172 个源文件）及编译检查通过。数据库审核与认证 API 使用临时 SQLite
-验证，自动化测试中的模型响应全部是显式合成测试夹具。PostgreSQL 触发器已实现，但本次没有在真实
-PostgreSQL 实例执行迁移；部署前仍应在目标数据库的测试副本验证。
-前端 `npm run check`、`npm run build` 和 `npm test`（21 项 SSR/契约回归）通过。
+2026-09-08 当前后端完整回归：`uv run pytest -q` 共收集并通过 722 项；`ruff check src tests`、
+`mypy src/slim_guard`（174 个源文件）及编译检查通过。数据库审核与认证 API 使用临时 SQLite
+验证，自动化测试中的模型响应全部是显式合成测试夹具。风格纠正表及 append-only 触发器迁移已应用到
+本地 `.env` 指向的 PostgreSQL，管理 API 也用实际管理员会话完成只读连通性验证；没有写入示例反馈。
+前端 `npm run check`、`npm run build` 和 `npm test`（25 项 SSR/契约回归）通过。
 最终固定 bundle 的 12 组合成 A/B 均由真实模型生成，独立自动评估 12/12 通过；这与代码回归是
 两组不同证据。首轮人工 A/B 仅接受 1/12，证明自动评估不能替代真实风格验收；该版本没有发布。

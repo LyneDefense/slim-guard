@@ -372,6 +372,39 @@ export interface StyleABReviewInput {
   corrects_review_id: string | null;
 }
 
+export interface StyleFeedbackContext {
+  runtime_default_profile_version: string;
+  suggested_profile_version: string;
+  profile_versions: string[];
+  development_direct_rollout: boolean;
+}
+
+export interface StyleCorrectionFeedback {
+  feedback_id: string;
+  profile_version: string;
+  communication_act: string | null;
+  scenario: string;
+  user_message: string;
+  agent_response: string;
+  desired_response: string;
+  guidance_note: string | null;
+  actor: string;
+  content_sha256: string;
+  created_at: string;
+}
+
+export interface StyleCorrectionFeedbackInput {
+  profile_version: string;
+  communication_act: string | null;
+  scenario: string;
+  user_message: string;
+  agent_response: string;
+  desired_response: string;
+  guidance_note: string | null;
+  deidentified_confirmed: true;
+  expression_only_confirmed: true;
+}
+
 export interface TraceAgentInvocation {
   invocation_id: string;
   agent_role: AgentRole;

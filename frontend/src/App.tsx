@@ -16,6 +16,7 @@ import {
 
 import { api, UnauthorizedError } from "./api";
 import { StyleABReviewPage } from "./components/style/StyleABReviewPage";
+import { StyleFeedbackPage } from "./components/style/StyleFeedbackPage";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
 import { EvidencePanel } from "./components/trace/EvidencePanel";
 import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
@@ -191,6 +192,9 @@ function Shell({ username }: { username: string }) {
           </NavLink>
           <NavLink to="/style-ab" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>◫</span> 风格 A/B 人评
+          </NavLink>
+          <NavLink to="/style-feedback" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+            <span>✎</span> 风格纠正
           </NavLink>
         </nav>
         <div className="sidebar-note">
@@ -631,6 +635,7 @@ export function App() {
         <Route index element={<Navigate to="/users" replace />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="style-ab" element={<StyleABReviewPage />} />
+        <Route path="style-feedback" element={<StyleFeedbackPage />} />
         <Route path="users/:userId" element={<UserLayout />}>
           <Route index element={<TraceList />} />
           <Route path="traces/:traceId" element={<TracePage />} />

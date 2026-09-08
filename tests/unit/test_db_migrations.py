@@ -41,6 +41,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260906_01_nutrition_knowledge",
             "20260908_01_style_ab_reviews",
             "20260908_02_style_ab_scenarios",
+            "20260908_03_style_correction_feedback",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -50,6 +51,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "nutrition_knowledge_reviews",
             "style_ab_evaluation_cases",
             "style_ab_human_reviews",
+            "style_correction_feedback",
         }.issubset(table_names)
     finally:
         await database.close()
@@ -106,6 +108,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260906_01_nutrition_knowledge",
             "20260908_01_style_ab_reviews",
             "20260908_02_style_ab_scenarios",
+            "20260908_03_style_correction_feedback",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
@@ -132,7 +135,9 @@ async def test_existing_style_ab_rows_receive_an_explicit_legacy_scenario(tmp_pa
             await connection.execute(
                 text("INSERT INTO style_ab_evaluation_cases (id) VALUES ('TEST-case')")
             )
-            for migration in MIGRATIONS[:-1]:
+            for migration in MIGRATIONS:
+                if migration.version == "20260908_02_style_ab_scenarios":
+                    continue
                 await connection.execute(
                     insert(SchemaMigrationRecord).values(version=migration.version)
                 )

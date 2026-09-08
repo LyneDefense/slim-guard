@@ -261,6 +261,44 @@ async def _add_style_ab_scenarios(connection: AsyncConnection) -> None:
         )
 
 
+async def _create_style_correction_feedback(connection: AsyncConnection) -> None:
+    """Create the real-test correction ledger and make every entry immutable."""
+
+    await _create_application_tables(connection)
+    if connection.dialect.name == "sqlite":
+        for operation in ("UPDATE", "DELETE"):
+            await connection.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS "
+                    f"style_correction_feedback_{operation.lower()}_blocked "
+                    f"BEFORE {operation} ON style_correction_feedback BEGIN "
+                    "SELECT RAISE(ABORT, 'Style correction feedback is append-only'); END"
+                )
+            )
+    elif connection.dialect.name == "postgresql":
+        await connection.execute(
+            text(
+                "CREATE OR REPLACE FUNCTION block_style_correction_feedback_mutation() "
+                "RETURNS trigger AS $$ BEGIN "
+                "RAISE EXCEPTION 'Style correction feedback is append-only'; "
+                "END; $$ LANGUAGE plpgsql"
+            )
+        )
+        await connection.execute(
+            text(
+                "DROP TRIGGER IF EXISTS style_correction_feedback_mutation_blocked "
+                "ON style_correction_feedback"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE TRIGGER style_correction_feedback_mutation_blocked "
+                "BEFORE UPDATE OR DELETE ON style_correction_feedback "
+                "FOR EACH ROW EXECUTE FUNCTION block_style_correction_feedback_mutation()"
+            )
+        )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -277,6 +315,10 @@ MIGRATIONS = (
     SchemaMigration("20260906_01_nutrition_knowledge", _create_application_tables),
     SchemaMigration("20260908_01_style_ab_reviews", _create_style_ab_review_tables),
     SchemaMigration("20260908_02_style_ab_scenarios", _add_style_ab_scenarios),
+    SchemaMigration(
+        "20260908_03_style_correction_feedback",
+        _create_style_correction_feedback,
+    ),
 )
 
 

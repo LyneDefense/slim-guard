@@ -6,6 +6,9 @@ import type {
   StyleABHumanReview,
   StyleABReviewInput,
   StyleABStatistics,
+  StyleCorrectionFeedback,
+  StyleCorrectionFeedbackInput,
+  StyleFeedbackContext,
   TraceDetail,
   TraceListFilters,
   TraceSummary,
@@ -116,6 +119,29 @@ export const api = {
   reviewStyleABCase: (caseId: string, input: StyleABReviewInput) =>
     request<StyleABHumanReview>(
       `/style-ab/cases/${encodeURIComponent(caseId)}/reviews`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-SlimGuard-CSRF": "1",
+        },
+        body: JSON.stringify(input),
+      },
+    ),
+  styleFeedbackContext: () => request<StyleFeedbackContext>("/style-feedback/context"),
+  styleFeedback: (
+    offset = 0,
+    filters: { profile_version?: string; communication_act?: string } = {},
+  ) => {
+    const query = new URLSearchParams({ limit: "30", offset: String(offset) });
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value);
+    }
+    return request<Page<StyleCorrectionFeedback>>(`/style-feedback?${query.toString()}`);
+  },
+  appendStyleFeedback: (input: StyleCorrectionFeedbackInput) =>
+    request<StyleCorrectionFeedback>(
+      "/style-feedback",
       {
         method: "POST",
         headers: {

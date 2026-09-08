@@ -102,8 +102,11 @@ Canary/on 要求启用 Style 和 Reviewer，失败沿用本轮原回复而不重
 真实微信 HTML 整理、医生风格草案、精确版本 A/B、人审发布和回滚流程见
 [STYLE_ASSET_RUNBOOK.md](STYLE_ASSET_RUNBOOK.md)。A/B 人评页会先展示与 Case 哈希绑定的合成场景、已知
 上下文和回复目标，再展示两侧输出；医生资产当前未通过人工验收，不默认启用。
-基于首轮批注修订的 `doctor_strict_v2` 已作为 12 条带具体场景的 A/B Case 导入管理台，仍需第二轮
-实名人工评分；自动评估通过不等于发布批准。
+基于首轮批注修订的 `doctor_strict_v2` 已作为 12 条带具体场景的 A/B Case 导入管理台；第二轮实名
+人工评分接受 7、拒绝 5，因此仍未发布或启用。管理台“风格纠正”可继续追加已脱敏的真实测试场景、
+当前回复与期望回复，作为下一版本素材；它不是即时微调，不会修改当前 Profile。当前单人开发阶段，
+候选版本整套人评全部接受并发布后，按已批准策略跳过 Style Canary，直接切换 `DEFAULT_STYLE_PROFILE`；
+生产环境不继承该便利。自动评估通过不等于发布批准。
 
 离线模型单独配置 `STYLE_CORPUS_API_KEY`、`STYLE_CORPUS_MODEL` 和可选 `STYLE_CORPUS_BASE_URL`。
 
