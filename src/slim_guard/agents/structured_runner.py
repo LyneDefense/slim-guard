@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Generic, TypeVar
@@ -25,6 +27,30 @@ from slim_guard.agents.contracts import AgentInvocation, InvocationStatus
 from slim_guard.orchestration.graph import InvocationGrant, validate_invocation_grant
 
 StructuredOutput = TypeVar("StructuredOutput", bound=BaseModel)
+
+
+@dataclass(slots=True)
+class WorkflowCallBudget:
+    """Task-local aggregate budget shared by all nodes and their repair calls."""
+
+    max_model_calls: int
+    max_total_tokens: int
+    model_calls: int = 0
+    total_tokens: int = 0
+
+
+_WORKFLOW_BUDGET: ContextVar[WorkflowCallBudget | None] = ContextVar(
+    "workflow_call_budget", default=None
+)
+
+
+@contextmanager
+def workflow_call_budget(budget: WorkflowCallBudget) -> Iterator[WorkflowCallBudget]:
+    token = _WORKFLOW_BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _WORKFLOW_BUDGET.reset(token)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +99,22 @@ class StructuredAgentRunner:
             timeout_seconds = (invocation.deadline_at - self._clock()).total_seconds()
             if timeout_seconds <= 0:
                 return self._failure(responses, "deadline_exceeded")
+            budget = _WORKFLOW_BUDGET.get()
+            if budget is not None:
+                if budget.model_calls >= budget.max_model_calls:
+                    return self._failure(responses, "turn_model_budget_exhausted")
+                remaining_tokens = budget.max_total_tokens - budget.total_tokens
+                if remaining_tokens <= 0:
+                    return self._failure(responses, "turn_token_budget_exhausted")
+                current_request = current_request.model_copy(
+                    update={
+                        "max_output_tokens": min(
+                            current_request.max_output_tokens or remaining_tokens, remaining_tokens
+                        )
+                    }
+                )
+                # Failed provider attempts consume call budget too.
+                budget.model_calls += 1
             try:
                 async with asyncio.timeout(timeout_seconds):
                     response = await self._model.complete(current_request)
@@ -82,6 +124,10 @@ class StructuredAgentRunner:
                 return self._failure(responses, "model_gateway_error")
 
             responses.append(response)
+            if budget is not None:
+                budget.total_tokens += response.usage.total_tokens
+                if budget.total_tokens > budget.max_total_tokens:
+                    return self._failure(responses, "turn_token_budget_exhausted")
             total_tokens = sum(item.usage.total_tokens for item in responses)
             if total_tokens > invocation.max_total_tokens:
                 return self._failure(responses, "token_budget_exhausted")

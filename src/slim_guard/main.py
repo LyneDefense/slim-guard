@@ -81,11 +81,8 @@ def create_app(
         raise ValueError(
             f"AGENT_RUNTIME_MODE={app_settings.agent_runtime_mode!r} is not implemented yet"
         )
-    if app_settings.multi_agent_mode not in {"off", "shadow"}:
-        raise ValueError(
-            "MULTI_AGENT_MODE canary/on requires the later adoption rollout; "
-            "use off or shadow"
-        )
+    if app_settings.multi_agent_mode != "off" and app_settings.agent_runtime_mode != "harness":
+        raise ValueError("MULTI_AGENT_MODE requires AGENT_RUNTIME_MODE=harness")
     if app_settings.default_style_profile != "slimguard_default_v1":
         raise ValueError(
             "DEFAULT_STYLE_PROFILE is not published; use slimguard_default_v1"
@@ -127,9 +124,8 @@ def create_app(
         ),
         memory_recall_search_limit=app_settings.memory_recall_search_limit,
         memory_recall_max_selected=app_settings.memory_recall_max_selected,
-        multi_agent_mode=(
-            "shadow" if app_settings.multi_agent_mode == "shadow" else "off"
-        ),
+        multi_agent_mode=app_settings.multi_agent_mode,
+        multi_agent_canary_users=app_settings.multi_agent_canary_users,
         multi_agent_graph_version=app_settings.multi_agent_graph_version,
         multi_agent_shadow_timeout_seconds=(
             app_settings.multi_agent_shadow_timeout_seconds

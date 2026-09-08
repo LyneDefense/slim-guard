@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -23,6 +25,7 @@ from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.runner import HarnessTurnGrants, HarnessTurnRunner
+from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository, TurnRef
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome
@@ -361,6 +364,125 @@ async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_pat
         await database.close()
 
 
+@pytest.mark.parametrize(
+    "mode,selected,reject",
+    [
+        ("on", True, False),
+        ("canary", True, False),
+        ("canary", False, False),
+        ("off", True, False),
+        ("on", True, True),
+    ],
+)
+async def test_live_workflow_adoption_preserves_single_tool_execution_and_final_message(
+    tmp_path,
+    mode,
+    selected,
+    reject,
+) -> None:
+    database, user = await prepare_database(tmp_path)
+    manifest = build_manifest(with_tools=True)
+    await AgentVersionRepository(database).register(manifest)
+    repository = HarnessStateRepository(database)
+    recorder = PersistentHarnessRunRecorder(repository)
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    baseline = "已记录今天的体重 77.6kg。"
+    calls = [
+        ModelResponse(
+            message=ModelMessage(
+                role=MessageRole.ASSISTANT,
+                tool_calls=(
+                    NormalizedToolCall(
+                        id="weight-once",
+                        name="record_weight",
+                        arguments={"weight_kg": 77.6},
+                    ),
+                ),
+            )
+        ),
+        final_response(baseline),
+    ]
+    executes = mode in {"on", "canary"} and selected
+    if executes:
+        calls.extend(
+            [
+                final_response(direct_shadow_directive("确认本轮记录").model_dump_json()),
+                final_response(
+                    json.dumps(
+                        {
+                            "text": "已记录今天的体重 77.6kg！",
+                            "used_block_ids": ["verified-harness-response"],
+                            "style_profile_version": "slimguard_default_v1",
+                        }
+                    )
+                ),
+                final_response(
+                    json.dumps(
+                        {
+                            "verdict": "reject",
+                            "issue_type": "unsupported_claim",
+                            "reason_summary": "需进一步确认",
+                        }
+                        if reject
+                        else {"verdict": "pass"}
+                    )
+                ),
+            ]
+        )
+    model = ScriptedModelGateway(calls)
+    tools = RecordingToolRunner()
+    workflow = AgentWorkflowCoordinator(
+        model=model,
+        recorder=recorder,
+        model_name="test",
+        graph_version="live-test",
+        persistence=OrchestrationRepository(database),
+        reviewer_enabled=True,
+        clock=lambda: now,
+    )
+    runner = HarnessTurnRunner(
+        initializer=TurnInitializer(repository),
+        compiler=ContextCompiler(
+            manifest=manifest, system_prompt=SYSTEM_PROMPT, tools=tool_registry()
+        ),
+        model=model,
+        tool_calls=tools,
+        recorder=recorder,
+        limits=HarnessLimits(),
+        output_guard=SlimGuardOutputGuard(),
+        shadow_workflow=workflow,
+        workflow_mode=mode,
+        workflow_adopts_for=lambda _: selected,
+        clock=lambda: now,
+    )
+    try:
+        result = await runner.run(
+            request=initialization_request(
+                user_id=user.id,
+                agent_version_id=manifest.version_id,
+                deadline_at=now + timedelta(seconds=30),
+            )
+        )
+        expected = "已记录今天的体重 77.6kg！" if executes and not reject else baseline
+        assert result.final_text == expected
+        assert len(tools.authorizations) == 1
+        model.assert_exhausted()
+        items = await repository.list_items(result.initialized.turn.id)
+        finals = [item for item in items if item.item_type is ItemType.AGENT_MESSAGE]
+        assert len(finals) == 1 and finals[0].payload["text"] == expected
+        adopted = [
+            item
+            for item in items
+            if item.item_type is ItemType.RESPONSE_ADOPTED and item.payload.get("final")
+        ]
+        assert len(adopted) == int(executes and not reject)
+        if executes:
+            assert result.shadow_workflow.legacy_response == baseline
+            assert not result.shadow_workflow.delivered
+    finally:
+        await database.close()
+
+
 async def test_style_failure_uses_neutral_candidate_and_legacy_reply_continues(tmp_path) -> None:
     database, user = await prepare_database(tmp_path)
     manifest = build_manifest()
@@ -449,9 +571,7 @@ async def test_runner_uses_same_tool_subset_for_model_and_authorization(tmp_path
 
         assert result.compiled is not None
         assert [tool.name for tool in result.compiled.request.tools] == ["record_weight"]
-        assert tool_calls.authorizations[0].allowed_tool_names == frozenset(
-            {"record_weight"}
-        )
+        assert tool_calls.authorizations[0].allowed_tool_names == frozenset({"record_weight"})
         assert tool_calls.authorizations[0].isolated_write_environment is True
         assert tool_calls.source_item_ids == [result.initialized.source_item_id]
         assert result.final_text == "体重已记录。"

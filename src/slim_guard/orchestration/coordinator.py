@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -56,7 +58,11 @@ from slim_guard.agents.reviewer import (
     ReviewerContextCompiler,
     ReviewerEvidenceSummary,
 )
-from slim_guard.agents.structured_runner import StructuredAgentRunner
+from slim_guard.agents.structured_runner import (
+    StructuredAgentRunner,
+    WorkflowCallBudget,
+    workflow_call_budget,
+)
 from slim_guard.agents.style import (
     SLIMGUARD_DEFAULT_V1,
     NeutralRenderer,
@@ -82,6 +88,9 @@ from slim_guard.orchestration.graph import (
 )
 
 logger = logging.getLogger(__name__)
+_ACTIVE_INVOCATIONS: ContextVar[dict[str, AgentInvocation] | None] = ContextVar(
+    "active_workflow_invocations", default=None
+)
 
 SHADOW_ORCHESTRATOR_PROMPT_VERSION = "shadow-orchestrator-v1"
 SHADOW_ORCHESTRATOR_PROMPT = """You are the read-only SlimGuard shadow orchestrator.
@@ -102,9 +111,12 @@ class ShadowWorkflowRequest(BaseModel):
     thread_id: str | None = Field(default=None, min_length=1, max_length=128)
     context: tuple[ModelMessage, ...] = Field(min_length=1, max_length=64)
     user_request: str = Field(default="定期主动沟通", min_length=1, max_length=20_000)
-    current_items: tuple[dict[str, Any], ...] = Field(default=(), max_length=16)
+    current_items: tuple[dict[str, Any], ...] = Field(default=(), max_length=80)
     authoritative_context: dict[str, Any] = Field(default_factory=dict)
     legacy_response: str | None = Field(default=None, max_length=16_000)
+    mode: Literal["shadow", "canary", "on"] = "shadow"
+    max_model_calls: int | None = Field(default=None, ge=0, le=32)
+    max_total_tokens: int | None = Field(default=None, ge=0)
     deadline_at: datetime | None = None
 
     @field_validator("deadline_at")
@@ -260,6 +272,62 @@ class AgentWorkflowCoordinator:
     async def run_shadow(self, request: ShadowWorkflowRequest) -> ShadowWorkflowResult:
         """Return a candidate or an auditable failure without raising to the legacy path."""
 
+        active: dict[str, AgentInvocation] = {}
+        token = _ACTIVE_INVOCATIONS.set(active)
+        try:
+            return await self._run_with_budget(request)
+        finally:
+            try:
+                # Cancellation/provider/storage faults must not leave an invocation
+                # permanently running. Cleanup is best effort and strictly bounded.
+                async with asyncio.timeout(0.5):
+                    for unfinished in tuple(active.values()):
+                        await self._complete_invocation(
+                            result=AgentResult(
+                                invocation_id=unfinished.invocation_id,
+                                status=InvocationStatus.FAILED,
+                                output_schema={
+                                    AgentRole.ORCHESTRATOR: "TurnDirective",
+                                    AgentRole.NUTRITION_EXPERT: "ProfessionalAssessment",
+                                    AgentRole.RESPONSE_STYLE: "StyledResponse",
+                                    AgentRole.RESPONSE_REVIEWER: "ReviewerVerdict",
+                                }[unfinished.agent_role],
+                                output_schema_version="1",
+                                model_call_count=0,
+                                tool_call_count=0,
+                                token_usage=0,
+                                failure_code="workflow_interrupted",
+                            ),
+                            turn_id=request.turn_id,
+                            completed_at=self._aware_now(),
+                        )
+            except Exception as error:
+                logger.warning(
+                    "workflow_cleanup_failed",
+                    extra={
+                        "failure_type": type(error).__name__,
+                    },
+                )
+            finally:
+                _ACTIVE_INVOCATIONS.reset(token)
+
+    async def _run_with_budget(self, request: ShadowWorkflowRequest) -> ShadowWorkflowResult:
+
+        if request.max_model_calls is None or request.max_total_tokens is None:
+            return await self._run_candidate(request)
+        with workflow_call_budget(
+            WorkflowCallBudget(
+                max_model_calls=request.max_model_calls,
+                max_total_tokens=request.max_total_tokens,
+            )
+        ) as budget:
+            result = await self._run_candidate(request)
+            return replace(
+                result, model_call_count=budget.model_calls, total_token_count=budget.total_tokens
+            )
+
+    async def _run_candidate(self, request: ShadowWorkflowRequest) -> ShadowWorkflowResult:
+
         invocation: AgentInvocation | None = None
         invocations: list[AgentInvocation] = []
         transition_log: list[GraphTransition] = []
@@ -303,7 +371,7 @@ class AgentWorkflowCoordinator:
                 max_total_tokens=max(self._max_output_tokens * 2, 1),
                 payload={
                     "context_message_count": len(request.context),
-                    "mode": "shadow",
+                    "mode": request.mode,
                     "no_business_writes": True,
                 },
             )
@@ -592,6 +660,20 @@ class AgentWorkflowCoordinator:
                     completed_at=self._aware_now(),
                 )
 
+            if request.mode != "shadow" and request.legacy_response:
+                # Freeze the existing tool-aware response as required content so adoption
+                # cannot silently discard a successful/failed record acknowledgement.
+                baseline = ResponseContentBlock(
+                    block_id="verified-harness-response",
+                    kind=ContentBlockKind.FACT,
+                    text=request.legacy_response,
+                    required=True,
+                    source_refs=("harness:guarded-response",),
+                )
+                blocks = (
+                    (baseline,) if assessment is None else (baseline, *response_plan.content_blocks)
+                )
+                response_plan = response_plan.model_copy(update={"content_blocks": blocks})
             plan_artifact = self._artifact(
                 turn_id=request.turn_id,
                 producer=ArtifactProducerRole.COORDINATOR,
@@ -646,7 +728,7 @@ class AgentWorkflowCoordinator:
                     event_type=ItemType.RESPONSE_ADOPTED,
                     payload={
                         "artifact_id": candidate_artifact.artifact_id,
-                        "mode": "shadow",
+                        "mode": request.mode,
                         "final": False,
                     },
                 )
@@ -884,7 +966,7 @@ class AgentWorkflowCoordinator:
                 event_type=ItemType.RESPONSE_ADOPTED,
                 payload={
                     "artifact_id": candidate_artifact.artifact_id,
-                    "mode": "shadow",
+                    "mode": request.mode,
                     "final": False,
                 },
             )
@@ -1948,6 +2030,19 @@ class AgentWorkflowCoordinator:
         degraded: bool,
         failure: str | None,
     ) -> _UpstreamRepairStage:
+        if request.mode != "shadow" and request.legacy_response:
+            baseline = ResponseContentBlock(
+                block_id="verified-harness-response",
+                kind=ContentBlockKind.FACT,
+                text=request.legacy_response,
+                required=True,
+                source_refs=("harness:guarded-response",),
+            )
+            response_plan = response_plan.model_copy(
+                update={
+                    "content_blocks": (baseline, *response_plan.content_blocks),
+                }
+            )
         plan = self._artifact(
             turn_id=request.turn_id,
             producer=ArtifactProducerRole.COORDINATOR,
@@ -2353,6 +2448,9 @@ class AgentWorkflowCoordinator:
                 reason_summary=reason,
                 started_at=started_at,
             )
+        active = _ACTIVE_INVOCATIONS.get()
+        if active is not None:
+            active[invocation.invocation_id] = invocation
         await self._recorder.record_workflow_event(
             turn_id=invocation.turn_id,
             event_type=ItemType.INVOCATION_STARTED,
@@ -2383,6 +2481,9 @@ class AgentWorkflowCoordinator:
                 result,
                 completed_at=completed_at,
             )
+        active = _ACTIVE_INVOCATIONS.get()
+        if active is not None:
+            active.pop(result.invocation_id, None)
         await self._record_invocation_result(
             turn_id=turn_id,
             result=result,

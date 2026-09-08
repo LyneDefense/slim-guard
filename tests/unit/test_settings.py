@@ -188,10 +188,17 @@ def test_unimplemented_shadow_runtime_mode_fails_fast() -> None:
         create_app(settings)
 
 
-def test_multi_agent_adoption_modes_fail_closed_until_rollout() -> None:
+def test_multi_agent_adoption_modes_require_reviewer() -> None:
     for mode in ("canary", "on"):
-        with pytest.raises(ValueError, match="later adoption rollout"):
+        with pytest.raises(ValueError, match="requires Response Reviewer"):
             create_app(Settings(multi_agent_mode=mode))  # type: ignore[arg-type]
+        app = create_app(Settings(multi_agent_mode=mode, response_reviewer_enabled=True))
+        assert app.state.multi_agent_mode == mode
+
+
+def test_multi_agent_cannot_silently_run_with_legacy_runtime() -> None:
+    with pytest.raises(ValueError, match="requires AGENT_RUNTIME_MODE=harness"):
+        create_app(Settings(agent_runtime_mode="legacy", multi_agent_mode="on"))
 
 
 def test_nutrition_rag_requires_agent_and_mandatory_citations() -> None:

@@ -441,3 +441,11 @@ curl -i https://enceladus.online/health/ready
 - 独立 SQLite → 不连接业务数据库、Memory 或 RAG；新文件默认 0600，审核和评估 append-only。具名人工审核必须确认隐私和纯表达，精确 Bundle 哈希绑定最新 Eval，修改/撤销使旧 Eval 失效，导出仅为 draft。
 - 验证 → 22 项离线管线和 CLI 测试通过，Ruff 和严格 Mypy 通过。测试均为明确标注的合成数据，不代表真实医生语料评估。
 - 前置条件 → 原计划要求 Increment 6 等待风格需求评审；本提交仅备好通用工具，未创建或发布 `doctor_strict_v1`，医生专属线上示例、A/B 评分和发布仍待该评审及真实授权语料。
+
+### `feat: enable guarded canary response adoption`
+
+- `harness/runner.py`、`loop.py` → Canary/on 采用边界 → 业务工具只执行一次；在原回复完成安全检查后刷新权威快照、重编译上下文并加入本轮真实工具回执。候选必须通过成功状态、同 Turn Artifact 哈希/文本/血缘绑定、最新 Reviewer pass 和最终 OutputGuard，再保存唯一最终消息。
+- `agents/structured_runner.py`、`orchestration/coordinator.py` → 整体预算和中断收尾 → 各节点及返修共享扣除 Harness 已用量后的任务隔离预算，费用/调用计入 Turn 结果；对关闭、名单外、紧急输入、审查拒绝、超时和预算耗尽保持原回复，不重放工具。异常中断尝试有界收尾 Invocation，存储故障不阻断原回复。
+- `agent/composition.py`、`main.py` → 安全装配 → 真正支持 off/shadow/canary/on；Canary 使用内部 user_id 精确名单，采用要求 Harness、Style 和 Reviewer，未发布医生 Profile 仍不可启用。
+- `rollout.py`、`tools/check_workflow_rollout.py`、`MULTI_AGENT_ROLLOUT.md` → 量化放量检查 → 三阶段最小采样、人工配对评分、固定回归证据、失败样本复测、引用/安全/延迟/Token 门槛；报告检查只读，不自动批准、改配置或部署。
+- 验证 → 15 项独立 live 安全测试、3 项异常收尾测试、53 项放量门槛/CLI 测试，以及 Harness/Reviewer/配置相邻回归通过；Ruff 和严格 Mypy（164 个源码文件）通过。管理台 Increment 7 的筛选和运营指标另行收尾；未进行真实用户放量。

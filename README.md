@@ -89,6 +89,9 @@ ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 
 `MULTI_AGENT_MODE` 支持 `off → shadow → canary → on`。首次部署保持 `off`；完成 Shadow 验证前不要
 直接进入 Canary 或全量。关闭该开关不影响现有 Harness、用户 Thread 或已经写入的健康记录。
+Canary/on 要求启用 Style 和 Reviewer，失败沿用本轮原回复而不重复执行工具。名单使用内部 user_id，
+不是显示名；配置变更需重启服务。量化门槛、只读验收命令和回退步骤见
+[Multi-Agent 发布手册](MULTI_AGENT_ROLLOUT.md)。默认保持 `off`，本仓库不自动放量。
 
 离线表达语料使用独立 SQLite 文件，不连接用户 Memory 或营养 RAG。通用准备工具已提供，但
 `doctor_strict_v1` 必须等待真实语料授权、风格需求评审和人工隐私审核，当前没有发布或激活。

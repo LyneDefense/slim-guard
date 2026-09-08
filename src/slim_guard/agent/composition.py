@@ -108,7 +108,8 @@ class AgentRuntimeDefinition(BaseModel):
     memory_ingestion_history_max_chars: int = Field(default=6000, ge=100, le=20_000)
     memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
     memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
-    multi_agent_mode: Literal["off", "shadow"] = "off"
+    multi_agent_mode: Literal["off", "shadow", "canary", "on"] = "off"
+    multi_agent_canary_users: frozenset[str] = frozenset()
     multi_agent_graph_version: str = Field(
         default="typed-supervisor-v1",
         min_length=1,
@@ -134,6 +135,8 @@ class AgentRuntimeDefinition(BaseModel):
             raise ValueError("Nutrition RAG citations cannot be disabled")
         if self.response_reviewer_enabled and not self.style_render_all_normal_replies:
             raise ValueError("Response Reviewer requires the Response Style path")
+        if self.multi_agent_mode in {"canary", "on"} and not self.response_reviewer_enabled:
+            raise ValueError("Multi-agent adoption requires Response Reviewer")
         return self
 
 
@@ -318,10 +321,16 @@ def build_agent_runtime(
                 ),
                 clock=clock,
             )
-            if definition.multi_agent_mode == "shadow"
+            if definition.multi_agent_mode != "off"
             else None
         ),
         shadow_enabled_for=lambda _user_id: definition.multi_agent_mode == "shadow",
+        workflow_mode=definition.multi_agent_mode,
+        workflow_adopts_for=lambda user_id: definition.multi_agent_mode == "on" or (
+            definition.multi_agent_mode == "canary"
+            and user_id in definition.multi_agent_canary_users
+        ),
+        workflow_timeout_seconds=definition.multi_agent_shadow_timeout_seconds,
         clock=clock,
     )
     return AgentRuntime(

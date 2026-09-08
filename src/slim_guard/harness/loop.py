@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -30,6 +30,19 @@ from slim_guard.tools.contracts import ToolContext, ToolExecutionMode
 from slim_guard.tools.policy import ToolAuthorization
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class FinalResponseCandidate:
+    text: str
+    model_call_count: int = 0
+    total_token_count: int = 0
+
+
+FinalResponseHook = Callable[
+    [str, tuple[ModelMessage, ...], tuple[ToolCallOutcome, ...], tuple[ModelResponse, ...]],
+    Awaitable[FinalResponseCandidate],
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +85,12 @@ class HarnessLoopResult:
     model_responses: tuple[ModelResponse, ...]
     tool_outcomes: tuple[ToolCallOutcome, ...]
     failure: HarnessFailure | None = None
+    workflow_model_call_count: int = 0
+    workflow_total_token_count: int = 0
 
     @property
     def model_call_count(self) -> int:
-        return len(self.model_responses)
+        return len(self.model_responses) + self.workflow_model_call_count
 
     @property
     def tool_call_count(self) -> int:
@@ -83,7 +98,10 @@ class HarnessLoopResult:
 
     @property
     def total_token_count(self) -> int:
-        return sum(response.usage.total_tokens for response in self.model_responses)
+        return (
+            sum(response.usage.total_tokens for response in self.model_responses)
+            + self.workflow_total_token_count
+        )
 
 
 class HarnessLoop:
@@ -116,6 +134,7 @@ class HarnessLoop:
         now: datetime,
         trusted_evidence_item_ids: tuple[str, ...] = (),
         safety_assessment: SafetyAssessment | None = None,
+        final_response_hook: FinalResponseHook | None = None,
     ) -> HarnessLoopResult:
         messages = list(request.messages)
         model_responses: list[ModelResponse] = []
@@ -215,13 +234,42 @@ class HarnessLoop:
                         turn_id=context.turn_id,
                         code=guarded.code,
                     )
+                final_text = guarded.text
+                workflow_calls = 0
+                workflow_tokens = 0
+                if final_response_hook is not None and not guarded.modified:
+                    try:
+                        proposed = await final_response_hook(
+                            final_text,
+                            tuple(messages),
+                            tuple(tool_outcomes),
+                            tuple(model_responses),
+                        )
+                        workflow_calls = proposed.model_call_count
+                        workflow_tokens = proposed.total_token_count
+                        checked = self._output_guard.review(
+                            text=proposed.text,
+                            assessment=active_assessment,
+                            tool_outcomes=tuple(tool_outcomes),
+                        )
+                        if not checked.modified:
+                            final_text = checked.text
+                    except Exception as error:
+                        logger.warning(
+                            "final_response_workflow_failed",
+                            extra={
+                                "failure_type": type(error).__name__,
+                            },
+                        )
                 return await self._finish(
                     context=context,
                     termination=HarnessTermination.FINAL_RESPONSE,
-                    final_text=guarded.text,
+                    final_text=final_text,
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    workflow_model_call_count=workflow_calls,
+                    workflow_total_token_count=workflow_tokens,
                 )
 
             if len(tool_outcomes) + len(calls) > self._limits.max_tool_calls:
@@ -337,14 +385,16 @@ class HarnessLoop:
         tool_outcomes: list[ToolCallOutcome],
         final_text: str | None = None,
         failure: HarnessFailure | None = None,
+        workflow_model_call_count: int = 0,
+        workflow_total_token_count: int = 0,
     ) -> HarnessLoopResult:
         await self._recorder.finish_run(
             turn_id=context.turn_id,
             termination=termination,
             final_text=final_text,
-            model_call_count=len(model_responses),
+            model_call_count=len(model_responses) + workflow_model_call_count,
             tool_call_count=len(tool_outcomes),
-            total_token_count=self._total_tokens(model_responses),
+            total_token_count=self._total_tokens(model_responses) + workflow_total_token_count,
             failure=failure,
         )
         return HarnessLoopResult(
@@ -354,6 +404,8 @@ class HarnessLoop:
             model_responses=tuple(model_responses),
             tool_outcomes=tuple(tool_outcomes),
             failure=failure,
+            workflow_model_call_count=workflow_model_call_count,
+            workflow_total_token_count=workflow_total_token_count,
         )
 
     def _deadline_exceeded(self, context: HarnessTurnContext) -> bool:

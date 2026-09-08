@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from slim_guard.agent_models.gateway import ModelGateway
+from slim_guard.agent_models.gateway import ModelGateway, ModelMessage, ModelResponse
+from slim_guard.agents.contracts import InvocationStatus
 from slim_guard.harness.context import CompiledContext, ContextCompiler
 from slim_guard.harness.context_data import ContextDataProvider, EmptyContextDataProvider
 from slim_guard.harness.errors import ContextCompilationError
+from slim_guard.harness.events import ItemType
 from slim_guard.harness.failures import context_compilation_failure
 from slim_guard.harness.initialization import (
     InitializedTurn,
@@ -17,14 +21,15 @@ from slim_guard.harness.initialization import (
     TurnInitializer,
 )
 from slim_guard.harness.limits import HarnessLimits
-from slim_guard.harness.loop import HarnessLoop, HarnessLoopResult
+from slim_guard.harness.loop import FinalResponseCandidate, HarnessLoop, HarnessLoopResult
 from slim_guard.harness.safety import (
     DefaultInputSafetyPolicy,
     InputSafetyPolicy,
     OutputGuard,
+    PermissiveOutputGuard,
 )
 from slim_guard.harness.termination import HarnessTermination
-from slim_guard.harness.tool_calls import ToolCallRunner
+from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.memory.ingestion import MemoryIngestionResult, MemoryIngestor
 from slim_guard.memory.recall import MemoryRecaller, MemoryRecallResult
@@ -81,6 +86,9 @@ class HarnessTurnRunner:
         output_guard: OutputGuard | None = None,
         shadow_workflow: AgentWorkflowCoordinator | None = None,
         shadow_enabled_for: Callable[[str], bool] | None = None,
+        workflow_mode: Literal["off", "shadow", "canary", "on"] = "off",
+        workflow_adopts_for: Callable[[str], bool] | None = None,
+        workflow_timeout_seconds: float = 20,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._initializer = initializer
@@ -92,6 +100,11 @@ class HarnessTurnRunner:
         self._input_safety = input_safety or DefaultInputSafetyPolicy()
         self._shadow_workflow = shadow_workflow
         self._shadow_enabled_for = shadow_enabled_for or (lambda _user_id: False)
+        self._workflow_mode = workflow_mode
+        self._workflow_adopts_for = workflow_adopts_for or (lambda _user_id: False)
+        self._workflow_timeout_seconds = workflow_timeout_seconds
+        self._limits = limits
+        self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
         self._loop = HarnessLoop(
             model=model,
@@ -141,9 +154,7 @@ class HarnessTurnRunner:
             if ingestion_result is not None:
                 memory_receipt = ingestion_result.context_receipt()
                 if memory_receipt is not None:
-                    authoritative_context["current_turn_memory_receipt"] = (
-                        memory_receipt
-                    )
+                    authoritative_context["current_turn_memory_receipt"] = memory_receipt
             if safety_assessment.blocks_tools:
                 authoritative_context["health_safety"] = safety_assessment.to_context()
             allowed_tool_names = (
@@ -201,15 +212,9 @@ class HarnessTurnRunner:
                 "input_item_ids": list(compiled.input_item_ids),
                 "authorization": {
                     "allowed_tool_names": sorted(authorization.allowed_tool_names),
-                    "confirmed_execution_keys": sorted(
-                        authorization.confirmed_execution_keys
-                    ),
-                    "reviewed_execution_keys": sorted(
-                        authorization.reviewed_execution_keys
-                    ),
-                    "isolated_write_environment": (
-                        authorization.isolated_write_environment
-                    ),
+                    "confirmed_execution_keys": sorted(authorization.confirmed_execution_keys),
+                    "reviewed_execution_keys": sorted(authorization.reviewed_execution_keys),
+                    "isolated_write_environment": (authorization.isolated_write_environment),
                 },
             },
         )
@@ -218,6 +223,7 @@ class HarnessTurnRunner:
             self._shadow_workflow is not None
             and self._shadow_enabled_for(initialized.context.user_id)
             and not safety_assessment.blocks_tools
+            and self._workflow_mode not in {"canary", "on"}
         ):
             shadow_result = await self._shadow_workflow.run_shadow(
                 ShadowWorkflowRequest(
@@ -238,6 +244,193 @@ class HarnessTurnRunner:
                     deadline_at=initialized.turn.deadline_at,
                 )
             )
+
+        async def finalize_response(
+            baseline: str,
+            messages: tuple[ModelMessage, ...],
+            outcomes: tuple[ToolCallOutcome, ...],
+            responses: tuple[ModelResponse, ...],
+        ) -> str:
+            nonlocal shadow_result
+            if self._shadow_workflow is None:
+                return baseline
+            timeout = self._workflow_timeout_seconds
+            if initialized.turn.deadline_at is not None:
+                timeout = min(
+                    timeout, (initialized.turn.deadline_at - self._clock()).total_seconds()
+                )
+            if timeout <= 0:
+                return baseline
+            try:
+                async with asyncio.timeout(timeout):
+                    remaining_calls = max(0, self._limits.max_model_calls - len(responses))
+                    remaining_tokens = max(
+                        0,
+                        self._limits.max_total_tokens
+                        - sum(response.usage.total_tokens for response in responses),
+                    )
+                    if remaining_calls == 0 or remaining_tokens == 0:
+                        await self._recorder.record_workflow_event(
+                            turn_id=initialized.turn.id,
+                            event_type=ItemType.RESPONSE_DEGRADED,
+                            payload={
+                                "artifact_id": None,
+                                "reason_code": "turn_workflow_budget_exhausted",
+                                "fallback_type": "legacy_response",
+                            },
+                        )
+                        return baseline
+                    refreshed_context = dict(
+                        await self._context_data.load(
+                            user_id=initialized.context.user_id,
+                            current_time=self._clock(),
+                            trigger=initialized.turn.trigger,
+                            input_items=initialized.input_items,
+                        )
+                    )
+                    if "current_turn_memory_receipt" in authoritative_context:
+                        refreshed_context["current_turn_memory_receipt"] = authoritative_context[
+                            "current_turn_memory_receipt"
+                        ]
+                    fresh_compiled = self._compiler.compile(
+                        initialized=initialized,
+                        current_time=self._clock(),
+                        allowed_tool_names=allowed_tool_names,
+                        authoritative_context=refreshed_context,
+                    )
+                    # Replace the stale context prefix, retaining only this turn's
+                    # actual tool exchanges and guarded baseline response.
+                    fresh_messages = (
+                        *fresh_compiled.request.messages,
+                        *messages[len(compiled.request.messages) :],
+                    )
+                    receipts = tuple(
+                        {
+                            "id": "tool-call:" + outcome.execution.tool_call_id,
+                            "item_type": "tool_result",
+                            "payload": {
+                                "tool_name": outcome.execution.tool_name,
+                                "tool_version": outcome.execution.tool_version,
+                                **outcome.execution.result.model_dump(mode="json"),
+                            },
+                        }
+                        for outcome in outcomes
+                    )
+                    shadow_result = await self._shadow_workflow.run_shadow(
+                        ShadowWorkflowRequest(
+                            trace_id=current_trace_id() or initialized.turn.id,
+                            turn_id=initialized.turn.id,
+                            thread_id=initialized.thread.id,
+                            context=fresh_messages[-64:],
+                            user_request=self._user_request(initialized),
+                            current_items=tuple(
+                                {
+                                    "id": item.id,
+                                    "item_type": item.item_type.value,
+                                    "payload": item.payload,
+                                }
+                                for item in initialized.input_items
+                            )
+                            + receipts,
+                            authoritative_context=refreshed_context,
+                            legacy_response=baseline,
+                            mode="canary" if self._workflow_mode == "canary" else "on",
+                            max_model_calls=remaining_calls,
+                            max_total_tokens=remaining_tokens,
+                            deadline_at=initialized.turn.deadline_at,
+                        )
+                    )
+            except Exception:
+                await self._recorder.record_workflow_event(
+                    turn_id=initialized.turn.id,
+                    event_type=ItemType.RESPONSE_DEGRADED,
+                    payload={
+                        "artifact_id": None,
+                        "reason_code": "workflow_timeout_or_error",
+                        "fallback_type": "legacy_response",
+                    },
+                )
+                return baseline
+            candidate = shadow_result.shadow_candidate
+            selected = next(
+                (
+                    item
+                    for item in reversed(shadow_result.artifacts)
+                    if item.artifact_type in {"styled_response", "neutral_response"}
+                ),
+                None,
+            )
+            latest_review = next(
+                (
+                    item
+                    for item in reversed(shadow_result.artifacts)
+                    if item.artifact_type == "reviewer_verdict"
+                ),
+                None,
+            )
+            eligible = (
+                shadow_result.status is InvocationStatus.SUCCEEDED
+                and candidate is not None
+                and latest_review is not None
+                and latest_review.payload.get("verdict") == "pass"
+                and selected is not None
+                and selected.turn_id == latest_review.turn_id == initialized.turn.id
+                and selected.verify_payload()
+                and latest_review.verify_payload()
+                and selected.payload.get("text") == candidate
+                and selected.artifact_id in latest_review.parent_artifact_ids
+                and selected.artifact_id in latest_review.payload.get("reviewed_artifact_ids", [])
+            )
+            if eligible and candidate is not None:
+                checked = self._output_guard.review(
+                    text=candidate,
+                    assessment=safety_assessment,
+                    tool_outcomes=outcomes,
+                )
+                eligible = not checked.modified
+            if not eligible:
+                await self._recorder.record_workflow_event(
+                    turn_id=initialized.turn.id,
+                    event_type=ItemType.RESPONSE_DEGRADED,
+                    payload={
+                        "artifact_id": None,
+                        "reason_code": shadow_result.failure_code or "candidate_not_adoptable",
+                        "fallback_type": "legacy_response",
+                    },
+                )
+                return baseline
+            assert selected is not None
+            await self._recorder.record_workflow_event(
+                turn_id=initialized.turn.id,
+                event_type=ItemType.RESPONSE_ADOPTED,
+                payload={
+                    "artifact_id": selected.artifact_id,
+                    "mode": self._workflow_mode,
+                    "final": True,
+                },
+            )
+            # Adoption is not channel delivery; delivery is owned by the outbox.
+            assert candidate is not None
+            return candidate
+
+        async def finalize_with_usage(
+            baseline: str,
+            messages: tuple[ModelMessage, ...],
+            outcomes: tuple[ToolCallOutcome, ...],
+            responses: tuple[ModelResponse, ...],
+        ) -> FinalResponseCandidate:
+            text = await finalize_response(baseline, messages, outcomes, responses)
+            return FinalResponseCandidate(
+                text=text,
+                model_call_count=shadow_result.model_call_count if shadow_result else 0,
+                total_token_count=shadow_result.total_token_count if shadow_result else 0,
+            )
+
+        adopt = (
+            self._workflow_mode in {"canary", "on"}
+            and self._workflow_adopts_for(initialized.context.user_id)
+            and not safety_assessment.blocks_tools
+        )
         loop_result = await self._loop.run(
             request=compiled.request,
             context=initialized.context,
@@ -246,7 +439,13 @@ class HarnessTurnRunner:
             now=current_time,
             trusted_evidence_item_ids=compiled.evidence_item_ids,
             safety_assessment=safety_assessment,
+            final_response_hook=finalize_with_usage if adopt else None,
         )
+        if shadow_result is not None:
+            shadow_result = replace(
+                shadow_result,
+                legacy_response=(shadow_result.legacy_response or loop_result.final_text),
+            )
         return HarnessTurnRunResult(
             initialized=initialized,
             compiled=compiled,
