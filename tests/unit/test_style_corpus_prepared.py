@@ -10,7 +10,12 @@ from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import MessageRole, ModelMessage, ModelResponse
 from slim_guard.agents.contracts import ResponseContentBlock, ResponsePlan, StyledResponse
 from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1
-from slim_guard.style_corpus import CorpusReview, OfflineStyleCorpus, StyleEvalCase
+from slim_guard.style_corpus import (
+    CorpusReview,
+    OfflineStyleCorpus,
+    StyleEvalCase,
+    StyleEvaluationScenario,
+)
 from slim_guard.wechat_style_export import PreparedExport, PreparedStylePair
 
 
@@ -85,6 +90,12 @@ def review(decision="approve"):
 def eval_case(generation_status="succeeded"):
     return StyleEvalCase(
         case_id="synthetic-eval",
+        scenario=StyleEvaluationScenario(
+            title="测试场景",
+            user_situation="测试用户提交了一条合成记录。",
+            known_context=("仅用于自动化测试。",),
+            response_goal="确认收到合成记录。",
+        ),
         response_plan=ResponsePlan(
             communication_act="acknowledge",
             content_blocks=(

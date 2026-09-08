@@ -29,6 +29,7 @@ from slim_guard.style_corpus import (
     StyleEvalJudgment,
     StyleEvalReport,
     StyleEvalResult,
+    StyleEvaluationScenario,
 )
 from slim_guard.style_profiles import (
     StyleProfileAlreadyExists,
@@ -104,6 +105,7 @@ async def synthetic_approval(_repository, **binding):
             {
                 "case_id": style_ab_case_key(binding["evaluation_sha256"], f"TEST-{act.value}"),
                 "source_sample_sha256": "c" * 64,
+                "scenario_sha256": "d" * 64,
                 "review_id": "TEST-review",
                 "actor": "TEST-human",
                 "style_match": 5,
@@ -251,6 +253,12 @@ async def test_real_database_review_adapter_requires_all_test_case_acceptances(r
             StyleABPairImport(
                 case_id=style_ab_case_key(evaluation_digest, result.case_id),
                 source_sample_sha256="c" * 64,
+                scenario=StyleEvaluationScenario(
+                    title="TEST synthetic scenario",
+                    user_situation="TEST user supplied synthetic input.",
+                    known_context=("TEST context only.",),
+                    response_goal="TEST comparison goal.",
+                ),
                 response_plan=plan,
                 baseline_response=baseline,
                 candidate_response=candidate,

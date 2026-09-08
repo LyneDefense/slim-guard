@@ -107,6 +107,7 @@ def test_cli_can_build_exact_approved_bundle_before_ab_evaluation(tmp_path: Path
 def test_external_evaluation_plan_is_not_implicitly_marked_synthetic() -> None:
     supplied = StyleEvaluationInput(
         case_id="external-input",
+        scenario=synthetic_style_suite()[0].scenario,
         response_plan=synthetic_style_suite()[0].response_plan,
     )
     assert supplied.synthetic is False

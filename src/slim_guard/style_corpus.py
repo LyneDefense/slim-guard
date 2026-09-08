@@ -108,10 +108,38 @@ class StyleAssetBundle(ContractModel):
         return self
 
 
+class StyleEvaluationScenario(ContractModel):
+    """Human-readable synthetic context bound to an A/B case and its evaluation."""
+
+    title: str = Field(min_length=1, max_length=128)
+    user_situation: str = Field(min_length=1, max_length=1000)
+    known_context: tuple[str, ...] = Field(min_length=1, max_length=12)
+    response_goal: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("title", "user_situation", "response_goal")
+    @classmethod
+    def normalize_scenario_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Style evaluation scenario text cannot be blank")
+        return normalized
+
+    @field_validator("known_context")
+    @classmethod
+    def validate_known_context(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(item.strip() for item in value)
+        if any(not item or len(item) > 1000 for item in normalized):
+            raise ValueError("Scenario context items must contain 1 to 1000 characters")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Scenario context items must be unique")
+        return normalized
+
+
 class StyleEvalCase(ContractModel):
     """Actual generated candidate plus its immutable source for fidelity evaluation."""
 
     case_id: str = Field(min_length=1, max_length=128)
+    scenario: StyleEvaluationScenario
     response_plan: ResponsePlan
     styled_response: StyledResponse
     generation_status: Literal["succeeded", "degraded"] = "succeeded"
@@ -722,6 +750,7 @@ __all__ = [
     "ExportMessage",
     "OfflineStyleCorpus",
     "StyleAssetBundle",
+    "StyleEvaluationScenario",
     "StyleEvalCase",
     "StyleEvalJudgment",
     "StyleEvalReport",

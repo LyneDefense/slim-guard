@@ -42,6 +42,23 @@ _DEFAULT_STYLE_SPEC = {
     ],
     "preferred_max_paragraphs": 3,
 }
+_LEGACY_STYLE_AB_SCENARIO = json.dumps(
+    {
+        "title": "历史 A/B 用例（未单独记录场景）",
+        "user_situation": "该用例创建于结构化场景字段上线之前。",
+        "known_context": [
+            "请结合下方合成 ResponsePlan 和两侧输出查看；旧评分历史保持不变。"
+        ],
+        "response_goal": "比较同一份合成 ResponsePlan 在两个风格版本下的表达。",
+    },
+    ensure_ascii=False,
+    allow_nan=False,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+_LEGACY_STYLE_AB_SCENARIO_SHA256 = hashlib.sha256(
+    _LEGACY_STYLE_AB_SCENARIO.encode()
+).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +209,58 @@ async def _create_style_ab_review_tables(connection: AsyncConnection) -> None:
         )
 
 
+async def _add_style_ab_scenarios(connection: AsyncConnection) -> None:
+    """Bind human-readable context to new A/B cases and label legacy rows explicitly."""
+
+    await _create_application_tables(connection)
+    columns = await connection.run_sync(
+        lambda sync_connection: {
+            column["name"]
+            for column in inspect(sync_connection).get_columns("style_ab_evaluation_cases")
+        }
+    )
+    scenario_columns_added = (
+        "scenario_json" not in columns or "scenario_sha256" not in columns
+    )
+    if "scenario_json" not in columns:
+        await connection.execute(
+            text("ALTER TABLE style_ab_evaluation_cases ADD COLUMN scenario_json TEXT")
+        )
+    if "scenario_sha256" not in columns:
+        await connection.execute(
+            text(
+                "ALTER TABLE style_ab_evaluation_cases "
+                "ADD COLUMN scenario_sha256 VARCHAR(64)"
+            )
+        )
+    await connection.execute(
+        text(
+            "UPDATE style_ab_evaluation_cases "
+            "SET scenario_json = :scenario, scenario_sha256 = :scenario_sha256 "
+            "WHERE scenario_json IS NULL OR scenario_sha256 IS NULL"
+        ),
+        {
+            "scenario": _LEGACY_STYLE_AB_SCENARIO,
+            "scenario_sha256": _LEGACY_STYLE_AB_SCENARIO_SHA256,
+        },
+    )
+    if connection.dialect.name == "postgresql" and scenario_columns_added:
+        await connection.execute(
+            text(
+                "ALTER TABLE style_ab_evaluation_cases "
+                "ALTER COLUMN scenario_json SET NOT NULL, "
+                "ALTER COLUMN scenario_sha256 SET NOT NULL"
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE style_ab_evaluation_cases "
+                "ADD CONSTRAINT ck_style_ab_case_scenario_sha256 "
+                "CHECK (length(scenario_sha256) = 64)"
+            )
+        )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -207,6 +276,7 @@ MIGRATIONS = (
     SchemaMigration("20260905_01_style_profiles", _create_and_seed_style_profiles),
     SchemaMigration("20260906_01_nutrition_knowledge", _create_application_tables),
     SchemaMigration("20260908_01_style_ab_reviews", _create_style_ab_review_tables),
+    SchemaMigration("20260908_02_style_ab_scenarios", _add_style_ab_scenarios),
 )
 
 

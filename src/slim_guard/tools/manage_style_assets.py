@@ -12,7 +12,12 @@ from typing import Any
 
 from slim_guard.agents.contracts import CommunicationAct, ResponsePlan, StyledResponse
 from slim_guard.db.session import Database
-from slim_guard.style_corpus import StyleAssetBundle, StyleEvalCase, StyleEvalReport
+from slim_guard.style_corpus import (
+    StyleAssetBundle,
+    StyleEvalCase,
+    StyleEvalReport,
+    StyleEvaluationScenario,
+)
 from slim_guard.style_profiles import StyleProfileRepository
 from slim_guard.style_reviews import (
     StyleABPairImport,
@@ -70,9 +75,11 @@ def prepare_ab_import(
         if any(item.get("generation_status") != "succeeded" for item in (baseline, candidate)):
             raise ValueError("Degraded generations cannot be imported as comparable A/B pairs")
         plan = ResponsePlan.model_validate(raw["response_plan"])
+        scenario = StyleEvaluationScenario.model_validate(raw.get("scenario"))
         response = StyledResponse.model_validate(candidate["response"])
         case = StyleEvalCase(
             case_id=raw["case_id"],
+            scenario=scenario,
             response_plan=plan,
             styled_response=response,
             generation_status="succeeded",
@@ -95,6 +102,7 @@ def prepare_ab_import(
             StyleABPairImport(
                 case_id=style_ab_case_key(evaluation_hash, case.case_id),
                 source_sample_sha256=_digest(case.model_dump_json()),
+                scenario=scenario,
                 response_plan=plan,
                 baseline_response=StyledResponse.model_validate(baseline["response"]),
                 candidate_response=response,

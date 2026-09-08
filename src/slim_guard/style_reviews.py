@@ -27,6 +27,7 @@ from slim_guard.db.models import (
     utc_now,
 )
 from slim_guard.db.session import Database
+from slim_guard.style_corpus import StyleEvaluationScenario
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -84,6 +85,7 @@ class StyleABPairImport(ContractModel):
 
     case_id: str = Field(min_length=1, max_length=128)
     source_sample_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scenario: StyleEvaluationScenario
     response_plan: ResponsePlan
     baseline_response: StyledResponse
     candidate_response: StyledResponse
@@ -452,6 +454,7 @@ class StyleABReviewRepository:
             {
                 "case_id": row.case_key,
                 "source_sample_sha256": row.source_sample_sha256,
+                "scenario_sha256": row.scenario_sha256,
                 "review_id": latest[row.id].id,
                 "actor": latest[row.id].actor,
                 "style_match": latest[row.id].style_match,
@@ -491,6 +494,8 @@ class StyleABReviewRepository:
             "case_key": pair.case_id,
             "source_kind": "synthetic_evaluation",
             "source_sample_sha256": pair.source_sample_sha256,
+            "scenario_json": self._json(pair.scenario.model_dump(mode="json")),
+            "scenario_sha256": self._sha256(pair.scenario.model_dump(mode="json")),
             "import_source_id": trusted_source.source_id,
             "import_manifest_sha256": trusted_source.manifest_sha256,
             "response_plan_json": self._json(plan),
@@ -581,11 +586,14 @@ class StyleABReviewRepository:
         *,
         include_content: bool,
     ) -> dict[str, Any]:
+        scenario = cls._object(row.scenario_json)
         result: dict[str, Any] = {
             "case_id": row.id,
             "case_key": row.case_key,
             "source_kind": row.source_kind,
             "source_sample_sha256": row.source_sample_sha256,
+            "scenario_title": scenario.get("title", "合成评估场景"),
+            "scenario_sha256": row.scenario_sha256,
             "response_plan_sha256": row.response_plan_sha256,
             "communication_act": row.communication_act,
             "required_communication_acts": cls._string_list(row.required_communication_acts_json),
@@ -611,6 +619,7 @@ class StyleABReviewRepository:
             "created_at": cls._aware(row.created_at),
         }
         if include_content:
+            result["scenario"] = scenario
             result["response_plan"] = cls._object(row.response_plan_json)
             result["baseline"]["response"] = cls._object(row.baseline_response_json)
             result["candidate"]["response"] = cls._object(row.candidate_response_json)

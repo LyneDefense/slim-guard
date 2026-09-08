@@ -94,12 +94,14 @@ Canary/on 要求启用 Style 和 Reviewer，失败沿用本轮原回复而不重
 [Multi-Agent 发布手册](MULTI_AGENT_ROLLOUT.md)。默认保持 `off`，本仓库不自动放量。
 
 离线表达语料使用独立 SQLite 文件，不连接用户 Memory 或营养 RAG。通用准备工具已提供，但
-`doctor_strict_v1` 必须等待真实语料授权、风格需求评审和人工隐私审核，当前没有发布或激活。
+`doctor_strict_v1` 已完成真实语料授权、隐私处理、自动评估和首轮实名 A/B 人评；人工结果为接受 1、
+拒绝 11，因此该版本没有发布或激活，拒绝批注仅作为下一版本修订输入。
 导入支持 UTF-8 JSON 消息数组（`sender/text/conversation_id`）或 `sender<TAB>text` 文本，
 并非任意微信导出格式；必须用 JSON 显式映射所有 sender。模型只收到自动脱敏后的候选，
 但自动脱敏无法保证识别全部个人信息，调用模型前应先完成源文件隐私检查，并补充 `--private-terms`。
 真实微信 HTML 整理、医生风格草案、精确版本 A/B、人审发布和回滚流程见
-[STYLE_ASSET_RUNBOOK.md](STYLE_ASSET_RUNBOOK.md)。医生资产当前仍待真实模型评估及人工审核，不默认启用。
+[STYLE_ASSET_RUNBOOK.md](STYLE_ASSET_RUNBOOK.md)。A/B 人评页会先展示与 Case 哈希绑定的合成场景、已知
+上下文和回复目标，再展示两侧输出；医生资产当前未通过人工验收，不默认启用。
 
 离线模型单独配置 `STYLE_CORPUS_API_KEY`、`STYLE_CORPUS_MODEL` 和可选 `STYLE_CORPUS_BASE_URL`。
 

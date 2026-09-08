@@ -187,6 +187,7 @@ function StyleABCaseList({
           key={item.case_id}
         >
           <strong>{ACT_LABELS[item.communication_act] ?? item.communication_act}</strong>
+          <em>{item.scenario_title}</em>
           <span>{item.candidate.profile_version}</span>
           <small>
             {item.latest_human_review
@@ -233,9 +234,23 @@ export function StyleABCaseData({ value }: { value: StyleABCaseDetail }) {
       </header>
       <div className="style-ab-provenance">
         <span>样本 <code>{displayHash(value.source_sample_sha256)}</code></span>
+        <span>场景 <code>{displayHash(value.scenario_sha256)}</code></span>
         <span>计划 <code>{displayHash(value.response_plan_sha256)}</code></span>
         <span>Bundle <code>{displayHash(value.candidate_bundle_sha256)}</code></span>
       </div>
+      <article className="style-ab-scenario">
+        <p className="eyebrow">REVIEW SCENARIO · 合成审核语境</p>
+        <h3>{value.scenario.title}</h3>
+        <dl>
+          <div><dt>用户刚刚发生了什么</dt><dd>{value.scenario.user_situation}</dd></div>
+          <div>
+            <dt>系统已确认的上下文</dt>
+            <dd><ul>{value.scenario.known_context.map((item) => <li key={item}>{item}</li>)}</ul></dd>
+          </div>
+          <div><dt>这条回复要完成什么</dt><dd>{value.scenario.response_goal}</dd></div>
+        </dl>
+        <small>这是专门用于评估的合成场景，不是微信群聊原文，也不代表新增用户事实。</small>
+      </article>
       <article className="style-ab-plan">
         <h3>同一份合成 ResponsePlan</h3>
         {blocks.map((block) => (

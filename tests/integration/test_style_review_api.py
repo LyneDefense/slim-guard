@@ -61,6 +61,7 @@ async def api(test_settings):
                 StyleABPairImport(
                     case_id=f"TEST-api-{case.case_id}",
                     source_sample_sha256="a" * 64,
+                    scenario=case.scenario,
                     response_plan=case.response_plan,
                     baseline_response=baseline,
                     candidate_response=candidate,
@@ -122,6 +123,7 @@ async def test_authenticated_list_filters_pagination_and_detail_return_synthetic
     assert listing.json()["total"] == 3
     assert len(listing.json()["items"]) == 1
     assert "response_plan" not in listing.json()["items"][0]
+    assert listing.json()["items"][0]["scenario_title"]
     assert "response" not in listing.json()["items"][0]["candidate"]
     filtered = await client.get(
         f"{PREFIX}/cases",
@@ -134,6 +136,9 @@ async def test_authenticated_list_filters_pagination_and_detail_return_synthetic
     assert filtered.json()["total"] == 1
     detail = await client.get(f"{PREFIX}/cases/{ids[0]}")
     assert detail.status_code == 200
+    assert detail.json()["scenario"]["user_situation"]
+    assert detail.json()["scenario"]["known_context"]
+    assert detail.json()["scenario"]["response_goal"]
     assert detail.json()["response_plan"]["communication_act"] == "acknowledge"
     assert detail.json()["candidate"]["response"]["text"]
     assert detail.json()["baseline"]["profile_version"] == SLIMGUARD_DEFAULT_V1.version

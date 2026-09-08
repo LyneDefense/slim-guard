@@ -121,6 +121,12 @@ async def test_cli_import_review_eval_export_stays_offline_and_draft(
             [
                 {
                     "case_id": "test-case",
+                    "scenario": {
+                        "title": "TEST scenario",
+                        "user_situation": "TEST user submitted one check-in.",
+                        "known_context": ["TEST no additional facts are available."],
+                        "response_goal": "TEST acknowledge the check-in.",
+                    },
                     "response_plan": {
                         "communication_act": "acknowledge",
                         "content_blocks": [

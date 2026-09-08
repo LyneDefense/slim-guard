@@ -19,6 +19,7 @@ from slim_guard.style_corpus import (
     OfflineStyleCorpus,
     StyleAssetBundle,
     StyleEvalCase,
+    StyleEvaluationScenario,
     merge_messages,
     parse_export,
     redact,
@@ -107,6 +108,12 @@ async def approved_bundle(corpus: OfflineStyleCorpus) -> StyleAssetBundle:
 def eval_case(*, profile_version: str = "test_style_v1") -> StyleEvalCase:
     return StyleEvalCase(
         case_id="test-case-1",
+        scenario=StyleEvaluationScenario(
+            title="测试确认场景",
+            user_situation="测试用户提交了一条合成记录。",
+            known_context=("仅用于自动化测试。",),
+            response_goal="用测试表达确认收到。",
+        ),
         response_plan=ResponsePlan(
             communication_act="acknowledge",
             content_blocks=(

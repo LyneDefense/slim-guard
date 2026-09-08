@@ -46,6 +46,7 @@ async def ledger(tmp_path):
             StyleABPairImport(
                 case_id=f"TEST-{case.case_id}",
                 source_sample_sha256="a" * 64,
+                scenario=case.scenario,
                 response_plan=case.response_plan,
                 baseline_response=baseline,
                 candidate_response=candidate,
@@ -100,7 +101,10 @@ async def test_import_is_idempotent_and_list_omits_synthetic_reply_bodies(ledger
     assert listing["total"] == 2
     assert all("response_plan" not in row for row in listing["items"])
     assert all("response" not in row["candidate"] for row in listing["items"])
+    assert all(row["scenario_title"] for row in listing["items"])
     detail = await repository.get_case(ids[0])
+    assert detail["scenario"] == pairs[0].scenario.model_dump(mode="json")
+    assert len(detail["scenario_sha256"]) == 64
     assert detail["candidate"]["response"]["text"] == pairs[0].candidate_response.text
     assert detail["reviews"] == []
 
@@ -137,7 +141,9 @@ async def test_correction_keeps_history_changes_latest_stats_and_revokes_approva
         review = await repository.submit_review(case_id=case_id, actor="TEST-human", score=score())
         if first is None:
             first = review
-    assert (await repository.require_bundle_approval(**gate))["case_count"] == 2
+    receipt = await repository.require_bundle_approval(**gate)
+    assert receipt["case_count"] == 2
+    assert all(len(item["scenario_sha256"]) == 64 for item in receipt["case_reviews"])
     await repository.submit_review(
         case_id=ids[0],
         actor="TEST-second-human",

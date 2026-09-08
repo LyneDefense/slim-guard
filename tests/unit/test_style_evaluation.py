@@ -89,6 +89,9 @@ def test_synthetic_suite_has_each_of_six_acts_with_social_and_protected_versions
     assert Counter(case.response_plan.communication_act for case in cases) == {
         act: 2 for act in CommunicationAct
     }
+    assert all(case.scenario.title and case.scenario.user_situation for case in cases)
+    assert all(case.scenario.known_context and case.scenario.response_goal for case in cases)
+    assert len({case.scenario.title for case in cases}) == 12
     protected = [
         case
         for case in cases
@@ -134,6 +137,7 @@ async def test_ab_generation_shares_plans_binds_examples_and_does_not_approve_or
         baseline = baseline_payload["style_context"]
         candidate = candidate_payload["style_context"]
         assert baseline["response_plan"] == candidate["response_plan"]
+        assert result["cases"][index]["scenario"] == case.scenario.model_dump(mode="json")
         assert not baseline["examples"]
         assert len(candidate["examples"]) == 1
         assert candidate["examples"][0]["communication_act"] == case.response_plan.communication_act

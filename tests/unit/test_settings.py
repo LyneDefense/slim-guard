@@ -127,11 +127,11 @@ def test_routine_scheduler_reserves_proactive_message_capacity() -> None:
 
 
 def test_admin_credentials_must_be_complete_but_may_use_a_test_password() -> None:
-    settings = Settings(admin_username="admin", admin_password="short")
+    settings = Settings(admin_username="admin", admin_password="short", _env_file=None)
     assert settings.admin_is_configured is True
 
     with pytest.raises(ValidationError, match="configured together"):
-        Settings(admin_username="admin")
+        Settings(admin_username="admin", _env_file=None)
 
 
 def test_database_settings_ignore_unrelated_invalid_app_configuration(

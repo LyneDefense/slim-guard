@@ -318,6 +318,8 @@ export interface StyleABCaseSummary {
   case_key: string;
   source_kind: "synthetic_evaluation";
   source_sample_sha256: string;
+  scenario_title: string;
+  scenario_sha256: string;
   response_plan_sha256: string;
   communication_act: string;
   required_communication_acts: string[];
@@ -334,6 +336,12 @@ export interface StyleABCaseSummary {
 }
 
 export interface StyleABCaseDetail extends StyleABCaseSummary {
+  scenario: {
+    title: string;
+    user_situation: string;
+    known_context: string[];
+    response_goal: string;
+  };
   response_plan: {
     communication_act?: string;
     content_blocks?: Array<{ block_id?: string; kind?: string; text?: string }>;

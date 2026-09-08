@@ -676,8 +676,8 @@ class StyleProfileRepository:
             ):
                 raise ValueError("Style publication approval does not match bundle/evaluation")
             case_fields = {
-                "case_id", "source_sample_sha256", "review_id", "actor", "style_match",
-                "fidelity", "appropriateness", "reviewed_at",
+                "case_id", "source_sample_sha256", "scenario_sha256", "review_id", "actor",
+                "style_match", "fidelity", "appropriateness", "reviewed_at",
             }
             for case in approval["case_reviews"]:
                 if not isinstance(case, dict) or set(case) != case_fields:
@@ -688,6 +688,7 @@ class StyleProfileRepository:
                     if type(case[field]) is not int or not 1 <= case[field] <= 5:
                         raise ValueError("Human approval scores must be integers from 1 to 5")
                 StyleProfileRepository._digest(case["source_sample_sha256"], field="source_sample")
+                StyleProfileRepository._digest(case["scenario_sha256"], field="scenario")
                 StyleProfileRepository._require_aware(datetime.fromisoformat(case["reviewed_at"]))
             case_ids = {case["case_id"] for case in approval["case_reviews"]}
             if len(case_ids) != approval["case_count"]:

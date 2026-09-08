@@ -116,6 +116,7 @@ async def test_generated_synthetic_pairs_import_with_exact_bindings_and_no_human
         StyleEvalReport.model_validate(report["evaluation"]).model_dump_json().encode()
     ).hexdigest()
     for pair, raw in zip(pairs, report["cases"], strict=True):
+        assert pair.scenario.model_dump(mode="json") == raw["scenario"]
         assert pair.response_plan.model_dump(mode="json") == raw["response_plan"]
         assert pair.baseline_response.model_dump(mode="json") == raw["baseline"]["response"]
         assert pair.candidate_response.model_dump(mode="json") == raw["candidate"]["response"]
@@ -185,6 +186,22 @@ async def test_rehashed_candidate_change_still_requires_evaluation_of_exact_resp
     report["cases"][0]["candidate"]["response"]["text"] = "TEST ONLY different expression"
     refresh_generated_checksum(report)
     with pytest.raises(ValueError, match="actually evaluated"):
+        prepare(bundle, report)
+
+
+async def test_rehashed_scenario_change_still_requires_the_exact_evaluated_context(generated):
+    bundle, report = generated
+    report["cases"][0]["scenario"]["user_situation"] = "TEST changed review context"
+    refresh_generated_checksum(report)
+    with pytest.raises(ValueError, match="actually evaluated"):
+        prepare(bundle, report)
+
+
+async def test_missing_scenario_cannot_enter_human_review(generated):
+    bundle, report = generated
+    del report["cases"][0]["scenario"]
+    refresh_generated_checksum(report)
+    with pytest.raises(ValueError):
         prepare(bundle, report)
 
 

@@ -1188,6 +1188,10 @@ class StyleABEvaluationCaseRecord(Base):
             name="ck_style_ab_case_source_sha256",
         ),
         CheckConstraint(
+            "length(scenario_sha256) = 64",
+            name="ck_style_ab_case_scenario_sha256",
+        ),
+        CheckConstraint(
             "length(import_manifest_sha256) = 64",
             name="ck_style_ab_case_manifest_sha256",
         ),
@@ -1229,6 +1233,8 @@ class StyleABEvaluationCaseRecord(Base):
         String(32), nullable=False, default="synthetic_evaluation"
     )
     source_sample_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario_json: Mapped[str] = mapped_column(Text, nullable=False)
+    scenario_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     import_source_id: Mapped[str] = mapped_column(String(128), nullable=False)
     import_manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     response_plan_json: Mapped[str] = mapped_column(Text, nullable=False)

@@ -26,6 +26,8 @@ const fixture = {
   case_key: "style-ab-TEST-case-key",
   source_kind: "synthetic_evaluation",
   source_sample_sha256: "a".repeat(64),
+  scenario_title: "TEST 合成趋势判断场景",
+  scenario_sha256: "9".repeat(64),
   response_plan_sha256: "b".repeat(64),
   communication_act: "explain",
   required_communication_acts: ["explain"],
@@ -62,6 +64,12 @@ const fixture = {
     created_at: "2026-09-08T08:01:00Z",
   },
   created_at: "2026-09-08T08:00:00Z",
+  scenario: {
+    title: "TEST 合成趋势判断场景",
+    user_situation: "TEST 用户询问现有记录是否足以判断长期趋势。",
+    known_context: ["TEST 当前只有一条合成记录。", "TEST 不得补造更多记录。"],
+    response_goal: "TEST 解释为什么当前不能下结论。",
+  },
   response_plan: {
     communication_act: "explain",
     content_blocks: [
@@ -106,6 +114,14 @@ test("A/B review renders one synthetic plan and both versioned expression output
   const html = render();
   for (const expected of [
     "SYNTHETIC CASE",
+    "REVIEW SCENARIO · 合成审核语境",
+    "用户刚刚发生了什么",
+    "系统已确认的上下文",
+    "这条回复要完成什么",
+    "TEST 合成趋势判断场景",
+    "TEST 用户询问现有记录是否足以判断长期趋势。",
+    "TEST 当前只有一条合成记录。",
+    "TEST 解释为什么当前不能下结论。",
     "同一份合成 ResponsePlan",
     "TEST 合成业务计划内容",
     "TEST 合成 Baseline 表达",
@@ -144,6 +160,12 @@ test("comparison ignores unexpected raw conversation and context properties", ()
         text: "TEST 合成业务计划内容",
         original_context: "PRIVATE_TEST_BLOCK_CONTEXT",
       }],
+    },
+    scenario: {
+      ...fixture.scenario,
+      raw_chat: "PRIVATE_TEST_SCENARIO_CHAT",
+      user_situation: "TEST 用户询问现有记录是否足以判断长期趋势。",
+      known_context: ["TEST 当前只有一条合成记录。"],
     },
     baseline: {
       ...fixture.baseline,

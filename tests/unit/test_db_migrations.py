@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import insert, inspect, text
 
+from slim_guard.db.migrations import MIGRATIONS
 from slim_guard.db.models import SchemaMigrationRecord
 from slim_guard.db.session import Database
 
@@ -37,6 +40,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260905_01_style_profiles",
             "20260906_01_nutrition_knowledge",
             "20260908_01_style_ab_reviews",
+            "20260908_02_style_ab_scenarios",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -101,8 +105,59 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260905_01_style_profiles",
             "20260906_01_nutrition_knowledge",
             "20260908_01_style_ab_reviews",
+            "20260908_02_style_ab_scenarios",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
+    finally:
+        await database.close()
+
+
+async def test_existing_style_ab_rows_receive_an_explicit_legacy_scenario(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'style-ab-upgrade.sqlite3'}")
+    try:
+        async with database.engine.begin() as connection:
+            await connection.run_sync(
+                lambda sync_connection: SchemaMigrationRecord.__table__.create(
+                    sync_connection,
+                    checkfirst=True,
+                )
+            )
+            await connection.execute(
+                text(
+                    "CREATE TABLE style_ab_evaluation_cases ("
+                    "id VARCHAR(36) PRIMARY KEY)"
+                )
+            )
+            await connection.execute(
+                text("INSERT INTO style_ab_evaluation_cases (id) VALUES ('TEST-case')")
+            )
+            for migration in MIGRATIONS[:-1]:
+                await connection.execute(
+                    insert(SchemaMigrationRecord).values(version=migration.version)
+                )
+
+        assert await database.migrate() == ("20260908_02_style_ab_scenarios",)
+        async with database.engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda sync_connection: {
+                    column["name"]
+                    for column in inspect(sync_connection).get_columns(
+                        "style_ab_evaluation_cases"
+                    )
+                }
+            )
+            row = (
+                await connection.execute(
+                    text(
+                        "SELECT scenario_json, scenario_sha256 "
+                        "FROM style_ab_evaluation_cases WHERE id = 'TEST-case'"
+                    )
+                )
+            ).one()
+
+        assert {"scenario_json", "scenario_sha256"}.issubset(columns)
+        assert json.loads(row.scenario_json)["title"].startswith("历史 A/B 用例")
+        assert len(row.scenario_sha256) == 64
     finally:
         await database.close()
