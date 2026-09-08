@@ -130,7 +130,120 @@ export interface TraceWorkflowSummary {
   tool_call_count: number;
   total_token_count: number;
   repair_count: number;
+  repair_budget?: number | null;
+  max_repair_attempts?: number | null;
+  review_count?: number | null;
+  reviewer_rejection_rate?: number | null;
+  reviewer_repair_rate?: number | null;
+  reviewer_degradation_rate?: number | null;
   degraded: boolean;
+}
+
+export type TraceReviewerVerdictStatus = "pass" | "repair" | "reject" | string;
+
+export type TraceReviewerRepairTarget =
+  | "orchestrator"
+  | "nutrition_expert"
+  | "response_style"
+  | string;
+
+export interface TraceReviewerIssue {
+  type?: string | null;
+  excerpt?: string | null;
+  explanation?: string | null;
+  excerpt_present?: boolean;
+  explanation_present?: boolean;
+}
+
+export interface TraceReviewerVerdictPayload {
+  schema_version?: string | null;
+  verdict?: TraceReviewerVerdictStatus | null;
+  repair_target?: TraceReviewerRepairTarget | null;
+  issue_type?: string | null;
+  issue_types?: string[];
+  reason_summary?: string | null;
+  reason_summary_present?: boolean;
+  issues?: TraceReviewerIssue[];
+  issue_count?: number | null;
+  reviewed_artifact_ids?: string[];
+  original_artifact_id?: string | null;
+  repaired_artifact_id?: string | null;
+  final_artifact_id?: string | null;
+  repair_attempt?: number | null;
+  repair_budget?: number | Record<string, number> | null;
+  artifact_id?: string | null;
+  invocation_id?: string | null;
+  parent_artifact_ids?: string[];
+  attempt?: number | null;
+  created_at?: string | null;
+  integrity_status?: string | null;
+}
+
+export interface TraceReviewerRepairAttempt {
+  attempt?: number | null;
+  target?: TraceReviewerRepairTarget | null;
+  verdict_artifact_id?: string | null;
+  input_artifact_id?: string | null;
+  output_artifact_id?: string | null;
+  status?: string | null;
+  transition?: TraceWorkflowTransition | null;
+}
+
+export interface TraceReviewerArtifactRef {
+  artifact_id?: string | null;
+  artifact_type?: string | null;
+  producer_role?: string | null;
+  schema_version?: string | null;
+  integrity_status?: string | null;
+  created_at?: string | null;
+}
+
+export interface TraceReviewerSummary {
+  status?: string | null;
+  verdict?: TraceReviewerVerdictStatus | null;
+  latest_verdict?: TraceReviewerVerdictPayload | null;
+  verdicts?: TraceReviewerVerdictPayload[];
+  attempts?: TraceReviewerVerdictPayload[];
+  reviewer_invocation_count?: number | null;
+  verdict_count?: number | null;
+  issue_count?: number | null;
+  repair_attempts?: TraceReviewerRepairAttempt[];
+  repair_counts?: Record<string, number> | null;
+  budget?: {
+    exhausted?: boolean;
+    exhausted_targets?: string[];
+    repair_attempts_observed?: number | null;
+    configured_limits?: Record<string, number> | null;
+  } | null;
+  comparison?: {
+    original?: TraceReviewerArtifactRef | null;
+    repaired?: TraceReviewerArtifactRef[];
+    final_adopted?: TraceReviewerArtifactRef | null;
+    changed?: boolean | null;
+  } | null;
+  rejected?: boolean;
+  degraded?: boolean;
+  review_count?: number | null;
+  rejection_count?: number | null;
+  repair_count?: number | null;
+  degradation_count?: number | null;
+  rejection_rate?: number | null;
+  repair_rate?: number | null;
+  degradation_rate?: number | null;
+  repair_budget?: number | null;
+  max_repair_attempts?: number | null;
+  remaining_repair_attempts?: number | null;
+  original_artifact_id?: string | null;
+  repaired_artifact_id?: string | null;
+  final_artifact_id?: string | null;
+}
+
+export interface TraceWorkflowReviewMetrics {
+  window?: Record<string, unknown> | null;
+  counts?: Record<string, number> | null;
+  rates?: Record<string, number> | null;
+  denominators?: Record<string, number> | null;
+  by_repair_target?: Record<string, number> | null;
 }
 
 export interface TraceAgentInvocation {
@@ -325,6 +438,7 @@ export interface TraceWorkflow {
   artifacts: TraceAgentArtifact[];
   transitions: TraceWorkflowTransition[];
   shadow_comparison: TraceShadowComparison | null;
+  review?: TraceReviewerSummary | null;
 }
 
 export type MultiAgentTraceOperation =
@@ -388,6 +502,7 @@ export interface TraceDetail {
   artifacts?: TraceAgentArtifact[];
   transitions?: TraceWorkflowTransition[];
   shadow_comparison?: TraceShadowComparison | null;
+  review?: TraceReviewerSummary | null;
   execution_summary: {
     architecture: string;
     model_call_count: number;

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from slim_guard.agent.composition import AgentRuntimeDefinition
 from slim_guard.config import DatabaseSettings, Settings
 from slim_guard.main import create_app
 
@@ -217,6 +218,18 @@ def test_nutrition_rag_fails_closed_without_agent_and_citations() -> None:
                 nutrition_rag_enabled=True,
                 nutrition_require_rag_citations=False,
             )
+        )
+
+
+def test_response_reviewer_requires_style_rendering() -> None:
+    with pytest.raises(ValueError, match="requires the Response Style path"):
+        AgentRuntimeDefinition(
+            model_provider="test",
+            text_model="test",
+            vision_model="test",
+            code_revision="test",
+            style_render_all_normal_replies=False,
+            response_reviewer_enabled=True,
         )
 
 

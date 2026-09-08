@@ -425,3 +425,12 @@ curl -i https://enceladus.online/health/ready
 - `src/slim_guard/admin/repository.py`、`frontend/src/components/trace/RagCitationPanel.tsx` → RAG 可观测管理台 → 分栏展示检索候选与最终采用 Citation、资料版本/章节/适用范围、排序分数以及 Citation→Claim 锚点；查询正文、候选片段和敏感内容默认不返回。
 - `tests/unit/test_nutrition_knowledge.py`、`test_nutrition_rag.py`、`test_structured_agent_runner.py` 及迁移/配置/Admin 回归 → Increment 4 验收 → 覆盖治理状态机、去重与稳定检索、draft/retired 隔离、候选拒绝原因、引用哈希/元数据/调用归属、一次修复以及完整 RAG Shadow 路径。
 - 最终验证 → Ruff 全仓、Mypy strict（155 个源码文件）、Python compileall、前端 TypeScript/生产构建及 367 项 Pytest 全部通过。
+
+### `feat: add response review and bounded repairs`
+
+- `agents/reviewer/` → 零工具忠实度审查 → 接收最小事实摘要、Directive、Plan、Assessment 和候选，最多一次格式修复；确定性引用/风险/Profile/权限校验阻止错误 pass，失败返回保守 reject。
+- `orchestration/coordinator.py` → 有限返回边 → 按问题类型仅返回 Style、Nutrition 或 Orchestrator；每目标一次、全 Turn 两次返回。专业修复重新检索并绑定 Citation、重新渲染、重新审查；缺证据生成澄清问题，拒绝或预算耗尽使用无新增判断的保守候选。
+- `agents/style/agent.py`、`agents/nutrition/agent.py` → 修复输入 → 只传结构化问题类型，避免把自由文本审查原因当成新指令。
+- `admin/repository.py`、`api/admin_routes.py`、`frontend/` → 审查可观测 → 展示 Verdict、实际返回边、预算、原始/修复/最终 Artifact 元数据，提供带分母的窗口拒绝率、修复率与降级率，敏感原因和正文不渲染。
+- `agent/composition.py`、`main.py`、`README.md` → 发布装配 → 接通 Reviewer 开关，冻结真实 Prompt/权限到 Graph Manifest；默认保持关闭。
+- 验证 → Reviewer 定向返回、格式修复、权限与引用边界、全 Turn/节点修复上限、专业修复持久化血缘、Admin 脱敏和指标鉴权回归；后端静态检查、前端类型/构建通过。完整测试数量见提交验收记录。

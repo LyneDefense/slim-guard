@@ -208,12 +208,17 @@ class NutritionAgent:
         invocation: AgentInvocation,
         context: NutritionContext,
         grant: InvocationGrant | None = None,
+        review_feedback: tuple[str, ...] = (),
     ) -> NutritionAgentResult:
         boundary_failure = self._boundary_failure(invocation, context)
         if boundary_failure is not None:
             return self._degraded(context=context, failure_code=boundary_failure)
 
-        request = self._request(invocation=invocation, context=context)
+        request = self._request(
+            invocation=invocation,
+            context=context,
+            review_feedback=review_feedback,
+        )
         responses: list[ModelResponse] = []
         total_tokens = 0
         last_report = NutritionValidationReport()
@@ -327,7 +332,13 @@ class NutritionAgent:
             grant=grant,
         )
 
-    def _request(self, *, invocation: AgentInvocation, context: NutritionContext) -> ModelRequest:
+    def _request(
+        self,
+        *,
+        invocation: AgentInvocation,
+        context: NutritionContext,
+        review_feedback: tuple[str, ...] = (),
+    ) -> ModelRequest:
         system = ModelMessage(
             role=MessageRole.SYSTEM,
             content=NUTRITION_AGENT_PROMPT,
@@ -337,7 +348,13 @@ class NutritionAgent:
             model=self._model,
             messages=(
                 system,
-                ModelMessage(role=MessageRole.USER, content=self._model_context_json(context)),
+                ModelMessage(
+                    role=MessageRole.USER,
+                    content=self._model_context_json(
+                        context,
+                        review_feedback=review_feedback,
+                    ),
+                ),
             ),
             tools=(),
             tool_choice=ToolChoice.NONE,
@@ -353,7 +370,11 @@ class NutritionAgent:
         )
 
     @staticmethod
-    def _model_context_json(context: NutritionContext) -> str:
+    def _model_context_json(
+        context: NutritionContext,
+        *,
+        review_feedback: tuple[str, ...] = (),
+    ) -> str:
         """Do not expose rejected draft, inactive, or inapplicable candidate text."""
 
         payload = context.model_dump(mode="json")
@@ -366,6 +387,11 @@ class NutritionAgent:
             for candidate in context.knowledge.candidates
             if candidate.citation_id in allowed_ids
         ]
+        if review_feedback:
+            payload = {
+                "nutrition_context": payload,
+                "review_feedback_issue_types": list(review_feedback),
+            }
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod

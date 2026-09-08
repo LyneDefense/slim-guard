@@ -31,9 +31,13 @@ from slim_guard.agents.contracts import (
     InteractionKind,
     InvocationStatus,
     ProfessionalAssessment,
+    RepairTarget,
     ResponseContentBlock,
     ResponsePath,
     ResponsePlan,
+    ReviewerVerdict,
+    ReviewerVerdictStatus,
+    StyledResponse,
     TurnDirective,
 )
 from slim_guard.agents.nutrition import (
@@ -47,11 +51,18 @@ from slim_guard.agents.nutrition.knowledge import (
     KnowledgeCandidateBinder,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry, NutritionToolResult
+from slim_guard.agents.reviewer import (
+    ResponseReviewerAgent,
+    ReviewerContextCompiler,
+    ReviewerEvidenceSummary,
+)
 from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.agents.style import (
     SLIMGUARD_DEFAULT_V1,
     NeutralRenderer,
     ResponseStyleAgent,
+    StyleAgentResult,
+    StyleContext,
     StyleContextCompiler,
     StyleProfile,
     StyleProfileRepository,
@@ -61,9 +72,12 @@ from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.orchestration.artifacts import InMemoryArtifactStore
 from slim_guard.orchestration.evidence import EvidenceBuilder, EvidenceItem, EvidencePacket
 from slim_guard.orchestration.graph import (
+    GraphLoopBudget,
+    GraphLoopCounters,
     GraphNode,
     GraphTransition,
     InvocationGrant,
+    LoopBudgetExceeded,
     TransitionReason,
 )
 
@@ -117,6 +131,39 @@ class ShadowWorkflowResult:
     business_write_count: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _StyleAttemptResult:
+    invocation: AgentInvocation
+    result: StyleAgentResult
+    artifact: AgentArtifact
+
+
+@dataclass(frozen=True, slots=True)
+class _ReviewLoopResult:
+    response: StyledResponse
+    artifact: AgentArtifact
+    status: InvocationStatus
+    model_call_count: int
+    total_token_count: int
+    failure_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _UpstreamRepairStage:
+    response_plan: ResponsePlan
+    plan_artifact: AgentArtifact
+    style_resolution_artifact: AgentArtifact
+    style_context: StyleContext
+    assessment: ProfessionalAssessment | None
+    assessment_artifact: AgentArtifact | None
+    directive_artifact: AgentArtifact
+    parent_invocation_id: str
+    model_call_count: int
+    total_token_count: int
+    degraded: bool = False
+    failure_code: str | None = None
+
+
 class WorkflowPersistence(Protocol):
     async def start_invocation(
         self,
@@ -166,6 +213,10 @@ class AgentWorkflowCoordinator:
         nutrition_compiler: NutritionContextCompiler | None = None,
         nutrition_tools: NutritionToolRegistry | None = None,
         nutrition_citation_policy: CitationValidationPolicy | None = None,
+        reviewer_enabled: bool = False,
+        reviewer_agent: ResponseReviewerAgent | None = None,
+        reviewer_compiler: ReviewerContextCompiler | None = None,
+        loop_budget: GraphLoopBudget | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if timeout <= timedelta(0):
@@ -196,9 +247,14 @@ class AgentWorkflowCoordinator:
         self._nutrition_compiler = nutrition_compiler or NutritionContextCompiler()
         self._nutrition_tools = nutrition_tools or NutritionToolRegistry()
         self._nutrition_candidate_binder = KnowledgeCandidateBinder()
-        self._nutrition_citation_policy = (
-            nutrition_citation_policy or CitationValidationPolicy()
+        self._nutrition_citation_policy = nutrition_citation_policy or CitationValidationPolicy()
+        self._reviewer_enabled = reviewer_enabled
+        self._reviewer_agent = reviewer_agent or ResponseReviewerAgent(
+            runner=self._runner,
+            model=model_name,
         )
+        self._reviewer_compiler = reviewer_compiler or ReviewerContextCompiler()
+        self._loop_budget = loop_budget or GraphLoopBudget()
         self._neutral_renderer = NeutralRenderer()
 
     async def run_shadow(self, request: ShadowWorkflowRequest) -> ShadowWorkflowResult:
@@ -225,7 +281,7 @@ class AgentWorkflowCoordinator:
                     current_items=request.current_items,
                     authoritative_context=request.authoritative_context,
                 )
-                if self._nutrition_enabled
+                if self._nutrition_enabled or self._reviewer_enabled
                 else None
             )
             invocation = AgentInvocation(
@@ -311,6 +367,8 @@ class AgentWorkflowCoordinator:
             nutrition_result = None
             assessment: ProfessionalAssessment | None = None
             assessment_artifact: AgentArtifact | None = None
+            evidence_packet: EvidencePacket | None = routing_packet
+            evidence_artifact: AgentArtifact | None = None
             plan_parent_ids: tuple[str, ...] = (directive_artifact.artifact_id,)
             style_entry_node = GraphNode.RESPONSE_RENDERING
 
@@ -371,9 +429,7 @@ class AgentWorkflowCoordinator:
                     producer=ArtifactProducerRole.NUTRITION_TOOL,
                     artifact_type="nutrition_observations",
                     payload={
-                        "observations": [
-                            item.model_dump(mode="json") for item in observations
-                        ],
+                        "observations": [item.model_dump(mode="json") for item in observations],
                         "knowledge": knowledge.model_dump(mode="json"),
                         "tool_receipts": tool_receipts,
                     },
@@ -502,8 +558,7 @@ class AgentWorkflowCoordinator:
                         event_type=ItemType.RESPONSE_DEGRADED,
                         payload={
                             "artifact_id": assessment_artifact.artifact_id,
-                            "reason_code": nutrition_result.failure_code
-                            or "insufficient_evidence",
+                            "reason_code": nutrition_result.failure_code or "insufficient_evidence",
                             "fallback_type": "conservative_assessment",
                         },
                     )
@@ -564,9 +619,7 @@ class AgentWorkflowCoordinator:
                         if assessment_artifact is not None
                         else None,
                     )
-                    await self._record_transition(
-                        request.turn_id, assessment_ready, attempt=1
-                    )
+                    await self._record_transition(request.turn_id, assessment_ready, attempt=1)
                     transition_log.append(assessment_ready)
                     actual_nodes.append(GraphNode.RESPONSE_RENDERING.value)
                 neutral = self._neutral_renderer.render(style_context)
@@ -612,9 +665,7 @@ class AgentWorkflowCoordinator:
                     model_call_count=total_model_calls,
                     total_token_count=total_tokens,
                     failure_code=(
-                        nutrition_result.failure_code
-                        if nutrition_result is not None
-                        else None
+                        nutrition_result.failure_code if nutrition_result is not None else None
                     ),
                 )
             resolution_artifact = self._artifact(
@@ -755,6 +806,9 @@ class AgentWorkflowCoordinator:
                 turn_id=request.turn_id,
                 completed_at=self._aware_now(),
             )
+            final_response = style_result.response
+            final_status = style_result.status
+            failure_code = style_result.failure_code
             if style_result.used_fallback:
                 style_failed = GraphTransition(
                     source=GraphNode.STYLE_RUNNING,
@@ -784,6 +838,36 @@ class AgentWorkflowCoordinator:
                         "fallback_type": "neutral_renderer",
                     },
                 )
+            elif self._reviewer_enabled:
+                review_loop = await self._review_and_repair(
+                    request=request,
+                    deadline=deadline,
+                    ledger=ledger,
+                    invocations=invocations,
+                    transitions=transition_log,
+                    actual_nodes=actual_nodes,
+                    directive_artifact=directive_artifact,
+                    evidence_packet=evidence_packet,
+                    evidence_artifact=evidence_artifact,
+                    assessment=assessment,
+                    assessment_artifact=assessment_artifact,
+                    response_plan=response_plan,
+                    plan_artifact=plan_artifact,
+                    style_profile=style_profile,
+                    style_context=style_context,
+                    style_invocation=style_invocation,
+                    candidate_artifact=candidate_artifact,
+                    candidate=style_result.response,
+                    nutrition_degraded=(
+                        nutrition_result is not None and nutrition_result.used_fallback
+                    ),
+                )
+                total_model_calls += review_loop.model_call_count
+                total_tokens += review_loop.total_token_count
+                candidate_artifact = review_loop.artifact
+                final_response = review_loop.response
+                final_status = review_loop.status
+                failure_code = review_loop.failure_code
             else:
                 rendered = GraphTransition(
                     source=GraphNode.STYLE_RUNNING,
@@ -804,14 +888,16 @@ class AgentWorkflowCoordinator:
                     "final": False,
                 },
             )
-            final_status = style_result.status
-            failure_code = style_result.failure_code
-            if nutrition_result is not None and nutrition_result.used_fallback:
+            if (
+                not self._reviewer_enabled
+                and nutrition_result is not None
+                and nutrition_result.used_fallback
+            ):
                 final_status = InvocationStatus.DEGRADED
                 failure_code = nutrition_result.failure_code or "insufficient_evidence"
             return ShadowWorkflowResult(
                 status=final_status,
-                shadow_candidate=style_result.response.text,
+                shadow_candidate=final_response.text,
                 legacy_response=request.legacy_response,
                 actual_nodes=tuple(actual_nodes),
                 invocations=tuple(invocations),
@@ -883,9 +969,7 @@ class AgentWorkflowCoordinator:
                                         ),
                                         "has_uncertainty": item.uncertainty is not None,
                                     }
-                                    for item in (
-                                        evidence_packet.items if evidence_packet else ()
-                                    )
+                                    for item in (evidence_packet.items if evidence_packet else ())
                                 ],
                             },
                             ensure_ascii=False,
@@ -1018,9 +1102,7 @@ class AgentWorkflowCoordinator:
             communication_act=directive.voice_act,
             requested_detail=directive.requested_detail,
             content_blocks=tuple(blocks),
-            citation_refs=tuple(
-                citation.citation_id for citation in assessment.citations
-            ),
+            citation_refs=tuple(citation.citation_id for citation in assessment.citations),
             prohibited_transformations=(
                 "claim_business_write",
                 "change_professional_claim",
@@ -1030,6 +1112,1038 @@ class AgentWorkflowCoordinator:
                 "add_citation",
             ),
         )
+
+    async def _review_and_repair(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        deadline: datetime,
+        ledger: InMemoryArtifactStore,
+        invocations: list[AgentInvocation],
+        transitions: list[GraphTransition],
+        actual_nodes: list[str],
+        directive_artifact: AgentArtifact,
+        evidence_packet: EvidencePacket | None,
+        evidence_artifact: AgentArtifact | None,
+        assessment: ProfessionalAssessment | None,
+        assessment_artifact: AgentArtifact | None,
+        response_plan: ResponsePlan,
+        plan_artifact: AgentArtifact,
+        style_profile: StyleProfile,
+        style_context: StyleContext,
+        style_invocation: AgentInvocation,
+        candidate: StyledResponse,
+        candidate_artifact: AgentArtifact,
+        nutrition_degraded: bool,
+    ) -> _ReviewLoopResult:
+        """Review a candidate and execute only the bounded, typed return edge."""
+
+        counters = GraphLoopCounters()
+        total_model_calls = 0
+        total_tokens = 0
+        reviewer_attempt = 0
+        style_attempt = style_invocation.attempt
+        degraded = nutrition_degraded
+        failure_code: str | None = None
+        current_parent_invocation_id = style_invocation.invocation_id
+
+        while True:
+            reviewer_attempt += 1
+            fact_summaries = self._review_evidence_summaries(
+                ledger,
+                request.turn_id,
+                evidence_packet,
+            )
+            reviewer_context = self._reviewer_compiler.compile(
+                turn_id=request.turn_id,
+                response_plan=response_plan,
+                styled_response=candidate,
+                assessment=assessment,
+                style_profile=style_profile,
+                directive=TurnDirective.model_validate(directive_artifact.payload),
+                available_evidence_ids=tuple(item.evidence_id for item in fact_summaries),
+                evidence_summaries=fact_summaries,
+            )
+            reviewer_invocation = AgentInvocation(
+                invocation_id=f"inv-{uuid4()}",
+                trace_id=request.trace_id,
+                thread_id=request.thread_id,
+                turn_id=request.turn_id,
+                graph_version=self._graph_version,
+                agent_role=AgentRole.RESPONSE_REVIEWER,
+                agent_version="response-reviewer-v1",
+                attempt=reviewer_attempt,
+                parent_invocation_id=current_parent_invocation_id,
+                input_artifact_ids=tuple(
+                    artifact_id
+                    for artifact_id in (
+                        plan_artifact.artifact_id,
+                        candidate_artifact.artifact_id,
+                        assessment_artifact.artifact_id
+                        if assessment_artifact is not None
+                        else None,
+                    )
+                    if artifact_id is not None
+                ),
+                input_schema="ReviewerContext",
+                input_schema_version="1",
+                allowed_tools=(),
+                privacy_scopes=(
+                    "response_plan",
+                    "styled_response",
+                    "professional_assessment",
+                ),
+                deadline_at=deadline,
+                max_model_calls=2,
+                max_tool_calls=0,
+                max_total_tokens=max(self._max_output_tokens * 2, 1),
+                payload={
+                    "reviewed_artifact_id": candidate_artifact.artifact_id,
+                    "repair_attempts_used": counters.upstream_repairs,
+                },
+            )
+            invocations.append(reviewer_invocation)
+            await self._start_invocation(
+                reviewer_invocation,
+                reason="审查候选回复是否忠实于既定事实、结论、风险和引用",
+                started_at=self._aware_now(),
+            )
+            review_running = GraphTransition(
+                source=GraphNode.STYLE_RUNNING,
+                target=GraphNode.REVIEW_RUNNING,
+                reason=TransitionReason.RENDERED,
+                invocation_id=reviewer_invocation.invocation_id,
+                artifact_id=candidate_artifact.artifact_id,
+            )
+            await self._record_transition(
+                request.turn_id,
+                review_running,
+                attempt=reviewer_attempt,
+            )
+            transitions.append(review_running)
+            actual_nodes.append(GraphNode.REVIEW_RUNNING.value)
+            reviewer_result = await self._reviewer_agent.run(
+                invocation=reviewer_invocation,
+                context=reviewer_context,
+                grant=InvocationGrant(
+                    agent_role=AgentRole.RESPONSE_REVIEWER,
+                    allowed_tools=frozenset(),
+                    privacy_scopes=frozenset(reviewer_invocation.privacy_scopes),
+                    max_model_calls=2,
+                    max_tool_calls=0,
+                    max_total_tokens=reviewer_invocation.max_total_tokens,
+                ),
+            )
+            total_model_calls += reviewer_result.model_call_count
+            total_tokens += reviewer_result.total_token_count
+            verdict = reviewer_result.verdict
+            verdict_artifact = self._artifact(
+                turn_id=request.turn_id,
+                producer=(
+                    ArtifactProducerRole.COORDINATOR
+                    if reviewer_result.used_fallback
+                    else ArtifactProducerRole.RESPONSE_REVIEWER
+                ),
+                artifact_type="reviewer_verdict",
+                payload={
+                    **verdict.model_dump(mode="json"),
+                    "reviewed_artifact_ids": [candidate_artifact.artifact_id],
+                    "repair_attempt": counters.upstream_repairs,
+                    "repair_budget": self._loop_budget.model_dump(mode="json"),
+                },
+                created_at=self._aware_now(),
+                parents=tuple(
+                    artifact_id
+                    for artifact_id in (
+                        candidate_artifact.artifact_id,
+                        plan_artifact.artifact_id,
+                        assessment_artifact.artifact_id
+                        if assessment_artifact is not None
+                        else None,
+                    )
+                    if artifact_id is not None
+                ),
+            )
+            await self._persist_artifact(
+                ledger,
+                verdict_artifact,
+                reviewer_invocation.invocation_id,
+            )
+            await self._complete_invocation(
+                result=AgentResult(
+                    invocation_id=reviewer_invocation.invocation_id,
+                    status=reviewer_result.status,
+                    output_schema="ReviewerVerdict",
+                    output_schema_version="1",
+                    artifact_id=verdict_artifact.artifact_id,
+                    model_call_count=reviewer_result.model_call_count,
+                    tool_call_count=0,
+                    token_usage=reviewer_result.total_token_count,
+                    failure_code=reviewer_result.failure_code,
+                ),
+                turn_id=request.turn_id,
+                completed_at=self._aware_now(),
+            )
+
+            if reviewer_result.used_fallback or verdict.verdict is ReviewerVerdictStatus.REJECT:
+                reason = reviewer_result.failure_code or "review_rejected"
+                return await self._review_neutral_fallback(
+                    request=request,
+                    ledger=ledger,
+                    transitions=transitions,
+                    actual_nodes=actual_nodes,
+                    style_context=style_context,
+                    candidate_artifact=candidate_artifact,
+                    verdict_artifact=verdict_artifact,
+                    transition_reason=TransitionReason.REVIEW_REJECTED,
+                    failure_code=reason,
+                    model_call_count=total_model_calls,
+                    total_token_count=total_tokens,
+                )
+
+            if verdict.verdict is ReviewerVerdictStatus.PASS:
+                review_passed = GraphTransition(
+                    source=GraphNode.REVIEW_RUNNING,
+                    target=GraphNode.OUTPUT_GUARDED,
+                    reason=TransitionReason.REVIEW_PASSED,
+                    invocation_id=reviewer_invocation.invocation_id,
+                    artifact_id=verdict_artifact.artifact_id,
+                )
+                await self._record_transition(
+                    request.turn_id,
+                    review_passed,
+                    attempt=reviewer_attempt,
+                )
+                transitions.append(review_passed)
+                actual_nodes.append(GraphNode.OUTPUT_GUARDED.value)
+                return _ReviewLoopResult(
+                    response=candidate,
+                    artifact=candidate_artifact,
+                    status=(InvocationStatus.DEGRADED if degraded else InvocationStatus.SUCCEEDED),
+                    model_call_count=total_model_calls,
+                    total_token_count=total_tokens,
+                    failure_code=failure_code,
+                )
+
+            target = verdict.repair_target
+            if target is None:
+                return await self._review_neutral_fallback(
+                    request=request,
+                    ledger=ledger,
+                    transitions=transitions,
+                    actual_nodes=actual_nodes,
+                    style_context=style_context,
+                    candidate_artifact=candidate_artifact,
+                    verdict_artifact=verdict_artifact,
+                    transition_reason=TransitionReason.REVIEW_REJECTED,
+                    failure_code="review_repair_target_missing",
+                    model_call_count=total_model_calls,
+                    total_token_count=total_tokens,
+                )
+            try:
+                counters = counters.consume_repair(target, self._loop_budget)
+            except LoopBudgetExceeded:
+                return await self._review_neutral_fallback(
+                    request=request,
+                    ledger=ledger,
+                    transitions=transitions,
+                    actual_nodes=actual_nodes,
+                    style_context=style_context,
+                    candidate_artifact=candidate_artifact,
+                    verdict_artifact=verdict_artifact,
+                    transition_reason=TransitionReason.BUDGET_EXHAUSTED,
+                    failure_code="review_repair_budget_exhausted",
+                    model_call_count=total_model_calls,
+                    total_token_count=total_tokens,
+                )
+
+            issue_types = self._review_issue_types(verdict)
+            target_node = {
+                RepairTarget.RESPONSE_STYLE: GraphNode.STYLE_RUNNING,
+                RepairTarget.NUTRITION_EXPERT: GraphNode.EXPERT_RUNNING,
+                RepairTarget.ORCHESTRATOR: GraphNode.ORCHESTRATOR_RUNNING,
+            }[target]
+            if target is RepairTarget.NUTRITION_EXPERT and (
+                evidence_packet is None or evidence_artifact is None
+            ):
+                return await self._review_neutral_fallback(
+                    request=request,
+                    ledger=ledger,
+                    transitions=transitions,
+                    actual_nodes=actual_nodes,
+                    style_context=style_context,
+                    candidate_artifact=candidate_artifact,
+                    verdict_artifact=verdict_artifact,
+                    transition_reason=TransitionReason.REVIEW_REJECTED,
+                    failure_code="nutrition_repair_without_evidence",
+                    model_call_count=total_model_calls,
+                    total_token_count=total_tokens,
+                )
+            repair_transition = GraphTransition(
+                source=GraphNode.REVIEW_RUNNING,
+                target=target_node,
+                reason=TransitionReason.REVIEW_REPAIR,
+                invocation_id=reviewer_invocation.invocation_id,
+                artifact_id=verdict_artifact.artifact_id,
+            )
+            await self._record_transition(
+                request.turn_id,
+                repair_transition,
+                attempt=counters.upstream_repairs,
+            )
+            transitions.append(repair_transition)
+            actual_nodes.append(target_node.value)
+
+            if target is RepairTarget.RESPONSE_STYLE:
+                style_attempt += 1
+                style_run = await self._execute_style_attempt(
+                    request=request,
+                    deadline=deadline,
+                    ledger=ledger,
+                    invocations=invocations,
+                    response_plan=response_plan,
+                    plan_artifact=plan_artifact,
+                    assessment=assessment,
+                    style_context=style_context,
+                    style_profile=style_profile,
+                    parent_invocation_id=reviewer_invocation.invocation_id,
+                    parent_artifact_ids=(
+                        candidate_artifact.artifact_id,
+                        verdict_artifact.artifact_id,
+                        plan_artifact.artifact_id,
+                    ),
+                    attempt=style_attempt,
+                    review_feedback=issue_types,
+                )
+            else:
+                if target is RepairTarget.NUTRITION_EXPERT:
+                    if evidence_packet is None or evidence_artifact is None:
+                        return await self._review_neutral_fallback(
+                            request=request,
+                            ledger=ledger,
+                            transitions=transitions,
+                            actual_nodes=actual_nodes,
+                            style_context=style_context,
+                            candidate_artifact=candidate_artifact,
+                            verdict_artifact=verdict_artifact,
+                            transition_reason=TransitionReason.REVIEW_REJECTED,
+                            failure_code="nutrition_repair_without_evidence",
+                            model_call_count=total_model_calls,
+                            total_token_count=total_tokens,
+                        )
+                    stage = await self._repair_nutrition_stage(
+                        request=request,
+                        deadline=deadline,
+                        ledger=ledger,
+                        invocations=invocations,
+                        transitions=transitions,
+                        actual_nodes=actual_nodes,
+                        evidence_packet=evidence_packet,
+                        evidence_artifact=evidence_artifact,
+                        assessment_artifact=assessment_artifact,
+                        plan_artifact=plan_artifact,
+                        directive_artifact=directive_artifact,
+                        verdict_artifact=verdict_artifact,
+                        reviewer_invocation=reviewer_invocation,
+                        style_profile=style_profile,
+                        attempt=counters.nutrition_repairs + 1,
+                        review_feedback=issue_types,
+                    )
+                else:
+                    stage = await self._repair_orchestrator_stage(
+                        request=request,
+                        deadline=deadline,
+                        ledger=ledger,
+                        invocations=invocations,
+                        transitions=transitions,
+                        actual_nodes=actual_nodes,
+                        directive_artifact=directive_artifact,
+                        plan_artifact=plan_artifact,
+                        verdict_artifact=verdict_artifact,
+                        reviewer_invocation=reviewer_invocation,
+                        style_profile=style_profile,
+                        evidence_packet=evidence_packet,
+                        attempt=counters.orchestrator_repairs + 1,
+                        review_feedback=issue_types,
+                    )
+                total_model_calls += stage.model_call_count
+                total_tokens += stage.total_token_count
+                degraded = degraded or stage.degraded
+                failure_code = stage.failure_code or failure_code
+                assessment = stage.assessment
+                assessment_artifact = stage.assessment_artifact
+                response_plan = stage.response_plan
+                plan_artifact = stage.plan_artifact
+                style_context = stage.style_context
+                directive_artifact = stage.directive_artifact
+                style_attempt += 1
+                style_to_running = GraphTransition(
+                    source=GraphNode.STYLE_RESOLVED,
+                    target=GraphNode.STYLE_RUNNING,
+                    reason=TransitionReason.STYLE_RESOLVED,
+                    artifact_id=stage.style_resolution_artifact.artifact_id,
+                )
+                await self._record_transition(
+                    request.turn_id,
+                    style_to_running,
+                    attempt=style_attempt,
+                )
+                transitions.append(style_to_running)
+                actual_nodes.append(GraphNode.STYLE_RUNNING.value)
+                style_run = await self._execute_style_attempt(
+                    request=request,
+                    deadline=deadline,
+                    ledger=ledger,
+                    invocations=invocations,
+                    response_plan=response_plan,
+                    plan_artifact=plan_artifact,
+                    assessment=assessment,
+                    style_context=style_context,
+                    style_profile=style_profile,
+                    parent_invocation_id=stage.parent_invocation_id,
+                    parent_artifact_ids=(
+                        plan_artifact.artifact_id,
+                        stage.style_resolution_artifact.artifact_id,
+                        verdict_artifact.artifact_id,
+                    ),
+                    attempt=style_attempt,
+                )
+
+            total_model_calls += style_run.result.model_call_count
+            total_tokens += style_run.result.total_token_count
+            candidate = style_run.result.response
+            candidate_artifact = style_run.artifact
+            current_parent_invocation_id = style_run.invocation.invocation_id
+            if style_run.result.used_fallback:
+                style_failed = GraphTransition(
+                    source=GraphNode.STYLE_RUNNING,
+                    target=GraphNode.NEUTRAL_FALLBACK,
+                    reason=TransitionReason.STYLE_FAILED,
+                    invocation_id=style_run.invocation.invocation_id,
+                    artifact_id=candidate_artifact.artifact_id,
+                )
+                fallback_ready = GraphTransition(
+                    source=GraphNode.NEUTRAL_FALLBACK,
+                    target=GraphNode.OUTPUT_GUARDED,
+                    reason=TransitionReason.FALLBACK_READY,
+                    artifact_id=candidate_artifact.artifact_id,
+                )
+                await self._record_transition(
+                    request.turn_id,
+                    style_failed,
+                    attempt=style_attempt,
+                )
+                await self._record_transition(
+                    request.turn_id,
+                    fallback_ready,
+                    attempt=style_attempt,
+                )
+                transitions.extend((style_failed, fallback_ready))
+                actual_nodes.extend(
+                    (GraphNode.NEUTRAL_FALLBACK.value, GraphNode.OUTPUT_GUARDED.value)
+                )
+                await self._recorder.record_workflow_event(
+                    turn_id=request.turn_id,
+                    event_type=ItemType.RESPONSE_DEGRADED,
+                    payload={
+                        "artifact_id": candidate_artifact.artifact_id,
+                        "reason_code": style_run.result.failure_code or "style_failed",
+                        "fallback_type": "neutral_renderer",
+                    },
+                )
+                return _ReviewLoopResult(
+                    response=candidate,
+                    artifact=candidate_artifact,
+                    status=InvocationStatus.DEGRADED,
+                    model_call_count=total_model_calls,
+                    total_token_count=total_tokens,
+                    failure_code=style_run.result.failure_code or "style_failed",
+                )
+
+    async def _execute_style_attempt(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        deadline: datetime,
+        ledger: InMemoryArtifactStore,
+        invocations: list[AgentInvocation],
+        response_plan: ResponsePlan,
+        plan_artifact: AgentArtifact,
+        assessment: ProfessionalAssessment | None,
+        style_context: StyleContext,
+        style_profile: StyleProfile,
+        parent_invocation_id: str,
+        parent_artifact_ids: tuple[str, ...],
+        attempt: int,
+        review_feedback: tuple[str, ...] = (),
+    ) -> _StyleAttemptResult:
+        invocation = self._repair_invocation(
+            request,
+            deadline,
+            AgentRole.RESPONSE_STYLE,
+            attempt,
+            parent_invocation_id,
+            parent_artifact_ids,
+        )
+        invocations.append(invocation)
+        await self._start_invocation(
+            invocation,
+            reason="按审查结果重新表达已验证内容",
+            started_at=self._aware_now(),
+        )
+        result = await self._style_agent.run(
+            invocation=invocation,
+            context=style_context,
+            grant=self._repair_grant(invocation),
+            review_feedback=review_feedback,
+        )
+        artifact = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.COORDINATOR
+            if result.used_fallback
+            else ArtifactProducerRole.RESPONSE_STYLE,
+            artifact_type="neutral_response" if result.used_fallback else "styled_response",
+            payload=result.response.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=parent_artifact_ids,
+        )
+        await self._persist_artifact(ledger, artifact, invocation.invocation_id)
+        await self._complete_repair_invocation(
+            invocation,
+            artifact,
+            result.status,
+            result.model_call_count,
+            result.total_token_count,
+            result.failure_code,
+        )
+        return _StyleAttemptResult(invocation, result, artifact)
+
+    def _repair_invocation(
+        self,
+        request: ShadowWorkflowRequest,
+        deadline: datetime,
+        role: AgentRole,
+        attempt: int,
+        parent: str,
+        inputs: tuple[str, ...],
+    ) -> AgentInvocation:
+        version, schema, scopes = {
+            AgentRole.RESPONSE_STYLE: (
+                "response-style-v1",
+                "StyleContext",
+                ("response_plan", "style_profile"),
+            ),
+            AgentRole.NUTRITION_EXPERT: (
+                "nutrition-assessment-v1",
+                "NutritionContext",
+                ("evidence_packet", "nutrition_observations"),
+            ),
+            AgentRole.ORCHESTRATOR: (
+                self._agent_version,
+                "ShadowContext",
+                ("current_user_message", "trusted_context"),
+            ),
+        }[role]
+        return AgentInvocation(
+            invocation_id=f"inv-{uuid4()}",
+            trace_id=request.trace_id,
+            thread_id=request.thread_id,
+            turn_id=request.turn_id,
+            graph_version=self._graph_version,
+            agent_role=role,
+            agent_version=version,
+            attempt=attempt,
+            parent_invocation_id=parent,
+            input_artifact_ids=inputs,
+            input_schema=schema,
+            input_schema_version="1",
+            allowed_tools=(),
+            privacy_scopes=scopes,
+            deadline_at=deadline,
+            max_model_calls=2,
+            max_tool_calls=0,
+            max_total_tokens=max(self._max_output_tokens * 2, 1),
+        )
+
+    @staticmethod
+    def _repair_grant(invocation: AgentInvocation) -> InvocationGrant:
+        return InvocationGrant(
+            agent_role=invocation.agent_role,
+            allowed_tools=frozenset(),
+            privacy_scopes=frozenset(invocation.privacy_scopes),
+            max_model_calls=2,
+            max_tool_calls=0,
+            max_total_tokens=invocation.max_total_tokens,
+        )
+
+    async def _complete_repair_invocation(
+        self,
+        invocation: AgentInvocation,
+        artifact: AgentArtifact,
+        status: InvocationStatus,
+        calls: int,
+        tokens: int,
+        failure: str | None,
+    ) -> None:
+        await self._complete_invocation(
+            result=AgentResult(
+                invocation_id=invocation.invocation_id,
+                status=status,
+                output_schema={
+                    AgentRole.ORCHESTRATOR: "TurnDirective",
+                    AgentRole.NUTRITION_EXPERT: "ProfessionalAssessment",
+                    AgentRole.RESPONSE_STYLE: "StyledResponse",
+                }[invocation.agent_role],
+                output_schema_version="1",
+                artifact_id=artifact.artifact_id,
+                model_call_count=calls,
+                tool_call_count=0,
+                token_usage=tokens,
+                failure_code=failure,
+            ),
+            turn_id=invocation.turn_id,
+            completed_at=self._aware_now(),
+        )
+
+    async def _repair_nutrition_stage(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        deadline: datetime,
+        ledger: InMemoryArtifactStore,
+        invocations: list[AgentInvocation],
+        transitions: list[GraphTransition],
+        actual_nodes: list[str],
+        evidence_packet: EvidencePacket,
+        evidence_artifact: AgentArtifact,
+        assessment_artifact: AgentArtifact | None,
+        plan_artifact: AgentArtifact,
+        directive_artifact: AgentArtifact,
+        verdict_artifact: AgentArtifact,
+        reviewer_invocation: AgentInvocation,
+        style_profile: StyleProfile,
+        attempt: int,
+        review_feedback: tuple[str, ...],
+    ) -> _UpstreamRepairStage:
+        invocation = self._repair_invocation(
+            request,
+            deadline,
+            AgentRole.NUTRITION_EXPERT,
+            attempt,
+            reviewer_invocation.invocation_id,
+            (evidence_artifact.artifact_id, verdict_artifact.artifact_id),
+        )
+        observations, knowledge, receipts = await self._nutrition_inputs(
+            evidence_packet,
+            invocation_id=invocation.invocation_id,
+        )
+        observed = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.NUTRITION_TOOL,
+            artifact_type="nutrition_observations",
+            created_at=self._aware_now(),
+            parents=(evidence_artifact.artifact_id, verdict_artifact.artifact_id),
+            payload={
+                "observations": [item.model_dump(mode="json") for item in observations],
+                "knowledge": knowledge.model_dump(mode="json"),
+                "tool_receipts": receipts,
+            },
+        )
+        await self._persist_artifact(ledger, observed, None)
+        invocation = invocation.model_copy(
+            update={
+                "input_artifact_ids": (*invocation.input_artifact_ids, observed.artifact_id),
+            }
+        )
+        invocations.append(invocation)
+        await self._start_invocation(
+            invocation,
+            reason="重新核对专业结论的证据",
+            started_at=self._aware_now(),
+        )
+        context = self._nutrition_compiler.compile(
+            evidence_packet,
+            calculation_observations=observations,
+            knowledge=knowledge,
+        )
+        result = await self._nutrition_agent.run(
+            invocation=invocation,
+            context=context,
+            grant=self._repair_grant(invocation),
+            review_feedback=review_feedback,
+        )
+        repaired = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.COORDINATOR
+            if result.used_fallback
+            else ArtifactProducerRole.NUTRITION_EXPERT,
+            artifact_type="conservative_assessment"
+            if result.used_fallback
+            else "professional_assessment",
+            payload=result.assessment.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=tuple(
+                dict.fromkeys(
+                    (
+                        observed.artifact_id,
+                        verdict_artifact.artifact_id,
+                        assessment_artifact.artifact_id
+                        if assessment_artifact
+                        else evidence_artifact.artifact_id,
+                    )
+                )
+            ),
+        )
+        await self._persist_artifact(ledger, repaired, invocation.invocation_id)
+        await self._complete_repair_invocation(
+            invocation,
+            repaired,
+            result.status,
+            result.model_call_count,
+            result.total_token_count,
+            result.failure_code,
+        )
+        directive = TurnDirective.model_validate(directive_artifact.payload)
+        return await self._repaired_plan_stage(
+            request=request,
+            ledger=ledger,
+            transitions=transitions,
+            actual_nodes=actual_nodes,
+            response_plan=self._assessment_response_plan(directive, result.assessment),
+            old_plan=plan_artifact,
+            directive_artifact=directive_artifact,
+            assessment=result.assessment,
+            assessment_artifact=repaired,
+            parent=repaired,
+            invocation=invocation,
+            style_profile=style_profile,
+            calls=result.model_call_count,
+            tokens=result.total_token_count,
+            degraded=result.used_fallback,
+            failure=result.failure_code,
+        )
+
+    async def _repair_orchestrator_stage(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        deadline: datetime,
+        ledger: InMemoryArtifactStore,
+        invocations: list[AgentInvocation],
+        transitions: list[GraphTransition],
+        actual_nodes: list[str],
+        directive_artifact: AgentArtifact,
+        plan_artifact: AgentArtifact,
+        verdict_artifact: AgentArtifact,
+        reviewer_invocation: AgentInvocation,
+        style_profile: StyleProfile,
+        evidence_packet: EvidencePacket | None,
+        attempt: int,
+        review_feedback: tuple[str, ...],
+    ) -> _UpstreamRepairStage:
+        invocation = self._repair_invocation(
+            request,
+            deadline,
+            AgentRole.ORCHESTRATOR,
+            attempt,
+            reviewer_invocation.invocation_id,
+            (directive_artifact.artifact_id, verdict_artifact.artifact_id),
+        )
+        invocations.append(invocation)
+        await self._start_invocation(
+            invocation,
+            reason="缺少用户证据，生成必要的澄清问题",
+            started_at=self._aware_now(),
+        )
+        model_request = self._model_request(request, evidence_packet=evidence_packet)
+        model_request = model_request.model_copy(
+            update={
+                "messages": (
+                    *model_request.messages,
+                    ModelMessage(
+                        role=MessageRole.USER,
+                        content=(
+                            "Evidence is missing. Return a direct TurnDirective with "
+                            "voice_act=ask, asking only for missing user information. "
+                            "Do not assert new facts or "
+                            "repeat the unsupported assessment. Issue types: "
+                            + json.dumps(review_feedback)
+                        ),
+                    ),
+                )
+            }
+        )
+        result = await self._runner.run(
+            invocation=invocation,
+            request=model_request,
+            output_type=TurnDirective,
+            grant=self._repair_grant(invocation),
+        )
+        directive = result.output
+        failed = (
+            directive is None
+            or directive.response_path is not ResponsePath.DIRECT
+            or (directive.voice_act.value != "ask")
+        )
+        if failed:
+            directive = direct_shadow_directive("还缺少可核对的信息，你能补充一下具体情况吗？")
+            directive = directive.model_copy(update={"voice_act": "ask"})
+            directive = TurnDirective.model_validate(directive.model_dump())
+        assert directive is not None
+        artifact = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.COORDINATOR
+            if failed
+            else ArtifactProducerRole.ORCHESTRATOR,
+            artifact_type="directive",
+            payload=directive.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(directive_artifact.artifact_id, verdict_artifact.artifact_id),
+        )
+        await self._persist_artifact(ledger, artifact, invocation.invocation_id)
+        await self._complete_repair_invocation(
+            invocation,
+            artifact,
+            InvocationStatus.DEGRADED if failed else InvocationStatus.SUCCEEDED,
+            result.model_call_count,
+            result.total_token_count,
+            "clarification_fallback" if failed else None,
+        )
+        return await self._repaired_plan_stage(
+            request=request,
+            ledger=ledger,
+            transitions=transitions,
+            actual_nodes=actual_nodes,
+            response_plan=self._response_plan(directive),
+            old_plan=plan_artifact,
+            directive_artifact=artifact,
+            assessment=None,
+            assessment_artifact=None,
+            parent=artifact,
+            invocation=invocation,
+            style_profile=style_profile,
+            calls=result.model_call_count,
+            tokens=result.total_token_count,
+            degraded=failed,
+            failure="clarification_fallback" if failed else None,
+        )
+
+    async def _repaired_plan_stage(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        ledger: InMemoryArtifactStore,
+        transitions: list[GraphTransition],
+        actual_nodes: list[str],
+        response_plan: ResponsePlan,
+        old_plan: AgentArtifact,
+        directive_artifact: AgentArtifact,
+        assessment: ProfessionalAssessment | None,
+        assessment_artifact: AgentArtifact | None,
+        parent: AgentArtifact,
+        invocation: AgentInvocation,
+        style_profile: StyleProfile,
+        calls: int,
+        tokens: int,
+        degraded: bool,
+        failure: str | None,
+    ) -> _UpstreamRepairStage:
+        plan = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.COORDINATOR,
+            artifact_type="response_plan",
+            payload=response_plan.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(old_plan.artifact_id, parent.artifact_id),
+        )
+        await self._persist_artifact(ledger, plan, None)
+        resolution = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.STYLE_RESOLVER,
+            artifact_type="style_resolution",
+            created_at=self._aware_now(),
+            parents=(plan.artifact_id,),
+            payload={
+                "style_profile_id": style_profile.profile_id,
+                "style_profile_version": style_profile.version,
+                "communication_act": response_plan.communication_act.value,
+                "bypassed": False,
+            },
+        )
+        await self._persist_artifact(ledger, resolution, None)
+        source = (
+            GraphNode.EXPERT_RUNNING if assessment is not None else GraphNode.ORCHESTRATOR_RUNNING
+        )
+        edges = []
+        if source is GraphNode.ORCHESTRATOR_RUNNING:
+            edges.append(
+                GraphTransition(
+                    source=source,
+                    target=GraphNode.RESPONSE_RENDERING,
+                    reason=TransitionReason.NEEDS_USER_INPUT,
+                )
+            )
+            source = GraphNode.RESPONSE_RENDERING
+        edges.append(
+            GraphTransition(
+                source=source,
+                target=GraphNode.STYLE_RESOLVED,
+                reason=TransitionReason.ASSESSMENT_READY
+                if source is GraphNode.EXPERT_RUNNING
+                else TransitionReason.STYLE_RESOLVED,
+                artifact_id=resolution.artifact_id,
+            )
+        )
+        for edge in edges:
+            await self._record_transition(request.turn_id, edge, attempt=invocation.attempt)
+            transitions.append(edge)
+            actual_nodes.append(edge.target.value)
+        return _UpstreamRepairStage(
+            response_plan,
+            plan,
+            resolution,
+            self._style_compiler.compile(
+                turn_id=request.turn_id,
+                response_plan=response_plan,
+                profile=style_profile,
+                assessment=assessment,
+            ),
+            assessment,
+            assessment_artifact,
+            directive_artifact,
+            invocation.invocation_id,
+            calls,
+            tokens,
+            degraded,
+            failure,
+        )
+
+    async def _review_neutral_fallback(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        ledger: InMemoryArtifactStore,
+        transitions: list[GraphTransition],
+        actual_nodes: list[str],
+        style_context: StyleContext,
+        candidate_artifact: AgentArtifact,
+        verdict_artifact: AgentArtifact,
+        transition_reason: TransitionReason,
+        failure_code: str,
+        model_call_count: int,
+        total_token_count: int,
+    ) -> _ReviewLoopResult:
+        # A rejected assessment may itself be unsupported; never repeat it as a fallback.
+        safe_plan = self._response_plan(
+            direct_shadow_directive("当前信息还不足以给出可靠判断，请补充具体情况后再继续。")
+        )
+        context = self._style_compiler.compile(
+            turn_id=request.turn_id,
+            response_plan=safe_plan,
+            profile=style_context.profile,
+        )
+        neutral = self._neutral_renderer.render(context)
+        plan = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.COORDINATOR,
+            artifact_type="response_plan",
+            payload=safe_plan.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(verdict_artifact.artifact_id,),
+        )
+        await self._persist_artifact(ledger, plan, None)
+        artifact = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.COORDINATOR,
+            artifact_type="neutral_response",
+            payload=neutral.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(
+                candidate_artifact.artifact_id,
+                verdict_artifact.artifact_id,
+                plan.artifact_id,
+            ),
+        )
+        await self._persist_artifact(ledger, artifact, None)
+        for edge in (
+            GraphTransition(
+                source=GraphNode.REVIEW_RUNNING,
+                target=GraphNode.NEUTRAL_FALLBACK,
+                reason=transition_reason,
+                artifact_id=verdict_artifact.artifact_id,
+            ),
+            GraphTransition(
+                source=GraphNode.NEUTRAL_FALLBACK,
+                target=GraphNode.OUTPUT_GUARDED,
+                reason=TransitionReason.FALLBACK_READY,
+                artifact_id=artifact.artifact_id,
+            ),
+        ):
+            await self._record_transition(request.turn_id, edge, attempt=1)
+            transitions.append(edge)
+            actual_nodes.append(edge.target.value)
+        await self._recorder.record_workflow_event(
+            turn_id=request.turn_id,
+            event_type=ItemType.RESPONSE_DEGRADED,
+            payload={
+                "artifact_id": artifact.artifact_id,
+                "reason_code": failure_code,
+                "fallback_type": "conservative_review_fallback",
+            },
+        )
+        return _ReviewLoopResult(
+            neutral,
+            artifact,
+            InvocationStatus.DEGRADED,
+            model_call_count,
+            total_token_count,
+            failure_code,
+        )
+
+    @staticmethod
+    def _review_evidence_summaries(
+        ledger: InMemoryArtifactStore,
+        turn_id: str,
+        packet: EvidencePacket | None,
+    ) -> tuple[ReviewerEvidenceSummary, ...]:
+        facts: dict[str, str] = {}
+        for item in packet.items if packet else ():
+            facts[item.evidence_id] = item.model_dump_json()[:4000]
+        latest = next(
+            (
+                item
+                for item in reversed(ledger.list_turn(turn_id))
+                if item.artifact_type == "nutrition_observations"
+            ),
+            None,
+        )
+        if latest is not None:
+            for observation in latest.payload.get("observations", []):
+                facts[observation["observation_id"]] = json.dumps(
+                    observation,
+                    ensure_ascii=False,
+                    default=str,
+                )[:4000]
+            knowledge = latest.payload.get("knowledge", {})
+            adopted = {item["citation_id"] for item in knowledge.get("citations", [])}
+            for candidate in knowledge.get("candidates", []):
+                if candidate["citation_id"] in adopted:
+                    facts[candidate["citation_id"]] = json.dumps(
+                        candidate,
+                        ensure_ascii=False,
+                        default=str,
+                    )[:4000]
+        return tuple(
+            ReviewerEvidenceSummary(evidence_id=key, summary=value)
+            for key, value in list(facts.items())[:128]
+        )
+
+    @staticmethod
+    def _review_issue_types(verdict: ReviewerVerdict) -> tuple[str, ...]:
+        values = {item.type.value for item in verdict.issues}
+        if verdict.issue_type is not None:
+            values.add(verdict.issue_type.value)
+        return tuple(sorted(values))
 
     async def _nutrition_inputs(
         self,
@@ -1044,9 +2158,7 @@ class AgentWorkflowCoordinator:
         observations: list[CalculationObservation] = []
         receipts: list[dict[str, object]] = []
 
-        weight_items = [
-            item for item in packet.items if item.source_type.value == "weight_record"
-        ]
+        weight_items = [item for item in packet.items if item.source_type.value == "weight_record"]
         timed_weights = [item for item in weight_items if item.occurred_at is not None]
         if timed_weights:
             trend = await self._nutrition_tools.execute(

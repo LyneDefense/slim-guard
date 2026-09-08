@@ -16,6 +16,10 @@ from slim_guard.agents.nutrition import (
     NUTRITION_AGENT_PROMPT,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
+from slim_guard.agents.reviewer import (
+    RESPONSE_REVIEWER_PROMPT,
+    RESPONSE_REVIEWER_PROMPT_VERSION,
+)
 from slim_guard.agents.style import RESPONSE_STYLE_PROMPT, RESPONSE_STYLE_PROMPT_VERSION
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
@@ -120,6 +124,7 @@ class AgentRuntimeDefinition(BaseModel):
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
+    response_reviewer_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_nutrition_rag(self) -> AgentRuntimeDefinition:
@@ -127,6 +132,8 @@ class AgentRuntimeDefinition(BaseModel):
             raise ValueError("Nutrition RAG requires the Nutrition Agent")
         if self.nutrition_rag_enabled and not self.nutrition_require_rag_citations:
             raise ValueError("Nutrition RAG citations cannot be disabled")
+        if self.response_reviewer_enabled and not self.style_render_all_normal_replies:
+            raise ValueError("Response Reviewer requires the Response Style path")
         return self
 
 
@@ -299,6 +306,7 @@ def build_agent_runtime(
                 style_profiles=StyleProfileRepository(database),
                 style_enabled=definition.style_render_all_normal_replies,
                 nutrition_enabled=definition.nutrition_agent_enabled,
+                reviewer_enabled=definition.response_reviewer_enabled,
                 nutrition_tools=NutritionToolRegistry(
                     knowledge_repository=(
                         NutritionKnowledgeService(
@@ -359,7 +367,6 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
 def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraphManifest:
     """Freeze active and planned roles for the typed workflow."""
 
-    disabled_prompt = "This workflow role is disabled in the current rollout increment."
     nodes = {
         "orchestrator": AgentGraphNodeManifest.build(
             role="orchestrator",
@@ -398,12 +405,13 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
         "response_reviewer": AgentGraphNodeManifest.build(
             role="response_reviewer",
             model=definition.text_model,
-            prompt_version="disabled-v1",
-            prompt=disabled_prompt,
+            prompt_version=RESPONSE_REVIEWER_PROMPT_VERSION,
+            prompt=RESPONSE_REVIEWER_PROMPT,
             output_schema="ReviewerVerdict",
-            max_model_calls=1,
+            privacy_scopes=("response_plan", "styled_response", "professional_assessment"),
+            max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens,
+            max_total_tokens=definition.vision_max_output_tokens * 2,
         ),
     }
     return AgentGraphManifest.build(

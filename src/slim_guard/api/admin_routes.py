@@ -160,6 +160,16 @@ async def list_users(
     return await _repository(request).list_users(search=search, limit=limit, offset=offset)
 
 
+@router.get("/metrics/workflows")
+async def workflow_metrics(
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    window_days: int = Query(default=7, ge=1, le=90),
+) -> dict[str, Any]:
+    del principal
+    return await _repository(request).workflow_review_metrics(window_days=window_days)
+
+
 @router.get("/users/{user_id}")
 async def get_user(
     user_id: str,

@@ -15,6 +15,7 @@ import {
 import { api, UnauthorizedError } from "./api";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
 import { EvidencePanel } from "./components/trace/EvidencePanel";
+import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
 import { ShadowComparison } from "./components/trace/ShadowComparison";
 import { StyleTracePanel } from "./components/trace/StyleTracePanel";
 import { WorkflowGraph } from "./components/trace/WorkflowGraph";
@@ -353,6 +354,7 @@ function TracePage() {
       {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
       <EvidencePanel workflow={workflow} />
       <StyleTracePanel workflow={workflow} />
+      <ReviewerTracePanel workflow={workflow} />
       {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
       <ContextSources data={data} />
       {workflow.hasMultiAgentTrace

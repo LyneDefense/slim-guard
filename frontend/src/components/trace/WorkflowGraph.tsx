@@ -6,13 +6,20 @@ import {
 } from "./model";
 
 const NODE_LABELS: Record<string, string> = {
+  initialized: "工作流初始化",
+  input_guarded: "输入保护",
+  memory_ingested: "记忆摄取",
+  memory_recall: "记忆召回",
   context_ready: "上下文就绪",
   orchestrator_running: "对话编排",
+  evidence_ready: "证据包就绪",
+  expert_running: "营养分析",
   nutrition_running: "营养分析",
   response_rendering: "生成回复计划",
   style_resolved: "风格策略就绪",
   style_running: "表达风格",
   review_running: "忠实度审查",
+  neutral_fallback: "中性降级输出",
   output_guarded: "输出保护",
   completed: "工作流完成",
   degraded: "降级输出",
@@ -34,7 +41,9 @@ export function WorkflowGraph({ workflow }: { workflow: WorkflowTraceView }) {
       <div className="section-heading workflow-heading">
         <div>
           <h2>本轮实际工作流</h2>
-          <p>只展示真实执行过的节点；箭头来自 Coordinator 保存的实际转换。</p>
+          <p>{workflow.transitions.length > 0
+            ? "只展示真实执行过的节点；箭头来自 Coordinator 保存的实际转换。"
+            : "按 Invocation 顺序展示已执行节点；旧 Trace 未记录工作流转换。"}</p>
         </div>
         <div className="workflow-summary-badges">
           <span>{workflow.mode.toUpperCase()}</span>
@@ -48,7 +57,9 @@ export function WorkflowGraph({ workflow }: { workflow: WorkflowTraceView }) {
             <div className="workflow-step" key={step.key}>
               {step.incoming && (
                 <div className={`workflow-edge ${isRepair(step.incoming) ? "workflow-edge-repair" : ""}`}>
-                  <span>→</span>
+                  <span aria-label={isRepair(step.incoming) ? "返回修复" : "继续"}>
+                    {isRepair(step.incoming) ? "↩" : "→"}
+                  </span>
                   <small>{transitionLabel(step.incoming)}</small>
                 </div>
               )}
@@ -80,11 +91,11 @@ export function WorkflowGraph({ workflow }: { workflow: WorkflowTraceView }) {
 
 function buildSteps(workflow: WorkflowTraceView): GraphStep[] {
   if (workflow.transitions.length === 0) {
-    return workflow.invocations.map((invocation, index) => ({
+    return workflow.invocations.map((invocation) => ({
       key: invocation.invocation_id,
       node: nodeForRole(invocation.agent_role),
       invocation,
-      incoming: index === 0 ? null : inferredTransition(workflow.invocations[index - 1], invocation),
+      incoming: null,
     }));
   }
 
@@ -112,24 +123,12 @@ function buildSteps(workflow: WorkflowTraceView): GraphStep[] {
   });
 }
 
-function inferredTransition(
-  from: AgentInvocationView,
-  to: AgentInvocationView,
-): TraceWorkflowTransition {
-  return {
-    from_node: nodeForRole(from.agent_role),
-    to_node: nodeForRole(to.agent_role),
-    transition_type: to.repaired ? "repair" : "forward",
-    reason_code: to.parent_invocation_id === from.invocation_id ? "parent_invocation" : "invocation_sequence",
-    attempt: to.attempt,
-  };
-}
-
 function roleForNode(node: string): AgentRole | null {
   const roles: Partial<Record<string, AgentRole>> = {
     orchestrator: "orchestrator",
     orchestrator_running: "orchestrator",
     nutrition_expert: "nutrition_expert",
+    expert_running: "nutrition_expert",
     nutrition_running: "nutrition_expert",
     response_style: "response_style",
     style_running: "response_style",
@@ -142,7 +141,7 @@ function roleForNode(node: string): AgentRole | null {
 function nodeForRole(role: AgentRole): string {
   return {
     orchestrator: "orchestrator_running",
-    nutrition_expert: "nutrition_running",
+    nutrition_expert: "expert_running",
     response_style: "style_running",
     response_reviewer: "review_running",
   }[role];
@@ -156,6 +155,7 @@ function transitionLabel(transition: TraceWorkflowTransition): string {
   const labels: Record<string, string> = {
     forward: "继续",
     repair: "返回修复",
+    return: "返回修复",
     context_request: "补充上下文",
     degraded: "降级",
     fallback: "转入兜底",
@@ -165,7 +165,10 @@ function transitionLabel(transition: TraceWorkflowTransition): string {
 }
 
 function isRepair(transition: TraceWorkflowTransition): boolean {
-  return transition.attempt > 1 || /repair|retry|return/.test(transition.transition_type);
+  const marker = `${transition.transition_type} ${transition.reason_code}`.toLowerCase();
+  return ["repair", "return", "retry"].includes(transition.transition_type)
+    || (["review_running", "review", "response_reviewer"].includes(transition.from_node)
+      && /repair|retry|return/.test(marker));
 }
 
 function statusTone(status: string | undefined): string {

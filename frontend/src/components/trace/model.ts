@@ -5,6 +5,8 @@ import type {
   TraceAgentInvocation,
   TraceDetail,
   TraceShadowComparison,
+  TraceReviewerSummary,
+  TraceWorkflowSummary,
   TraceWorkflowTransition,
 } from "../../types";
 
@@ -48,6 +50,8 @@ export interface WorkflowTraceView {
   mode: string;
   graph_version: string | null;
   status: string;
+  summary: TraceWorkflowSummary | null;
+  reviewSummary: TraceReviewerSummary | null;
   invocations: AgentInvocationView[];
   artifacts: TraceAgentArtifact[];
   transitions: TraceWorkflowTransition[];
@@ -81,7 +85,7 @@ export function buildWorkflowTrace(data: TraceDetail): WorkflowTraceView {
       ...invocation,
       duration_ms:
         invocation.duration_ms ?? durationBetween(invocation.started_at, invocation.completed_at),
-      repaired: isRepairInvocation(invocation, transitions),
+      repaired: invocation.attempt > 1,
       events: grouped.byInvocation.get(invocation.invocation_id) ?? [],
     }))
     .sort(compareInvocations);
@@ -95,6 +99,8 @@ export function buildWorkflowTrace(data: TraceDetail): WorkflowTraceView {
     mode,
     graph_version: summary?.graph_version ?? null,
     status: summary?.status ?? inferWorkflowStatus(invocations),
+    summary: summary ?? null,
+    reviewSummary: data.workflow?.review ?? data.review ?? null,
     invocations,
     artifacts,
     transitions,
@@ -302,24 +308,6 @@ function contentFromPayload(payload: unknown): string | null {
     if (content) return content;
   }
   return null;
-}
-
-function isRepairInvocation(
-  invocation: TraceAgentInvocation,
-  transitions: TraceWorkflowTransition[],
-): boolean {
-  if (invocation.attempt > 1) return true;
-  const nodeNames: Record<AgentRole, string[]> = {
-    orchestrator: ["orchestrator", "orchestrator_running"],
-    nutrition_expert: ["nutrition", "nutrition_running", "nutrition_expert"],
-    response_style: ["style", "style_running", "response_style"],
-    response_reviewer: ["review", "review_running", "response_reviewer"],
-  };
-  return transitions.some((transition) => {
-    const isTarget = nodeNames[invocation.agent_role].includes(transition.to_node);
-    const repairMarker = `${transition.transition_type} ${transition.reason_code}`.toLowerCase();
-    return isTarget && (transition.attempt > 1 || /repair|retry|return|drift|changed/.test(repairMarker));
-  });
 }
 
 function inferWorkflowStatus(invocations: AgentInvocationView[]): string {

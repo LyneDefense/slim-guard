@@ -139,6 +139,7 @@ def create_app(
         nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
         nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
         nutrition_require_rag_citations=app_settings.nutrition_require_rag_citations,
+        response_reviewer_enabled=app_settings.response_reviewer_enabled,
     )
     agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
     agent_manifest = (

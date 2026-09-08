@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import case, func, or_, select
@@ -399,6 +399,7 @@ class AdminQueryRepository:
                 "transitions": workflow["transitions"],
                 "shadow_comparison": workflow["shadow_comparison"],
                 "evidence": workflow["evidence"],
+                "review": workflow["review"],
                 "privacy": {
                     "contains_sensitive_health_data": True,
                     "redacted_item_count": sum(
@@ -592,6 +593,192 @@ class AdminQueryRepository:
                     for row in jobs
                 ],
             }
+
+    async def workflow_review_metrics(
+        self,
+        *,
+        window_days: int,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate privacy-safe reviewer outcomes over a bounded UTC window."""
+
+        end_at = self._aware(now or datetime.now(UTC))
+        start_at = end_at - timedelta(days=window_days)
+        async with self._database.session() as session:
+            traces = tuple(
+                await session.scalars(
+                    select(InteractionTraceRecord)
+                    .where(
+                        InteractionTraceRecord.created_at >= start_at,
+                        InteractionTraceRecord.created_at <= end_at,
+                    )
+                    .order_by(InteractionTraceRecord.created_at, InteractionTraceRecord.id)
+                )
+            )
+            trace_ids = [trace.id for trace in traces]
+            turn_ids = list(
+                dict.fromkeys(
+                    trace.agent_turn_id
+                    for trace in traces
+                    if isinstance(trace.agent_turn_id, str)
+                )
+            )
+            invocation_rows = (
+                tuple(
+                    await session.scalars(
+                        select(AgentInvocationRecord)
+                        .where(AgentInvocationRecord.trace_id.in_(trace_ids))
+                        .order_by(
+                            AgentInvocationRecord.started_at,
+                            AgentInvocationRecord.id,
+                        )
+                    )
+                )
+                if trace_ids
+                else ()
+            )
+            artifact_rows = (
+                tuple(
+                    await session.scalars(
+                        select(AgentArtifactRecord)
+                        .where(
+                            AgentArtifactRecord.turn_id.in_(turn_ids),
+                            func.lower(AgentArtifactRecord.artifact_type).in_(
+                                ("reviewerverdict", "reviewer_verdict", "reviewer-verdict")
+                            ),
+                        )
+                        .order_by(
+                            AgentArtifactRecord.created_at,
+                            AgentArtifactRecord.id,
+                        )
+                    )
+                )
+                if turn_ids
+                else ()
+            )
+            item_rows = (
+                tuple(
+                    await session.scalars(
+                        select(AgentItemRecord)
+                        .where(
+                            AgentItemRecord.turn_id.in_(turn_ids),
+                            AgentItemRecord.item_type.in_(
+                                ("workflow_transition", "response_degraded")
+                            ),
+                        )
+                        .order_by(
+                            AgentItemRecord.created_at,
+                            AgentItemRecord.sequence,
+                        )
+                    )
+                )
+                if turn_ids
+                else ()
+            )
+
+        invocations_by_trace: dict[str, list[dict[str, Any]]] = {}
+        for invocation_row in invocation_rows:
+            invocations_by_trace.setdefault(invocation_row.trace_id, []).append(
+                self._invocation_view(invocation_row, started_event=None)
+            )
+        artifacts_by_turn: dict[str, list[dict[str, Any]]] = {}
+        for artifact_row in artifact_rows:
+            artifacts_by_turn.setdefault(artifact_row.turn_id, []).append(
+                self._artifact_view(artifact_row)
+            )
+        transitions_by_turn: dict[str, list[dict[str, Any]]] = {}
+        degraded_by_turn: dict[str, list[dict[str, Any]]] = {}
+        for item_row in item_rows:
+            details = self._admin_safe(self._json_load(item_row.payload_json))
+            if not isinstance(details, dict):
+                continue
+            if item_row.item_type == "workflow_transition":
+                transitions_by_turn.setdefault(item_row.turn_id, []).append(
+                    {
+                        "from_node": details.get("from_node"),
+                        "to_node": details.get("to_node"),
+                        "transition_type": details.get("transition_type"),
+                        "reason_code": details.get("reason_code"),
+                        "attempt": details.get("attempt"),
+                    }
+                )
+            elif item_row.item_type == "response_degraded":
+                degraded_by_turn.setdefault(item_row.turn_id, []).append(
+                    {"details": details}
+                )
+
+        summaries: list[dict[str, Any]] = []
+        for trace in traces:
+            turn_id = trace.agent_turn_id or ""
+            summary = self._review_summary(
+                artifacts=artifacts_by_turn.get(turn_id, []),
+                invocations=invocations_by_trace.get(trace.id, []),
+                transitions=transitions_by_turn.get(turn_id, []),
+                adopted={},
+                degraded_events=degraded_by_turn.get(turn_id, []),
+            )
+            if summary["reviewer_invocation_count"] or summary["verdict_count"]:
+                summaries.append(summary)
+
+        reviewed_workflow_count = len(summaries)
+        rejected_workflow_count = sum(bool(item["rejected"]) for item in summaries)
+        repair_workflow_count = sum(bool(item["repair_attempts"]) for item in summaries)
+        degraded_workflow_count = sum(bool(item["degraded"]) for item in summaries)
+        denominators = {
+            "rejection_rate": reviewed_workflow_count,
+            "repair_rate": reviewed_workflow_count,
+            "degradation_rate": reviewed_workflow_count,
+        }
+
+        def rate(numerator: int, denominator: int) -> float:
+            return numerator / denominator if denominator else 0.0
+
+        target_names = ("orchestrator", "nutrition_expert", "response_style", "unknown")
+        return {
+            "window": {
+                "days": window_days,
+                "start_at": start_at,
+                "end_at": end_at,
+                "timezone": "UTC",
+            },
+            "counts": {
+                "trace_count": len(traces),
+                "workflow_count": sum(trace.agent_turn_id is not None for trace in traces),
+                "reviewed_workflow_count": reviewed_workflow_count,
+                "reviewer_invocation_count": sum(
+                    int(item["reviewer_invocation_count"]) for item in summaries
+                ),
+                "verdict_count": sum(int(item["verdict_count"]) for item in summaries),
+                "issue_count": sum(int(item["issue_count"]) for item in summaries),
+                "rejected_workflow_count": rejected_workflow_count,
+                "repair_workflow_count": repair_workflow_count,
+                "degraded_workflow_count": degraded_workflow_count,
+                "repair_attempt_count": sum(
+                    len(item["repair_attempts"]) for item in summaries
+                ),
+            },
+            "rates": {
+                "rejection_rate": rate(
+                    rejected_workflow_count,
+                    denominators["rejection_rate"],
+                ),
+                "repair_rate": rate(
+                    repair_workflow_count,
+                    denominators["repair_rate"],
+                ),
+                "degradation_rate": rate(
+                    degraded_workflow_count,
+                    denominators["degradation_rate"],
+                ),
+            },
+            "denominators": denominators,
+            "by_repair_target": {
+                target: sum(
+                    int(item["repair_counts"].get(target, 0)) for item in summaries
+                )
+                for target in target_names
+            },
+        }
 
     async def audit(
         self,
@@ -787,6 +974,13 @@ class AdminQueryRepository:
             else None
         )
         evidence = cls._evidence_summary(artifacts)
+        review = cls._review_summary(
+            artifacts=artifacts,
+            invocations=invocations,
+            transitions=transitions,
+            adopted=adopted if isinstance(adopted, dict) else {},
+            degraded_events=degraded_events,
+        )
         return {
             "summary": summary,
             "invocations": invocations,
@@ -795,6 +989,7 @@ class AdminQueryRepository:
             "shadow_comparison": shadow_comparison,
             "style": style,
             "evidence": evidence,
+            "review": review,
         }
 
     @classmethod
@@ -948,6 +1143,7 @@ class AdminQueryRepository:
             "nutritionobservation",
             "professionalassessment",
             "conservativeassessment",
+            "reviewerverdict",
         }
         return {
             "artifact_id": row.id,
@@ -978,7 +1174,136 @@ class AdminQueryRepository:
             return cls._safe_nutrition_observations(payload)
         if normalized in {"professionalassessment", "conservativeassessment"}:
             return cls._safe_professional_assessment(payload)
+        if normalized == "reviewerverdict":
+            return cls._safe_reviewer_verdict(payload)
         return payload
+
+    @classmethod
+    def _safe_reviewer_verdict(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_issues = payload.get("issues")
+        if isinstance(raw_issues, (list, tuple)):
+            issues = [cls._safe_reviewer_issue(issue) for issue in raw_issues]
+        elif isinstance(raw_issues, (dict, str)):
+            issues = [cls._safe_reviewer_issue(raw_issues)]
+        else:
+            issues = []
+        issue_types = cls._review_issue_types(payload)
+        reviewed_ids = cls._safe_string_values(
+            payload.get("reviewed_artifact_ids")
+            or payload.get("input_artifact_ids")
+        )
+        candidate_id = payload.get("candidate_artifact_id")
+        if isinstance(candidate_id, str) and candidate_id not in reviewed_ids:
+            reviewed_ids.append(candidate_id)
+        repair_attempt = payload.get("repair_attempt")
+        repair_budget = payload.get("repair_budget")
+        safe_repair_budget = (
+            {
+                str(key): value
+                for key, value in repair_budget.items()
+                if str(key).startswith("max_")
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            }
+            if isinstance(repair_budget, dict)
+            else None
+        )
+        return {
+            "schema_version": payload.get("schema_version"),
+            "verdict": cls._first_string(
+                payload.get("verdict"),
+                payload.get("status"),
+                payload.get("outcome"),
+            ),
+            "repair_target": cls._first_string(
+                payload.get("repair_target"),
+                payload.get("target"),
+                payload.get("target_agent"),
+            ),
+            "issue_type": cls._first_string(
+                payload.get("issue_type"),
+                issue_types[0] if issue_types else None,
+            ),
+            "issue_types": issue_types,
+            "issue_count": max(len(issues), len(issue_types)),
+            "issues": issues,
+            "reason_summary_present": bool(
+                payload.get("reason_summary")
+                or payload.get("reason")
+                or payload.get("explanation")
+            ),
+            "reviewed_artifact_ids": reviewed_ids,
+            "repair_attempt": (
+                repair_attempt
+                if isinstance(repair_attempt, int)
+                and not isinstance(repair_attempt, bool)
+                and repair_attempt >= 0
+                else None
+            ),
+            "repair_budget": safe_repair_budget,
+        }
+
+    @classmethod
+    def _safe_reviewer_issue(cls, issue: Any) -> dict[str, Any]:
+        if isinstance(issue, str):
+            return {
+                "type": issue,
+                "excerpt_present": False,
+                "explanation_present": False,
+            }
+        if not isinstance(issue, dict):
+            return {
+                "type": None,
+                "excerpt_present": False,
+                "explanation_present": False,
+            }
+        return {
+            "type": cls._first_string(
+                issue.get("type"),
+                issue.get("issue_type"),
+                issue.get("code"),
+                issue.get("category"),
+            ),
+            "excerpt_present": bool(issue.get("excerpt")),
+            "explanation_present": bool(
+                issue.get("explanation")
+                or issue.get("reason")
+                or issue.get("message")
+            ),
+        }
+
+    @classmethod
+    def _review_issue_types(cls, payload: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        primary = payload.get("issue_type")
+        if isinstance(primary, str):
+            values.append(primary)
+        for key in ("issue_types", "issue_codes"):
+            values.extend(cls._safe_string_values(payload.get(key)))
+        issues = payload.get("issues")
+        if isinstance(issues, (list, tuple)):
+            for issue in issues:
+                if isinstance(issue, str):
+                    values.append(issue)
+                    continue
+                if not isinstance(issue, dict):
+                    continue
+                issue_type = cls._first_string(
+                    issue.get("type"),
+                    issue.get("issue_type"),
+                    issue.get("code"),
+                    issue.get("category"),
+                )
+                if issue_type is not None:
+                    values.append(issue_type)
+        elif isinstance(issues, str):
+            values.append(issues)
+        elif isinstance(issues, dict):
+            issue_type = cls._safe_reviewer_issue(issues)["type"]
+            if isinstance(issue_type, str):
+                values.append(issue_type)
+        return list(dict.fromkeys(values))
 
     @classmethod
     def _safe_evidence_packet(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1340,6 +1665,430 @@ class AdminQueryRepository:
         if not isinstance(value, (list, tuple)):
             return []
         return [item for item in value if isinstance(item, str)]
+
+    @staticmethod
+    def _first_string(*values: Any) -> str | None:
+        return next(
+            (
+                value
+                for value in values
+                if isinstance(value, str) and value
+            ),
+            None,
+        )
+
+    @classmethod
+    def _review_summary(
+        cls,
+        *,
+        artifacts: list[dict[str, Any]],
+        invocations: list[dict[str, Any]],
+        transitions: list[dict[str, Any]],
+        adopted: dict[str, Any],
+        degraded_events: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        artifact_by_id = {
+            artifact["artifact_id"]: artifact
+            for artifact in artifacts
+            if isinstance(artifact.get("artifact_id"), str)
+        }
+        invocation_by_id = {
+            invocation["invocation_id"]: invocation
+            for invocation in invocations
+            if isinstance(invocation.get("invocation_id"), str)
+        }
+        reviewer_invocations = [
+            invocation
+            for invocation in invocations
+            if str(invocation.get("agent_role", "")).lower()
+            in {"response_reviewer", "reviewer"}
+        ]
+        verdict_artifacts = [
+            artifact
+            for artifact in artifacts
+            if cls._normalized_artifact_type(
+                str(artifact.get("artifact_type", ""))
+            )
+            == "reviewerverdict"
+        ]
+        verdicts: list[dict[str, Any]] = []
+        for artifact in verdict_artifacts:
+            payload = artifact.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
+            parents = cls._safe_string_values(artifact.get("parent_artifact_ids"))
+            reviewed_ids = cls._safe_string_values(
+                payload.get("reviewed_artifact_ids")
+            )
+            for parent in parents:
+                if parent not in reviewed_ids:
+                    reviewed_ids.append(parent)
+            verdict_status = cls._first_string(
+                payload.get("verdict"),
+                payload.get("status"),
+                payload.get("outcome"),
+            )
+            repair_target = cls._first_string(
+                payload.get("repair_target"),
+                payload.get("target"),
+                payload.get("target_agent"),
+            )
+            issue_types = cls._review_issue_types(payload)
+            issues = payload.get("issues")
+            issues = (
+                [issue for issue in issues if isinstance(issue, dict)]
+                if isinstance(issues, list)
+                else []
+            )
+            issue_count = payload.get("issue_count")
+            invocation = invocation_by_id.get(artifact.get("invocation_id"))
+            verdicts.append(
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "invocation_id": artifact.get("invocation_id"),
+                    "verdict": verdict_status,
+                    "repair_target": repair_target,
+                    "issue_type": cls._first_string(
+                        payload.get("issue_type"),
+                        issue_types[0] if issue_types else None,
+                    ),
+                    "issue_types": issue_types,
+                    "issue_count": (
+                        issue_count
+                        if isinstance(issue_count, int) and not isinstance(issue_count, bool)
+                        else max(len(issue_types), len(issues))
+                    ),
+                    "issues": issues,
+                    "reason_summary_present": bool(
+                        payload.get("reason_summary_present")
+                    ),
+                    "reviewed_artifact_ids": reviewed_ids,
+                    "parent_artifact_ids": parents,
+                    "attempt": invocation.get("attempt") if invocation else None,
+                    "repair_attempt": payload.get("repair_attempt"),
+                    "repair_budget": payload.get("repair_budget"),
+                    "created_at": artifact.get("created_at"),
+                    "integrity_status": artifact.get("integrity_status"),
+                }
+            )
+
+        repair_transitions = [
+            transition
+            for transition in transitions
+            if cls._is_review_repair_transition(transition)
+        ]
+        repair_verdicts = [
+            verdict for verdict in verdicts if verdict.get("verdict") == "repair"
+        ]
+        repair_invocations = [
+            invocation
+            for invocation in invocations
+            if (
+                int(invocation.get("attempt") or 0) > 1
+                or "repair" in str(invocation.get("reason_summary", "")).lower()
+            )
+            and str(invocation.get("agent_role", "")).lower()
+            in {"orchestrator", "nutrition_expert", "response_style"}
+        ]
+        used_invocation_ids: set[str] = set()
+        repair_attempts: list[dict[str, Any]] = []
+        for index, transition in enumerate(repair_transitions):
+            verdict = repair_verdicts[index] if index < len(repair_verdicts) else None
+            target = (
+                verdict.get("repair_target")
+                if verdict is not None
+                else None
+            )
+            if not isinstance(target, str) or not target:
+                target = cls._repair_target_from_transition(transition)
+            invocation = next(
+                (
+                    candidate
+                    for candidate in repair_invocations
+                    if candidate.get("invocation_id") not in used_invocation_ids
+                    and (
+                        target is None
+                        or str(candidate.get("agent_role", "")).lower() == target
+                    )
+                ),
+                None,
+            )
+            if invocation is not None and isinstance(
+                invocation.get("invocation_id"), str
+            ):
+                used_invocation_ids.add(invocation["invocation_id"])
+            reviewed_ids = (
+                cls._safe_string_values(verdict.get("reviewed_artifact_ids"))
+                if verdict is not None
+                else []
+            )
+            repair_attempts.append(
+                {
+                    "attempt": (
+                        transition.get("attempt")
+                        or (invocation.get("attempt") if invocation is not None else None)
+                        or index + 1
+                    ),
+                    "target": target or "unknown",
+                    "verdict_artifact_id": (
+                        verdict.get("artifact_id") if verdict is not None else None
+                    ),
+                    "input_artifact_id": reviewed_ids[0] if reviewed_ids else None,
+                    "output_artifact_id": (
+                        invocation.get("output_artifact_id")
+                        if invocation is not None
+                        else None
+                    ),
+                    "status": (
+                        invocation.get("status")
+                        if invocation is not None
+                        else "transitioned"
+                    ),
+                    "transition": dict(transition),
+                }
+            )
+
+        target_names = ("orchestrator", "nutrition_expert", "response_style")
+        repair_counts = {
+            target: sum(
+                1 for attempt in repair_attempts if attempt["target"] == target
+            )
+            for target in target_names
+        }
+        repair_counts["unknown"] = sum(
+            1
+            for attempt in repair_attempts
+            if attempt["target"] not in target_names
+        )
+        repair_counts["total"] = len(repair_attempts)
+        budget_transitions = [
+            transition
+            for transition in transitions
+            if cls._is_review_budget_transition(transition)
+        ]
+        exhausted_targets = list(
+            dict.fromkeys(
+                target
+                for transition in budget_transitions
+                if (
+                    target := cls._repair_target_from_transition(transition)
+                )
+                is not None
+            )
+        )
+        if budget_transitions and not exhausted_targets and repair_verdicts:
+            latest_repair_target = repair_verdicts[-1].get("repair_target")
+            if isinstance(latest_repair_target, str):
+                exhausted_targets.append(latest_repair_target)
+        configured_limits = next(
+            (
+                verdict["repair_budget"]
+                for verdict in reversed(verdicts)
+                if isinstance(verdict.get("repair_budget"), dict)
+            ),
+            None,
+        )
+
+        original_id = cls._original_reviewed_artifact_id(
+            verdicts=verdicts,
+            reviewer_invocations=reviewer_invocations,
+            artifact_by_id=artifact_by_id,
+        )
+        repaired_ids: list[str] = []
+        for attempt in repair_attempts:
+            artifact_id = attempt.get("output_artifact_id")
+            if (
+                isinstance(artifact_id, str)
+                and artifact_id != original_id
+                and artifact_id not in repaired_ids
+            ):
+                repaired_ids.append(artifact_id)
+        for verdict in verdicts[1:]:
+            for artifact_id in cls._safe_string_values(
+                verdict.get("reviewed_artifact_ids")
+            ):
+                if (
+                    artifact_id != original_id
+                    and artifact_id not in repaired_ids
+                    and cls._normalized_artifact_type(
+                        str(artifact_by_id.get(artifact_id, {}).get("artifact_type", ""))
+                    )
+                    != "reviewerverdict"
+                ):
+                    repaired_ids.append(artifact_id)
+        adopted_id = adopted.get("artifact_id")
+        adopted_id = adopted_id if isinstance(adopted_id, str) else None
+        comparison = {
+            "original": cls._review_artifact_ref(
+                artifact_by_id.get(original_id),
+                artifact_id=original_id,
+            ),
+            "repaired": [
+                cls._review_artifact_ref(
+                    artifact_by_id.get(artifact_id),
+                    artifact_id=artifact_id,
+                )
+                for artifact_id in repaired_ids
+            ],
+            "final_adopted": cls._review_artifact_ref(
+                artifact_by_id.get(adopted_id),
+                artifact_id=adopted_id,
+            ),
+            "changed": (
+                original_id != adopted_id
+                if original_id is not None and adopted_id is not None
+                else None
+            ),
+        }
+        latest_verdict = verdicts[-1].get("verdict") if verdicts else None
+        rejected = latest_verdict == "reject" or any(
+            transition.get("reason_code") == "review_rejected"
+            for transition in transitions
+        )
+        review_degraded_events = [
+            event
+            for event in degraded_events
+            if isinstance(event.get("details"), dict)
+            and (
+                "review" in str(event["details"].get("reason_code", "")).lower()
+                or "review" in str(event["details"].get("fallback_type", "")).lower()
+            )
+        ]
+        degraded = rejected or bool(budget_transitions) or bool(
+            review_degraded_events
+        )
+        if rejected:
+            status = "rejected"
+        elif degraded:
+            status = "degraded"
+        elif latest_verdict == "pass":
+            status = "passed"
+        elif latest_verdict == "repair":
+            status = "repair_requested"
+        elif any(item.get("status") == "started" for item in reviewer_invocations):
+            status = "running"
+        elif reviewer_invocations or verdicts:
+            status = "completed_unknown"
+        else:
+            status = "not_run"
+        return {
+            "status": status,
+            "reviewer_invocation_count": len(reviewer_invocations),
+            "verdict_count": len(verdicts),
+            "issue_count": sum(int(verdict["issue_count"]) for verdict in verdicts),
+            "verdicts": verdicts,
+            "repair_attempts": repair_attempts,
+            "repair_counts": repair_counts,
+            "budget": {
+                "exhausted": bool(budget_transitions),
+                "exhausted_targets": exhausted_targets,
+                "repair_attempts_observed": len(repair_attempts),
+                "configured_limits": configured_limits,
+            },
+            "comparison": comparison,
+            "rejected": rejected,
+            "degraded": degraded,
+        }
+
+    @classmethod
+    def _original_reviewed_artifact_id(
+        cls,
+        *,
+        verdicts: list[dict[str, Any]],
+        reviewer_invocations: list[dict[str, Any]],
+        artifact_by_id: dict[str, dict[str, Any]],
+    ) -> str | None:
+        candidates = (
+            cls._safe_string_values(verdicts[0].get("reviewed_artifact_ids"))
+            if verdicts
+            else []
+        )
+        if not candidates and reviewer_invocations:
+            candidates = cls._safe_string_values(
+                reviewer_invocations[0].get("input_artifact_ids")
+            )
+        response_types = {
+            "styledresponse",
+            "neutralresponse",
+            "responseplan",
+        }
+        return next(
+            (
+                artifact_id
+                for artifact_id in candidates
+                if cls._normalized_artifact_type(
+                    str(artifact_by_id.get(artifact_id, {}).get("artifact_type", ""))
+                )
+                in response_types
+            ),
+            candidates[0] if candidates else None,
+        )
+
+    @classmethod
+    def _review_artifact_ref(
+        cls,
+        artifact: dict[str, Any] | None,
+        *,
+        artifact_id: str | None,
+    ) -> dict[str, Any] | None:
+        if artifact_id is None:
+            return None
+        artifact = artifact or {}
+        return {
+            "artifact_id": artifact_id,
+            "artifact_type": artifact.get("artifact_type"),
+            "producer_role": artifact.get("producer_role"),
+            "schema_version": artifact.get("schema_version"),
+            "payload_sha256": artifact.get("payload_sha256"),
+            "integrity_status": artifact.get("integrity_status"),
+            "invocation_id": artifact.get("invocation_id"),
+            "created_at": artifact.get("created_at"),
+        }
+
+    @staticmethod
+    def _is_review_repair_transition(transition: dict[str, Any]) -> bool:
+        reason = str(transition.get("reason_code", "")).lower()
+        source = str(transition.get("from_node", "")).lower()
+        return reason == "review_repair" or (
+            source in {"review", "review_running", "response_reviewer"}
+            and reason in {"repair", "retry", "return_for_repair"}
+        )
+
+    @staticmethod
+    def _is_review_budget_transition(transition: dict[str, Any]) -> bool:
+        return (
+            str(transition.get("reason_code", "")).lower() == "budget_exhausted"
+            and str(transition.get("from_node", "")).lower()
+            in {"review", "review_running", "response_reviewer"}
+        )
+
+    @classmethod
+    def _repair_target_from_transition(
+        cls,
+        transition: dict[str, Any] | None,
+    ) -> str | None:
+        if transition is None:
+            return None
+        node = str(transition.get("to_node", "")).lower()
+        if node in {"style", "style_running", "response_style"}:
+            return "response_style"
+        if node in {
+            "expert_running",
+            "nutrition",
+            "nutrition_expert",
+            "nutrition_running",
+        }:
+            return "nutrition_expert"
+        if node in {"orchestrator", "orchestrator_running"}:
+            return "orchestrator"
+        if transition.get("reason_code") == "budget_exhausted":
+            source = str(transition.get("from_node", "")).lower()
+            if source in {"style", "style_running", "response_style"}:
+                return "response_style"
+            if source in {"expert_running", "nutrition", "nutrition_expert"}:
+                return "nutrition_expert"
+            if source in {"orchestrator", "orchestrator_running"}:
+                return "orchestrator"
+        return None
 
     @staticmethod
     def _style_summary(

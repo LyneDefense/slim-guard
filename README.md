@@ -83,6 +83,7 @@ DEFAULT_STYLE_PROFILE=slimguard_default_v1
 NUTRITION_AGENT_ENABLED=false
 NUTRITION_RAG_ENABLED=false
 NUTRITION_REQUIRE_RAG_CITATIONS=true
+RESPONSE_REVIEWER_ENABLED=false
 ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
 
@@ -109,6 +110,12 @@ uv run python -m slim_guard.tools.manage_nutrition_knowledge show SOURCE_ID
 完成资料审核后，才在 Shadow 模式打开 `NUTRITION_AGENT_ENABLED=true` 和
 `NUTRITION_RAG_ENABLED=true`。RAG 打开时不能关闭 `NUTRITION_REQUIRE_RAG_CITATIONS`；每条知识性
 Claim 都必须保留当前 Nutrition invocation 的 Citation，并完整通过 Style 渲染。
+
+`RESPONSE_REVIEWER_ENABLED=true` 开启候选回复审查，要求同时开启 Style 渲染。
+审查将风格问题返回 Style、无依据专业结论返回 Nutrition、缺少用户信息返回 Orchestrator 询问。
+每个目标最多修复一次，全 Turn 最多两次返回；每次专业修复都重新渲染并审查。
+拒绝、预算耗尽或审查失败会生成保守候选；Shadow 阶段仍交付原 Harness 回复。
+管理台展示审查结果、返回边、版本关系和过去 7 天的拒绝/修复/降级率。
 
 智谱可选配置：
 

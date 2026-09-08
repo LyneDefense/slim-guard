@@ -79,6 +79,7 @@ class ResponseStyleAgent:
         invocation: AgentInvocation,
         context: StyleContext,
         grant: InvocationGrant | None = None,
+        review_feedback: tuple[str, ...] = (),
     ) -> StyleAgentResult:
         """Run at most two calls: the initial JSON response and one repair."""
 
@@ -86,7 +87,11 @@ class ResponseStyleAgent:
         if boundary_failure is not None:
             return self._fallback(context=context, failure_code=boundary_failure)
 
-        request = self._request(invocation=invocation, context=context)
+        request = self._request(
+            invocation=invocation,
+            context=context,
+            review_feedback=review_feedback,
+        )
         responses: list[ModelResponse] = []
         total_tokens = 0
         last_report = StyleValidationReport()
@@ -195,14 +200,31 @@ class ResponseStyleAgent:
             grant=grant,
         )
 
-    def _request(self, *, invocation: AgentInvocation, context: StyleContext) -> ModelRequest:
+    def _request(
+        self,
+        *,
+        invocation: AgentInvocation,
+        context: StyleContext,
+        review_feedback: tuple[str, ...] = (),
+    ) -> ModelRequest:
         system = ModelMessage(
             role=MessageRole.SYSTEM,
             content=RESPONSE_STYLE_PROMPT,
         )
         user = ModelMessage(
             role=MessageRole.USER,
-            content=context.model_dump_json(),
+            content=(
+                context.model_dump_json()
+                if not review_feedback
+                else json.dumps(
+                    {
+                        "style_context": context.model_dump(mode="json"),
+                        "review_feedback_issue_types": list(review_feedback),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            ),
         )
         return ModelRequest(
             purpose=ModelPurpose.RESPONSE_STYLE,

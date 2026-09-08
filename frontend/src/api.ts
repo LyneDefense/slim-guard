@@ -1,4 +1,12 @@
-import type { MemoryRecord, Page, TraceDetail, TraceSummary, UserDetail, UserListItem } from "./types";
+import type {
+  MemoryRecord,
+  Page,
+  TraceDetail,
+  TraceSummary,
+  TraceWorkflowReviewMetrics,
+  UserDetail,
+  UserListItem,
+} from "./types";
 
 export type AdminSession = {
   username: string;
@@ -64,6 +72,10 @@ export const api = {
   trace: (userId: string, traceId: string) =>
     request<TraceDetail>(
       `/users/${encodeURIComponent(userId)}/traces/${encodeURIComponent(traceId)}`,
+    ),
+  workflowMetrics: (windowDays = 7) =>
+    request<TraceWorkflowReviewMetrics>(
+      `/metrics/workflows?window_days=${encodeURIComponent(windowDays)}`,
     ),
   memories: (userId: string) =>
     request<MemoryRecord[]>(`/users/${encodeURIComponent(userId)}/memories`),
