@@ -2,6 +2,7 @@ import type {
   MemoryRecord,
   Page,
   TraceDetail,
+  TraceListFilters,
   TraceSummary,
   TraceWorkflowReviewMetrics,
   UserDetail,
@@ -65,10 +66,15 @@ export const api = {
       `/users?search=${encodeURIComponent(search)}&limit=30&offset=${offset}`,
     ),
   user: (userId: string) => request<UserDetail>(`/users/${encodeURIComponent(userId)}`),
-  traces: (userId: string, offset = 0, generation = "", delivery = "") =>
-    request<Page<TraceSummary>>(
-      `/users/${encodeURIComponent(userId)}/traces?limit=30&offset=${offset}&generation_status=${encodeURIComponent(generation)}&delivery_status=${encodeURIComponent(delivery)}`,
-    ),
+  traces: (userId: string, offset = 0, filters: TraceListFilters = {}) => {
+    const query = new URLSearchParams({ limit: "30", offset: String(offset) });
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value);
+    }
+    return request<Page<TraceSummary>>(
+      `/users/${encodeURIComponent(userId)}/traces?${query.toString()}`,
+    );
+  },
   trace: (userId: string, traceId: string) =>
     request<TraceDetail>(
       `/users/${encodeURIComponent(userId)}/traces/${encodeURIComponent(traceId)}`,

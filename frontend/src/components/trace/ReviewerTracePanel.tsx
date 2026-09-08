@@ -165,7 +165,7 @@ export function ReviewerTracePanel({ workflow }: { workflow: WorkflowTraceView }
           <span className="review-artifact-arrow">→</span>
           <ArtifactColumn
             artifacts={[comparison.finalAdopted]}
-            empty="未记录最终采用 Artifact"
+            empty={workflow.mode === "shadow" ? "Shadow 候选未作为最终输出采用" : "未记录最终采用 Artifact"}
             label="最终采用 Artifact"
           />
         </div>
@@ -439,7 +439,7 @@ function buildComparison(
     summary.repaired_artifact_id,
     ...reviewerInvocations.slice(1).map((invocation) => invocation.input_artifact_ids[0]),
   ]).filter((id) => id !== originalId);
-  const finalId = firstString(
+  const finalId = workflow.mode === "shadow" ? null : firstString(
     finalRef?.artifact_id,
     summary.final_artifact_id,
     latestFinalAdoptedId(workflow),
@@ -452,7 +452,7 @@ function buildComparison(
       workflow.artifacts,
     )),
     finalAdopted: resolveArtifact(finalId, finalRef, workflow.artifacts),
-    changed: booleanValue(comparison.changed)
+    changed: workflow.mode === "shadow" ? null : booleanValue(comparison.changed)
       ?? (originalId && finalId ? originalId !== finalId : null),
   };
 }
@@ -598,7 +598,7 @@ function latestFinalAdoptedId(workflow: WorkflowTraceView): string | null {
   for (const event of [...workflow.timeline].reverse()) {
     if (event.operation !== "response_adopted") continue;
     const details = asRecord(event.details);
-    if (details.final === false) continue;
+    if (details.final !== true) continue;
     const artifactId = stringValue(details.artifact_id);
     if (artifactId) return artifactId;
   }

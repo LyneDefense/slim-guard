@@ -123,7 +123,7 @@ def test_reviewer_summary_normalizes_aliases_and_keeps_comparison_metadata_only(
                 "attempt": 1,
             }
         ],
-        adopted={"artifact_id": "repaired"},
+        adopted={"artifact_id": "repaired", "mode": "on", "final": True},
         degraded_events=[],
     )
 
@@ -153,6 +153,16 @@ def test_reviewer_summary_normalizes_aliases_and_keeps_comparison_metadata_only(
         "private",
     ):
         assert forbidden not in comparison_json
+
+    shadow_summary = AdminQueryRepository._review_summary(
+        artifacts=artifacts,
+        invocations=invocations,
+        transitions=[],
+        adopted={"artifact_id": "repaired", "mode": "shadow", "final": False},
+        degraded_events=[],
+    )
+    assert shadow_summary["comparison"]["final_adopted"] is None
+    assert shadow_summary["comparison"]["changed"] is None
 
 
 def test_budget_denied_repair_is_degraded_but_not_counted_as_executed() -> None:
@@ -206,3 +216,31 @@ def test_budget_denied_repair_is_degraded_but_not_counted_as_executed() -> None:
         "repair_attempts_observed": 0,
         "configured_limits": {"max_upstream_repairs": 1},
     }
+
+
+def test_rag_facet_prefers_explicit_enablement_and_treats_empty_as_unused() -> None:
+    def artifact(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "artifact_type": "nutrition_observations",
+            "payload": AdminQueryRepository._safe_nutrition_observations(payload),
+        }
+
+    assert not AdminQueryRepository._artifact_used_rag(
+        artifact(
+            {
+                "rag_enabled": False,
+                "knowledge": {"corpus_status": "available", "citations": []},
+            }
+        )
+    )
+    assert not AdminQueryRepository._artifact_used_rag(
+        artifact({"knowledge": {"corpus_status": "empty", "citations": []}})
+    )
+    assert AdminQueryRepository._artifact_used_rag(
+        artifact(
+            {
+                "rag_enabled": True,
+                "knowledge": {"corpus_status": "empty", "citations": []},
+            }
+        )
+    )

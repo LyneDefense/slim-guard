@@ -7,6 +7,7 @@ import pytest
 
 from slim_guard.admin.repository import AdminQueryRepository
 from slim_guard.agents.nutrition.tools import (
+    EmptyNutritionKnowledgeRepository,
     NutritionToolRegistry,
     calculate_bmi,
     calculate_weight_trend,
@@ -151,6 +152,8 @@ def test_nutrition_calculations_are_deterministic() -> None:
 @pytest.mark.asyncio
 async def test_nutrition_registry_is_read_only_and_empty_corpus_never_has_articles() -> None:
     registry = NutritionToolRegistry()
+    assert registry.knowledge_configured is False
+    assert NutritionToolRegistry(EmptyNutritionKnowledgeRepository()).knowledge_configured is True
 
     assert all(registry.resolve(name).effect_level == "read" for name in registry.names)
     search = await registry.execute(

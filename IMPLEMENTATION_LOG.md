@@ -449,3 +449,13 @@ curl -i https://enceladus.online/health/ready
 - `agent/composition.py`、`main.py` → 安全装配 → 真正支持 off/shadow/canary/on；Canary 使用内部 user_id 精确名单，采用要求 Harness、Style 和 Reviewer，未发布医生 Profile 仍不可启用。
 - `rollout.py`、`tools/check_workflow_rollout.py`、`MULTI_AGENT_ROLLOUT.md` → 量化放量检查 → 三阶段最小采样、人工配对评分、固定回归证据、失败样本复测、引用/安全/延迟/Token 门槛；报告检查只读，不自动批准、改配置或部署。
 - 验证 → 15 项独立 live 安全测试、3 项异常收尾测试、53 项放量门槛/CLI 测试，以及 Harness/Reviewer/配置相邻回归通过；Ruff 和严格 Mypy（164 个源码文件）通过。管理台 Increment 7 的筛选和运营指标另行收尾；未进行真实用户放量。
+
+### `feat: add workflow operations dashboard and rollout regressions`
+
+- `admin/repository.py`、`api/admin_routes.py` → 运营查询 → 新增 mode、Agent 失败、RAG、实际返回修复、降级和 Graph/Agent/Profile 版本筛选；无工作流筛选保留数据库分页。Canary/on 早期失败从 Invocation 元数据恢复模式，Shadow 候选不冒充 final adopted。
+- 工作流指标 → UTC 窗口内按 Turn 去重，提供端到端 p50/p95、原 Harness + 图节点 Token 总量/分位、节点失败率、最新专业结果的引用覆盖/显式无效引用率，以及分模式执行状态。各指标明确样本和分母，不把运行成功率当成人工质量评分。
+- `frontend/` → 管理台闭环 → 筛选/分页写入 URL、详情往返保持条件；展示模式与版本、全站指标和 Legacy/Multi 执行对比；缺数据/零分母显示未记录，敏感正文不进入审查面板。新增无额外依赖的 `npm test` 持久 SSR 回归。
+- `agents/nutrition/tools.py`、`orchestration/coordinator.py` → RAG 可观测修正 → 区分未配置占位器与已配置但空的语料库，Artifact 冻结 `rag_enabled`，避免关闭 RAG 时误报使用。
+- `tests/unit/test_multi_agent_rollback.py` → 真正数据库回滚回归 → 真实 Runtime/记录工具先在 on 写入、关闭并重开 SQLite 后切 off，确认相同 Thread、记录保留/不重复、新 Turn 走原 Harness 且不创建图调用；模型仍为明确合成脚本，不代替现场演练。
+- 最终验收（2026-09-08）→ 523 项 Pytest、11 项前端 SSR 回归、Ruff 全仓、严格 Mypy（164 个源码文件）、Python compileall、前端 TypeScript 和生产构建全部通过。
+- 交付边界 → 通用运行时与运营工具完成，默认 off；医生专属资产等待需求评审/真实授权语料，真实模型固定集、人评、真实失败样本复测与线上灰度未执行。发布门槛与已知查询规模限制见 `MULTI_AGENT_ROLLOUT.md`。

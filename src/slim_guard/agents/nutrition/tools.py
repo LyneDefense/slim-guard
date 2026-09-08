@@ -363,6 +363,7 @@ class NutritionToolRegistry:
         self,
         knowledge_repository: NutritionKnowledgeRepository | None = None,
     ) -> None:
+        self._knowledge_configured = knowledge_repository is not None
         self._knowledge = knowledge_repository or EmptyNutritionKnowledgeRepository()
         tools = (
             NutritionToolDefinition(
@@ -401,6 +402,11 @@ class NutritionToolRegistry:
         )
         self._ordered = tools
         self._by_name = {tool.name: tool for tool in tools}
+
+    @property
+    def knowledge_configured(self) -> bool:
+        """Distinguish a configured-but-empty corpus from the disabled placeholder."""
+        return self._knowledge_configured
 
     @property
     def names(self) -> tuple[str, ...]:

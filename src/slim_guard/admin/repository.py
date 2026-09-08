@@ -228,7 +228,22 @@ class AdminQueryRepository:
         offset: int,
         generation_status: str | None = None,
         delivery_status: str | None = None,
+        mode: str | None = None,
+        agent_failure: bool | None = None,
+        rag: bool | None = None,
+        repair: bool | None = None,
+        degraded: bool | None = None,
+        graph_version: str | None = None,
+        agent_version: str | None = None,
+        profile_version: str | None = None,
     ) -> dict[str, Any] | None:
+        """List user traces, enriching only one SQL page unless facet filtering is used.
+
+        Facet filters currently require bounded in-process enrichment of that user's
+        matching history before pagination; the unfiltered path retains database
+        count/offset/limit behavior.
+        """
+
         async with self._database.session() as session:
             if await session.get(SlimGuardUser, user_id) is None:
                 return None
@@ -237,28 +252,261 @@ class AdminQueryRepository:
                 filters.append(InteractionTraceRecord.generation_status == generation_status)
             if delivery_status:
                 filters.append(InteractionTraceRecord.delivery_status == delivery_status)
-            total = int(
-                await session.scalar(select(func.count(InteractionTraceRecord.id)).where(*filters))
-                or 0
-            )
-            traces = tuple(
-                await session.scalars(
-                    select(InteractionTraceRecord)
-                    .where(*filters)
-                    .order_by(
-                        InteractionTraceRecord.created_at.desc(),
-                        InteractionTraceRecord.id,
-                    )
-                    .offset(offset)
-                    .limit(limit)
+            facet_filters_active = any(
+                value is not None
+                for value in (
+                    mode,
+                    agent_failure,
+                    rag,
+                    repair,
+                    degraded,
+                    graph_version,
+                    agent_version,
+                    profile_version,
                 )
             )
-            return {
-                "items": [self._trace_summary(trace) for trace in traces],
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-            }
+            unfiltered_total = int(
+                await session.scalar(
+                    select(func.count(InteractionTraceRecord.id)).where(*filters)
+                )
+                or 0
+            )
+            trace_statement = (
+                select(InteractionTraceRecord)
+                .where(*filters)
+                .order_by(
+                    InteractionTraceRecord.created_at.desc(),
+                    InteractionTraceRecord.id,
+                )
+            )
+            if not facet_filters_active:
+                trace_statement = trace_statement.offset(offset).limit(limit)
+            traces = tuple(
+                await session.scalars(trace_statement)
+            )
+            trace_ids = [trace.id for trace in traces]
+            turn_ids = list(
+                dict.fromkeys(
+                    trace.agent_turn_id
+                    for trace in traces
+                    if isinstance(trace.agent_turn_id, str)
+                )
+
+            )
+            invocation_rows = (
+                tuple(
+                    await session.scalars(
+                        select(AgentInvocationRecord)
+                        .where(AgentInvocationRecord.trace_id.in_(trace_ids))
+                        .order_by(
+                            AgentInvocationRecord.started_at,
+                            AgentInvocationRecord.id,
+                        )
+                    )
+                )
+                if trace_ids
+                else ()
+            )
+            artifact_rows = (
+                tuple(
+                    await session.scalars(
+                        select(AgentArtifactRecord)
+                        .where(AgentArtifactRecord.turn_id.in_(turn_ids))
+                        .order_by(
+                            AgentArtifactRecord.created_at,
+                            AgentArtifactRecord.id,
+                        )
+                    )
+                )
+                if turn_ids
+                else ()
+            )
+            item_rows = (
+                tuple(
+                    await session.scalars(
+                        select(AgentItemRecord)
+                        .where(
+                            AgentItemRecord.turn_id.in_(turn_ids),
+                            AgentItemRecord.item_type.in_(
+                                (
+                                    "workflow_transition",
+                                    "response_adopted",
+                                    "response_degraded",
+                                )
+                            ),
+                        )
+                        .order_by(AgentItemRecord.created_at, AgentItemRecord.sequence)
+                    )
+                )
+                if turn_ids
+                else ()
+            )
+
+        invocations_by_trace: dict[str, list[dict[str, Any]]] = {}
+        for invocation_row in invocation_rows:
+            invocation = self._invocation_view(invocation_row, started_event=None)
+            invocations_by_trace.setdefault(invocation_row.trace_id, []).append(invocation)
+        artifacts_by_turn: dict[str, list[dict[str, Any]]] = {}
+        for artifact_row in artifact_rows:
+            artifacts_by_turn.setdefault(artifact_row.turn_id, []).append(
+                self._artifact_view(artifact_row)
+            )
+        events_by_turn: dict[str, list[dict[str, Any]]] = {}
+        for item in item_rows:
+            events_by_turn.setdefault(item.turn_id, []).append(self._item_view(item, None))
+
+        enriched: list[dict[str, Any]] = []
+        for trace in traces:
+            turn_id = trace.agent_turn_id or ""
+            facets = self._trace_workflow_facets(
+                trace=trace,
+                invocations=invocations_by_trace.get(trace.id, []),
+                artifacts=artifacts_by_turn.get(turn_id, []),
+                timeline=events_by_turn.get(turn_id, []),
+            )
+            if not self._matches_trace_facets(
+                facets,
+                mode=mode,
+                agent_failure=agent_failure,
+                rag=rag,
+                repair=repair,
+                degraded=degraded,
+                graph_version=graph_version,
+                agent_version=agent_version,
+                profile_version=profile_version,
+            ):
+                continue
+            enriched.append({**self._trace_summary(trace), **facets})
+
+        return {
+            "items": (
+                enriched[offset : offset + limit]
+                if facet_filters_active
+                else enriched
+            ),
+            "total": len(enriched) if facet_filters_active else unfiltered_total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @classmethod
+    def _trace_workflow_facets(
+        cls,
+        *,
+        trace: InteractionTraceRecord,
+        invocations: list[dict[str, Any]],
+        artifacts: list[dict[str, Any]],
+        timeline: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        adopted_events = cls._workflow_events(timeline, "response_adopted")
+        adopted = adopted_events[-1].get("details") if adopted_events else None
+        raw_mode = adopted.get("mode") if isinstance(adopted, dict) else None
+        invocation_modes = cls._unique_string_field(invocations, "workflow_mode")
+        mode = (
+            raw_mode
+            if isinstance(raw_mode, str)
+            else invocation_modes[0]
+            if invocation_modes
+            else "shadow"
+            if invocations
+            else "off"
+        )
+        if mode == "legacy":
+            mode = "off"
+
+        graph_versions = cls._unique_string_field(invocations, "graph_version")
+        agent_versions = cls._unique_string_field(invocations, "agent_version")
+        profile_versions = cls._unique_string_field(artifacts, "style_profile_version")
+        transition_events = cls._workflow_events(timeline, "workflow_transition")
+        repair = any(
+            isinstance(event.get("details"), dict)
+            and cls._is_review_repair_transition(event["details"])
+            for event in transition_events
+        )
+        degraded = (
+            trace.generation_status == "degraded"
+            or any(invocation.get("status") == "degraded" for invocation in invocations)
+            or bool(cls._workflow_events(timeline, "response_degraded"))
+        )
+        return {
+            "mode": mode,
+            "graph_version": graph_versions[-1] if graph_versions else None,
+            "agent_versions": agent_versions,
+            "profile_versions": profile_versions,
+            "agent_failure": any(
+                invocation.get("status") == "failed" for invocation in invocations
+            ),
+            "rag": any(cls._artifact_used_rag(artifact) for artifact in artifacts),
+            "repair": repair,
+            "degraded": degraded,
+        }
+
+    @staticmethod
+    def _unique_string_field(items: list[dict[str, Any]], field: str) -> list[str]:
+        return list(
+            dict.fromkeys(
+                value
+                for item in items
+                if isinstance((value := item.get(field)), str) and value
+            )
+        )
+
+    @classmethod
+    def _artifact_used_rag(cls, artifact: dict[str, Any]) -> bool:
+        if cls._normalized_artifact_type(str(artifact.get("artifact_type", ""))) not in {
+            "nutritionobservation",
+            "nutritionobservations",
+        }:
+            return False
+        payload = artifact.get("payload")
+        rag_enabled = payload.get("rag_enabled") if isinstance(payload, dict) else None
+        if isinstance(rag_enabled, bool):
+            return rag_enabled
+        knowledge = payload.get("knowledge") if isinstance(payload, dict) else None
+        if not isinstance(knowledge, dict):
+            return False
+        corpus_status = str(knowledge.get("corpus_status", "")).lower()
+        if corpus_status in {"available", "ready"}:
+            return True
+        return any(
+            isinstance(knowledge.get(key), list) and bool(knowledge[key])
+            for key in ("candidates", "citations", "adopted_citations")
+        )
+
+    @staticmethod
+    def _matches_trace_facets(
+        facets: dict[str, Any],
+        *,
+        mode: str | None,
+        agent_failure: bool | None,
+        rag: bool | None,
+        repair: bool | None,
+        degraded: bool | None,
+        graph_version: str | None,
+        agent_version: str | None,
+        profile_version: str | None,
+    ) -> bool:
+        boolean_filters = {
+            "agent_failure": agent_failure,
+            "rag": rag,
+            "repair": repair,
+            "degraded": degraded,
+        }
+        if any(
+            expected is not None and facets.get(key) is not expected
+            for key, expected in boolean_filters.items()
+        ):
+            return False
+        if mode is not None and facets.get("mode") != mode:
+            return False
+        if graph_version is not None and facets.get("graph_version") != graph_version:
+            return False
+        if agent_version is not None and agent_version not in facets.get("agent_versions", []):
+            return False
+        return not (
+            profile_version is not None
+            and profile_version not in facets.get("profile_versions", [])
+        )
 
     async def get_trace(self, *, user_id: str, trace_id: str) -> dict[str, Any] | None:
         async with self._database.session() as session:
@@ -369,8 +617,14 @@ class AdminQueryRepository:
                 timeline=timeline,
                 output=output,
             )
+            trace_facets = self._trace_workflow_facets(
+                trace=trace,
+                invocations=workflow["invocations"],
+                artifacts=workflow["artifacts"],
+                timeline=timeline,
+            )
             return {
-                "trace": self._trace_summary(trace),
+                "trace": {**self._trace_summary(trace), **trace_facets},
                 "turn": (
                     {
                         "id": turn.id,
@@ -641,12 +895,7 @@ class AdminQueryRepository:
                 tuple(
                     await session.scalars(
                         select(AgentArtifactRecord)
-                        .where(
-                            AgentArtifactRecord.turn_id.in_(turn_ids),
-                            func.lower(AgentArtifactRecord.artifact_type).in_(
-                                ("reviewerverdict", "reviewer_verdict", "reviewer-verdict")
-                            ),
-                        )
+                        .where(AgentArtifactRecord.turn_id.in_(turn_ids))
                         .order_by(
                             AgentArtifactRecord.created_at,
                             AgentArtifactRecord.id,
@@ -663,7 +912,12 @@ class AdminQueryRepository:
                         .where(
                             AgentItemRecord.turn_id.in_(turn_ids),
                             AgentItemRecord.item_type.in_(
-                                ("workflow_transition", "response_degraded")
+                                (
+                                    "model_message",
+                                    "workflow_transition",
+                                    "response_adopted",
+                                    "response_degraded",
+                                )
                             ),
                         )
                         .order_by(
@@ -676,11 +930,10 @@ class AdminQueryRepository:
                 else ()
             )
 
-        invocations_by_trace: dict[str, list[dict[str, Any]]] = {}
+        invocations_by_turn: dict[str, list[dict[str, Any]]] = {}
         for invocation_row in invocation_rows:
-            invocations_by_trace.setdefault(invocation_row.trace_id, []).append(
-                self._invocation_view(invocation_row, started_event=None)
-            )
+            invocation = self._invocation_view(invocation_row, started_event=None)
+            invocations_by_turn.setdefault(invocation_row.turn_id, []).append(invocation)
         artifacts_by_turn: dict[str, list[dict[str, Any]]] = {}
         for artifact_row in artifact_rows:
             artifacts_by_turn.setdefault(artifact_row.turn_id, []).append(
@@ -688,7 +941,18 @@ class AdminQueryRepository:
             )
         transitions_by_turn: dict[str, list[dict[str, Any]]] = {}
         degraded_by_turn: dict[str, list[dict[str, Any]]] = {}
+        timeline_by_turn: dict[str, list[dict[str, Any]]] = {}
+        legacy_tokens_by_turn: dict[str, int] = {}
         for item_row in item_rows:
+            if item_row.item_type == "model_message":
+                legacy_tokens_by_turn[item_row.turn_id] = (
+                    legacy_tokens_by_turn.get(item_row.turn_id, 0)
+                    + self._model_message_token_count(item_row)
+                )
+                continue
+            timeline_by_turn.setdefault(item_row.turn_id, []).append(
+                self._item_view(item_row, None)
+            )
             details = self._admin_safe(self._json_load(item_row.payload_json))
             if not isinstance(details, dict):
                 continue
@@ -707,18 +971,47 @@ class AdminQueryRepository:
                     {"details": details}
                 )
 
-        summaries: list[dict[str, Any]] = []
+        workflows: list[dict[str, Any]] = []
+        seen_turn_ids: set[str] = set()
         for trace in traces:
-            turn_id = trace.agent_turn_id or ""
-            summary = self._review_summary(
+            turn_id = trace.agent_turn_id
+            if not isinstance(turn_id, str) or turn_id in seen_turn_ids:
+                continue
+            invocations = invocations_by_turn.get(turn_id, [])
+            if not invocations:
+                continue
+            seen_turn_ids.add(turn_id)
+            artifacts = artifacts_by_turn.get(turn_id, [])
+            review = self._review_summary(
                 artifacts=artifacts_by_turn.get(turn_id, []),
-                invocations=invocations_by_trace.get(trace.id, []),
+                invocations=invocations,
                 transitions=transitions_by_turn.get(turn_id, []),
                 adopted={},
                 degraded_events=degraded_by_turn.get(turn_id, []),
             )
-            if summary["reviewer_invocation_count"] or summary["verdict_count"]:
-                summaries.append(summary)
+            workflows.append(
+                {
+                    "turn_id": turn_id,
+                    "trace": trace,
+                    "invocations": invocations,
+                    "artifacts": artifacts,
+                    "review": review,
+                    "evidence": self._evidence_summary(artifacts),
+                    "facets": self._trace_workflow_facets(
+                        trace=trace,
+                        invocations=invocations,
+                        artifacts=artifacts,
+                        timeline=timeline_by_turn.get(turn_id, []),
+                    ),
+                }
+            )
+
+        summaries = [
+            workflow["review"]
+            for workflow in workflows
+            if workflow["review"]["reviewer_invocation_count"]
+            or workflow["review"]["verdict_count"]
+        ]
 
         reviewed_workflow_count = len(summaries)
         rejected_workflow_count = sum(bool(item["rejected"]) for item in summaries)
@@ -734,6 +1027,69 @@ class AdminQueryRepository:
             return numerator / denominator if denominator else 0.0
 
         target_names = ("orchestrator", "nutrition_expert", "response_style", "unknown")
+        latency_values = [
+            duration
+            for workflow in workflows
+            if isinstance(
+                (duration := self._trace_summary(workflow["trace"])["duration_ms"]),
+                int,
+            )
+        ]
+        token_values = [
+            (
+                legacy_tokens_by_turn.get(str(workflow["turn_id"]), 0)
+                + sum(
+                    int(invocation.get("total_token_count") or 0)
+                    for invocation in workflow["invocations"]
+                )
+            )
+            for workflow in workflows
+        ]
+        node_counts: dict[str, dict[str, int]] = {}
+        for workflow in workflows:
+            for invocation in workflow["invocations"]:
+                role = str(invocation.get("agent_role") or "unknown")
+                counts = node_counts.setdefault(role, {"failed": 0, "total": 0})
+                counts["total"] += 1
+                if invocation.get("status") == "failed":
+                    counts["failed"] += 1
+        node_failure_rates = {
+            role: {
+                **counts,
+                "rate": rate(counts["failed"], counts["total"]),
+            }
+            for role, counts in sorted(node_counts.items())
+        }
+        citation_metrics = self._citation_metrics(
+            [workflow["evidence"] for workflow in workflows]
+        )
+        outcomes_by_mode: dict[str, dict[str, int]] = {}
+        workflow_by_turn_id = {
+            str(workflow["turn_id"]): workflow for workflow in workflows
+        }
+        outcome_keys: set[str] = set()
+        for trace in traces:
+            turn_id = trace.agent_turn_id
+            outcome_key = f"turn:{turn_id}" if isinstance(turn_id, str) else f"trace:{trace.id}"
+            if outcome_key in outcome_keys:
+                continue
+            outcome_keys.add(outcome_key)
+            selected_workflow = (
+                workflow_by_turn_id.get(turn_id) if isinstance(turn_id, str) else None
+            )
+            mode_name = (
+                str(selected_workflow["facets"]["mode"])
+                if selected_workflow is not None
+                else "off"
+            )
+            outcomes = outcomes_by_mode.setdefault(
+                mode_name,
+                {"total": 0, "succeeded": 0, "degraded": 0, "failed": 0},
+            )
+            outcomes["total"] += 1
+            status_name = trace.generation_status
+            if status_name in {"succeeded", "degraded", "failed"}:
+                outcomes[status_name] += 1
         return {
             "window": {
                 "days": window_days,
@@ -743,7 +1099,7 @@ class AdminQueryRepository:
             },
             "counts": {
                 "trace_count": len(traces),
-                "workflow_count": sum(trace.agent_turn_id is not None for trace in traces),
+                "workflow_count": len(workflows),
                 "reviewed_workflow_count": reviewed_workflow_count,
                 "reviewer_invocation_count": sum(
                     int(item["reviewer_invocation_count"]) for item in summaries
@@ -778,7 +1134,121 @@ class AdminQueryRepository:
                 )
                 for target in target_names
             },
+            "latency_ms": {
+                "sample_count": len(latency_values),
+                "p50": self._percentile(latency_values, 50),
+                "p95": self._percentile(latency_values, 95),
+            },
+            "tokens": {
+                "workflow_count": len(token_values),
+                "total": sum(token_values),
+                "p50": self._percentile(token_values, 50),
+                "p95": self._percentile(token_values, 95),
+            },
+            "node_failure_rates": node_failure_rates,
+            "citations": citation_metrics,
+            "outcomes_by_mode": outcomes_by_mode,
         }
+
+    @classmethod
+    def _model_message_token_count(cls, item: AgentItemRecord) -> int:
+        payload = cls._json_load(item.payload_json)
+        usage = payload.get("usage") if isinstance(payload, dict) else None
+        total = usage.get("total_tokens") if isinstance(usage, dict) else None
+        return total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else 0
+
+    @staticmethod
+    def _percentile(values: list[int], percentile: int) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        position = (len(ordered) - 1) * percentile / 100
+        lower_index = int(position)
+        upper_index = min(lower_index + 1, len(ordered) - 1)
+        fraction = position - lower_index
+        return float(
+            ordered[lower_index]
+            + (ordered[upper_index] - ordered[lower_index]) * fraction
+        )
+
+    @classmethod
+    def _citation_metrics(
+        cls,
+        evidence_summaries: list[dict[str, Any]],
+    ) -> dict[str, int | float]:
+        knowledge_claim_count = 0
+        covered_claim_count = 0
+        citation_count = 0
+        invalid_citation_count = 0
+        for evidence in evidence_summaries:
+            citations = evidence.get("adopted_citations")
+            citations = citations if isinstance(citations, list) else []
+            unresolved = cls._safe_string_values(
+                evidence.get("unresolved_knowledge_refs")
+            )
+            citation_count += len(citations) + len(unresolved)
+            valid_refs: set[str] = set()
+            for citation in citations:
+                if not isinstance(citation, dict):
+                    invalid_citation_count += 1
+                    continue
+                invalid = cls._citation_is_explicitly_invalid(citation)
+                if invalid:
+                    invalid_citation_count += 1
+                    continue
+                valid_refs.update(
+                    value
+                    for value in (
+                        citation.get("citation_id"),
+                        citation.get("source_id"),
+                        citation.get("chunk_id"),
+                    )
+                    if isinstance(value, str)
+                )
+            invalid_citation_count += len(unresolved)
+
+            claims = evidence.get("claims")
+            claims = claims if isinstance(claims, list) else []
+            for claim in claims:
+                if not isinstance(claim, dict):
+                    continue
+                knowledge_refs = cls._safe_string_values(claim.get("knowledge_refs"))
+                basis_types = {
+                    value.lower()
+                    for value in cls._safe_string_values(claim.get("basis_types"))
+                }
+                if not knowledge_refs and "rag_evidence" not in basis_types:
+                    continue
+                knowledge_claim_count += 1
+                if any(reference in valid_refs for reference in knowledge_refs):
+                    covered_claim_count += 1
+
+        return {
+            "knowledge_claim_count": knowledge_claim_count,
+            "covered_claim_count": covered_claim_count,
+            "citation_count": citation_count,
+            "invalid_citation_count": invalid_citation_count,
+            "coverage_rate": (
+                covered_claim_count / knowledge_claim_count
+                if knowledge_claim_count
+                else 0.0
+            ),
+            "invalid_rate": (
+                invalid_citation_count / citation_count if citation_count else 0.0
+            ),
+        }
+
+    @staticmethod
+    def _citation_is_explicitly_invalid(citation: dict[str, Any]) -> bool:
+        review_status = citation.get("review_status")
+        publication_status = citation.get("publication_status")
+        return (
+            isinstance(review_status, str)
+            and review_status.lower() != "approved"
+            or isinstance(publication_status, str)
+            and publication_status.lower() in {"rejected", "retired"}
+            or citation.get("active") is False
+        )
 
     async def audit(
         self,
@@ -894,7 +1364,16 @@ class AdminQueryRepository:
         degraded_events = cls._workflow_events(timeline, "response_degraded")
         adopted = adopted_events[-1]["details"] if adopted_events else {}
         mode_value = adopted.get("mode") if isinstance(adopted, dict) else None
-        mode = mode_value if isinstance(mode_value, str) else "shadow" if invocations else "legacy"
+        invocation_modes = cls._unique_string_field(invocations, "workflow_mode")
+        mode = (
+            mode_value
+            if isinstance(mode_value, str)
+            else invocation_modes[0]
+            if invocation_modes
+            else "shadow"
+            if invocations
+            else "legacy"
+        )
         degraded = bool(degraded_events) or any(
             item["status"] == "degraded" for item in invocations
         )
@@ -916,13 +1395,7 @@ class AdminQueryRepository:
             (row.graph_version for row in invocation_rows if row.graph_version),
             "legacy",
         )
-        repair_count = sum(
-            1
-            for transition in transitions
-            if "repair" in str(transition["transition_type"]).lower()
-            or "return" in str(transition["transition_type"]).lower()
-            or "repair" in str(transition["reason_code"]).lower()
-        )
+        repair_count = sum(cls._is_review_repair_transition(item) for item in transitions)
         style = cls._style_summary(
             artifacts=artifacts,
             transitions=transitions,
@@ -1004,8 +1477,17 @@ class AdminQueryRepository:
         reason_summary = None
         if started_event is not None and isinstance(started_event.get("details"), dict):
             reason_summary = started_event["details"].get("reason_summary")
+        input_payload = cls._json_load(row.input_payload_json)
+        workflow_mode = input_payload.get("mode") if isinstance(input_payload, dict) else None
+        workflow_mode = (
+            workflow_mode
+            if workflow_mode in {"off", "shadow", "canary", "on"}
+            else None
+        )
         return {
             "invocation_id": row.id,
+            "graph_version": row.graph_version,
+            "workflow_mode": workflow_mode,
             "agent_role": row.agent_role,
             "agent_version": row.agent_version,
             "attempt": row.attempt,
@@ -1040,6 +1522,8 @@ class AdminQueryRepository:
         completed_at = cls._parse_datetime(result.get("completed_at"))
         return {
             "invocation_id": started.get("invocation_id"),
+            "graph_version": started.get("graph_version"),
+            "workflow_mode": None,
             "agent_role": started.get("agent_role"),
             "agent_version": started.get("agent_version"),
             "attempt": started.get("attempt"),
@@ -1369,6 +1853,11 @@ class AdminQueryRepository:
         knowledge = payload.get("knowledge", payload.get("knowledge_status"))
         return {
             "schema_version": payload.get("schema_version"),
+            "rag_enabled": (
+                payload.get("rag_enabled")
+                if isinstance(payload.get("rag_enabled"), bool)
+                else None
+            ),
             "evidence": [
                 cls._safe_evidence_item(item) for item in raw_evidence if isinstance(item, dict)
             ]
@@ -1915,7 +2404,7 @@ class AdminQueryRepository:
                     != "reviewerverdict"
                 ):
                     repaired_ids.append(artifact_id)
-        adopted_id = adopted.get("artifact_id")
+        adopted_id = adopted.get("artifact_id") if adopted.get("final") is True else None
         adopted_id = adopted_id if isinstance(adopted_id, str) else None
         comparison = {
             "original": cls._review_artifact_ref(

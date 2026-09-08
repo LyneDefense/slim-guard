@@ -106,6 +106,23 @@ button:disabled { cursor: default; }
 .filters label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
 .filters select { padding: 8px 28px 8px 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: white; }
 .trace-list { display: grid; gap: 10px; }
+.trace-filter-form { margin-bottom: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.trace-filters { flex-wrap: wrap; margin: 0; }
+.trace-filters + .trace-filters { margin-top: 12px; }
+.trace-filters input { min-width: 120px; max-width: 180px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: white; }
+.trace-filters button { padding: 8px 12px; }
+.trace-workflow-flags, .trace-version-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.trace-workflow-flags span { padding: 3px 6px; border-radius: 5px; background: #edf4ef; color: #375747; font-size: 10px; }
+.trace-version-tags code { max-width: 100%; overflow-wrap: anywhere; font-size: 10px; }
+.workflow-metrics { margin: 22px 0 28px; }
+.workflow-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.workflow-metric-grid .metric strong { font-size: 22px; }
+.workflow-metric-note { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.workflow-metric-table { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+.workflow-metric-table table { width: 100%; border-collapse: collapse; background: white; text-align: left; font-size: 12px; }
+.workflow-metric-table th, .workflow-metric-table td { padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.workflow-metric-table thead { background: #f2f6f3; color: var(--muted); }
+.workflow-metric-table tr:last-child td, .workflow-metric-table tr:last-child th { border-bottom: 0; }
 .trace-row { display: grid; grid-template-columns: auto minmax(180px,1fr) auto auto; align-items: center; gap: 15px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: white; }
 .trace-row:hover { border-color: #aac4b5; }
 .trace-icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; font-weight: 900; }

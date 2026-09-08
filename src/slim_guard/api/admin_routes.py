@@ -199,6 +199,14 @@ async def list_user_traces(
     offset: int = Query(default=0, ge=0),
     generation_status: str | None = Query(default=None, max_length=32),
     delivery_status: str | None = Query(default=None, max_length=32),
+    mode: str | None = Query(default=None, max_length=32),
+    agent_failure: bool | None = Query(default=None),
+    rag: bool | None = Query(default=None),
+    repair: bool | None = Query(default=None),
+    degraded: bool | None = Query(default=None),
+    graph_version: str | None = Query(default=None, max_length=128),
+    agent_version: str | None = Query(default=None, max_length=128),
+    profile_version: str | None = Query(default=None, max_length=128),
 ) -> dict[str, Any]:
     del principal
     result = await _repository(request).list_traces(
@@ -207,6 +215,14 @@ async def list_user_traces(
         offset=offset,
         generation_status=generation_status,
         delivery_status=delivery_status,
+        mode=mode,
+        agent_failure=agent_failure,
+        rag=rag,
+        repair=repair,
+        degraded=degraded,
+        graph_version=graph_version,
+        agent_version=agent_version,
+        profile_version=profile_version,
     )
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

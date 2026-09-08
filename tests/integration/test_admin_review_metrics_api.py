@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from httpx import ASGITransport, AsyncClient
 
@@ -44,6 +44,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
         turn_id: str,
         attempt: int,
         output_artifact_id: str,
+        total_token_count: int,
     ) -> AgentInvocationRecord:
         return AgentInvocationRecord(
             id=invocation_id,
@@ -68,6 +69,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
             output_schema_version="1",
             output_artifact_id=output_artifact_id,
             tool_receipt_ids_json="[]",
+            total_token_count=total_token_count,
             started_at=now,
             completed_at=now,
         )
@@ -118,7 +120,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
                     last_active_at=now,
                 )
             )
-            for suffix in ("repair", "reject"):
+            for suffix in ("repair", "reject", "legacy"):
                 session.add(
                     AgentTurnRecord(
                         id=f"turn-{suffix}",
@@ -145,6 +147,20 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
                         completed_at=now,
                     )
                 )
+            session.add(
+                InteractionTraceRecord(
+                    id="trace-repair-duplicate",
+                    user_id="user-review-metrics",
+                    trigger_type="user_message",
+                    agent_turn_id="turn-repair",
+                    agent_version_id="review-version",
+                    reply_kind="agent",
+                    generation_status="succeeded",
+                    delivery_status="accepted",
+                    created_at=now,
+                    completed_at=now,
+                )
+            )
 
             repair_payload: dict[str, object] = {
                 "verdict": "repair",
@@ -173,6 +189,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
                         turn_id="turn-repair",
                         attempt=1,
                         output_artifact_id="verdict-repair",
+                        total_token_count=10,
                     ),
                     invocation(
                         "review-repair-2",
@@ -180,6 +197,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
                         turn_id="turn-repair",
                         attempt=2,
                         output_artifact_id="verdict-pass",
+                        total_token_count=20,
                     ),
                     invocation(
                         "review-reject-1",
@@ -187,6 +205,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
                         turn_id="turn-reject",
                         attempt=1,
                         output_artifact_id="verdict-reject",
+                        total_token_count=30,
                     ),
                     artifact(
                         "verdict-repair",
@@ -245,6 +264,95 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
                         ),
                         created_at=now,
                     ),
+                    AgentItemRecord(
+                        id="legacy-model-repair",
+                        thread_id="review-thread",
+                        turn_id="turn-repair",
+                        sequence=2,
+                        item_type="model_message",
+                        status="completed",
+                        payload_json=json.dumps(
+                            {
+                                "content": "must remain private",
+                                "usage": {"total_tokens": 7},
+                            }
+                        ),
+                        created_at=now,
+                    ),
+                    AgentItemRecord(
+                        id="legacy-model-reject",
+                        thread_id="review-thread",
+                        turn_id="turn-reject",
+                        sequence=2,
+                        item_type="model_message",
+                        status="completed",
+                        payload_json=json.dumps(
+                            {
+                                "content": "must remain private",
+                                "usage": {"total_tokens": 11},
+                            }
+                        ),
+                        created_at=now,
+                    ),
+                )
+            )
+            old_assessment: dict[str, object] = {
+                "findings": [
+                    {
+                        "claim_id": "old-claim",
+                        "basis_types": ["rag_evidence"],
+                        "knowledge_refs": ["missing-old-ref"],
+                    }
+                ],
+                "citations": [],
+            }
+            latest_assessment: dict[str, object] = {
+                "findings": [
+                    {
+                        "claim_id": "latest-claim",
+                        "basis_types": ["rag_evidence"],
+                        "knowledge_refs": ["citation-current"],
+                    }
+                ],
+                "citations": [
+                    {
+                        "citation_id": "citation-current",
+                        "review_status": "approved",
+                        "publication_status": "published",
+                        "active": True,
+                    },
+                    {
+                        "citation_id": "citation-retired",
+                        "review_status": "approved",
+                        "publication_status": "retired",
+                        "active": False,
+                    },
+                ],
+            }
+            session.add_all(
+                (
+                    AgentArtifactRecord(
+                        id="assessment-old",
+                        turn_id="turn-repair",
+                        producer_role="nutrition_expert",
+                        artifact_type="professional_assessment",
+                        schema_version="1",
+                        parent_artifact_ids_json="[]",
+                        payload_sha256=payload_sha256(old_assessment),
+                        payload_json=json.dumps(old_assessment),
+                        created_at=now,
+                    ),
+                    AgentArtifactRecord(
+                        id="assessment-latest",
+                        turn_id="turn-repair",
+                        producer_role="nutrition_expert",
+                        artifact_type="professional_assessment",
+                        schema_version="1",
+                        parent_artifact_ids_json='["assessment-old"]',
+                        payload_sha256=payload_sha256(latest_assessment),
+                        payload_json=json.dumps(latest_assessment),
+                        created_at=now + timedelta(microseconds=1),
+                    ),
                 )
             )
 
@@ -268,7 +376,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
     payload = metrics.json()
     assert payload["window"]["days"] == 7
     assert payload["counts"] == {
-        "trace_count": 2,
+        "trace_count": 4,
         "workflow_count": 2,
         "reviewed_workflow_count": 2,
         "reviewer_invocation_count": 3,
@@ -294,5 +402,27 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
         "nutrition_expert": 0,
         "response_style": 1,
         "unknown": 0,
+    }
+    assert payload["latency_ms"] == {"sample_count": 2, "p50": 0.0, "p95": 0.0}
+    assert payload["tokens"] == {
+        "workflow_count": 2,
+        "total": 78,
+        "p50": 39.0,
+        "p95": 40.8,
+    }
+    assert payload["node_failure_rates"] == {
+        "response_reviewer": {"failed": 0, "total": 3, "rate": 0.0}
+    }
+    assert payload["citations"] == {
+        "knowledge_claim_count": 1,
+        "covered_claim_count": 1,
+        "citation_count": 2,
+        "invalid_citation_count": 1,
+        "coverage_rate": 1.0,
+        "invalid_rate": 0.5,
+    }
+    assert payload["outcomes_by_mode"] == {
+        "off": {"total": 1, "succeeded": 1, "degraded": 0, "failed": 0},
+        "shadow": {"total": 2, "succeeded": 1, "degraded": 1, "failed": 0},
     }
     assert "must remain private" not in metrics.text

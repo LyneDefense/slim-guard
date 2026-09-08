@@ -499,6 +499,7 @@ class AgentWorkflowCoordinator:
                     payload={
                         "observations": [item.model_dump(mode="json") for item in observations],
                         "knowledge": knowledge.model_dump(mode="json"),
+                        "rag_enabled": self._nutrition_tools.knowledge_configured,
                         "tool_receipts": tool_receipts,
                     },
                     created_at=self._aware_now(),
@@ -1828,6 +1829,7 @@ class AgentWorkflowCoordinator:
             payload={
                 "observations": [item.model_dump(mode="json") for item in observations],
                 "knowledge": knowledge.model_dump(mode="json"),
+                "rag_enabled": self._nutrition_tools.knowledge_configured,
                 "tool_receipts": receipts,
             },
         )

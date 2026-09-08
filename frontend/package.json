@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "check": "tsc -b"
+    "check": "tsc -b",
+    "test": "node --test tests/trace-regression.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",

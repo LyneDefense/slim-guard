@@ -269,7 +269,8 @@ Shadow 页面并排显示现有线上结果和新工作流候选结果，并明�
 Increment 2 和 Increment 3 已于 2026-09-06 完成，Increment 4 已于 2026-09-07 完成，
 Increment 5 已于 2026-09-08 完成；
 Increment 6 的通用离线语料准备工具已完成，医生专属资产仍按本计划等待风格需求评审；
-Increment 7 实施中。
+Increment 7 的 Canary/on 运行时、运营指标、筛选和只读放量检查已实现；
+真实模型固定集、人评、真实失败样本复测及线上放量尚未执行，默认保持 off。
 
 ### Increment 0：设计冻结、契约和 Trace 规范
 

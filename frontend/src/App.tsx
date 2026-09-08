@@ -8,8 +8,10 @@ import {
   Route,
   Routes,
   useNavigate,
+  useLocation,
   useOutletContext,
   useParams,
+  useSearchParams,
 } from "react-router-dom";
 
 import { api, UnauthorizedError } from "./api";
@@ -18,7 +20,9 @@ import { EvidencePanel } from "./components/trace/EvidencePanel";
 import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
 import { ShadowComparison } from "./components/trace/ShadowComparison";
 import { StyleTracePanel } from "./components/trace/StyleTracePanel";
+import { TraceFilters, traceFiltersFromParams } from "./components/trace/TraceFilters";
 import { WorkflowGraph } from "./components/trace/WorkflowGraph";
+import { WorkflowMetrics } from "./components/trace/WorkflowMetrics";
 import {
   AGENT_ROLE_LABELS,
   buildWorkflowTrace,
@@ -273,10 +277,17 @@ function useUser(): UserDetail {
 
 function TraceList() {
   const user = useUser();
-  const [offset, setOffset] = useState(0);
-  const [generation, setGeneration] = useState("");
-  const [delivery, setDelivery] = useState("");
-  const query = useQuery({ queryKey: ["traces", user.id, offset, generation, delivery], queryFn: () => api.traces(user.id, offset, generation, delivery), refetchInterval: 5_000 });
+  const [params, setParams] = useSearchParams();
+  const rawOffset = Number(params.get("offset") ?? 0);
+  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+  const filters = traceFiltersFromParams(params);
+  const setOffset = (value: number) => {
+    const next = new URLSearchParams(params);
+    if (value > 0) next.set("offset", String(value));
+    else next.delete("offset");
+    setParams(next);
+  };
+  const query = useQuery({ queryKey: ["traces", user.id, offset, filters], queryFn: () => api.traces(user.id, offset, filters), refetchInterval: 5_000 });
   return (
     <section>
       <div className="metric-grid">
@@ -304,16 +315,14 @@ function TraceList() {
           )}
         </div>
       )}
-      <div className="section-heading"><div><h2>输出链路</h2><p>每条回复的生成状态和投递状态分开呈现。</p></div></div>
-      <div className="filters">
-        <label>生成状态<select value={generation} onChange={(event) => { setGeneration(event.target.value); setOffset(0); }}><option value="">全部</option><option value="succeeded">成功</option><option value="waiting">等待确认</option><option value="degraded">降级</option><option value="failed">失败</option><option value="unknown">未知</option><option value="skipped">跳过</option></select></label>
-        <label>投递状态<select value={delivery} onChange={(event) => { setDelivery(event.target.value); setOffset(0); }}><option value="">全部</option><option value="accepted">已送达</option><option value="sending">发送中</option><option value="pending_review">待审核</option><option value="failed">失败</option><option value="unknown">未知</option><option value="deferred_external_session">人工会话中</option><option value="skipped">跳过</option></select></label>
-      </div>
+      <WorkflowMetrics />
+      <div className="section-heading"><div><h2>输出链路</h2><p>按运行模式、执行结果与版本定位回归；筛选条件保存在链接中。</p></div></div>
+      <TraceFilters params={params} onApply={setParams} />
       {query.isLoading && <Loading />}
       {query.error && <Failure error={query.error} />}
-      {query.data && <div className="trace-list">{query.data.items.map((trace) => <TraceRow key={trace.id} trace={trace} userId={user.id} />)}</div>}
-      {query.data && query.data.items.length === 0 && <div className="state-card">这个用户还没有可查看的 Trace</div>}
-      {query.data && <div className="pager"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 30))}>上一页</button><span>{offset + 1}–{Math.min(offset + 30, query.data.total)} / {query.data.total}</span><button disabled={offset + 30 >= query.data.total} onClick={() => setOffset(offset + 30)}>下一页</button></div>}
+      {query.data && <div className="trace-list">{query.data.items.map((trace) => <TraceRow key={trace.id} trace={trace} userId={user.id} listSearch={params.toString()} />)}</div>}
+      {query.data && query.data.items.length === 0 && <div className="state-card">没有符合当前筛选条件的 Trace</div>}
+      {query.data && <div className="pager"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 30))}>上一页</button><span>{query.data.items.length > 0 ? offset + 1 : 0}–{query.data.items.length > 0 ? Math.min(offset + query.data.items.length, query.data.total) : 0} / {query.data.total}</span><button disabled={offset + 30 >= query.data.total} onClick={() => setOffset(offset + 30)}>下一页</button></div>}
     </section>
   );
 }
@@ -322,11 +331,28 @@ function Metric({ label, value }: { label: string; value: number }) {
   return <div className="metric"><strong>{value}</strong><span>{label}</span></div>;
 }
 
-function TraceRow({ trace, userId }: { trace: TraceSummary; userId: string }) {
+function TraceRow({ trace, userId, listSearch }: { trace: TraceSummary; userId: string; listSearch: string }) {
   return (
-    <Link className="trace-row" to={`/users/${userId}/traces/${trace.id}`}>
+    <Link className="trace-row" to={`/users/${userId}/traces/${trace.id}${listSearch ? `?${listSearch}` : ""}`}>
       <div className={`trace-icon ${trace.generation_status === "succeeded" ? "ok" : "attention"}`}>{trace.generation_status === "succeeded" ? "✓" : "!"}</div>
-      <div className="trace-primary"><div><strong>{TRIGGER_LABELS[trace.trigger_type] ?? trace.trigger_type}</strong><code>{trace.id.slice(0, 8)}</code></div><span>{formatDate(trace.created_at)} · {formatDuration(trace.duration_ms)}</span></div>
+      <div className="trace-primary">
+        <div><strong>{TRIGGER_LABELS[trace.trigger_type] ?? trace.trigger_type}</strong><code>{trace.id.slice(0, 8)}</code></div>
+        <span>{formatDate(trace.created_at)} · {formatDuration(trace.duration_ms)}</span>
+        <div className="trace-workflow-flags">
+          <span>{trace.mode?.toUpperCase() ?? "模式未记录"}</span>
+          {trace.agent_failure && <span>Agent 失败</span>}
+          {trace.rag && <span>RAG</span>}
+          {trace.repair && <span>返回修复</span>}
+          {trace.degraded && <span>工作流降级</span>}
+        </div>
+        {(trace.graph_version || trace.agent_versions?.length || trace.profile_versions?.length) ? (
+          <div className="trace-version-tags">
+            {trace.graph_version && <code>Graph · {trace.graph_version}</code>}
+            {trace.agent_versions?.map((version) => <code key={version}>Agent · {version}</code>)}
+            {trace.profile_versions?.map((version) => <code key={version}>Profile · {version}</code>)}
+          </div>
+        ) : null}
+      </div>
       <div className="trace-statuses"><label>生成 <StatusBadge value={trace.generation_status} /></label><label>投递 <StatusBadge value={trace.delivery_status} /></label></div>
       <span className="arrow">→</span>
     </Link>
@@ -335,6 +361,7 @@ function TraceRow({ trace, userId }: { trace: TraceSummary; userId: string }) {
 
 function TracePage() {
   const user = useUser();
+  const listSearch = useLocation().search;
   const { traceId = "" } = useParams();
   const query = useQuery({ queryKey: ["trace", user.id, traceId], queryFn: () => api.trace(user.id, traceId), refetchInterval: 5_000 });
   if (query.isLoading) return <Loading label="正在重建输出链路" />;
@@ -343,7 +370,7 @@ function TracePage() {
   const workflow = buildWorkflowTrace(data);
   return (
     <section>
-      <Link to={`/users/${user.id}`} className="back-link">← 返回该用户的链路</Link>
+      <Link to={`/users/${user.id}${listSearch}`} className="back-link">← 返回该用户的链路</Link>
       <div className="trace-heading">
         <div><p className="eyebrow">TRACE · {data.trace.id}</p><h2>{TRIGGER_LABELS[data.trace.trigger_type] ?? data.trace.trigger_type}</h2><p>{formatDate(data.trace.created_at)} · 总耗时 {formatDuration(data.trace.duration_ms)}</p></div>
         <div className="trace-statuses"><label>生成 <StatusBadge value={data.trace.generation_status} /></label><label>投递 <StatusBadge value={data.trace.delivery_status} /></label></div>

@@ -59,6 +59,27 @@ export interface TraceSummary {
   created_at: string;
   completed_at: string | null;
   duration_ms: number | null;
+  mode?: string | null;
+  agent_failure?: boolean | null;
+  rag?: boolean | null;
+  repair?: boolean | null;
+  degraded?: boolean | null;
+  graph_version?: string | null;
+  agent_versions?: string[];
+  profile_versions?: string[];
+}
+
+export interface TraceListFilters {
+  generation_status?: string;
+  delivery_status?: string;
+  mode?: string;
+  agent_failure?: string;
+  rag?: string;
+  repair?: string;
+  degraded?: string;
+  graph_version?: string;
+  agent_version?: string;
+  profile_version?: string;
 }
 
 export type AgentRole =
@@ -244,6 +265,27 @@ export interface TraceWorkflowReviewMetrics {
   rates?: Record<string, number> | null;
   denominators?: Record<string, number> | null;
   by_repair_target?: Record<string, number> | null;
+  latency_ms?: { sample_count?: number | null; p50?: number | null; p95?: number | null } | null;
+  tokens?: { workflow_count?: number | null; total?: number | null; p50?: number | null; p95?: number | null } | null;
+  node_failure_rates?: Record<string, {
+    failed?: number | null;
+    total?: number | null;
+    rate?: number | null;
+  }> | null;
+  outcomes_by_mode?: Record<string, {
+    total?: number | null;
+    succeeded?: number | null;
+    degraded?: number | null;
+    failed?: number | null;
+  }> | null;
+  citations?: {
+    coverage_rate?: number | null;
+    invalid_rate?: number | null;
+    covered_claim_count?: number | null;
+    knowledge_claim_count?: number | null;
+    invalid_citation_count?: number | null;
+    citation_count?: number | null;
+  } | null;
 }
 
 export interface TraceAgentInvocation {
