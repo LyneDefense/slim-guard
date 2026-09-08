@@ -29,6 +29,14 @@
 - `data/style-assets/doctor_strict_v2/feedback-review.v1.json`：六类批注到修订例句及来源 review ID 的本地审计记录。
 - `data/style-assets/doctor_strict_v2/bundle.v1.json`：从 append-only 反馈修订记录构建的 v2 draft bundle。
 - `data/style-assets/doctor_strict_v2/comparison.v3.json`：带逐条结构化场景的 v2 最终人工复审输入。
+- `style_assets/doctor_strict_v3/profile.feedback-derived.json`：根据 v2 的 7 条接受、5 条拒绝归纳的
+  v3 候选规则；不是发布批准。
+- `data/style-assets/doctor_strict_v3/iteration-input.v1.json`：冻结 v2 最新实名评分、场景、输出和来源
+  Hash 的 v3 修订输入；当前没有额外风格纠正记录。
+- `data/style-assets/doctor_strict_v3/evaluation-cases.v1.json`：修正抽象 ResponsePlan，并覆盖餐次歧义的
+  12 条 v3 合成回归场景。
+- `data/style-assets/doctor_strict_v3/bundle.v1.json`：包含八条候选表达的 v3 draft bundle。
+- `data/style-assets/doctor_strict_v3/comparison.v4.json`：v3 唯一可用于人评的最终真实模型 A/B 报告。
 
 `data/` 已忽略，输出文件权限为 0600，不覆盖已有文件。初版 `prepared.json` 已被
 `prepared.v2.json` 取代，保留便于核对，后续不要导入初版。
@@ -77,6 +85,14 @@
 12/12 通过，并已导入目标 PostgreSQL：`doctor_strict_v2` 共 12 条，用户已完成第二轮实名评分，
 最新结论为接受 7、拒绝 5。它仍未通过整套人工门槛，未发布、未灰度、未启用；拒绝项与后续真实测试
 纠正只作为 v3 的输入，不会改写 v2 历史。
+
+`doctor_strict_v3` 已冻结 v2 全部 12 条最新实名评分作为来源，source SHA-256 为
+`a41908da08e004371d926e8f6f13efd57476ef3024bab3b3504467db5cee425a`。v3 将普通成功打卡收敛为
+“行”，提醒收敛为“为什么今天午餐没有发”，解释收敛为“你只有 3 天记录，没办法判断长期趋势”；
+同时把用户对日期/餐次的说明落实为上游规则：普通本轮图片默认当天，先按本地时间和当天已有餐次判断，
+仍有歧义才追问。前三份 v3 comparison 是结构化事实保护失败的诊断记录，不得导入。
+最终 `comparison.v4.json` 两侧 12/12 真实生成成功、自动评估 12/12 通过，并以 source ID
+`doctor-strict-v3-review-1` 导入目标 PostgreSQL。当前 v3 为 12 条待实名人评，未发布、未启用。
 
 ## 1. 本地准备与隐私核对
 
@@ -198,6 +214,22 @@ uv run python -m slim_guard.tools.manage_style_assets \
 这些反馈不会即时修改运行中 Profile，不进入用户 Memory 或营养知识库。构建下一版本时按反馈 ID/Hash
 冻结选中集合，将规则和例句去事实化，再重新执行本章的 A/B、自动评估和实名人评。
 
+日常使用中的“训练”实际是版本化风格校准，不修改基础模型权重。先把不合适的真实测试样例追加到
+“风格纠正”，并确保当前版本的 A/B 已全部评分；准备下一版时运行：
+
+```sh
+uv run python -m slim_guard.tools.prepare_style_iteration \
+  --source-profile-version doctor_strict_v3 \
+  --target-profile-version doctor_strict_v4 \
+  --actor ACTUAL_OPERATOR --confirm-reviewed-inputs \
+  --output data/style-assets/doctor_strict_v4/iteration-input.v1.json
+```
+
+该命令只冻结当前版本的最新实名 A/B 决定、纠正记录、精确内容和来源 Hash；不会调用模型、发布资产或
+切换运行版本。相同输入得到相同 `source_sha256`。随后才以该快照归纳仅涉及表达的规则与例句，把每条
+新增纠正转换为回归场景并保留基础六类覆盖，真实生成、自动评估并导入新一轮 A/B。任一项被拒绝就继续
+修订为下一版本；整套接受后仍必须执行发布步骤，开发环境才可按已批准策略直接全量切换。
+
 ## 6. 发布、灰度与回滚
 
 先从离线库导出与当前批准集合完全一致且真实 Eval 通过的资产：
@@ -245,8 +277,8 @@ workflow canary 名单。先 shadow 检查，再经批准使用 canary，不能�
 
 ## 实现验证
 
-2026-09-08 当前后端完整回归：`uv run pytest -q` 共收集并通过 722 项；`ruff check src tests`、
-`mypy src/slim_guard`（174 个源文件）及编译检查通过。数据库审核与认证 API 使用临时 SQLite
+2026-09-08 当前后端完整回归：`uv run pytest -q` 共收集并通过 728 项；`ruff check src tests`、
+`mypy src/slim_guard`（175 个源文件）及编译检查通过。数据库审核与认证 API 使用临时 SQLite
 验证，自动化测试中的模型响应全部是显式合成测试夹具。风格纠正表及 append-only 触发器迁移已应用到
 本地 `.env` 指向的 PostgreSQL，管理 API 也用实际管理员会话完成只读连通性验证；没有写入示例反馈。
 前端 `npm run check`、`npm run build` 和 `npm test`（25 项 SSR/契约回归）通过。

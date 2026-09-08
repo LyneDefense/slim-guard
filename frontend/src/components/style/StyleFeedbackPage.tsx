@@ -125,6 +125,16 @@ export function StyleFeedbackPage() {
         )}
       </section>
 
+      <details className="style-feedback-guide">
+        <summary>追加反馈后，怎样生成下一版本？</summary>
+        <ol>
+          <li>先继续测试并追加不符合预期的回复；单条反馈不会立即改变当前 Agent。</li>
+          <li>准备迭代时，明确提出“基于这些反馈构建下一个版本”，系统会冻结当前实名反馈及内容 Hash。</li>
+          <li>新 Profile 和回归场景生成后，必须重新完成自动评估与 A/B 人评。</li>
+          <li>开发环境中整套人评全部接受后，才直接切换默认全量版本；有拒绝就继续生成下一版。</li>
+        </ol>
+      </details>
+
       <form className="style-feedback-form" onSubmit={submit}>
         <div className="style-feedback-form-heading">
           <div>

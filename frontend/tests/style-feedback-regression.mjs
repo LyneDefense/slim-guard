@@ -64,6 +64,9 @@ test("feedback form explains version boundary and requires privacy confirmations
     "deidentified_confirmed: true",
     "expression_only_confirmed: true",
     "不会把测试内容写入用户 Memory 或营养知识库",
+    "追加反馈后，怎样生成下一版本",
+    "基于这些反馈构建下一个版本",
+    "整套人评全部接受后",
   ]) assert.ok(source.includes(expected), expected);
   assert.doesNotMatch(source, /name=["']actor["']/);
 });

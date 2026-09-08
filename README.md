@@ -107,6 +107,9 @@ Canary/on 要求启用 Style 和 Reviewer，失败沿用本轮原回复而不重
 当前回复与期望回复，作为下一版本素材；它不是即时微调，不会修改当前 Profile。当前单人开发阶段，
 候选版本整套人评全部接受并发布后，按已批准策略跳过 Style Canary，直接切换 `DEFAULT_STYLE_PROFILE`；
 生产环境不继承该便利。自动评估通过不等于发布批准。
+`doctor_strict_v3` 已根据 v2 的全部评分生成并完成 12/12 自动评估，当前作为 12 条待评 Case 留在
+管理台，仍未发布或启用。后续每次版本迭代都先冻结上一版本的实名 A/B 结果和“风格纠正”记录，再生成
+新 Profile、回归场景和 A/B Case；具体命令与边界见风格资产运行手册。
 
 离线模型单独配置 `STYLE_CORPUS_API_KEY`、`STYLE_CORPUS_MODEL` 和可选 `STYLE_CORPUS_BASE_URL`。
 

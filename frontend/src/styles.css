@@ -609,6 +609,9 @@ button:disabled { cursor: default; }
 .style-feedback-policy p { margin: 6px 0 10px; color: #3f5148; font-size: 13px; line-height: 1.6; }
 .style-feedback-policy small { color: var(--muted); line-height: 1.6; }
 .style-feedback-policy code { color: #235d45; }
+.style-feedback-guide { margin: -4px 0 18px; padding: 14px 18px; border: 1px solid #ddd6e9; border-radius: 13px; background: #faf8fd; }
+.style-feedback-guide summary { color: #5f4774; cursor: pointer; font-size: 12px; font-weight: 800; }
+.style-feedback-guide ol { margin: 13px 0 2px; padding-left: 20px; color: #56615b; font-size: 12px; line-height: 1.75; }
 .style-feedback-form { display: grid; gap: 16px; padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: white; }
 .style-feedback-form-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .style-feedback-form-heading h2 { margin: 4px 0 0; }
