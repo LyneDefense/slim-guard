@@ -288,6 +288,82 @@ export interface TraceWorkflowReviewMetrics {
   } | null;
 }
 
+export interface StyleABHumanReview {
+  review_id: string;
+  case_id: string;
+  supersedes_review_id: string | null;
+  actor: string;
+  style_match: number;
+  fidelity: number;
+  appropriateness: number;
+  decision: "accept" | "reject";
+  comment: string;
+  created_at: string;
+}
+
+export interface StyleABSide {
+  profile_version: string;
+  generation_model: string;
+  example_ids: string[];
+  response_sha256: string;
+  response?: {
+    text?: string;
+    style_profile_version?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface StyleABCaseSummary {
+  case_id: string;
+  case_key: string;
+  source_kind: "synthetic_evaluation";
+  source_sample_sha256: string;
+  response_plan_sha256: string;
+  communication_act: string;
+  required_communication_acts: string[];
+  baseline: StyleABSide;
+  candidate: StyleABSide;
+  candidate_bundle_sha256: string;
+  automated_judge: {
+    status: "not_run" | "passed" | "failed" | "error";
+    model: string;
+    evaluation_sha256: string;
+  };
+  latest_human_review: StyleABHumanReview | null;
+  created_at: string;
+}
+
+export interface StyleABCaseDetail extends StyleABCaseSummary {
+  response_plan: {
+    communication_act?: string;
+    content_blocks?: Array<{ block_id?: string; kind?: string; text?: string }>;
+    [key: string]: unknown;
+  };
+  reviews: StyleABHumanReview[];
+}
+
+export interface StyleABStatistics {
+  counts: {
+    case_count: number;
+    reviewed_case_count: number;
+    pending_case_count: number;
+    accepted_case_count: number;
+    rejected_case_count: number;
+  };
+  rates: { acceptance_rate: number };
+  denominators: { acceptance_rate: number; score_averages: number };
+  scores: Record<string, { sample_count: number; average: number | null }>;
+}
+
+export interface StyleABReviewInput {
+  style_match: number;
+  fidelity: number;
+  appropriateness: number;
+  decision: "accept" | "reject";
+  comment: string;
+  corrects_review_id: string | null;
+}
+
 export interface TraceAgentInvocation {
   invocation_id: string;
   agent_role: AgentRole;
@@ -346,11 +422,17 @@ export interface TraceStyledResponsePayload {
 
 export interface TraceResolvedStyleProfilePayload {
   profile_id?: string;
+  style_profile_id?: string;
   profile_name?: string;
   display_name?: string;
   name?: string;
   version?: string;
   style_profile_version?: string;
+  requested_style_profile_version?: string;
+  style_selection_source?: string;
+  style_fallback_reason?: string | null;
+  communication_act?: string;
+  example_ids?: string[];
 }
 
 export interface StyleBypassDetails {

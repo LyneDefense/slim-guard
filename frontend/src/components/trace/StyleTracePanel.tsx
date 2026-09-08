@@ -9,6 +9,11 @@ import { type WorkflowTraceView } from "./model";
 interface StyleTraceView {
   profileName: string | null;
   profileVersion: string | null;
+  requestedProfileVersion: string | null;
+  selectionSource: string | null;
+  profileFallbackReason: string | null;
+  communicationAct: string | null;
+  exampleIds: string[] | null;
   planArtifact: TraceAgentArtifact | null;
   renderedArtifact: TraceAgentArtifact | null;
   adoptedArtifactId: string | null;
@@ -47,7 +52,22 @@ export function StyleTracePanel({ workflow }: { workflow: WorkflowTraceView }) {
         <div><span>Style Profile</span><strong>{view.profileName ?? "未单独记录"}</strong></div>
         <div><span>Profile 版本</span><code>{view.profileVersion ?? "未记录"}</code></div>
         <div><span>执行状态</span><strong>{styleStatusLabel(view.styleInvocationStatus)}</strong></div>
+        <div><span>请求版本</span><code>{view.requestedProfileVersion ?? "未记录"}</code></div>
+        <div><span>选择来源</span><strong>{selectionSourceLabel(view.selectionSource)}</strong></div>
+        <div><span>沟通行为</span><strong>{communicationActLabel(view.communicationAct)}</strong></div>
       </div>
+      <div className="style-block-summary">
+        <header><div><h3>本轮表达示例</h3><p>仅显示已冻结的示例 ID，示例正文和原始群聊不在这里展示。</p></div></header>
+        {view.exampleIds === null ? <p>旧 Trace 未记录示例 ID。</p>
+          : view.exampleIds.length === 0 ? <p>本次未使用表达示例。</p>
+            : <div className="trace-version-tags">{view.exampleIds.map((id) => <code key={id}>{id}</code>)}</div>}
+      </div>
+      {view.profileFallbackReason && (
+        <div className="style-notice style-notice-degraded">
+          <strong>风格资产已回退</strong>
+          <span>{profileFallbackLabel(view.profileFallbackReason)}</span>
+        </div>
+      )}
       {view.blocks.length > 0 && (
         <div className="style-block-summary">
           <header>
@@ -161,8 +181,14 @@ function buildStyleTrace(workflow: WorkflowTraceView): StyleTraceView | null {
 
   return {
     profileName: profile.display_name ?? profile.profile_name ?? profile.name ?? profile.profile_id
+      ?? profile.style_profile_id
       ?? profileDisplayName(profileVersion),
     profileVersion,
+    requestedProfileVersion: stringValue(profile.requested_style_profile_version),
+    selectionSource: stringValue(profile.style_selection_source),
+    profileFallbackReason: stringValue(profile.style_fallback_reason),
+    communicationAct: stringValue(profile.communication_act) ?? stringValue(plan.communication_act),
+    exampleIds: Array.isArray(profile.example_ids) ? [...new Set(stringArray(profile.example_ids))] : null,
     planArtifact,
     renderedArtifact,
     adoptedArtifactId,
@@ -248,6 +274,27 @@ function contentBlockLabel(kind: string): string {
     social_act: "日常沟通",
   };
   return labels[kind] ?? kind;
+}
+
+function communicationActLabel(value: string | null): string {
+  const labels: Record<string, string> = {
+    acknowledge: "确认", correct: "纠正", remind: "提醒", encourage: "鼓励", explain: "解释", ask: "询问",
+  };
+  return value ? labels[value] ?? value : "未记录";
+}
+
+function selectionSourceLabel(value: string | null): string {
+  const labels: Record<string, string> = { default: "默认配置", canary: "内部用户灰度", fallback: "默认风格回退" };
+  return value ? labels[value] ?? value : "未记录";
+}
+
+function profileFallbackLabel(value: string): string {
+  const labels: Record<string, string> = {
+    profile_not_published: "所选版本未发布，已使用内置默认风格。",
+    profile_resolution_failed: "读取风格资产失败，已使用内置默认风格。",
+    profile_version_mismatch: "风格资产版本不匹配，已使用内置默认风格。",
+  };
+  return labels[value] ?? value;
 }
 
 function profileDisplayName(version: string | null): string | null {

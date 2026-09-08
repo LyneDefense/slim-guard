@@ -1,6 +1,11 @@
 import type {
   MemoryRecord,
   Page,
+  StyleABCaseDetail,
+  StyleABCaseSummary,
+  StyleABHumanReview,
+  StyleABReviewInput,
+  StyleABStatistics,
   TraceDetail,
   TraceListFilters,
   TraceSummary,
@@ -82,6 +87,43 @@ export const api = {
   workflowMetrics: (windowDays = 7) =>
     request<TraceWorkflowReviewMetrics>(
       `/metrics/workflows?window_days=${encodeURIComponent(windowDays)}`,
+    ),
+  styleABCases: (
+    offset = 0,
+    filters: {
+      candidate_profile_version?: string;
+      communication_act?: string;
+      decision?: string;
+    } = {},
+  ) => {
+    const query = new URLSearchParams({ limit: "30", offset: String(offset) });
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value);
+    }
+    return request<Page<StyleABCaseSummary>>(`/style-ab/cases?${query.toString()}`);
+  },
+  styleABCase: (caseId: string) =>
+    request<StyleABCaseDetail>(`/style-ab/cases/${encodeURIComponent(caseId)}`),
+  styleABStatistics: (candidateProfileVersion = "") => {
+    const query = new URLSearchParams();
+    if (candidateProfileVersion) {
+      query.set("candidate_profile_version", candidateProfileVersion);
+    }
+    return request<StyleABStatistics>(
+      `/style-ab/statistics${query.size ? `?${query.toString()}` : ""}`,
+    );
+  },
+  reviewStyleABCase: (caseId: string, input: StyleABReviewInput) =>
+    request<StyleABHumanReview>(
+      `/style-ab/cases/${encodeURIComponent(caseId)}/reviews`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-SlimGuard-CSRF": "1",
+        },
+        body: JSON.stringify(input),
+      },
     ),
   memories: (userId: string) =>
     request<MemoryRecord[]>(`/users/${encodeURIComponent(userId)}/memories`),

@@ -13,7 +13,7 @@ const server = await createServer({
   appType: "custom",
   logLevel: "error",
   optimizeDeps: { noDiscovery: true, entries: [] },
-  server: { middlewareMode: true, hmr: false, watch: null },
+  server: { middlewareMode: true, hmr: false, ws: false, watch: null },
 });
 after(() => server.close());
 
