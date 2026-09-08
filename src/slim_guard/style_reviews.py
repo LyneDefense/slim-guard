@@ -32,9 +32,7 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def style_ab_case_key(evaluation_sha256: str, case_id: str) -> str:
-    return "style-ab-" + hashlib.sha256(
-        f"{evaluation_sha256}:{case_id}".encode()
-    ).hexdigest()[:40]
+    return "style-ab-" + hashlib.sha256(f"{evaluation_sha256}:{case_id}".encode()).hexdigest()[:40]
 
 
 class StyleABReviewError(RuntimeError):
@@ -59,9 +57,7 @@ class TrustedStyleABSource(ContractModel):
     source_id: str = Field(min_length=1, max_length=128)
     manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     imported_by: str = Field(min_length=1, max_length=128)
-    required_communication_acts: tuple[CommunicationAct, ...] = Field(
-        min_length=1, max_length=16
-    )
+    required_communication_acts: tuple[CommunicationAct, ...] = Field(min_length=1, max_length=16)
     synthetic_confirmed: Literal[True]
     deidentified_confirmed: Literal[True]
     expression_assets_reviewed: Literal[True]
@@ -77,9 +73,7 @@ class TrustedStyleABSource(ContractModel):
 
     @field_validator("required_communication_acts")
     @classmethod
-    def unique_acts(
-        cls, value: tuple[CommunicationAct, ...]
-    ) -> tuple[CommunicationAct, ...]:
+    def unique_acts(cls, value: tuple[CommunicationAct, ...]) -> tuple[CommunicationAct, ...]:
         if len(value) != len(set(value)):
             raise ValueError("Required communication acts must be unique")
         return value
@@ -175,9 +169,7 @@ class StyleABReviewRepository:
     ) -> str:
         payload = {
             "source_id": source_id,
-            "required_communication_acts": sorted(
-                act.value for act in required_communication_acts
-            ),
+            "required_communication_acts": sorted(act.value for act in required_communication_acts),
             "pairs": [pair.model_dump(mode="json") for pair in pairs],
         }
         return cls._sha256(payload)
@@ -271,13 +263,10 @@ class StyleABReviewRepository:
         conditions: list[Any] = []
         if candidate_profile_version:
             conditions.append(
-                StyleABEvaluationCaseRecord.candidate_profile_version
-                == candidate_profile_version
+                StyleABEvaluationCaseRecord.candidate_profile_version == candidate_profile_version
             )
         if communication_act:
-            conditions.append(
-                StyleABEvaluationCaseRecord.communication_act == communication_act
-            )
+            conditions.append(StyleABEvaluationCaseRecord.communication_act == communication_act)
         async with self.database.session() as session:
             statement = select(StyleABEvaluationCaseRecord)
             if conditions:
@@ -337,15 +326,9 @@ class StyleABReviewRepository:
                 case = await session.get(StyleABEvaluationCaseRecord, case_id)
                 if case is None:
                     raise StyleABCaseNotFound(f"A/B case {case_id} does not exist")
-                latest = await session.scalar(
-                    select(StyleABHumanReviewRecord)
-                    .where(StyleABHumanReviewRecord.case_id == case_id)
-                    .order_by(
-                        StyleABHumanReviewRecord.created_at.desc(),
-                        StyleABHumanReviewRecord.id.desc(),
-                    )
-                    .limit(1)
-                )
+                latest = self._latest_reviews(
+                    await self._reviews_for_cases(session, [case_id])
+                ).get(case_id)
                 latest_id = latest.id if latest is not None else None
                 if score.corrects_review_id != latest_id:
                     raise StyleABCaseConflict(
@@ -379,8 +362,7 @@ class StyleABReviewRepository:
         conditions: list[Any] = []
         if candidate_profile_version:
             conditions.append(
-                StyleABEvaluationCaseRecord.candidate_profile_version
-                == candidate_profile_version
+                StyleABEvaluationCaseRecord.candidate_profile_version == candidate_profile_version
             )
         async with self.database.session() as session:
             statement = select(StyleABEvaluationCaseRecord)
@@ -436,8 +418,7 @@ class StyleABReviewRepository:
                 await session.scalars(
                     select(StyleABEvaluationCaseRecord)
                     .where(
-                        StyleABEvaluationCaseRecord.candidate_bundle_sha256
-                        == bundle_sha256,
+                        StyleABEvaluationCaseRecord.candidate_bundle_sha256 == bundle_sha256,
                         StyleABEvaluationCaseRecord.automated_evaluation_sha256
                         == evaluation_sha256,
                         StyleABEvaluationCaseRecord.candidate_profile_version
@@ -453,16 +434,12 @@ class StyleABReviewRepository:
         if not cases:
             raise StyleABBundleNotApproved("No A/B cases bind this bundle and evaluation")
         latest = self._latest_reviews(reviews)
-        if (
-            len(latest) != len(cases)
-            or any(latest[row.id].decision != "accept" for row in cases)
-        ):
+        if len(latest) != len(cases) or any(latest[row.id].decision != "accept" for row in cases):
             raise StyleABBundleNotApproved("Every A/B case requires a latest human acceptance")
         if any(row.automated_judge_status != "passed" for row in cases):
             raise StyleABBundleNotApproved("Every A/B case requires a passed automated judge")
         required_sets = {
-            tuple(self._string_list(row.required_communication_acts_json))
-            for row in cases
+            tuple(self._string_list(row.required_communication_acts_json)) for row in cases
         }
         if len(required_sets) != 1:
             raise StyleABBundleNotApproved("A/B cases disagree on required communication acts")
@@ -491,9 +468,7 @@ class StyleABReviewRepository:
             "candidate_profile_version": candidate_profile_version,
             "case_count": len(cases),
             "required_communication_acts": sorted(required_acts),
-            "automated_judge_models": sorted(
-                {row.automated_judge_model for row in cases}
-            ),
+            "automated_judge_models": sorted({row.automated_judge_model for row in cases}),
             "reviewer_actors": sorted({review["actor"] for review in case_reviews}),
             "reviewed_at": max(str(review["reviewed_at"]) for review in case_reviews),
             "case_reviews": case_reviews,
@@ -546,8 +521,7 @@ class StyleABReviewRepository:
         values: Mapping[str, Any],
     ) -> bool:
         return all(
-            field == "created_at" or getattr(row, field) == value
-            for field, value in values.items()
+            field == "created_at" or getattr(row, field) == value for field, value in values.items()
         )
 
     @staticmethod
@@ -573,7 +547,14 @@ class StyleABReviewRepository:
         reviews: Sequence[StyleABHumanReviewRecord],
     ) -> dict[str, StyleABHumanReviewRecord]:
         latest: dict[str, StyleABHumanReviewRecord] = {}
+        # The explicit correction chain defines recency, not wall-clock ordering.
+        # Clock adjustments or equal timestamps must not resurrect an older acceptance.
+        superseded = {review.supersedes_review_id for review in reviews}
         for review in reviews:
+            if review.id in superseded:
+                continue
+            if review.case_id in latest:
+                raise StyleABCaseConflict("Human review history has multiple current branches")
             latest[review.case_id] = review
         return latest
 
@@ -626,9 +607,7 @@ class StyleABReviewRepository:
                 "model": row.automated_judge_model,
                 "evaluation_sha256": row.automated_evaluation_sha256,
             },
-            "latest_human_review": (
-                cls._review_view(latest) if latest is not None else None
-            ),
+            "latest_human_review": (cls._review_view(latest) if latest is not None else None),
             "created_at": cls._aware(row.created_at),
         }
         if include_content:
@@ -667,9 +646,7 @@ class StyleABReviewRepository:
     @staticmethod
     def _string_list(value: str) -> list[str]:
         decoded = json.loads(value)
-        if not isinstance(decoded, list) or any(
-            not isinstance(item, str) for item in decoded
-        ):
+        if not isinstance(decoded, list) or any(not isinstance(item, str) for item in decoded):
             raise StyleABCaseConflict("Stored A/B string list is invalid")
         return decoded
 

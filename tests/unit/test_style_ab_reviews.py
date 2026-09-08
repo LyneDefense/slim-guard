@@ -191,3 +191,37 @@ async def test_database_rejects_second_initial_review_even_if_repository_is_bypa
                 )
             )
     assert len((await repository.get_case(ids[0]))["reviews"]) == 1
+
+
+@pytest.mark.parametrize("clock_offset", [0, -3600])
+async def test_correction_chain_not_clock_order_determines_current_human_decision(
+    ledger, clock_offset
+):
+    _, repository, _, _, ids = ledger
+    first_time = datetime(2026, 1, 1, tzinfo=UTC)
+    first = await repository.submit_review(
+        case_id=ids[0],
+        actor="TEST-human",
+        score=score(),
+        created_at=first_time,
+    )
+    correction = await repository.submit_review(
+        case_id=ids[0],
+        actor="TEST-human",
+        score=score(decision="reject", corrects_review_id=first["review_id"]),
+        created_at=first_time + timedelta(seconds=clock_offset),
+    )
+    assert (await repository.get_case(ids[0]))["latest_human_review"]["review_id"] == correction[
+        "review_id"
+    ]
+    assert (await repository.statistics())["counts"]["rejected_case_count"] == 1
+    # A subsequent review must correct the actual leaf, even when its clock was earlier.
+    latest = await repository.submit_review(
+        case_id=ids[0],
+        actor="TEST-human",
+        score=score(corrects_review_id=correction["review_id"]),
+        created_at=first_time,
+    )
+    assert (await repository.get_case(ids[0]))["latest_human_review"]["review_id"] == latest[
+        "review_id"
+    ]
