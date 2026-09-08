@@ -18,6 +18,7 @@
 - `data/style-assets/doctor_strict_v1/extraction-review.v1.json`：保留实际模型输出，另列助手筛选及建议修订。
 - `data/style-assets/doctor_strict_v1/extraction-status.v1.json`：当前实际执行状态；早期 preparation-status 仅记录准备阶段。
 - `data/style-assets/doctor_strict_v1/style-direction.approved.v1.json`：用户在本会话接受三条表达建议及语气方向的记录，不是完整资产或上线批准。
+- `data/style-assets/doctor_strict_v1/REVIEW-ROUND-2.md`：纠正、鼓励、询问三类补充模板，等待用户复审。
 
 `data/` 已忽略，输出文件权限为 0600，不覆盖已有文件。初版 `prepared.json` 已被
 `prepared.v2.json` 取代，保留便于核对，后续不要导入初版。
@@ -36,6 +37,11 @@
 用户随后确认沿用确认、解释、提醒三条表达建议，以及“简短、直接、不责备”的方向。
 方向确认已单独记录，保留原始提取结果；未将其扩大为完整风格规范、语料隐私审核、A/B 或发布批准。
 后续不重复征求相同的方向确认，仍需补齐其他三类合格示例并走精确资产审核与评估流程。
+
+随后从未外发语料中进一步挑选并完全去事实化 4 组低风险表达，补做真实模型判断。
+纠正和询问得到相关候选；一条强烈肯定被归为 acknowledge，另补一条明确鼓励候选。
+助手把鼓励和询问缩短为安全模板，连同纠正模板交由用户第二轮复审。
+至此六类都有表达方向候选，后三类尚未确认；正式 corpus 批准仍为 0。
 
 ## 1. 本地准备与隐私核对
 
