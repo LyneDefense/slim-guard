@@ -129,8 +129,10 @@ async def test_ab_generation_shares_plans_binds_examples_and_does_not_approve_or
     ]
     assert len(generation) == 24
     for index, case in enumerate(cases):
-        baseline = json.loads(generation[2 * index].messages[-1].content)
-        candidate = json.loads(generation[2 * index + 1].messages[-1].content)
+        baseline_payload = json.loads(generation[2 * index].messages[-1].content)
+        candidate_payload = json.loads(generation[2 * index + 1].messages[-1].content)
+        baseline = baseline_payload["style_context"]
+        candidate = candidate_payload["style_context"]
         assert baseline["response_plan"] == candidate["response_plan"]
         assert not baseline["examples"]
         assert len(candidate["examples"]) == 1

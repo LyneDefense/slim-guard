@@ -238,6 +238,29 @@ def test_validator_rejects_new_record_medical_or_advice_claims() -> None:
     assert StyleIntegrityIssueCode.UNSUPPORTED_CONTENT_ADDED in set(report.issue_codes)
 
 
+def test_validator_rejects_an_invented_need_or_next_step() -> None:
+    plan = ResponsePlan(
+        communication_act="explain",
+        content_blocks=(
+            ResponseContentBlock(
+                block_id="social",
+                kind="social_act",
+                text="目前还不能直接得出结论。",
+            ),
+        ),
+    )
+    context = StyleContextCompiler().compile(turn_id="turn-1", response_plan=plan)
+    response = StyledResponse(
+        text="目前还不能直接得出结论。下一步需要补齐更多信息。",
+        used_block_ids=("social",),
+        style_profile_version="slimguard_default_v1",
+    )
+
+    report = StyleResponseValidator().validate(context, response)
+
+    assert StyleIntegrityIssueCode.UNSUPPORTED_CONTENT_ADDED in set(report.issue_codes)
+
+
 async def test_style_agent_returns_valid_model_response_without_repair() -> None:
     gateway = ScriptedModelGateway((model_response(valid_styled_response()),))
     agent = ResponseStyleAgent(
@@ -255,6 +278,30 @@ async def test_style_agent_returns_valid_model_response_without_repair() -> None
     assert gateway.requests[0].purpose.value == "response_style"
     assert gateway.requests[0].tools == ()
     assert gateway.requests[0].output_schema_name == "StyledResponse"
+    prompt = gateway.requests[0].messages[0].content
+    assert "StyledResponse JSON schema" in prompt
+    assert '"used_block_ids"' in prompt
+    assert "do not return the input StyleContext" in prompt
+    assert "not/is correction contrast" in prompt
+    assert "Never copy placeholder scaffolding" in prompt
+    assert "when the ResponsePlan supplies no action" in prompt
+    payload = json.loads(gateway.requests[0].messages[-1].content)
+    assert StyleContext.model_validate(payload["style_context"]) == style_context()
+    assert payload["output_requirements"] == {
+        "required_block_ids": [
+            "fact-block",
+            "claim-block",
+            "action-block",
+            "risk-block",
+            "uncertainty-block",
+        ],
+        "used_claim_ids_exact": ["claim-1"],
+        "used_action_ids_exact": ["action-1"],
+        "preserved_risk_flags_exact": ["risk-1"],
+        "preserved_citation_refs_exact": ["citation-1"],
+        "style_profile_version_exact": "slimguard_default_v1",
+        "no_action_may_be_added": False,
+    }
 
 
 async def test_style_agent_repairs_a_semantically_invalid_json_response_once() -> None:

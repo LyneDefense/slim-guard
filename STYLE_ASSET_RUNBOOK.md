@@ -18,7 +18,12 @@
 - `data/style-assets/doctor_strict_v1/extraction-review.v1.json`：保留实际模型输出，另列助手筛选及建议修订。
 - `data/style-assets/doctor_strict_v1/extraction-status.v1.json`：当前实际执行状态；早期 preparation-status 仅记录准备阶段。
 - `data/style-assets/doctor_strict_v1/style-direction.approved.v1.json`：用户在本会话接受三条表达建议及语气方向的记录，不是完整资产或上线批准。
-- `data/style-assets/doctor_strict_v1/REVIEW-ROUND-2.md`：纠正、鼓励、询问三类补充模板，等待用户复审。
+- `data/style-assets/doctor_strict_v1/REVIEW-ROUND-2.md`：纠正、鼓励、询问三类补充模板的历史复审材料，现已通过。
+- `style_assets/doctor_strict_v1/profile.reviewed.json`：六类表达审核完成后冻结的无身份化风格规范。
+- `data/style-assets/doctor_strict_v1/bundle.v3.json`：六类各一条已批准示例组成的固定受审 bundle。
+- `data/style-assets/doctor_strict_v1/comparison.v5.json`：固定 bundle 的最终真实模型合成 A/B 报告。
+- `data/style-assets/doctor_strict_v1/AB-REVIEW.md`：与最终报告逐字一致的本地人工复审清单。
+- `data/style-assets/doctor_strict_v1/export.v1.json`：自动 Eval 通过的精确离线导出，仍为 draft。
 
 `data/` 已忽略，输出文件权限为 0600，不覆盖已有文件。初版 `prepared.json` 已被
 `prepared.v2.json` 取代，保留便于核对，后续不要导入初版。
@@ -31,17 +36,27 @@
 首轮出现英文输出、主观推断及反问误读，已保留原记录并收紧抽取提示词后重跑。
 第二轮模型判定 5 组相关、2 组不相关；助手复核建议 1 组送人工审核、2 组修订后再审，
 4 组不采用。相关性不代表表达适用；修订建议不是医生原话，也不是人工批准。
-当前仅确认、解释、提醒三类有待审建议，纠正、鼓励、询问仍缺合格候选。
-没有构建已批准资产，没有执行真实 A/B，没有人工评分或发布。
+确认、解释、提醒三类建议以及后续的纠正、鼓励、询问模板均已由用户明确确认。
+六条审核以实际会话审核人写入离线 append-only corpus，均限定为表达方式批准，不包含原聊天事实、
+医学知识、真人身份或上线授权。
 
-用户随后确认沿用确认、解释、提醒三条表达建议，以及“简短、直接、不责备”的方向。
-方向确认已单独记录，保留原始提取结果；未将其扩大为完整风格规范、语料隐私审核、A/B 或发布批准。
-后续不重复征求相同的方向确认，仍需补齐其他三类合格示例并走精确资产审核与评估流程。
+用户随后确认沿用确认、解释、提醒三条表达建议，以及“简短、直接、不责备”的方向；之后又明确
+通过纠正、鼓励、询问三条补充模板。原始提取结果与最终修订模板分别保留，批准不外推到原始事实。
 
 随后从未外发语料中进一步挑选并完全去事实化 4 组低风险表达，补做真实模型判断。
 纠正和询问得到相关候选；一条强烈肯定被归为 acknowledge，另补一条明确鼓励候选。
-助手把鼓励和询问缩短为安全模板，连同纠正模板交由用户第二轮复审。
-至此六类都有表达方向候选，后三类尚未确认；正式 corpus 批准仍为 0。
+助手把鼓励和询问缩短为安全模板，连同纠正模板交由用户第二轮复审并获得明确通过。
+至此六类各有一个正式 corpus 批准示例，受审规范和 bundle 已冻结。
+
+固定 bundle 经过数轮真实合成 A/B 诊断：首先发现真实供应商无法仅凭类型名稳定返回结构化响应，
+补入完整 JSON Schema；随后人工发现自动 Judge 漏过生硬纠正前缀和解释类新增动作，因而进一步禁止
+强套示例脚手架，并在无上游 Action 时禁止补造下一步。最终 `response-style-v5` 的 12 个 Case 两侧
+全部真实生成成功，12 个自动评估全部通过，六类行为齐全。早期 comparison 文件仅作失败审计，
+不得导入；后续只使用 bundle SHA-256
+`409df5d0ace5b18fde0597f558a213c2f8c5977aa8442edb5860ef053fe0e528` 对应的 `comparison.v5.json`。
+
+人工 A/B 评分仍未发生，资产未导入目标应用数据库、未发布、未灰度、未启用。当前 `.env` 指向的
+本机 PostgreSQL 在本次检查中不可达，管理员账号也未配置；不要改用一份临时 SQLite 冒充实际管理台。
 
 ## 1. 本地准备与隐私核对
 
@@ -196,11 +211,10 @@ workflow canary 名单。先 shadow 检查，再经批准使用 canary，不能�
 
 ## 实现验证
 
-2026-09-08 后端完整回归：`uv run pytest` 为 694 passed；`ruff check src tests`、
+2026-09-08 最终资产修正后的后端完整回归：`uv run pytest -q` 共收集并通过 696 项；`ruff check src tests`、
 `mypy src/slim_guard`（172 个源文件）及编译检查通过。数据库审核与认证 API 使用临时 SQLite
 验证，自动化测试中的模型响应全部是显式合成测试夹具。PostgreSQL 触发器已实现，但本次没有在真实
 PostgreSQL 实例执行迁移；部署前仍应在目标数据库的测试副本验证。
 前端 `npm run check`、`npm run build` 和 `npm test`（21 项 SSR/契约回归）通过。
-本次真实提取后收紧了候选提示词，相关 86 项离线语料/评估/导入回归、Ruff 及该源模块的 mypy 通过；
-上面的 694 项为此前完整基线记录，不是本次真实模型质量得分。
-这些结果证明代码链路的测试状态，不等同于医生风格的真实模型效果或人工验收。
+最终固定 bundle 的 12 组合成 A/B 均由真实模型生成，独立自动评估 12/12 通过；这与 696 项代码
+回归是两组不同证据。人工 A/B 评分仍未完成，因此这些结果不等同于人工验收或上线批准。
