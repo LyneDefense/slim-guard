@@ -434,3 +434,10 @@ curl -i https://enceladus.online/health/ready
 - `admin/repository.py`、`api/admin_routes.py`、`frontend/` → 审查可观测 → 展示 Verdict、实际返回边、预算、原始/修复/最终 Artifact 元数据，提供带分母的窗口拒绝率、修复率与降级率，敏感原因和正文不渲染。
 - `agent/composition.py`、`main.py`、`README.md` → 发布装配 → 接通 Reviewer 开关，冻结真实 Prompt/权限到 Graph Manifest；默认保持关闭。
 - 验证 → Reviewer 定向返回、格式修复、权限与引用边界、全 Turn/节点修复上限、专业修复持久化血缘、Admin 脱敏和指标鉴权回归；后端静态检查、前端类型/构建通过。完整测试数量见提交验收记录。
+
+### `feat: add reviewed offline style corpus pipeline`
+
+- `style_corpus.py`、`tools/manage_style_corpus.py` → 离线表达资产准备 → UTF-8 JSON/TSV、显式 sender 映射、连续消息合并、自动脱敏、模型相关性判断、按沟通行为生成去事实化示例与 Style Spec。
+- 独立 SQLite → 不连接业务数据库、Memory 或 RAG；新文件默认 0600，审核和评估 append-only。具名人工审核必须确认隐私和纯表达，精确 Bundle 哈希绑定最新 Eval，修改/撤销使旧 Eval 失效，导出仅为 draft。
+- 验证 → 22 项离线管线和 CLI 测试通过，Ruff 和严格 Mypy 通过。测试均为明确标注的合成数据，不代表真实医生语料评估。
+- 前置条件 → 原计划要求 Increment 6 等待风格需求评审；本提交仅备好通用工具，未创建或发布 `doctor_strict_v1`，医生专属线上示例、A/B 评分和发布仍待该评审及真实授权语料。

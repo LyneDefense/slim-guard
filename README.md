@@ -90,6 +90,27 @@ ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 `MULTI_AGENT_MODE` 支持 `off → shadow → canary → on`。首次部署保持 `off`；完成 Shadow 验证前不要
 直接进入 Canary 或全量。关闭该开关不影响现有 Harness、用户 Thread 或已经写入的健康记录。
 
+离线表达语料使用独立 SQLite 文件，不连接用户 Memory 或营养 RAG。通用准备工具已提供，但
+`doctor_strict_v1` 必须等待真实语料授权、风格需求评审和人工隐私审核，当前没有发布或激活。
+导入支持 UTF-8 JSON 消息数组（`sender/text/conversation_id`）或 `sender<TAB>text` 文本，
+并非任意微信导出格式；必须用 JSON 显式映射所有 sender。模型只收到自动脱敏后的候选，
+但自动脱敏无法保证识别全部个人信息，调用模型前应先完成源文件隐私检查，并补充 `--private-terms`。
+离线模型单独配置 `STYLE_CORPUS_API_KEY`、`STYLE_CORPUS_MODEL` 和可选 `STYLE_CORPUS_BASE_URL`。
+
+```bash
+uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite import --input ./export.json --format json --sender-mapping ./senders.json --private-terms ./private-terms.json
+uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite review
+uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite review --candidate-id CANDIDATE_ID --review ./human-review.json
+uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite eval --profile-id PROFILE_ID --version VERSION --display-name DISPLAY_NAME --cases ./style-eval-cases.json --actor REVIEWER
+uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite export --profile-id PROFILE_ID --version VERSION --display-name DISPLAY_NAME
+```
+
+人工审核 JSON 包含 `actor`、`decision`（approve/reject）、`note`；批准时必须明确设置
+`privacy_confirmed=true` 和 `expression_only_confirmed=true`，可覆写 `example_text`、`tone_rules`。
+Eval 输入必须是实际 `response_plan` 与 `styled_response` 配对，并覆盖所有已批准示例的沟通行为。
+导出只产生 `draft`，要求当前精确版本的最新评估同时通过表达、忠实度和隐私检查；修改或撤销审核后
+旧评估失效。评审记录 append-only，离线数据库和导出文件应限权存放，不提交仓库或暴露给普通管理员。
+
 Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。资料必须先离线导入为 `draft`，再经过
 “审核”和“发布”两个独立操作，才会被新 Turn 检索；资料退休后立即退出新检索，历史 Artifact 中已经
 冻结的 Citation 仍可审计。线上 Nutrition 工具全部只读，也不会自动把网页写入知识库。
