@@ -121,6 +121,8 @@ class AgentRuntimeDefinition(BaseModel):
         min_length=1,
         max_length=128,
     )
+    style_canary_profile: str = Field(default="", max_length=128)
+    style_canary_users: frozenset[str] = frozenset()
     style_render_all_normal_replies: bool = True
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
@@ -307,6 +309,9 @@ def build_agent_runtime(
                 max_output_tokens=definition.vision_max_output_tokens,
                 persistence=OrchestrationRepository(database),
                 style_profiles=StyleProfileRepository(database),
+                default_style_profile=definition.default_style_profile,
+                style_canary_profile=definition.style_canary_profile,
+                style_canary_users=definition.style_canary_users,
                 style_enabled=definition.style_render_all_normal_replies,
                 nutrition_enabled=definition.nutrition_agent_enabled,
                 reviewer_enabled=definition.response_reviewer_enabled,
@@ -406,7 +411,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             prompt_version=RESPONSE_STYLE_PROMPT_VERSION,
             prompt=RESPONSE_STYLE_PROMPT,
             output_schema="StyledResponse",
-            privacy_scopes=("response_plan", "style_profile"),
+            privacy_scopes=("response_plan", "style_profile", "style_examples"),
             max_model_calls=2,
             max_tool_calls=0,
             max_total_tokens=definition.vision_max_output_tokens * 2,

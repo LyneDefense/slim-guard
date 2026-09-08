@@ -154,6 +154,44 @@ async def _create_and_seed_style_profiles(connection: AsyncConnection) -> None:
     )
 
 
+async def _create_style_ab_review_tables(connection: AsyncConnection) -> None:
+    """Create the online-safe A/B ledger and enforce immutable human scores."""
+
+    await _create_application_tables(connection)
+    if connection.dialect.name == "sqlite":
+        for operation in ("UPDATE", "DELETE"):
+            await connection.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS "
+                    f"style_ab_human_reviews_{operation.lower()}_blocked "
+                    f"BEFORE {operation} ON style_ab_human_reviews BEGIN "
+                    "SELECT RAISE(ABORT, 'Style A/B reviews are append-only'); END"
+                )
+            )
+    elif connection.dialect.name == "postgresql":
+        await connection.execute(
+            text(
+                "CREATE OR REPLACE FUNCTION block_style_ab_review_mutation() "
+                "RETURNS trigger AS $$ BEGIN "
+                "RAISE EXCEPTION 'Style A/B reviews are append-only'; "
+                "END; $$ LANGUAGE plpgsql"
+            )
+        )
+        await connection.execute(
+            text(
+                "DROP TRIGGER IF EXISTS style_ab_human_reviews_mutation_blocked "
+                "ON style_ab_human_reviews"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE TRIGGER style_ab_human_reviews_mutation_blocked "
+                "BEFORE UPDATE OR DELETE ON style_ab_human_reviews "
+                "FOR EACH ROW EXECUTE FUNCTION block_style_ab_review_mutation()"
+            )
+        )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -168,6 +206,7 @@ MIGRATIONS = (
     SchemaMigration("20260904_01_multi_agent_audit", _create_application_tables),
     SchemaMigration("20260905_01_style_profiles", _create_and_seed_style_profiles),
     SchemaMigration("20260906_01_nutrition_knowledge", _create_application_tables),
+    SchemaMigration("20260908_01_style_ab_reviews", _create_style_ab_review_tables),
 )
 
 

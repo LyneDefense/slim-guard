@@ -34,7 +34,7 @@ from slim_guard.style_corpus import OfflineStyleCorpus, StyleAssetBundle, StyleE
 class StyleEvaluationInput(ContractModel):
     case_id: str = Field(min_length=1, max_length=128)
     response_plan: ResponsePlan
-    synthetic: bool = True
+    synthetic: bool = Field(default=False, strict=True)
 
 
 def synthetic_style_suite() -> tuple[StyleEvaluationInput, ...]:
@@ -65,6 +65,7 @@ def synthetic_style_suite() -> tuple[StyleEvaluationInput, ...]:
             cases.append(
                 StyleEvaluationInput(
                     case_id=f"synthetic-{act.value}-{'protected' if protected else 'social'}",
+                    synthetic=True,
                     response_plan=ResponsePlan(
                         communication_act=act,
                         content_blocks=(

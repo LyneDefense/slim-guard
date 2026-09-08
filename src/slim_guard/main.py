@@ -22,6 +22,7 @@ from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 from slim_guard.api.admin_routes import router as admin_router
 from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.routes import router
+from slim_guard.api.style_review_routes import router as style_review_router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
@@ -83,10 +84,6 @@ def create_app(
         )
     if app_settings.multi_agent_mode != "off" and app_settings.agent_runtime_mode != "harness":
         raise ValueError("MULTI_AGENT_MODE requires AGENT_RUNTIME_MODE=harness")
-    if app_settings.default_style_profile != "slimguard_default_v1":
-        raise ValueError(
-            "DEFAULT_STYLE_PROFILE is not published; use slimguard_default_v1"
-        )
     if app_settings.nutrition_rag_enabled and not app_settings.nutrition_agent_enabled:
         raise ValueError("NUTRITION_RAG_ENABLED requires NUTRITION_AGENT_ENABLED")
     if (
@@ -131,6 +128,8 @@ def create_app(
             app_settings.multi_agent_shadow_timeout_seconds
         ),
         default_style_profile=app_settings.default_style_profile,
+        style_canary_profile=app_settings.style_canary_profile,
+        style_canary_users=app_settings.style_canary_users,
         style_render_all_normal_replies=app_settings.style_render_all_normal_replies,
         nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
         nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
@@ -169,7 +168,15 @@ def create_app(
         database = Database(app_settings.database_url)
         await database.create_schema()
         await AgentVersionRepository(database).register(agent_manifest)
-        await StyleProfileRepository(database).ensure_default()
+        style_profiles = StyleProfileRepository(database)
+        await style_profiles.ensure_default()
+        try:
+            await style_profiles.require_published(app_settings.default_style_profile)
+            if app_settings.style_canary_profile:
+                await style_profiles.require_published(app_settings.style_canary_profile)
+        except Exception:
+            await database.close()
+            raise
         repository = MessageRepository(database)
         traces = InteractionTraceRepository(database)
         await repository.backfill_users_from_messages()
@@ -519,6 +526,7 @@ def create_app(
 
     application.include_router(router)
     application.include_router(admin_router)
+    application.include_router(style_review_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_graph_manifest = agent_graph_manifest

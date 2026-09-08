@@ -1165,6 +1165,153 @@ class StyleProfileVersionRecord(Base):
     )
 
 
+class StyleABEvaluationCaseRecord(Base):
+    """Immutable, synthetic A/B output pair offered for named human review."""
+
+    __tablename__ = "style_ab_evaluation_cases"
+    __table_args__ = (
+        UniqueConstraint("case_key", name="uq_style_ab_case_key"),
+        CheckConstraint(
+            "source_kind = 'synthetic_evaluation'",
+            name="ck_style_ab_case_synthetic_source",
+        ),
+        CheckConstraint(
+            "baseline_profile_version <> candidate_profile_version",
+            name="ck_style_ab_case_distinct_profiles",
+        ),
+        CheckConstraint(
+            "automated_judge_status IN ('not_run','passed','failed','error')",
+            name="ck_style_ab_case_judge_status",
+        ),
+        CheckConstraint(
+            "length(source_sample_sha256) = 64",
+            name="ck_style_ab_case_source_sha256",
+        ),
+        CheckConstraint(
+            "length(import_manifest_sha256) = 64",
+            name="ck_style_ab_case_manifest_sha256",
+        ),
+        CheckConstraint(
+            "length(response_plan_sha256) = 64",
+            name="ck_style_ab_case_plan_sha256",
+        ),
+        CheckConstraint(
+            "length(baseline_response_sha256) = 64",
+            name="ck_style_ab_case_baseline_sha256",
+        ),
+        CheckConstraint(
+            "length(candidate_response_sha256) = 64",
+            name="ck_style_ab_case_candidate_sha256",
+        ),
+        CheckConstraint(
+            "length(candidate_bundle_sha256) = 64",
+            name="ck_style_ab_case_bundle_sha256",
+        ),
+        CheckConstraint(
+            "length(automated_evaluation_sha256) = 64",
+            name="ck_style_ab_case_evaluation_sha256",
+        ),
+        Index(
+            "ix_style_ab_case_candidate_created",
+            "candidate_profile_version",
+            "created_at",
+        ),
+        Index(
+            "ix_style_ab_case_bundle_evaluation",
+            "candidate_bundle_sha256",
+            "automated_evaluation_sha256",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    case_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="synthetic_evaluation"
+    )
+    source_sample_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    import_source_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    import_manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_plan_json: Mapped[str] = mapped_column(Text, nullable=False)
+    response_plan_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    communication_act: Mapped[str] = mapped_column(String(32), nullable=False)
+    required_communication_acts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    baseline_profile_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    candidate_profile_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    baseline_generation_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    candidate_generation_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    baseline_example_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    candidate_example_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    baseline_response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    baseline_response_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_response_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_bundle_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    automated_evaluation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    automated_judge_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    automated_judge_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    imported_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class StyleABHumanReviewRecord(Base):
+    """Append-only named score; corrections explicitly supersede the latest row."""
+
+    __tablename__ = "style_ab_human_reviews"
+    __table_args__ = (
+        UniqueConstraint("id", "case_id", name="uq_style_ab_review_id_case"),
+        UniqueConstraint("supersedes_review_id", name="uq_style_ab_review_superseded_once"),
+        Index(
+            "uq_style_ab_review_first",
+            "case_id",
+            unique=True,
+            sqlite_where=text("supersedes_review_id IS NULL"),
+            postgresql_where=text("supersedes_review_id IS NULL"),
+        ),
+        ForeignKeyConstraint(
+            ["supersedes_review_id", "case_id"],
+            ["style_ab_human_reviews.id", "style_ab_human_reviews.case_id"],
+            name="fk_style_ab_review_supersedes_same_case",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "style_match BETWEEN 1 AND 5",
+            name="ck_style_ab_review_style_match",
+        ),
+        CheckConstraint(
+            "fidelity BETWEEN 1 AND 5",
+            name="ck_style_ab_review_fidelity",
+        ),
+        CheckConstraint(
+            "appropriateness BETWEEN 1 AND 5",
+            name="ck_style_ab_review_appropriateness",
+        ),
+        CheckConstraint(
+            "decision IN ('accept','reject')",
+            name="ck_style_ab_review_decision",
+        ),
+        Index("ix_style_ab_review_case_created", "case_id", "created_at"),
+        Index("ix_style_ab_review_actor_created", "actor", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    case_id: Mapped[str] = mapped_column(
+        ForeignKey("style_ab_evaluation_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    supersedes_review_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    style_match: Mapped[int] = mapped_column(Integer, nullable=False)
+    fidelity: Mapped[int] = mapped_column(Integer, nullable=False)
+    appropriateness: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    comment: Mapped[str] = mapped_column(String(2000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class NutritionKnowledgeImportBatchRecord(Base):
     """Auditable lifecycle of one offline corpus import attempt."""
 

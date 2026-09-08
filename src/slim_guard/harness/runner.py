@@ -227,6 +227,7 @@ class HarnessTurnRunner:
         ):
             shadow_result = await self._shadow_workflow.run_shadow(
                 ShadowWorkflowRequest(
+                    user_id=initialized.context.user_id,
                     trace_id=current_trace_id() or initialized.turn.id,
                     turn_id=initialized.turn.id,
                     thread_id=initialized.thread.id,
@@ -318,6 +319,7 @@ class HarnessTurnRunner:
                     )
                     shadow_result = await self._shadow_workflow.run_shadow(
                         ShadowWorkflowRequest(
+                            user_id=initialized.context.user_id,
                             trace_id=current_trace_id() or initialized.turn.id,
                             turn_id=initialized.turn.id,
                             thread_id=initialized.thread.id,

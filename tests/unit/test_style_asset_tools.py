@@ -11,6 +11,7 @@ import pytest
 
 from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1
 from slim_guard.style_corpus import StyleAssetBundle
+from slim_guard.style_evaluation import StyleEvaluationInput, synthetic_style_suite
 from slim_guard.tools.evaluate_style_asset import run as evaluate_run
 from slim_guard.tools.manage_style_corpus import parser
 from slim_guard.tools.manage_style_corpus import run as corpus_run
@@ -101,3 +102,12 @@ def test_cli_can_build_exact_approved_bundle_before_ab_evaluation(tmp_path: Path
     )
     assert args.command == "build"
     assert args.profile_spec == Path("synthetic.json")
+
+
+def test_external_evaluation_plan_is_not_implicitly_marked_synthetic() -> None:
+    supplied = StyleEvaluationInput(
+        case_id="external-input",
+        response_plan=synthetic_style_suite()[0].response_plan,
+    )
+    assert supplied.synthetic is False
+    assert all(case.synthetic for case in synthetic_style_suite())

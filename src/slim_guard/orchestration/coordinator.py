@@ -64,6 +64,7 @@ from slim_guard.agents.structured_runner import (
     workflow_call_budget,
 )
 from slim_guard.agents.style import (
+    RESPONSE_STYLE_PROMPT_VERSION,
     SLIMGUARD_DEFAULT_V1,
     NeutralRenderer,
     ResponseStyleAgent,
@@ -73,6 +74,7 @@ from slim_guard.agents.style import (
     StyleProfile,
     StyleProfileRepository,
 )
+from slim_guard.agents.style.contracts import StyleProfileSnapshot
 from slim_guard.harness.events import ItemStatus, ItemType
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.orchestration.artifacts import InMemoryArtifactStore
@@ -107,6 +109,7 @@ class ShadowWorkflowRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     trace_id: str = Field(min_length=1, max_length=128)
+    user_id: str | None = Field(default=None, min_length=1, max_length=128)
     turn_id: str = Field(min_length=1, max_length=128)
     thread_id: str | None = Field(default=None, min_length=1, max_length=128)
     context: tuple[ModelMessage, ...] = Field(min_length=1, max_length=64)
@@ -141,6 +144,27 @@ class ShadowWorkflowResult:
     failure_code: str | None = None
     delivered: bool = False
     business_write_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _StyleSelection:
+    snapshot: StyleProfileSnapshot
+    requested_version: str
+    source: str
+    fallback_reason: str | None = None
+
+    def metadata(self, plan: ResponsePlan) -> dict[str, Any]:
+        return {
+            "style_profile_id": self.snapshot.profile.profile_id,
+            "style_profile_version": self.snapshot.profile.version,
+            "requested_style_profile_version": self.requested_version,
+            "style_selection_source": self.source,
+            "style_fallback_reason": self.fallback_reason,
+            "communication_act": plan.communication_act.value,
+            "example_ids": [
+                item.example_id for item in self.snapshot.for_act(plan.communication_act)
+            ],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +242,9 @@ class AgentWorkflowCoordinator:
         style_compiler: StyleContextCompiler | None = None,
         style_profile: StyleProfile = SLIMGUARD_DEFAULT_V1,
         style_profiles: StyleProfileRepository | None = None,
+        default_style_profile: str | None = None,
+        style_canary_profile: str = "",
+        style_canary_users: frozenset[str] = frozenset(),
         style_enabled: bool = True,
         nutrition_enabled: bool = False,
         evidence_builder: EvidenceBuilder | None = None,
@@ -249,6 +276,9 @@ class AgentWorkflowCoordinator:
         self._style_compiler = style_compiler or StyleContextCompiler()
         self._style_profile = style_profile
         self._style_profiles = style_profiles
+        self._default_style_version = default_style_profile or style_profile.version
+        self._style_canary_version = style_canary_profile
+        self._style_canary_users = frozenset(style_canary_users)
         self._style_enabled = style_enabled
         self._nutrition_enabled = nutrition_enabled
         self._evidence_builder = evidence_builder or EvidenceBuilder()
@@ -685,12 +715,14 @@ class AgentWorkflowCoordinator:
             )
             await self._persist_artifact(ledger, plan_artifact, None)
 
-            style_profile = await self._resolved_style_profile()
+            style_selection = await self._resolved_style_profile(request.user_id)
+            style_profile = style_selection.snapshot.profile
             style_context = self._style_compiler.compile(
                 turn_id=request.turn_id,
                 response_plan=response_plan,
                 profile=style_profile,
                 assessment=assessment,
+                examples=style_selection.snapshot.for_act(response_plan.communication_act),
             )
             if not self._style_enabled:
                 if style_entry_node is GraphNode.EXPERT_RUNNING:
@@ -756,9 +788,7 @@ class AgentWorkflowCoordinator:
                 producer=ArtifactProducerRole.STYLE_RESOLVER,
                 artifact_type="style_resolution",
                 payload={
-                    "style_profile_id": style_profile.profile_id,
-                    "style_profile_version": style_profile.version,
-                    "communication_act": response_plan.communication_act.value,
+                    **style_selection.metadata(response_plan),
                     "content_block_kinds": [
                         block.kind.value for block in response_plan.content_blocks
                     ],
@@ -793,7 +823,7 @@ class AgentWorkflowCoordinator:
                 turn_id=request.turn_id,
                 graph_version=self._graph_version,
                 agent_role=AgentRole.RESPONSE_STYLE,
-                agent_version="response-style-v1",
+                agent_version=RESPONSE_STYLE_PROMPT_VERSION,
                 attempt=1,
                 parent_invocation_id=(
                     invocations[-1].invocation_id
@@ -814,7 +844,7 @@ class AgentWorkflowCoordinator:
                 input_schema="StyleContext",
                 input_schema_version="1",
                 allowed_tools=(),
-                privacy_scopes=("response_plan", "style_profile"),
+                privacy_scopes=("response_plan", "style_profile", "style_examples"),
                 deadline_at=deadline,
                 max_model_calls=2,
                 max_tool_calls=0,
@@ -937,6 +967,7 @@ class AgentWorkflowCoordinator:
                     response_plan=response_plan,
                     plan_artifact=plan_artifact,
                     style_profile=style_profile,
+                    style_selection=style_selection,
                     style_context=style_context,
                     style_invocation=style_invocation,
                     candidate_artifact=candidate_artifact,
@@ -1069,18 +1100,31 @@ class AgentWorkflowCoordinator:
             metadata={"turn_id": request.turn_id, "agent_role": "orchestrator"},
         )
 
-    async def _resolved_style_profile(self) -> StyleProfile:
-        if self._style_profiles is None:
-            return self._style_profile
+    async def _resolved_style_profile(self, user_id: str | None) -> _StyleSelection:
+        canary = bool(self._style_canary_version) and user_id in self._style_canary_users
+        requested = self._style_canary_version if canary else self._default_style_version
+        source = "canary" if canary else "default"
+        failure = "profile_not_published"
         try:
-            resolved = await self._style_profiles.get_profile(self._style_profile.version)
+            if self._style_profiles is not None:
+                resolved = await self._style_profiles.get_runtime_snapshot(requested)
+                if resolved is not None:
+                    if resolved.profile.version == requested:
+                        return _StyleSelection(resolved, requested, source)
+                    failure = "profile_version_mismatch"
+            elif requested == SLIMGUARD_DEFAULT_V1.version:
+                return _StyleSelection(
+                    StyleProfileSnapshot(profile=SLIMGUARD_DEFAULT_V1), requested, source,
+                )
         except Exception as error:
+            failure = "profile_resolution_failed"
             logger.warning(
                 "style_profile_resolution_failed",
                 extra={"failure_type": type(error).__name__},
             )
-            return self._style_profile
-        return resolved or self._style_profile
+        return _StyleSelection(
+            StyleProfileSnapshot(profile=SLIMGUARD_DEFAULT_V1), requested, "fallback", failure,
+        )
 
     @staticmethod
     def _response_plan(directive: TurnDirective) -> ResponsePlan:
@@ -1213,6 +1257,7 @@ class AgentWorkflowCoordinator:
         response_plan: ResponsePlan,
         plan_artifact: AgentArtifact,
         style_profile: StyleProfile,
+        style_selection: _StyleSelection,
         style_context: StyleContext,
         style_invocation: AgentInvocation,
         candidate: StyledResponse,
@@ -1529,6 +1574,7 @@ class AgentWorkflowCoordinator:
                         verdict_artifact=verdict_artifact,
                         reviewer_invocation=reviewer_invocation,
                         style_profile=style_profile,
+                        style_selection=style_selection,
                         attempt=counters.nutrition_repairs + 1,
                         review_feedback=issue_types,
                     )
@@ -1545,6 +1591,7 @@ class AgentWorkflowCoordinator:
                         verdict_artifact=verdict_artifact,
                         reviewer_invocation=reviewer_invocation,
                         style_profile=style_profile,
+                        style_selection=style_selection,
                         evidence_packet=evidence_packet,
                         attempt=counters.orchestrator_repairs + 1,
                         review_feedback=issue_types,
@@ -1712,9 +1759,9 @@ class AgentWorkflowCoordinator:
     ) -> AgentInvocation:
         version, schema, scopes = {
             AgentRole.RESPONSE_STYLE: (
-                "response-style-v1",
+                RESPONSE_STYLE_PROMPT_VERSION,
                 "StyleContext",
-                ("response_plan", "style_profile"),
+                ("response_plan", "style_profile", "style_examples"),
             ),
             AgentRole.NUTRITION_EXPERT: (
                 "nutrition-assessment-v1",
@@ -1805,6 +1852,7 @@ class AgentWorkflowCoordinator:
         verdict_artifact: AgentArtifact,
         reviewer_invocation: AgentInvocation,
         style_profile: StyleProfile,
+        style_selection: _StyleSelection,
         attempt: int,
         review_feedback: tuple[str, ...],
     ) -> _UpstreamRepairStage:
@@ -1901,6 +1949,7 @@ class AgentWorkflowCoordinator:
             parent=repaired,
             invocation=invocation,
             style_profile=style_profile,
+            style_selection=style_selection,
             calls=result.model_call_count,
             tokens=result.total_token_count,
             degraded=result.used_fallback,
@@ -1921,6 +1970,7 @@ class AgentWorkflowCoordinator:
         verdict_artifact: AgentArtifact,
         reviewer_invocation: AgentInvocation,
         style_profile: StyleProfile,
+        style_selection: _StyleSelection,
         evidence_packet: EvidencePacket | None,
         attempt: int,
         review_feedback: tuple[str, ...],
@@ -2006,6 +2056,7 @@ class AgentWorkflowCoordinator:
             parent=artifact,
             invocation=invocation,
             style_profile=style_profile,
+            style_selection=style_selection,
             calls=result.model_call_count,
             tokens=result.total_token_count,
             degraded=failed,
@@ -2027,6 +2078,7 @@ class AgentWorkflowCoordinator:
         parent: AgentArtifact,
         invocation: AgentInvocation,
         style_profile: StyleProfile,
+        style_selection: _StyleSelection,
         calls: int,
         tokens: int,
         degraded: bool,
@@ -2061,9 +2113,7 @@ class AgentWorkflowCoordinator:
             created_at=self._aware_now(),
             parents=(plan.artifact_id,),
             payload={
-                "style_profile_id": style_profile.profile_id,
-                "style_profile_version": style_profile.version,
-                "communication_act": response_plan.communication_act.value,
+                **style_selection.metadata(response_plan),
                 "bypassed": False,
             },
         )
@@ -2104,6 +2154,7 @@ class AgentWorkflowCoordinator:
                 response_plan=response_plan,
                 profile=style_profile,
                 assessment=assessment,
+                examples=style_selection.snapshot.for_act(response_plan.communication_act),
             ),
             assessment,
             assessment_artifact,

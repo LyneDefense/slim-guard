@@ -78,8 +78,28 @@ class StyleContext(ContractModel):
         return self
 
 
+class StyleProfileSnapshot(ContractModel):
+    """One published version and its immutable reviewed example library for a Turn."""
+
+    profile: StyleProfile
+    examples: tuple[StyleExample, ...] = Field(default=(), max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_library(self) -> StyleProfileSnapshot:
+        if any(item.style_profile_version != self.profile.version for item in self.examples):
+            raise ValueError("Style examples must belong to the selected profile version")
+        if len({item.example_id for item in self.examples}) != len(self.examples):
+            raise ValueError("Style example IDs must be unique")
+        return self
+
+    def for_act(self, act: CommunicationAct) -> tuple[StyleExample, ...]:
+        return tuple(item for item in self.examples if item.communication_act is act)[:5]
+
+
 class StyleProfileRepository(Protocol):
     async def get_profile(self, version: str) -> StyleProfile | None: ...
+
+    async def get_runtime_snapshot(self, version: str) -> StyleProfileSnapshot | None: ...
 
 
 SLIMGUARD_DEFAULT_V1 = StyleProfile(
@@ -109,4 +129,5 @@ __all__ = [
     "StyleExample",
     "StyleProfile",
     "StyleProfileRepository",
+    "StyleProfileSnapshot",
 ]

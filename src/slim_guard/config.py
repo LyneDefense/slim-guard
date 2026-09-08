@@ -36,7 +36,9 @@ class Settings(DatabaseSettings):
     multi_agent_canary_user_ids: str = ""
     multi_agent_graph_version: str = "typed-supervisor-v1"
     multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
-    default_style_profile: str = "slimguard_default_v1"
+    default_style_profile: str = Field(default="slimguard_default_v1", min_length=1, max_length=128)
+    style_canary_profile: str = Field(default="", max_length=128)
+    style_canary_user_ids: str = ""
     style_render_all_normal_replies: bool = True
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
@@ -135,6 +137,10 @@ class Settings(DatabaseSettings):
 
     @model_validator(mode="after")
     def validate_admin_credentials(self) -> Settings:
+        if self.default_style_profile != self.default_style_profile.strip():
+            raise ValueError("DEFAULT_STYLE_PROFILE must be a nonblank exact version")
+        if self.style_canary_profile != self.style_canary_profile.strip():
+            raise ValueError("STYLE_CANARY_PROFILE must be an exact version")
         if bool(self.admin_username) != bool(self.admin_password):
             raise ValueError("Admin username and password must be configured together")
         if self.mobile_api_enabled and len(self.mobile_auth_secret) < 32:
@@ -177,6 +183,12 @@ class Settings(DatabaseSettings):
     @cached_property
     def admin_is_configured(self) -> bool:
         return bool(self.admin_username and self.admin_password)
+
+    @cached_property
+    def style_canary_users(self) -> frozenset[str]:
+        return frozenset(
+            entry.strip() for entry in self.style_canary_user_ids.split(",") if entry.strip()
+        )
 
     @cached_property
     def multi_agent_canary_users(self) -> frozenset[str]:

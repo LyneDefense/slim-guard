@@ -13,7 +13,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
-from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1, StyleProfile
+from slim_guard.agents.contracts import CommunicationAct
+from slim_guard.agents.style.contracts import (
+    SLIMGUARD_DEFAULT_V1,
+    StyleExample,
+    StyleProfile,
+    StyleProfileSnapshot,
+)
 from slim_guard.db.models import (
     StyleProfileRecord,
     StyleProfileVersionRecord,
@@ -85,6 +91,8 @@ class StyleProfileAsset:
     prompt_sha256: str
     source_corpus_sha256: str | None
     created_at: datetime
+    examples: tuple[StyleExample, ...] = ()
+    publication: Mapping[str, Any] | None = None
 
     def to_profile(self) -> StyleProfile:
         return StyleProfile(
@@ -103,6 +111,163 @@ class StyleProfileRepository:
 
     def __init__(self, database: Database) -> None:
         self.database = database
+
+    async def import_reviewed_bundle(
+        self,
+        bundle: Mapping[str, Any],
+        *,
+        actor: str,
+        privacy_confirmed: bool,
+        expression_only_confirmed: bool,
+        evaluation_reviewed: bool,
+    ) -> StyleProfileAsset:
+        """Publish an explicitly human-reviewed export as evaluated, without activation."""
+        from slim_guard.style_corpus import StyleAssetBundle, StyleEvalReport
+        from slim_guard.style_reviews import style_ab_case_key
+
+        if not all(value is True for value in (
+            privacy_confirmed, expression_only_confirmed, evaluation_reviewed,
+        )):
+            raise ValueError(
+                "Publication requires explicit human privacy, expression and Eval review"
+            )
+        reviewer = self._text(actor, field="actor", maximum=128)
+        data = dict(bundle)
+        evaluation = StyleEvalReport.model_validate(data.pop("evaluation", None))
+        asset_bundle = StyleAssetBundle.model_validate(data)
+        if asset_bundle.profile.version == DEFAULT_STYLE_PROFILE_VERSION:
+            raise ValueError("The built-in default profile cannot be replaced")
+        snapshot = StyleProfileSnapshot(
+            profile=asset_bundle.profile,
+            examples=asset_bundle.examples,
+        )
+        for field in ("profile_id", "version"):
+            value = getattr(snapshot.profile, field)
+            if self._identifier(value, field=field) != value:
+                raise ValueError("Style Profile identity must be normalized before evaluation")
+        self._digest(asset_bundle.source_corpus_sha256, field="source_corpus_sha256")
+        if not snapshot.examples:
+            raise ValueError("Publication requires reviewed expression examples")
+        if (
+            snapshot.profile.profile_id == "doctor_strict"
+            or snapshot.profile.version == "doctor_strict_v1"
+        ) and {example.communication_act for example in snapshot.examples} != set(CommunicationAct):
+            raise ValueError(
+                "Doctor Strict publication requires examples for all six communication acts"
+            )
+        digest = hashlib.sha256(asset_bundle.model_dump_json().encode()).hexdigest()
+        if evaluation.bundle_sha256 != digest:
+            raise ValueError("Evaluation does not match the exact Style Asset bundle")
+        if (
+            evaluation.passed is not True
+            or evaluation.missing_acts
+            or not evaluation.results
+            or len({result.case_id for result in evaluation.results}) != len(evaluation.results)
+            or any(
+                result.passed is not True
+                or result.judgment is None
+                or not result.judgment.passed
+                or result.failure_code is not None
+                for result in evaluation.results
+            )
+            or not {example.communication_act for example in snapshot.examples}.issubset(
+                {result.communication_act for result in evaluation.results}
+            )
+        ):
+            raise ValueError("Publication requires complete passing style and fidelity evaluation")
+        self._digest(evaluation.cases_sha256, field="cases_sha256")
+        self._text(evaluation.actor, field="evaluation.actor", maximum=128)
+        self._text(evaluation.model, field="evaluation.model", maximum=256)
+        self._require_aware(datetime.fromisoformat(evaluation.created_at))
+        evaluation_digest = hashlib.sha256(evaluation.model_dump_json().encode()).hexdigest()
+        approval = await self._require_bundle_approval(
+            bundle_sha256=digest,
+            evaluation_sha256=evaluation_digest,
+            candidate_profile_version=snapshot.profile.version,
+        )
+        if {case["case_id"] for case in approval["case_reviews"]} != {
+            style_ab_case_key(evaluation_digest, result.case_id)
+            for result in evaluation.results
+        }:
+            raise ValueError("Human approval must cover the exact evaluated case set")
+        profile = snapshot.profile
+        spec = self._style_spec(style_spec=profile.model_dump(
+            mode="json", exclude={"schema_version", "profile_id", "version"},
+        ))
+        # Normalization must not change the asset that was actually evaluated.
+        if StyleProfile(profile_id=profile.profile_id, version=profile.version, **spec) != profile:
+            raise ValueError("Style Profile must be normalized before evaluation")
+        spec["examples"] = [example.model_dump(mode="json") for example in snapshot.examples]
+        spec["publication"] = {
+            "actor": reviewer,
+            "privacy_confirmed": True,
+            "expression_only_confirmed": True,
+            "evaluation_reviewed": True,
+            "bundle_sha256": digest,
+            "evaluation_sha256": evaluation_digest,
+            "reviewed_at": utc_now().isoformat(),
+            "approval": approval,
+        }
+        await self.create_profile(profile.profile_id)
+        return await self.append_version(
+            profile_id=profile.profile_id,
+            version=profile.version,
+            style_spec=spec,
+            source_corpus_sha256=asset_bundle.source_corpus_sha256,
+            prompt_sha256=digest,
+            status="evaluated",
+        )
+
+    async def _require_bundle_approval(
+        self, *, bundle_sha256: str, evaluation_sha256: str, candidate_profile_version: str,
+    ) -> dict[str, Any]:
+        from slim_guard.style_reviews import StyleABReviewRepository
+
+        return await StyleABReviewRepository(self.database).require_bundle_approval(
+            bundle_sha256=bundle_sha256,
+            evaluation_sha256=evaluation_sha256,
+            candidate_profile_version=candidate_profile_version,
+        )
+
+    async def get_runtime_snapshot(self, version: str) -> StyleProfileSnapshot | None:
+        """Only published versions cross the online prompt boundary."""
+        asset = await self.get_profile_asset(version)
+        if asset is None or asset.status not in {"evaluated", "active"}:
+            return None
+        snapshot = StyleProfileSnapshot(profile=asset.to_profile(), examples=asset.examples)
+        if version == DEFAULT_STYLE_PROFILE_VERSION:
+            if snapshot.profile != SLIMGUARD_DEFAULT_V1 or snapshot.examples:
+                raise StyleProfileIntegrityError("Built-in Style Profile content changed")
+            return snapshot
+        if asset.publication is None or asset.source_corpus_sha256 is None:
+            return None
+        from slim_guard.style_corpus import StyleAssetBundle
+
+        bundle = StyleAssetBundle(
+            source_corpus_sha256=asset.source_corpus_sha256,
+            profile=snapshot.profile,
+            examples=snapshot.examples,
+        )
+        digest = hashlib.sha256(bundle.model_dump_json().encode()).hexdigest()
+        if (
+            digest != asset.publication["bundle_sha256"]
+            or digest != asset.prompt_sha256
+            or asset.publication["approval"]["candidate_profile_version"] != version
+        ):
+            raise StyleProfileIntegrityError("Published Style Profile content changed")
+        return snapshot
+
+    async def get_examples(
+        self, version: str, communication_act: CommunicationAct,
+    ) -> tuple[StyleExample, ...]:
+        snapshot = await self.get_runtime_snapshot(version)
+        return snapshot.for_act(communication_act) if snapshot is not None else ()
+
+    async def require_published(self, version: str) -> StyleProfileSnapshot:
+        snapshot = await self.get_runtime_snapshot(version)
+        if snapshot is None:
+            raise StyleProfileNotFound(f"Style Profile version {version} is not published")
+        return snapshot
 
     async def create_profile(
         self,
@@ -169,6 +334,8 @@ class StyleProfileRepository:
         version = self._identifier(version, field="version")
         if status not in _VERSION_STATUSES:
             raise ValueError(f"Unsupported Style Profile version status: {status}")
+        if activate and status not in {"evaluated", "active"}:
+            raise ValueError("Draft or retired Style Profiles cannot be activated")
         created_at = created_at or utc_now()
         self._require_aware(created_at)
         spec = self._style_spec(
@@ -179,6 +346,15 @@ class StyleProfileRepository:
             prohibited_phrases=prohibited_phrases,
             preferred_max_paragraphs=preferred_max_paragraphs,
         )
+        if "publication" in spec:
+            publication = spec["publication"]
+            approval = await self._require_bundle_approval(
+                bundle_sha256=publication["bundle_sha256"],
+                evaluation_sha256=publication["evaluation_sha256"],
+                candidate_profile_version=version,
+            )
+            if approval != publication["approval"]:
+                raise ValueError("Publication approval changed; review the current receipt")
         digest = self._prompt_digest(
             prompt_text=prompt_text,
             prompt_sha256=prompt_sha256,
@@ -334,6 +510,8 @@ class StyleProfileRepository:
                 raise StyleProfileNotFound(
                     f"Style Profile version {version} does not exist for {profile_key}"
                 )
+            if row.status not in {"evaluated", "active"}:
+                raise ValueError("Draft or retired Style Profiles cannot be activated")
             profile.active_version_id = row.id
             profile.updated_at = activated_at
             await session.flush()
@@ -373,6 +551,8 @@ class StyleProfileRepository:
             prompt_sha256=row.prompt_sha256,
             source_corpus_sha256=row.source_corpus_sha256,
             created_at=cls._aware(row.created_at),
+            examples=tuple(StyleExample.model_validate(item) for item in spec.get("examples", [])),
+            publication=spec.get("publication"),
         )
 
     @classmethod
@@ -414,7 +594,7 @@ class StyleProfileRepository:
             "prohibited_phrases",
             "preferred_max_paragraphs",
         }
-        if set(source) != expected:
+        if not expected.issubset(source) or set(source) - expected - {"examples", "publication"}:
             raise ValueError(
                 "Style Profile specification must contain exactly: "
                 + ", ".join(sorted(expected))
@@ -446,13 +626,79 @@ class StyleProfileRepository:
             or not 1 <= paragraph_count <= 12
         ):
             raise ValueError("preferred_max_paragraphs must be between 1 and 12")
-        return {
+        result = {
             "display_name": normalized_display,
             "description": normalized_description,
             "tone_rules": list(normalized_rules),
             "prohibited_phrases": list(normalized_prohibited),
             "preferred_max_paragraphs": paragraph_count,
         }
+        if "examples" in source:
+            raw_examples = source["examples"]
+            if not isinstance(raw_examples, list) or len(raw_examples) > 1000:
+                raise ValueError("Style examples must be a bounded list")
+            result["examples"] = [
+                StyleExample.model_validate(item).model_dump(mode="json") for item in raw_examples
+            ]
+        if "publication" in source:
+            publication = source["publication"]
+            required = {
+                "actor", "privacy_confirmed", "expression_only_confirmed", "evaluation_reviewed",
+                "bundle_sha256", "evaluation_sha256", "reviewed_at",
+                "approval",
+            }
+            if not isinstance(publication, dict) or set(publication) != required:
+                raise ValueError("Style publication receipt is invalid")
+            if not all(publication[key] is True for key in (
+                "privacy_confirmed", "expression_only_confirmed", "evaluation_reviewed",
+            )):
+                raise ValueError("Style publication requires explicit human confirmations")
+            StyleProfileRepository._text(publication["actor"], field="actor", maximum=128)
+            for field in ("bundle_sha256", "evaluation_sha256"):
+                StyleProfileRepository._digest(publication[field], field=field)
+            StyleProfileRepository._require_aware(datetime.fromisoformat(publication["reviewed_at"]))
+            approval = publication["approval"]
+            approval_fields = {
+                "schema_version", "bundle_sha256", "evaluation_sha256", "candidate_profile_version",
+                "case_count", "case_reviews", "reviewer_actors", "reviewed_at", "approval_sha256",
+                "required_communication_acts", "automated_judge_models",
+            }
+            if not isinstance(approval, dict) or set(approval) != approval_fields:
+                raise ValueError("Style publication approval receipt is invalid")
+            if (
+                approval["schema_version"] != "1"
+                or approval["bundle_sha256"] != publication["bundle_sha256"]
+                or approval["evaluation_sha256"] != publication["evaluation_sha256"]
+                or not isinstance(approval["case_reviews"], list)
+                or not approval["case_reviews"]
+                or type(approval["case_count"]) is not int
+                or approval["case_count"] != len(approval["case_reviews"])
+            ):
+                raise ValueError("Style publication approval does not match bundle/evaluation")
+            case_fields = {
+                "case_id", "source_sample_sha256", "review_id", "actor", "style_match",
+                "fidelity", "appropriateness", "reviewed_at",
+            }
+            for case in approval["case_reviews"]:
+                if not isinstance(case, dict) or set(case) != case_fields:
+                    raise ValueError("Human approval case receipt is invalid")
+                for field in ("case_id", "review_id", "actor"):
+                    StyleProfileRepository._text(case[field], field=field, maximum=128)
+                for field in ("style_match", "fidelity", "appropriateness"):
+                    if type(case[field]) is not int or not 1 <= case[field] <= 5:
+                        raise ValueError("Human approval scores must be integers from 1 to 5")
+                StyleProfileRepository._digest(case["source_sample_sha256"], field="source_sample")
+                StyleProfileRepository._require_aware(datetime.fromisoformat(case["reviewed_at"]))
+            case_ids = {case["case_id"] for case in approval["case_reviews"]}
+            if len(case_ids) != approval["case_count"]:
+                raise ValueError("Human approval cases must be unique")
+            receipt_digest = hashlib.sha256(StyleProfileRepository._json({
+                key: value for key, value in approval.items() if key != "approval_sha256"
+            }).encode()).hexdigest()
+            if receipt_digest != approval["approval_sha256"]:
+                raise ValueError("Style publication approval digest does not match")
+            result["publication"] = dict(publication)
+        return result
 
     @staticmethod
     def _prompt_digest(
