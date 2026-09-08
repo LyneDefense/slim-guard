@@ -24,6 +24,11 @@
 - `data/style-assets/doctor_strict_v1/comparison.v5.json`：固定 bundle 的最终真实模型合成 A/B 报告。
 - `data/style-assets/doctor_strict_v1/AB-REVIEW.md`：与最终报告逐字一致的本地人工复审清单。
 - `data/style-assets/doctor_strict_v1/export.v1.json`：自动 Eval 通过的精确离线导出，仍为 draft。
+- `style_assets/doctor_strict_v2/profile.feedback-derived.json`：根据首轮实名拒绝批注归纳的 v2 规则；
+  不冒充真人，不携带批注场景中的食物或专业知识。
+- `data/style-assets/doctor_strict_v2/feedback-review.v1.json`：六类批注到修订例句及来源 review ID 的本地审计记录。
+- `data/style-assets/doctor_strict_v2/bundle.v1.json`：从 append-only 反馈修订记录构建的 v2 draft bundle。
+- `data/style-assets/doctor_strict_v2/comparison.v3.json`：带逐条结构化场景的 v2 最终人工复审输入。
 
 `data/` 已忽略，输出文件权限为 0600，不覆盖已有文件。初版 `prepared.json` 已被
 `prepared.v2.json` 取代，保留便于核对，后续不要导入初版。
@@ -63,7 +68,14 @@
 人工复审页现先展示合成场景，再展示同一份 ResponsePlan 和两侧输出。新 Case 的场景包含“用户刚刚
 发生了什么”“系统已确认的上下文”“这条回复要完成什么”，并以 SHA-256 与 Case、导入清单和最终
 发布回执绑定。迁移前已有的 12 条评分及批注保持不变；由于旧报告没有结构化场景字段，只明确标注为
-“历史 A/B 用例（未单独记录场景）”，不根据输出倒推或补造上下文。下一版 A/B 会写入逐条明确场景。
+“历史 A/B 用例（未单独记录场景）”，不根据输出倒推或补造上下文。v2 A/B 已写入逐条明确场景。
+
+`doctor_strict_v2` 已使用首轮实名批注中的六类说法修订：普通确认“行”、鼓励“不错，要保持”、
+日期追问“你记录的是哪一天的”，并为提醒、纠正和解释增加只使用上游已确认事实的边界。
+首轮 v2 真实生成因一条受保护事实被模型改写而降级，第二轮虽 12/12 通过但基线和候选区分不足；
+两份报告均保留为失败/诊断审计。最终 `comparison.v3.json` 的两侧 12/12 均真实生成成功、自动评估
+12/12 通过，并已导入目标 PostgreSQL：`doctor_strict_v2` 共 12 条，已评分 0、待评分 12。
+它仍是待人工判断的候选版本，未发布、未灰度、未启用。
 
 ## 1. 本地准备与隐私核对
 
