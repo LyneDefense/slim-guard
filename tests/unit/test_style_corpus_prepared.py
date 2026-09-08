@@ -132,6 +132,17 @@ async def test_repeated_prepared_import_reuses_content_model_identity_and_preser
     assert len(gateway.requests) == 3
 
 
+async def test_candidate_prompt_requires_chinese_templates_and_semantic_caution(corpus):
+    gateway = ScriptedModelGateway([judgment()])
+    await corpus.import_prepared_pairs(prepared(), gateway=gateway, model="test-model")
+    prompt = gateway.requests[0].messages[0].content
+    assert "Simplified Chinese" in prompt
+    assert "reusable reply template" in prompt
+    assert "rhetorical question" in prompt
+    assert "use related=false" in prompt
+    assert "Do not copy dismissiveness" in prompt
+
+
 async def test_pending_and_excluded_pairs_never_reach_a_model(corpus):
     gateway = ScriptedModelGateway([])
     source = prepared(

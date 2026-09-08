@@ -262,6 +262,18 @@ _CANDIDATE_PROMPT = (
     "for facts and actions; remove all personal facts, diagnoses, nutrition advice, "
     "names, identities and medical knowledge. Describe only expression in tone_rules. "
     "Do not imitate a real doctor's identity, shame, threaten, or invent corpus data. "
+    "Write example_text, tone_rules and reason in Simplified Chinese, matching the source "
+    "language. example_text must contain only a reusable reply template, never a user/reply "
+    "transcript or an English translation. Replace every personal behavioral assessment, "
+    "causal explanation, professional assertion and proposed action with Chinese placeholders "
+    "such as [上游已确认的事实] or [上游允许的下一步]. Do not turn the speaker's guesses into "
+    "facts. Preserve speech-act meaning: a rhetorical question such as '不是有搜索工具吗' "
+    "does not deny a preceding identity or location guess. A bare confirmation such as '是的' "
+    "does not establish the missing topic of a subsequent explanation, reassurance or "
+    "personal assessment; use related=false when that relationship cannot be established. "
+    "Do not copy dismissiveness, ridicule, blame, threats, or pressure to ignore feelings. "
+    "If those dominate the reply, explain that the expression is unsuitable instead of "
+    "endorsing them in the proposed tone rules. Relevance alone never means style suitability. "
     "Return the specified JSON. This is a candidate, never human approval."
 )
 

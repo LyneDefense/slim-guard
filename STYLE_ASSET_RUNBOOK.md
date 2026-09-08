@@ -14,13 +14,23 @@
 - `data/style-assets/doctor_strict_v1/prepared.v2.json`：自动脱敏、本地待审材料。
 - `data/style-assets/doctor_strict_v1/preparation-status.json`：真实执行状态，不含聊天正文。
 - `style_assets/doctor_strict_v1/profile.draft.json`：根据本地观察归纳的表达草案，未批准。
+- `data/style-assets/doctor_strict_v1/REVIEW.md`：首批真实模型结果与待审核表达建议。
+- `data/style-assets/doctor_strict_v1/extraction-review.v1.json`：保留实际模型输出，另列助手筛选及建议修订。
+- `data/style-assets/doctor_strict_v1/extraction-status.v1.json`：当前实际执行状态；早期 preparation-status 仅记录准备阶段。
 
 `data/` 已忽略，输出文件权限为 0600，不覆盖已有文件。初版 `prepared.json` 已被
 `prepared.v2.json` 取代，保留便于核对，后续不要导入初版。
 图片和语音没有被识别，不凭前后位置猜测回复对象。不足的例子保持缺失，不造训练数据。
 
-真实模型提取、真实 A/B、人工评分及发布尚未完成：本次环境没有模型凭据，未外发群聊，
-也没有代替用户提交任何人工批准。单元测试使用合成数据，不是实际风格验收结果。
+用户已配置模型凭据，并明确允许处理经隐私复核的脱敏文字。2026-09-08 已用真实模型
+处理首批 7 组低隐私风险文字，共两轮、14 次判断；另 9 组因个人健康、亲属或具体方案等原因
+保留在本地，未外发。原始 HTML、图片和语音没有上传。
+
+首轮出现英文输出、主观推断及反问误读，已保留原记录并收紧抽取提示词后重跑。
+第二轮模型判定 5 组相关、2 组不相关；助手复核建议 1 组送人工审核、2 组修订后再审，
+4 组不采用。相关性不代表表达适用；修订建议不是医生原话，也不是人工批准。
+当前仅确认、解释、提醒三类有待审建议，纠正、鼓励、询问仍缺合格候选。
+没有构建已批准资产，没有执行真实 A/B，没有人工评分或发布。
 
 ## 1. 本地准备与隐私核对
 
@@ -41,13 +51,15 @@ uv run python -m slim_guard.tools.prepare_style_export \
 不要把密钥写入命令示例、聊天、语料或 Git。
 
 以下确认参数只可在实际核对隐私并同意将筛选文本交给模型后使用。
+本批示例复用项目 `.env`，只导入已复核的 7 组；不直接发送原来 16 组自动脱敏候选。
 
 ```sh
 uv run python -m slim_guard.tools.manage_style_corpus \
   --database data/style-assets/doctor_strict_v1/corpus.sqlite \
+  --use-project-model \
   --output data/style-assets/doctor_strict_v1/import-result.json \
-  import-prepared --input data/style-assets/doctor_strict_v1/prepared.v2.json \
-  --max-pairs 40 --confirm-redacted-inputs
+  import-prepared --input data/style-assets/doctor_strict_v1/prepared.model-input.v1.json \
+  --max-pairs 7 --confirm-redacted-inputs
 ```
 
 只有可定位且未排除的文本送模型。模型判断是否真正相关、沟通行为、去事实的表达例子及规则。
@@ -98,6 +110,7 @@ uv run python -m slim_guard.tools.manage_style_corpus \
 uv run python -m slim_guard.tools.evaluate_style_asset \
   --bundle data/style-assets/doctor_strict_v1/bundle.json \
   --database data/style-assets/doctor_strict_v1/corpus.sqlite \
+  --use-project-model \
   --actor ACTUAL_OPERATOR --confirm-redacted-inputs \
   --output data/style-assets/doctor_strict_v1/comparison.json
 ```
@@ -174,7 +187,9 @@ workflow canary 名单。先 shadow 检查，再经批准使用 canary，不能�
 
 2026-09-08 后端完整回归：`uv run pytest` 为 694 passed；`ruff check src tests`、
 `mypy src/slim_guard`（172 个源文件）及编译检查通过。数据库审核与认证 API 使用临时 SQLite
-验证，模型响应全部是显式合成测试夹具。PostgreSQL 触发器已实现，但本次没有在真实
+验证，自动化测试中的模型响应全部是显式合成测试夹具。PostgreSQL 触发器已实现，但本次没有在真实
 PostgreSQL 实例执行迁移；部署前仍应在目标数据库的测试副本验证。
 前端 `npm run check`、`npm run build` 和 `npm test`（21 项 SSR/契约回归）通过。
+本次真实提取后收紧了候选提示词，相关 86 项离线语料/评估/导入回归、Ruff 及该源模块的 mypy 通过；
+上面的 694 项为此前完整基线记录，不是本次真实模型质量得分。
 这些结果证明代码链路的测试状态，不等同于医生风格的真实模型效果或人工验收。
