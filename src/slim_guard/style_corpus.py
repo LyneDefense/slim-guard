@@ -17,10 +17,10 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from uuid import uuid4
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -38,6 +38,9 @@ from slim_guard.agents.contracts import (
     StyledResponse,
 )
 from slim_guard.agents.style.contracts import StyleExample, StyleProfile
+
+if TYPE_CHECKING:
+    from slim_guard.wechat_style_export import PreparedExport
 
 
 class ExportMessage(ContractModel):
@@ -67,6 +70,10 @@ class CorpusCandidate(ContractModel):
     context: str
     reply: str
     judgment: CandidateJudgment
+    prepared_pair_id: str | None = None
+    source_message_ids: tuple[str, ...] = ()
+    context_message_ids: tuple[str, ...] = ()
+    judge_model: str | None = None
 
 
 class CorpusReview(ContractModel):
@@ -92,6 +99,14 @@ class StyleAssetBundle(ContractModel):
     profile: StyleProfile
     examples: tuple[StyleExample, ...]
 
+    @model_validator(mode="after")
+    def validate_example_library(self) -> StyleAssetBundle:
+        if any(item.style_profile_version != self.profile.version for item in self.examples):
+            raise ValueError("Bundle examples must match its exact profile version")
+        if len({item.example_id for item in self.examples}) != len(self.examples):
+            raise ValueError("Bundle example IDs must be unique")
+        return self
+
 
 class StyleEvalCase(ContractModel):
     """Actual generated candidate plus its immutable source for fidelity evaluation."""
@@ -99,6 +114,7 @@ class StyleEvalCase(ContractModel):
     case_id: str = Field(min_length=1, max_length=128)
     response_plan: ResponsePlan
     styled_response: StyledResponse
+    generation_status: Literal["succeeded", "degraded"] = "succeeded"
 
 
 class StyleEvalJudgment(ContractModel):
@@ -367,6 +383,137 @@ class OfflineStyleCorpus:
             for row in self.connection.execute("SELECT payload FROM corpus_candidates ORDER BY id")
         )
 
+    async def import_prepared_pairs(
+        self,
+        prepared: PreparedExport,
+        *,
+        gateway: ModelGateway,
+        model: str,
+        max_pairs: int = 40,
+    ) -> tuple[CorpusCandidate, ...]:
+        """Judge already redacted, recipient-aware pairs without re-merging them.
+
+        Only explicitly eligible text pairs cross the model boundary. A model
+        judgment is a proposal, never a human privacy or publication approval.
+        Repeated imports reuse exact source/pair/model/prompt identities.
+        """
+        if not 1 <= max_pairs <= 200:
+            raise ValueError("max_pairs must be between 1 and 200")
+        if not model.strip():
+            raise ValueError("An explicit judging model is required")
+        existing = {candidate.candidate_id: candidate for candidate in self.candidates()}
+        results: list[CorpusCandidate] = []
+        eligible = [pair for pair in prepared.pairs if pair.eligible_for_judgment]
+        for pair in eligible[:max_pairs]:
+            if pair.pending_reasons or pair.exclusion_reasons:
+                raise ValueError("Pending or excluded pairs cannot be sent to the judge")
+            if pair.source_sha256 != prepared.source_sha256:
+                raise ValueError("Prepared pair belongs to a different source")
+            context, reply = pair.context, pair.reply
+            if redact(context) != context or redact(reply) != reply:
+                raise ValueError("Prepared pair still contains recognizable private information")
+            identity = _digest(
+                _json(
+                    {
+                        "source": prepared.source_sha256,
+                        "pair": pair.model_dump(),
+                        "model": model,
+                        "prompt": _digest(_CANDIDATE_PROMPT),
+                    }
+                )
+            )
+            candidate_id = "candidate-" + identity[:32]
+            if candidate_id in existing:
+                results.append(existing[candidate_id])
+                continue
+            judgment = await _judge(
+                gateway,
+                model,
+                _CANDIDATE_PROMPT,
+                {"context": context, "reply": reply},
+                CandidateJudgment,
+            )
+            if any(
+                redact(text) != text
+                for text in (
+                    judgment.example_text,
+                    judgment.reason,
+                    *judgment.tone_rules,
+                )
+            ):
+                raise ValueError("Judge output introduced recognizable private information")
+            candidate = CorpusCandidate(
+                candidate_id=candidate_id,
+                source_sha256=prepared.source_sha256,
+                context=context,
+                reply=reply,
+                judgment=judgment,
+                prepared_pair_id=pair.pair_id,
+                source_message_ids=pair.message_ids,
+                context_message_ids=pair.context_message_ids,
+                judge_model=model,
+            )
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO corpus_candidates VALUES (?, ?)",
+                    (candidate.candidate_id, candidate.model_dump_json()),
+                )
+            existing[candidate_id] = candidate
+            results.append(candidate)
+        return tuple(results)
+
+    def propose_bundle(
+        self,
+        *,
+        profile: StyleProfile,
+        candidate_ids: Sequence[str],
+    ) -> StyleAssetBundle:
+        """Prepare expression examples for human inspection, not publication.
+
+        The separate provenance hash deliberately cannot pass export_bundle's
+        gate for a bundle built from current, explicit human approvals.
+        """
+        if not candidate_ids or len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("A proposal requires unique, explicit candidate IDs")
+        by_id = {candidate.candidate_id: candidate for candidate in self.candidates()}
+        examples: list[StyleExample] = []
+        provenance: list[dict[str, Any]] = []
+        for candidate_id in candidate_ids:
+            candidate = by_id.get(candidate_id)
+            if candidate is None or not candidate.judgment.related:
+                raise ValueError("Proposal contains an unknown or unrelated candidate")
+            latest = self.connection.execute(
+                "SELECT payload FROM corpus_reviews WHERE candidate_id = ? "
+                "ORDER BY sequence DESC LIMIT 1",
+                (candidate_id,),
+            ).fetchone()
+            review = CorpusReview.model_validate_json(latest[0]) if latest else None
+            if review is not None and review.decision == "reject":
+                raise ValueError("A rejected candidate cannot enter a proposal")
+            examples.append(
+                StyleExample(
+                    example_id=candidate_id,
+                    style_profile_version=profile.version,
+                    communication_act=candidate.judgment.communication_act,
+                    text=review.example_text
+                    if review and review.example_text
+                    else candidate.judgment.example_text,
+                )
+            )
+            provenance.append(candidate.model_dump())
+        return StyleAssetBundle(
+            source_corpus_sha256=_digest(
+                _json(
+                    {
+                        "human_approval": "pending",
+                        "candidates": provenance,
+                    }
+                )
+            ),
+            profile=profile,
+            examples=tuple(examples),
+        )
+
     def review(self, candidate_id: str, review: CorpusReview) -> None:
         candidate = next(
             (item for item in self.candidates() if item.candidate_id == candidate_id), None
@@ -401,7 +548,14 @@ class OfflineStyleCorpus:
                 (candidate_id, datetime.now(UTC).isoformat(), review.model_dump_json()),
             )
 
-    def build_bundle(self, *, profile_id: str, version: str, display_name: str) -> StyleAssetBundle:
+    def build_bundle(
+        self,
+        *,
+        profile_id: str,
+        version: str,
+        display_name: str,
+        profile_override: StyleProfile | None = None,
+    ) -> StyleAssetBundle:
         """Build a reviewable draft from currently approved examples only; no activation."""
         rows = self.connection.execute("""
             SELECT c.payload, r.payload FROM corpus_candidates c
@@ -434,7 +588,13 @@ class OfflineStyleCorpus:
             provenance.append({"candidate": candidate.model_dump(), "review": review.model_dump()})
         if not examples:
             raise ValueError("No human-approved related expression examples are available")
-        profile = StyleProfile(
+        if profile_override is not None and (
+            profile_override.profile_id != profile_id
+            or profile_override.version != version
+            or profile_override.display_name != display_name
+        ):
+            raise ValueError("Reviewed profile identity does not match the bundle")
+        profile = profile_override or StyleProfile(
             profile_id=profile_id,
             version=version,
             display_name=display_name,
@@ -464,6 +624,8 @@ class OfflineStyleCorpus:
         results: list[StyleEvalResult] = []
         for case in cases:
             try:
+                if case.generation_status != "succeeded":
+                    raise ValueError("A renderer fallback is not a successful style evaluation")
                 if case.styled_response.style_profile_version != bundle.profile.version:
                     raise ValueError("Evaluation response uses another profile version")
                 case.styled_response.validate_against_plan(case.response_plan)
@@ -521,6 +683,7 @@ class OfflineStyleCorpus:
             profile_id=bundle.profile.profile_id,
             version=bundle.profile.version,
             display_name=bundle.profile.display_name,
+            profile_override=bundle.profile,
         )
         if current != bundle:
             raise ValueError("Corpus approvals changed; rebuild and reevaluate the draft")
