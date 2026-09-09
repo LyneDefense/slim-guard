@@ -30,6 +30,16 @@ def _require_csrf(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF header required")
 
 
+@router.get("/context")
+async def context(
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+) -> dict[str, Any]:
+    del principal
+    versions = await _repository(request).candidate_profile_versions()
+    return {"candidate_profile_versions": list(versions)}
+
+
 @router.get("/cases")
 async def list_cases(
     request: Request,

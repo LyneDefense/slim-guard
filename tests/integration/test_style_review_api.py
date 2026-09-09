@@ -103,13 +103,18 @@ async def login(client):
     assert result.status_code == 200
 
 
-@pytest.mark.parametrize("endpoint", ["list", "detail", "statistics", "review"])
+@pytest.mark.parametrize("endpoint", ["context", "list", "detail", "statistics", "review"])
 async def test_every_style_review_endpoint_requires_real_admin_session(api, endpoint):
     client, repository, ids, _ = api
     if endpoint == "review":
         response = await client.post(f"{PREFIX}/cases/{ids[0]}/reviews", json=SCORE, headers=CSRF)
     else:
-        path = {"list": "/cases", "detail": f"/cases/{ids[0]}", "statistics": "/statistics"}
+        path = {
+            "context": "/context",
+            "list": "/cases",
+            "detail": f"/cases/{ids[0]}",
+            "statistics": "/statistics",
+        }
         response = await client.get(PREFIX + path[endpoint])
     assert response.status_code == 401
     assert (await repository.get_case(ids[0]))["reviews"] == []
@@ -118,6 +123,11 @@ async def test_every_style_review_endpoint_requires_real_admin_session(api, endp
 async def test_authenticated_list_filters_pagination_and_detail_return_synthetic_comparisons(api):
     client, _, ids, _ = api
     await login(client)
+    context = await client.get(f"{PREFIX}/context")
+    assert context.status_code == 200
+    assert context.json() == {
+        "candidate_profile_versions": ["TEST-api-style-v1"]
+    }
     listing = await client.get(f"{PREFIX}/cases", params={"limit": 1, "offset": 1})
     assert listing.status_code == 200
     assert listing.json()["total"] == 3

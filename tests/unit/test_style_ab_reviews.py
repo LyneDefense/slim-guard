@@ -97,6 +97,7 @@ def score(**updates):
 async def test_import_is_idempotent_and_list_omits_synthetic_reply_bodies(ledger):
     _, repository, pairs, source, ids = ledger
     assert await repository.import_pairs(pairs, trusted_source=source) == ids
+    assert await repository.candidate_profile_versions() == ("TEST-candidate-v1",)
     listing = await repository.list_cases(limit=50, offset=0)
     assert listing["total"] == 2
     assert all("response_plan" not in row for row in listing["items"])

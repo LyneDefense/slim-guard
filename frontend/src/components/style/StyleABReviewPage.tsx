@@ -39,6 +39,10 @@ export function StyleABReviewPage() {
   const [act, setAct] = useState("");
   const [decision, setDecision] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const context = useQuery({
+    queryKey: ["style-ab-context"],
+    queryFn: api.styleABContext,
+  });
   const filters = {
     candidate_profile_version: profile || undefined,
     communication_act: act || undefined,
@@ -73,6 +77,7 @@ export function StyleABReviewPage() {
       {statistics.data && <StyleABStats value={statistics.data} />}
       <StyleABFilters
         profile={profile}
+        versions={context.data?.candidate_profile_versions ?? []}
         act={act}
         decision={decision}
         onChange={(next) => {
@@ -130,25 +135,32 @@ function StyleABStats({ value }: { value: StyleABStatistics }) {
   );
 }
 
-function StyleABFilters({
+export function StyleABFilters({
   profile,
+  versions,
   act,
   decision,
   onChange,
 }: {
   profile: string;
+  versions: string[];
   act: string;
   decision: string;
   onChange: (value: { profile: string; act: string; decision: string }) => void;
 }) {
   return (
     <div className="filters style-ab-filters">
-      <label>候选 Profile
-        <input
+      <label>候选版本
+        <select
+          aria-label="候选版本"
           value={profile}
           onChange={(event) => onChange({ profile: event.target.value, act, decision })}
-          placeholder="例如 doctor_strict_v1"
-        />
+        >
+          <option value="">全部版本</option>
+          {versions.map((version) => (
+            <option key={version} value={version}>{version}</option>
+          ))}
+        </select>
       </label>
       <label>沟通行为
         <select value={act} onChange={(event) => onChange({ profile, act: event.target.value, decision })}>

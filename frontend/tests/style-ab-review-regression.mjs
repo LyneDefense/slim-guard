@@ -17,7 +17,7 @@ const server = await createServer({
 });
 after(() => server.close());
 
-const { StyleABCaseData } = await server.ssrLoadModule(
+const { StyleABCaseData, StyleABFilters } = await server.ssrLoadModule(
   "/src/components/style/StyleABReviewPage.tsx",
 );
 
@@ -188,4 +188,20 @@ test("review form identity, CSRF and correction binding stay server-owned and ca
   assert.doesNotMatch(componentSource, /name=["']actor["']/);
   assert.match(apiSource, /"X-SlimGuard-CSRF": "1"/);
   assert.match(apiSource, /JSON\.stringify\(input\)/);
+});
+
+test("A/B filters offer exact imported candidate versions instead of free text", () => {
+  const html = renderToStaticMarkup(createElement(StyleABFilters, {
+    profile: "TEST-candidate-v2",
+    versions: ["TEST-candidate-v3", "TEST-candidate-v2", "TEST-candidate-v1"],
+    act: "",
+    decision: "",
+    onChange: () => undefined,
+  }));
+  assert.ok(html.includes("候选版本"));
+  assert.ok(html.includes("全部版本"));
+  for (const version of ["TEST-candidate-v3", "TEST-candidate-v2", "TEST-candidate-v1"]) {
+    assert.ok(html.includes(`value="${version}"`), version);
+  }
+  assert.doesNotMatch(html, /placeholder=/);
 });

@@ -363,6 +363,10 @@ export interface StyleABStatistics {
   scores: Record<string, { sample_count: number; average: number | null }>;
 }
 
+export interface StyleABContext {
+  candidate_profile_versions: string[];
+}
+
 export interface StyleABReviewInput {
   style_match: number;
   fidelity: number;

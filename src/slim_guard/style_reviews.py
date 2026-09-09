@@ -406,6 +406,21 @@ class StyleABReviewRepository:
             },
         }
 
+    async def candidate_profile_versions(self) -> tuple[str, ...]:
+        """Return imported candidate versions, newest Case import first."""
+
+        async with self.database.session() as session:
+            versions = tuple(
+                await session.scalars(
+                    select(StyleABEvaluationCaseRecord.candidate_profile_version)
+                    .order_by(
+                        StyleABEvaluationCaseRecord.created_at.desc(),
+                        StyleABEvaluationCaseRecord.id.desc(),
+                    )
+                )
+            )
+        return tuple(dict.fromkeys(versions))
+
     async def require_bundle_approval(
         self,
         *,

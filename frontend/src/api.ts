@@ -3,6 +3,7 @@ import type {
   Page,
   StyleABCaseDetail,
   StyleABCaseSummary,
+  StyleABContext,
   StyleABHumanReview,
   StyleABReviewInput,
   StyleABStatistics,
@@ -107,6 +108,7 @@ export const api = {
   },
   styleABCase: (caseId: string) =>
     request<StyleABCaseDetail>(`/style-ab/cases/${encodeURIComponent(caseId)}`),
+  styleABContext: () => request<StyleABContext>("/style-ab/context"),
   styleABStatistics: (candidateProfileVersion = "") => {
     const query = new URLSearchParams();
     if (candidateProfileVersion) {
