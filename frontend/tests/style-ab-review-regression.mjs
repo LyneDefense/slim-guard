@@ -190,6 +190,18 @@ test("review form identity, CSRF and correction binding stay server-owned and ca
   assert.match(apiSource, /JSON\.stringify\(input\)/);
 });
 
+test("review comments are optional for acceptance and required for rejection", async () => {
+  const componentSource = await readFile(
+    new URL("../src/components/style/StyleABReviewPage.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(componentSource, /const commentRequired = decision === "reject"/);
+  assert.match(componentSource, /required=\{commentRequired\}/);
+  assert.match(componentSource, /commentRequired && !comment\.trim\(\)/);
+  assert.ok(componentSource.includes("评分说明（拒绝时必填）"));
+  assert.ok(componentSource.includes("评分说明（选填）"));
+});
+
 test("A/B filters offer exact imported candidate versions instead of free text", () => {
   const html = renderToStaticMarkup(createElement(StyleABFilters, {
     profile: "TEST-candidate-v2",

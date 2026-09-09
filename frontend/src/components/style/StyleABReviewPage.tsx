@@ -295,7 +295,7 @@ export function StyleABCaseData({ value }: { value: StyleABCaseDetail }) {
             <article key={review.review_id}>
               <strong>{review.actor} · {review.decision === "accept" ? "接受" : "拒绝"}</strong>
               <span>风格 {review.style_match} · 忠实 {review.fidelity} · 适宜 {review.appropriateness}</span>
-              <p>{review.comment}</p>
+              <p>{review.comment || "未填写评分说明"}</p>
               <small>{formatDate(review.created_at)}</small>
             </article>
           ))}
@@ -333,6 +333,7 @@ function StyleABReviewForm({ value }: { value: StyleABCaseDetail }) {
     () => latest?.decision ?? "accept",
   );
   const [comment, setComment] = useState("");
+  const commentRequired = decision === "reject";
 
   const mutation = useMutation({
     mutationFn: (input: StyleABReviewInput) => api.reviewStyleABCase(value.case_id, input),
@@ -345,14 +346,17 @@ function StyleABReviewForm({ value }: { value: StyleABCaseDetail }) {
       ]);
     },
   });
-  const submit = () => mutation.mutate({
-    style_match: styleMatch,
-    fidelity,
-    appropriateness,
-    decision,
-    comment: comment.trim(),
-    corrects_review_id: value.latest_human_review?.review_id ?? null,
-  });
+  const submit = () => {
+    if (commentRequired && !comment.trim()) return;
+    mutation.mutate({
+      style_match: styleMatch,
+      fidelity,
+      appropriateness,
+      decision,
+      comment: comment.trim(),
+      corrects_review_id: value.latest_human_review?.review_id ?? null,
+    });
+  };
 
   return (
     <section className="style-ab-review-form">
@@ -374,19 +378,22 @@ function StyleABReviewForm({ value }: { value: StyleABCaseDetail }) {
           <option value="reject">拒绝</option>
         </select>
       </label>
-      <label>评分说明
+      <label>{commentRequired ? "评分说明（拒绝时必填）" : "评分说明（选填）"}
         <textarea
           value={comment}
           maxLength={2000}
+          required={commentRequired}
           onChange={(event) => setComment(event.target.value)}
-          placeholder="说明风格、语义或适宜性判断；不要粘贴原微信群聊。"
+          placeholder={commentRequired
+            ? "请说明拒绝原因，并给出你期望的表达；不要粘贴原微信群聊。"
+            : "接受时可不填写；也可以补充评价。"}
         />
       </label>
       {mutation.error && <p className="style-ab-form-error">{mutation.error.message}</p>}
       {mutation.isSuccess && <p className="style-ab-form-success">实名评分已追加保存。</p>}
       <button
         type="button"
-        disabled={mutation.isPending || !comment.trim()}
+        disabled={mutation.isPending || (commentRequired && !comment.trim())}
         onClick={submit}
       >
         {mutation.isPending ? "正在保存…" : value.latest_human_review ? "追加更正" : "提交评分"}

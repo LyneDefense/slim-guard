@@ -94,6 +94,22 @@ def score(**updates):
     )
 
 
+def test_review_comment_is_optional_for_acceptance_and_required_for_rejection():
+    base = {
+        "style_match": 4,
+        "fidelity": 5,
+        "appropriateness": 4,
+    }
+    accepted = StyleABHumanScore.model_validate({**base, "decision": "accept"})
+    assert accepted.comment == ""
+    accepted_with_whitespace = StyleABHumanScore.model_validate(
+        {**base, "decision": "accept", "comment": " "}
+    )
+    assert accepted_with_whitespace.comment == ""
+    with pytest.raises(ValueError, match="Rejected review requires a comment"):
+        StyleABHumanScore.model_validate({**base, "decision": "reject", "comment": " "})
+
+
 async def test_import_is_idempotent_and_list_omits_synthetic_reply_bodies(ledger):
     _, repository, pairs, source, ids = ledger
     assert await repository.import_pairs(pairs, trusted_source=source) == ids

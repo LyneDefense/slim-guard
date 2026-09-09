@@ -125,9 +125,7 @@ async def test_authenticated_list_filters_pagination_and_detail_return_synthetic
     await login(client)
     context = await client.get(f"{PREFIX}/context")
     assert context.status_code == 200
-    assert context.json() == {
-        "candidate_profile_versions": ["TEST-api-style-v1"]
-    }
+    assert context.json() == {"candidate_profile_versions": ["TEST-api-style-v1"]}
     listing = await client.get(f"{PREFIX}/cases", params={"limit": 1, "offset": 1})
     assert listing.status_code == 200
     assert listing.json()["total"] == 3
@@ -215,6 +213,30 @@ async def test_review_rejects_missing_or_wrong_csrf_header(api, headers):
     assert (await repository.get_case(ids[0]))["reviews"] == []
 
 
+async def test_accepted_review_allows_omitted_comment(api):
+    client, repository, ids, _ = api
+    await login(client)
+    payload = {key: value for key, value in SCORE.items() if key != "comment"}
+    result = await client.post(f"{PREFIX}/cases/{ids[0]}/reviews", json=payload, headers=CSRF)
+    assert result.status_code == 201
+    assert result.json()["comment"] == ""
+    assert (await repository.get_case(ids[0]))["latest_human_review"]["decision"] == "accept"
+
+
+@pytest.mark.parametrize("comment", [None, " "])
+async def test_rejected_review_requires_nonblank_comment(api, comment):
+    client, repository, ids, _ = api
+    await login(client)
+    payload = {key: value for key, value in SCORE.items() if key != "comment"} | {
+        "decision": "reject"
+    }
+    if comment is not None:
+        payload["comment"] = comment
+    result = await client.post(f"{PREFIX}/cases/{ids[0]}/reviews", json=payload, headers=CSRF)
+    assert result.status_code == 422
+    assert (await repository.get_case(ids[0]))["reviews"] == []
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -222,7 +244,6 @@ async def test_review_rejects_missing_or_wrong_csrf_header(api, headers):
         {"style_match": True},
         {"fidelity": 6},
         {"appropriateness": 0},
-        {"comment": " "},
         {"decision": "approve"},
     ],
 )

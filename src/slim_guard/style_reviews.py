@@ -143,16 +143,19 @@ class StyleABHumanScore(ContractModel):
     fidelity: int = Field(ge=1, le=5, strict=True)
     appropriateness: int = Field(ge=1, le=5, strict=True)
     decision: Literal["accept", "reject"]
-    comment: str = Field(min_length=1, max_length=2000)
+    comment: str = Field(default="", max_length=2000)
     corrects_review_id: str | None = Field(default=None, min_length=1, max_length=36)
 
     @field_validator("comment")
     @classmethod
     def normalize_comment(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Review comment cannot be blank")
-        return normalized
+        return value.strip()
+
+    @model_validator(mode="after")
+    def require_rejection_comment(self) -> Self:
+        if self.decision == "reject" and not self.comment:
+            raise ValueError("Rejected review requires a comment")
+        return self
 
 
 class StyleABReviewRepository:
@@ -412,8 +415,7 @@ class StyleABReviewRepository:
         async with self.database.session() as session:
             versions = tuple(
                 await session.scalars(
-                    select(StyleABEvaluationCaseRecord.candidate_profile_version)
-                    .order_by(
+                    select(StyleABEvaluationCaseRecord.candidate_profile_version).order_by(
                         StyleABEvaluationCaseRecord.created_at.desc(),
                         StyleABEvaluationCaseRecord.id.desc(),
                     )
