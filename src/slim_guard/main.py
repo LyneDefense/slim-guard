@@ -23,7 +23,12 @@ from slim_guard.api.admin_routes import router as admin_router
 from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.routes import router
 from slim_guard.api.style_feedback_routes import router as style_feedback_router
-from slim_guard.api.style_iteration_routes import router as style_iteration_router
+from slim_guard.api.style_iteration_routes import (
+    router as style_iteration_router,
+)
+from slim_guard.api.style_iteration_routes import (
+    runtime_router as style_runtime_router,
+)
 from slim_guard.api.style_review_routes import router as style_review_router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
@@ -65,6 +70,7 @@ from slim_guard.services.reply_agent import (
     ZhipuReplyAgent,
 )
 from slim_guard.services.routine_scheduler import RoutineSchedulerService
+from slim_guard.style_iteration_builder import StyleIterationBuilder, StyleIterationWorker
 from slim_guard.style_profiles import StyleProfileRepository
 
 logger = logging.getLogger(__name__)
@@ -88,10 +94,7 @@ def create_app(
         raise ValueError("MULTI_AGENT_MODE requires AGENT_RUNTIME_MODE=harness")
     if app_settings.nutrition_rag_enabled and not app_settings.nutrition_agent_enabled:
         raise ValueError("NUTRITION_RAG_ENABLED requires NUTRITION_AGENT_ENABLED")
-    if (
-        app_settings.nutrition_rag_enabled
-        and not app_settings.nutrition_require_rag_citations
-    ):
+    if app_settings.nutrition_rag_enabled and not app_settings.nutrition_require_rag_citations:
         raise ValueError(
             "NUTRITION_REQUIRE_RAG_CITATIONS must stay enabled when Nutrition RAG is enabled"
         )
@@ -112,23 +115,17 @@ def create_app(
         memory_preload_max_facts=app_settings.memory_preload_max_facts,
         memory_health_review_days=app_settings.memory_health_review_days,
         memory_recent_turn_count=app_settings.memory_recent_turn_count,
-        memory_recent_dialogue_max_chars=(
-            app_settings.memory_recent_dialogue_max_chars
-        ),
+        memory_recent_dialogue_max_chars=(app_settings.memory_recent_dialogue_max_chars),
         memory_recent_image_count=app_settings.memory_recent_image_count,
         memory_handoff_ttl_days=app_settings.memory_handoff_ttl_days,
         memory_ingestion_history_count=app_settings.memory_ingestion_history_count,
-        memory_ingestion_history_max_chars=(
-            app_settings.memory_ingestion_history_max_chars
-        ),
+        memory_ingestion_history_max_chars=(app_settings.memory_ingestion_history_max_chars),
         memory_recall_search_limit=app_settings.memory_recall_search_limit,
         memory_recall_max_selected=app_settings.memory_recall_max_selected,
         multi_agent_mode=app_settings.multi_agent_mode,
         multi_agent_canary_users=app_settings.multi_agent_canary_users,
         multi_agent_graph_version=app_settings.multi_agent_graph_version,
-        multi_agent_shadow_timeout_seconds=(
-            app_settings.multi_agent_shadow_timeout_seconds
-        ),
+        multi_agent_shadow_timeout_seconds=(app_settings.multi_agent_shadow_timeout_seconds),
         default_style_profile=app_settings.default_style_profile,
         style_canary_profile=app_settings.style_canary_profile,
         style_canary_users=app_settings.style_canary_users,
@@ -211,8 +208,9 @@ def create_app(
 
         active_runtime: AgentRuntime | None = None
         active_reply_agent = reply_agent
+        active_model_for_services = model_gateway
         if active_reply_agent is None and app_settings.agent_runtime_mode == "harness":
-            active_model = model_gateway
+            active_model = active_model_for_services
             if active_model is None and app_settings.zhipu_is_configured:
                 owned_model_gateway = ZhipuModelGateway(
                     api_key=app_settings.zhipu_api_key,
@@ -221,6 +219,7 @@ def create_app(
                     thinking_enabled=False,
                 )
                 active_model = owned_model_gateway
+                active_model_for_services = active_model
             active_vision = vision_gateway
             if active_vision is None and app_settings.zhipu_is_configured:
                 owned_vision_gateway = ZhipuVisionModelGateway(
@@ -281,16 +280,10 @@ def create_app(
                 database=database,
                 secret=app_settings.mobile_auth_secret,
                 sender=otp_sender,
-                access_ttl=timedelta(
-                    minutes=app_settings.mobile_access_token_ttl_minutes
-                ),
-                refresh_ttl=timedelta(
-                    days=app_settings.mobile_refresh_token_ttl_days
-                ),
+                access_ttl=timedelta(minutes=app_settings.mobile_access_token_ttl_minutes),
+                refresh_ttl=timedelta(days=app_settings.mobile_refresh_token_ttl_days),
                 otp_ttl=timedelta(seconds=app_settings.mobile_otp_ttl_seconds),
-                resend_after=timedelta(
-                    seconds=app_settings.mobile_otp_resend_seconds
-                ),
+                resend_after=timedelta(seconds=app_settings.mobile_otp_resend_seconds),
                 hourly_limit=app_settings.mobile_otp_hourly_limit,
                 test_accounts_enabled=app_settings.mobile_test_accounts_enabled,
                 test_account_password=app_settings.mobile_test_account_password,
@@ -305,9 +298,7 @@ def create_app(
             mobile_platform = MobilePlatformService(
                 database=database,
                 secret=app_settings.mobile_auth_secret,
-                binding_ttl=timedelta(
-                    minutes=app_settings.mobile_wecom_binding_ttl_minutes
-                ),
+                binding_ttl=timedelta(minutes=app_settings.mobile_wecom_binding_ttl_minutes),
                 memory_engine=active_memory_engine,
             )
 
@@ -325,6 +316,8 @@ def create_app(
         outbox_task: asyncio.Task[None] | None = None
         memory_index_stop: asyncio.Event | None = None
         memory_index_task: asyncio.Task[None] | None = None
+        style_iteration_stop: asyncio.Event | None = None
+        style_iteration_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -382,27 +375,17 @@ def create_app(
                         active_window=timedelta(
                             hours=app_settings.wecom_proactive_active_window_hours
                         ),
-                        max_messages_per_window=(
-                            app_settings.wecom_proactive_max_messages
-                        ),
+                        max_messages_per_window=(app_settings.wecom_proactive_max_messages),
                     ),
                     deliveries=deliveries,
                     runtime=active_runtime,
                     client=active_client,
                     conversation_control=state_machine,
                     interval_seconds=app_settings.routine_scheduler_interval_seconds,
-                    job_lease=timedelta(
-                        seconds=app_settings.routine_job_lease_seconds
-                    ),
-                    send_retry_after=timedelta(
-                        seconds=app_settings.routine_send_retry_seconds
-                    ),
-                    max_lateness=timedelta(
-                        seconds=app_settings.routine_max_lateness_seconds
-                    ),
-                    agent_timeout=timedelta(
-                        seconds=app_settings.routine_agent_timeout_seconds
-                    ),
+                    job_lease=timedelta(seconds=app_settings.routine_job_lease_seconds),
+                    send_retry_after=timedelta(seconds=app_settings.routine_send_retry_seconds),
+                    max_lateness=timedelta(seconds=app_settings.routine_max_lateness_seconds),
+                    agent_timeout=timedelta(seconds=app_settings.routine_agent_timeout_seconds),
                     max_attempts=app_settings.routine_max_attempts,
                     max_message_chars=app_settings.agent_reply_max_chars,
                     traces=traces,
@@ -424,9 +407,7 @@ def create_app(
             )
         memory_maintenance = MemoryMaintenanceService(
             lifecycle=MemoryLifecycleRepository(database),
-            transcript_retention=timedelta(
-                days=app_settings.agent_transcript_body_retention_days
-            ),
+            transcript_retention=timedelta(days=app_settings.agent_transcript_body_retention_days),
             revoked_value_retention=timedelta(
                 days=app_settings.memory_revoked_value_retention_days
             ),
@@ -457,6 +438,29 @@ def create_app(
                 memory_index_sync.run_forever(memory_index_stop),
                 name="slim-guard-memory-index-sync",
             )
+        if app_settings.style_iteration_worker_enabled and app_settings.zhipu_is_configured:
+            if active_model_for_services is None:
+                owned_model_gateway = ZhipuModelGateway(
+                    api_key=app_settings.zhipu_api_key,
+                    base_url=app_settings.zhipu_base_url,
+                    timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+                    thinking_enabled=False,
+                )
+                active_model_for_services = owned_model_gateway
+            style_iteration_worker = StyleIterationWorker(
+                builder=StyleIterationBuilder(
+                    database=database,
+                    gateway=active_model_for_services,
+                    model=app_settings.zhipu_text_model,
+                ),
+                worker_id=f"web-{id(app):x}",
+                poll_seconds=app_settings.style_iteration_poll_seconds,
+            )
+            style_iteration_stop = asyncio.Event()
+            style_iteration_task = asyncio.create_task(
+                style_iteration_worker.run_forever(style_iteration_stop),
+                name="slim-guard-style-iteration",
+            )
 
         app.state.settings = app_settings
         app.state.database = database
@@ -483,6 +487,8 @@ def create_app(
                 outbox_stop.set()
             if memory_index_stop is not None:
                 memory_index_stop.set()
+            if style_iteration_stop is not None:
+                style_iteration_stop.set()
             if watchdog_task is not None:
                 await watchdog_task
             if routine_task is not None:
@@ -495,6 +501,8 @@ def create_app(
                 await outbox_task
             if memory_index_task is not None:
                 await memory_index_task
+            if style_iteration_task is not None:
+                await style_iteration_task
             if owned_client is not None:
                 await owned_client.close()
             if owned_reply_agent is not None:
@@ -531,6 +539,7 @@ def create_app(
     application.include_router(style_review_router)
     application.include_router(style_feedback_router)
     application.include_router(style_iteration_router)
+    application.include_router(style_runtime_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_graph_manifest = agent_graph_manifest

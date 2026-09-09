@@ -9,6 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from slim_guard.api.admin_routes import AdminPrincipal, _audit, _authenticate
 from slim_guard.config import Settings
 from slim_guard.db.session import Database
+from slim_guard.style_iteration_lifecycle import (
+    StyleActivationAction,
+    StyleIterationLifecycle,
+    StylePublishConfirmation,
+    StyleRollbackAction,
+    StyleRuntimeService,
+)
 from slim_guard.style_iterations import (
     StyleIterationAction,
     StyleIterationConflict,
@@ -18,6 +25,7 @@ from slim_guard.style_iterations import (
 )
 
 router = APIRouter(prefix="/api/admin/style-iterations", tags=["admin-style-iterations"])
+runtime_router = APIRouter(prefix="/api/admin/style-runtime", tags=["admin-style-runtime"])
 
 
 def _repository(request: Request) -> StyleIterationRepository:
@@ -36,10 +44,19 @@ async def context(
 ) -> dict[str, Any]:
     del principal
     settings = cast(Settings, request.app.state.settings)
-    return await _repository(request).context(
+    result = await _repository(request).context(
         fallback_version=settings.default_style_profile,
         model_configured=settings.zhipu_is_configured,
     )
+    if result["open_run"] is not None:
+        await StyleIterationLifecycle(cast(Database, request.app.state.database)).enriched_run(
+            result["open_run"]["run_id"]
+        )
+        result = await _repository(request).context(
+            fallback_version=settings.default_style_profile,
+            model_configured=settings.zhipu_is_configured,
+        )
+    return result
 
 
 @router.get("")
@@ -51,6 +68,16 @@ async def list_runs(
 ) -> dict[str, Any]:
     del principal
     return await _repository(request).list_runs(limit=limit, offset=offset)
+
+
+@router.get("/eligibility")
+async def build_eligibility(
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    source_profile_version: str = Query(min_length=1, max_length=128),
+) -> dict[str, Any]:
+    del principal
+    return await _repository(request).build_eligibility(source_profile_version)
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
@@ -92,7 +119,9 @@ async def get_run(
     principal: Annotated[AdminPrincipal, Depends(_authenticate)],
 ) -> dict[str, Any]:
     try:
-        result = await _repository(request).get_run(run_id, include_artifacts=True)
+        result = await StyleIterationLifecycle(
+            cast(Database, request.app.state.database)
+        ).enriched_run(run_id)
     except StyleIterationNotFound as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     await _audit(
@@ -176,3 +205,102 @@ async def retry_run(
 ) -> dict[str, Any]:
     del csrf
     return await _run_action("retry", run_id, payload, request, principal)
+
+
+@router.post("/{run_id}/publish")
+async def publish_run(
+    run_id: str,
+    payload: StylePublishConfirmation,
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    csrf: Annotated[None, Depends(_require_csrf)],
+) -> dict[str, Any]:
+    del csrf
+    try:
+        result = await StyleIterationLifecycle(cast(Database, request.app.state.database)).publish(
+            run_id, actor=principal.username, confirmation=payload
+        )
+    except StyleIterationNotFound as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except (StyleIterationConflict, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    await _audit(
+        request,
+        principal,
+        action="publish",
+        resource_type="style_iteration",
+        resource_id=run_id,
+    )
+    return result
+
+
+def _runtime_service(request: Request) -> StyleRuntimeService:
+    settings = cast(Settings, request.app.state.settings)
+    return StyleRuntimeService(
+        cast(Database, request.app.state.database),
+        fallback_version=settings.default_style_profile,
+    )
+
+
+@runtime_router.get("")
+async def runtime_context(
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+) -> dict[str, Any]:
+    del principal
+    return await _runtime_service(request).context()
+
+
+def _ensure_direct_activation_allowed(request: Request) -> None:
+    settings = cast(Settings, request.app.state.settings)
+    if settings.app_env == "production":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="生产环境不能从此页面直接全量切换风格",
+        )
+
+
+@runtime_router.post("/activate")
+async def activate_version(
+    payload: StyleActivationAction,
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    csrf: Annotated[None, Depends(_require_csrf)],
+) -> dict[str, Any]:
+    del csrf
+    _ensure_direct_activation_allowed(request)
+    try:
+        result = await _runtime_service(request).activate(payload, actor=principal.username)
+    except (StyleIterationConflict, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    await _audit(
+        request,
+        principal,
+        action="activate",
+        resource_type="style_runtime",
+        resource_id=payload.version,
+    )
+    return result
+
+
+@runtime_router.post("/rollback")
+async def rollback_version(
+    payload: StyleRollbackAction,
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    csrf: Annotated[None, Depends(_require_csrf)],
+) -> dict[str, Any]:
+    del csrf
+    _ensure_direct_activation_allowed(request)
+    try:
+        result = await _runtime_service(request).rollback(payload, actor=principal.username)
+    except (StyleIterationConflict, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    await _audit(
+        request,
+        principal,
+        action="rollback",
+        resource_type="style_runtime",
+        resource_id=result["runtime"]["active_profile_version"],
+    )
+    return result

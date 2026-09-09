@@ -60,6 +60,7 @@ from slim_guard.orchestration.coordinator import (
     AgentWorkflowCoordinator,
 )
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.style_iteration_lifecycle import StyleRuntimeVersionResolver
 from slim_guard.style_profiles import StyleProfileRepository
 from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
 from slim_guard.tools.execution_repository import ToolExecutionRepository
@@ -310,6 +311,10 @@ def build_agent_runtime(
                 persistence=OrchestrationRepository(database),
                 style_profiles=StyleProfileRepository(database),
                 default_style_profile=definition.default_style_profile,
+                active_style_version=StyleRuntimeVersionResolver(
+                    database,
+                    fallback_version=definition.default_style_profile,
+                ),
                 style_canary_profile=definition.style_canary_profile,
                 style_canary_users=definition.style_canary_users,
                 style_enabled=definition.style_render_all_normal_replies,
@@ -317,9 +322,7 @@ def build_agent_runtime(
                 reviewer_enabled=definition.response_reviewer_enabled,
                 nutrition_tools=NutritionToolRegistry(
                     knowledge_repository=(
-                        NutritionKnowledgeService(
-                            NutritionKnowledgeRepository(database)
-                        )
+                        NutritionKnowledgeService(NutritionKnowledgeRepository(database))
                         if definition.nutrition_rag_enabled
                         else None
                     )
@@ -331,9 +334,12 @@ def build_agent_runtime(
         ),
         shadow_enabled_for=lambda _user_id: definition.multi_agent_mode == "shadow",
         workflow_mode=definition.multi_agent_mode,
-        workflow_adopts_for=lambda user_id: definition.multi_agent_mode == "on" or (
-            definition.multi_agent_mode == "canary"
-            and user_id in definition.multi_agent_canary_users
+        workflow_adopts_for=lambda user_id: (
+            definition.multi_agent_mode == "on"
+            or (
+                definition.multi_agent_mode == "canary"
+                and user_id in definition.multi_agent_canary_users
+            )
         ),
         workflow_timeout_seconds=definition.multi_agent_shadow_timeout_seconds,
         clock=clock,

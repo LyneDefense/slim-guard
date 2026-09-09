@@ -149,6 +149,42 @@ async def test_ab_generation_shares_plans_binds_examples_and_does_not_approve_or
     gateway.assert_exhausted()
 
 
+async def test_web_worker_evaluation_uses_the_same_judge_without_offline_sqlite():
+    asset = bundle(CommunicationAct.ACKNOWLEDGE)
+    cases = synthetic_style_suite()[:1]
+    gateway = script(asset, cases)
+    result = await generate_style_comparisons(
+        bundle=asset,
+        inputs=cases,
+        gateway=gateway,
+        model="test-scripted",
+        corpus=None,
+        actor="TEST-web-worker",
+        redacted_inputs_confirmed=True,
+    )
+    assert result["evaluation"]["passed"] is True
+    assert result["human_review_status"] == "pending"
+    gateway.assert_exhausted()
+
+
+async def test_web_worker_evaluation_does_not_require_offline_sqlite():
+    asset = bundle(CommunicationAct.ACKNOWLEDGE)
+    cases = synthetic_style_suite()[:1]
+    gateway = script(asset, cases)
+    result = await generate_style_comparisons(
+        bundle=asset,
+        inputs=cases,
+        gateway=gateway,
+        model="test-scripted",
+        corpus=None,
+        actor="TEST-web-worker",
+        redacted_inputs_confirmed=True,
+    )
+    assert result["comparison_complete"]
+    assert result["evaluation"]["passed"]
+    gateway.assert_exhausted()
+
+
 @pytest.mark.parametrize("failed_label", ["baseline", "candidate"])
 async def test_renderer_fallback_is_never_counted_as_a_complete_ab_pair(corpus, failed_label):
     asset = bundle(CommunicationAct.ACKNOWLEDGE)

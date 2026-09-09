@@ -70,9 +70,7 @@ _OPEN_STATUSES = frozenset(
         "failed_transient",
     }
 )
-_TERMINAL_STATUSES = frozenset(
-    {"failed_terminal", "rejected", "evaluated", "active", "cancelled"}
-)
+_TERMINAL_STATUSES = frozenset({"failed_terminal", "rejected", "evaluated", "active", "cancelled"})
 _VERSION = re.compile(r"^(?P<profile>.+)_v(?P<number>[1-9][0-9]*)$")
 
 
@@ -135,12 +133,27 @@ class StyleIterationRepository:
             reasons.append(f"还有 {counts['pending_case_count']} 条 A/B Case 未评分")
         if counts["rejected_case_count"] == 0 and feedback["total"] == 0:
             reasons.append("没有拒绝评分或新增风格纠正")
+        base_case_count = counts["case_count"] or 12
+        maximum_case_count = base_case_count + feedback["total"]
+        classification_calls = 1 if feedback["total"] else 0
+        minimum_model_calls = classification_calls + 1 + (base_case_count * 3)
+        maximum_model_calls = classification_calls + 1 + (maximum_case_count * 3)
+        if feedback["total"] > 48:
+            reasons.append("新增风格纠正超过单次分类上限 48 条，请先分批处理")
+        if maximum_case_count > 60:
+            reasons.append("预计回归 Case 超过单次构建上限 60 条")
         return {
             "eligible": not reasons,
             "reasons": reasons,
             "counts": {
                 **counts,
                 "style_correction_count": feedback["total"],
+            },
+            "estimate": {
+                "case_count_min": base_case_count,
+                "case_count_max": maximum_case_count,
+                "model_call_min": minimum_model_calls,
+                "model_call_max": maximum_model_calls,
             },
         }
 
@@ -152,9 +165,7 @@ class StyleIterationRepository:
         model_configured: bool,
     ) -> dict[str, Any]:
         reviewer = self._text(actor, field="actor")
-        source_version = self._text(
-            payload.source_profile_version, field="source_profile_version"
-        )
+        source_version = self._text(payload.source_profile_version, field="source_profile_version")
         identity = _VERSION.fullmatch(source_version)
         if identity is None:
             raise ValueError("Source profile version must end in _v<number>")
@@ -196,9 +207,7 @@ class StyleIterationRepository:
                         select(StyleABEvaluationCaseRecord.candidate_profile_version)
                     )
                 )
-                versions.extend(
-                    await session.scalars(select(StyleProfileVersionRecord.version))
-                )
+                versions.extend(await session.scalars(select(StyleProfileVersionRecord.version)))
                 versions.extend(
                     await session.scalars(select(StyleIterationRunRecord.target_version))
                 )
@@ -279,6 +288,140 @@ class StyleIterationRepository:
         if row is None:
             raise StyleIterationNotFound("Style iteration not found")
         return self._run_view(row, include_artifacts=include_artifacts)
+
+    async def get_by_target_version(
+        self,
+        target_version: str,
+        *,
+        include_artifacts: bool = True,
+    ) -> dict[str, Any] | None:
+        async with self.database.session() as session:
+            row = await session.scalar(
+                select(StyleIterationRunRecord).where(
+                    StyleIterationRunRecord.target_version == target_version
+                )
+            )
+        return self._run_view(row, include_artifacts=include_artifacts) if row is not None else None
+
+    async def import_historical_run(
+        self,
+        *,
+        source_version: str,
+        target_version: str,
+        actor: str,
+        input_snapshot: Mapping[str, Any],
+        classifications: Sequence[Mapping[str, Any]],
+        profile: Mapping[str, Any],
+        bundle: Mapping[str, Any],
+        cases: Sequence[Mapping[str, Any]],
+        comparison: Mapping[str, Any],
+        profile_sha256: str,
+        bundle_sha256: str,
+        cases_sha256: str,
+        evaluation_sha256: str,
+        generation_model: str,
+        judge_model: str,
+    ) -> dict[str, Any]:
+        """Register exact pre-control-plane artifacts without regenerating them."""
+
+        identity = _VERSION.fullmatch(target_version)
+        if identity is None or source_version == target_version:
+            raise ValueError("Historical Style Profile versions are invalid")
+        if input_snapshot.get("source_profile_version") != source_version:
+            raise ValueError("Historical input snapshot source version mismatch")
+        if input_snapshot.get("source_sha256") != style_iteration_digest(
+            input_snapshot.get("sources")
+        ):
+            raise ValueError("Historical input snapshot checksum mismatch")
+        existing = await self.get_by_target_version(target_version)
+        if existing is not None:
+            if existing["hashes"]["bundle_sha256"] != bundle_sha256:
+                raise StyleIterationConflict(
+                    "Historical target version already exists with another bundle"
+                )
+            return existing
+        run_id = new_uuid()
+        now = utc_now()
+        run = StyleIterationRunRecord(
+            id=run_id,
+            profile_id=identity.group("profile"),
+            source_version=source_version,
+            target_version=target_version,
+            status="ready_for_review",
+            stage="ready_for_review",
+            progress_current=10,
+            progress_total=10,
+            source_sha256=input_snapshot["source_sha256"],
+            profile_sha256=profile_sha256,
+            bundle_sha256=bundle_sha256,
+            cases_sha256=cases_sha256,
+            evaluation_sha256=evaluation_sha256,
+            generation_model=generation_model,
+            judge_model=judge_model,
+            input_snapshot_json=self._json(input_snapshot),
+            classification_json=self._json(classifications),
+            profile_json=self._json(profile),
+            bundle_json=self._json(bundle),
+            cases_json=self._json(cases),
+            comparison_json=self._json(comparison),
+            created_by=self._text(actor, field="actor"),
+            idempotency_key=f"historical-{target_version}",
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+        )
+        by_source = {(item["source_kind"], item["source_id"]): item for item in classifications}
+        frozen = [
+            ("ab_review", item["latest_human_review"]["review_id"], item)
+            for item in input_snapshot["sources"]["a_b_reviews"]
+        ]
+        frozen.extend(
+            ("style_feedback", item["feedback_id"], item)
+            for item in input_snapshot["sources"]["style_corrections"]
+        )
+        async with self.database.session() as session, session.begin():
+            session.add(run)
+            await session.flush()
+            for source_kind, source_id, item in frozen:
+                classification = by_source.get((source_kind, source_id))
+                if classification is None:
+                    raise ValueError(
+                        f"Missing historical classification for {source_kind}:{source_id}"
+                    )
+                session.add(
+                    StyleIterationInputRecord(
+                        run_id=run_id,
+                        source_kind=source_kind,
+                        source_id=source_id,
+                        source_sha256=style_iteration_digest(item),
+                        classification=classification["classification"],
+                        classification_summary=classification["summary"],
+                        payload_json=self._json(item),
+                        derived_case_ids_json=self._json(
+                            classification.get("derived_case_ids", [])
+                        ),
+                    )
+                )
+            session.add(
+                StyleIterationEventRecord(
+                    run_id=run_id,
+                    sequence=1,
+                    event_type="historical_run_imported",
+                    stage="ready_for_review",
+                    status="ready_for_review",
+                    public_summary=(f"已引用现有精确产物接入 {target_version}，未重新调用模型。"),
+                    technical_metadata_json=self._json(
+                        {
+                            "source_sha256": input_snapshot["source_sha256"],
+                            "bundle_sha256": bundle_sha256,
+                            "evaluation_sha256": evaluation_sha256,
+                        }
+                    ),
+                    created_at=now,
+                )
+            )
+            await session.flush()
+        return await self.get_run(run_id, include_artifacts=True)
 
     async def open_run(self) -> dict[str, Any] | None:
         async with self.database.session() as session:
@@ -465,26 +608,23 @@ class StyleIterationRepository:
         snapshot = run.get("artifacts", {}).get("input_snapshot")
         if not isinstance(snapshot, dict):
             raise StyleIterationConflict("Style iteration inputs are not frozen")
-        by_source = {
-            (item["source_kind"], item["source_id"]): item for item in classifications
-        }
+        by_source = {(item["source_kind"], item["source_id"]): item for item in classifications}
         frozen: list[tuple[str, str, dict[str, Any]]] = []
         for item in snapshot["sources"]["a_b_reviews"]:
-            frozen.append(
-                ("ab_review", item["latest_human_review"]["review_id"], item)
-            )
+            frozen.append(("ab_review", item["latest_human_review"]["review_id"], item))
         for item in snapshot["sources"]["style_corrections"]:
             frozen.append(("style_feedback", item["feedback_id"], item))
         async with self.database.session() as session, session.begin():
             existing = set(
-                await session.scalars(
-                    select(StyleIterationInputRecord.source_id).where(
-                        StyleIterationInputRecord.run_id == run_id
-                    )
+                await session.execute(
+                    select(
+                        StyleIterationInputRecord.source_kind,
+                        StyleIterationInputRecord.source_id,
+                    ).where(StyleIterationInputRecord.run_id == run_id)
                 )
             )
             for source_kind, source_id, item in frozen:
-                if source_id in existing:
+                if (source_kind, source_id) in existing:
                     continue
                 classification = by_source.get((source_kind, source_id))
                 if classification is None:
@@ -584,14 +724,17 @@ class StyleIterationRepository:
         summary: str,
         metadata: Mapping[str, Any],
     ) -> None:
-        sequence = int(
-            await session.scalar(
-                select(func.max(StyleIterationEventRecord.sequence)).where(
-                    StyleIterationEventRecord.run_id == run.id
+        sequence = (
+            int(
+                await session.scalar(
+                    select(func.max(StyleIterationEventRecord.sequence)).where(
+                        StyleIterationEventRecord.run_id == run.id
+                    )
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         session.add(
             StyleIterationEventRecord(
                 run_id=run.id,

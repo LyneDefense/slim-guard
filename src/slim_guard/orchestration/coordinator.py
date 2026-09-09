@@ -224,6 +224,10 @@ class WorkflowPersistence(Protocol):
     ) -> object: ...
 
 
+class ActiveStyleVersionResolver(Protocol):
+    async def resolve(self) -> str: ...
+
+
 class AgentWorkflowCoordinator:
     """Runs an isolated candidate graph and never adopts or delivers its reply."""
 
@@ -243,6 +247,7 @@ class AgentWorkflowCoordinator:
         style_profile: StyleProfile = SLIMGUARD_DEFAULT_V1,
         style_profiles: StyleProfileRepository | None = None,
         default_style_profile: str | None = None,
+        active_style_version: ActiveStyleVersionResolver | None = None,
         style_canary_profile: str = "",
         style_canary_users: frozenset[str] = frozenset(),
         style_enabled: bool = True,
@@ -277,6 +282,7 @@ class AgentWorkflowCoordinator:
         self._style_profile = style_profile
         self._style_profiles = style_profiles
         self._default_style_version = default_style_profile or style_profile.version
+        self._active_style_version = active_style_version
         self._style_canary_version = style_canary_profile
         self._style_canary_users = frozenset(style_canary_users)
         self._style_enabled = style_enabled
@@ -1104,6 +1110,15 @@ class AgentWorkflowCoordinator:
         canary = bool(self._style_canary_version) and user_id in self._style_canary_users
         requested = self._style_canary_version if canary else self._default_style_version
         source = "canary" if canary else "default"
+        if not canary and self._active_style_version is not None:
+            try:
+                requested = await self._active_style_version.resolve()
+                source = "runtime_active"
+            except Exception as error:
+                logger.warning(
+                    "active_style_version_resolution_failed",
+                    extra={"failure_type": type(error).__name__},
+                )
         failure = "profile_not_published"
         try:
             if self._style_profiles is not None:
@@ -1114,7 +1129,9 @@ class AgentWorkflowCoordinator:
                     failure = "profile_version_mismatch"
             elif requested == SLIMGUARD_DEFAULT_V1.version:
                 return _StyleSelection(
-                    StyleProfileSnapshot(profile=SLIMGUARD_DEFAULT_V1), requested, source,
+                    StyleProfileSnapshot(profile=SLIMGUARD_DEFAULT_V1),
+                    requested,
+                    source,
                 )
         except Exception as error:
             failure = "profile_resolution_failed"
@@ -1123,7 +1140,10 @@ class AgentWorkflowCoordinator:
                 extra={"failure_type": type(error).__name__},
             )
         return _StyleSelection(
-            StyleProfileSnapshot(profile=SLIMGUARD_DEFAULT_V1), requested, "fallback", failure,
+            StyleProfileSnapshot(profile=SLIMGUARD_DEFAULT_V1),
+            requested,
+            "fallback",
+            failure,
         )
 
     @staticmethod

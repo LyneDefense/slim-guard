@@ -33,6 +33,7 @@ from slim_guard.style_corpus import (
     StyleAssetBundle,
     StyleEvalCase,
     StyleEvaluationScenario,
+    evaluate_style_cases,
 )
 
 
@@ -45,9 +46,7 @@ class StyleEvaluationInput(ContractModel):
 
 def synthetic_style_suite() -> tuple[StyleEvaluationInput, ...]:
     """Public invented business scenarios, never copied from the source chat."""
-    scenarios: tuple[
-        tuple[CommunicationAct, str, str, str, str, str], ...
-    ] = (
+    scenarios: tuple[tuple[CommunicationAct, str, str, str, str, str], ...] = (
         (
             CommunicationAct.ACKNOWLEDGE,
             "确认一次体重打卡",
@@ -151,7 +150,7 @@ async def generate_style_comparisons(
     inputs: tuple[StyleEvaluationInput, ...],
     gateway: ModelGateway,
     model: str,
-    corpus: OfflineStyleCorpus,
+    corpus: OfflineStyleCorpus | None,
     actor: str,
     redacted_inputs_confirmed: bool,
 ) -> dict[str, Any]:
@@ -228,7 +227,17 @@ async def generate_style_comparisons(
                 **outputs,
             }
         )
-    report = await corpus.evaluate(bundle, eval_cases, gateway=gateway, model=model, actor=actor)
+    report = (
+        await corpus.evaluate(bundle, eval_cases, gateway=gateway, model=model, actor=actor)
+        if corpus is not None
+        else await evaluate_style_cases(
+            bundle=bundle,
+            cases=eval_cases,
+            gateway=gateway,
+            model=model,
+            actor=actor,
+        )
+    )
     comparable_count = sum(
         item["baseline"]["generation_status"] == "succeeded"
         and item["candidate"]["generation_status"] == "succeeded"
