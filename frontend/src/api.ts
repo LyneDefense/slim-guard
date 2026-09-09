@@ -10,6 +10,10 @@ import type {
   StyleCorrectionFeedback,
   StyleCorrectionFeedbackInput,
   StyleFeedbackContext,
+  StyleIterationContext,
+  StyleIterationEvent,
+  StyleIterationRun,
+  StyleRuntimeContext,
   TraceDetail,
   TraceListFilters,
   TraceSummary,
@@ -153,6 +157,64 @@ export const api = {
         body: JSON.stringify(input),
       },
     ),
+  styleIterationContext: () => request<StyleIterationContext>("/style-iterations/context"),
+  styleIterationEligibility: (sourceProfileVersion: string) =>
+    request<StyleIterationContext["build_eligibility"]>(
+      `/style-iterations/eligibility?source_profile_version=${encodeURIComponent(sourceProfileVersion)}`,
+    ),
+  styleIterations: () =>
+    request<Page<StyleIterationRun>>("/style-iterations?limit=30&offset=0"),
+  styleIteration: (runId: string) =>
+    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}`),
+  styleIterationEvents: (runId: string) =>
+    request<{ items: StyleIterationEvent[] }>(
+      `/style-iterations/${encodeURIComponent(runId)}/events`,
+    ),
+  createStyleIteration: (sourceProfileVersion: string, idempotencyKey: string) =>
+    request<StyleIterationRun>("/style-iterations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify({
+        source_profile_version: sourceProfileVersion,
+        idempotency_key: idempotencyKey,
+        reviewed_inputs_confirmed: true,
+      }),
+    }),
+  cancelStyleIteration: (runId: string, reason: string) =>
+    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify({ reason }),
+    }),
+  retryStyleIteration: (runId: string, reason: string) =>
+    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify({ reason }),
+    }),
+  publishStyleIteration: (runId: string) =>
+    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}/publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify({
+        privacy_confirmed: true,
+        expression_only_confirmed: true,
+        evaluation_reviewed: true,
+      }),
+    }),
+  styleRuntime: () => request<StyleRuntimeContext>("/style-runtime"),
+  activateStyleVersion: (version: string, expectedRevision: number, reason: string) =>
+    request<StyleRuntimeContext>("/style-runtime/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify({ version, expected_revision: expectedRevision, reason }),
+    }),
+  rollbackStyleVersion: (expectedRevision: number, reason: string) =>
+    request<StyleRuntimeContext>("/style-runtime/rollback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify({ expected_revision: expectedRevision, reason }),
+    }),
   memories: (userId: string) =>
     request<MemoryRecord[]>(`/users/${encodeURIComponent(userId)}/memories`),
   records: (userId: string) =>

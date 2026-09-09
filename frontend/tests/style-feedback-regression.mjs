@@ -65,7 +65,7 @@ test("feedback form explains version boundary and requires privacy confirmations
     "expression_only_confirmed: true",
     "不会把测试内容写入用户 Memory 或营养知识库",
     "追加反馈后，怎样生成下一版本",
-    "基于这些反馈构建下一个版本",
+    "进入“风格版本”页面选择来源版本并点击“构建下一版本”",
     "整套人评全部接受后",
   ]) assert.ok(source.includes(expected), expected);
   assert.doesNotMatch(source, /name=["']actor["']/);
@@ -89,6 +89,8 @@ test("admin navigation exposes the correction entry separately from A-B review",
   const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(appSource, /to="\/style-feedback"/);
   assert.match(appSource, /path="style-feedback" element=\{<StyleFeedbackPage \/>\}/);
+  assert.match(appSource, /path="style-iterations" element=\{<StyleIterationPage \/>\}/);
   assert.ok(appSource.includes("风格 A/B 人评"));
   assert.ok(appSource.includes("风格纠正"));
+  assert.ok(appSource.includes("风格版本"));
 });

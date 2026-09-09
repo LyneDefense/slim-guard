@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 
 import { api } from "../../api";
 import type {
@@ -34,8 +35,9 @@ function formatDate(value: string): string {
 }
 
 export function StyleABReviewPage() {
+  const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
-  const [profile, setProfile] = useState("");
+  const [profile, setProfile] = useState(searchParams.get("version") ?? "");
   const [act, setAct] = useState("");
   const [decision, setDecision] = useState("");
   const [selectedId, setSelectedId] = useState("");

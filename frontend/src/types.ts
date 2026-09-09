@@ -409,6 +409,130 @@ export interface StyleCorrectionFeedbackInput {
   expression_only_confirmed: true;
 }
 
+export type StyleIterationStatus =
+  | "queued"
+  | "validating"
+  | "freezing_inputs"
+  | "classifying"
+  | "building_profile"
+  | "generating_cases"
+  | "evaluating"
+  | "importing_review"
+  | "ready_for_review"
+  | "needs_action"
+  | "failed_transient"
+  | "failed_terminal"
+  | "rejected"
+  | "evaluated"
+  | "active"
+  | "cancelled";
+
+export interface StyleProfileData {
+  profile_id: string;
+  version: string;
+  display_name: string;
+  description: string;
+  tone_rules: string[];
+  prohibited_phrases: string[];
+  preferred_max_paragraphs: number;
+}
+
+export interface StyleIterationClassification {
+  source_kind: "ab_review" | "style_feedback";
+  source_id: string;
+  classification: string;
+  primary_act?: string | null;
+  summary: string;
+  generalized_rule?: string | null;
+  derived_case_ids: string[];
+}
+
+export interface StyleIterationRun {
+  run_id: string;
+  profile_id: string;
+  source_version: string;
+  target_version: string;
+  status: StyleIterationStatus;
+  stage: string;
+  progress: { current: number; total: number };
+  hashes: Record<string, string | null>;
+  models: { generation: string | null; judge: string | null };
+  created_by: string;
+  failure: { code: string; summary: string } | null;
+  published_version_record_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  source_profile?: StyleProfileData | null;
+  artifacts?: {
+    input_snapshot: Record<string, unknown> | null;
+    classification: StyleIterationClassification[] | null;
+    profile: StyleProfileData | null;
+    bundle: Record<string, unknown> | null;
+    cases: Array<Record<string, unknown>> | null;
+    comparison: Record<string, unknown> | null;
+  };
+  review?: StyleABStatistics & {
+    automated_passed: boolean;
+    publish_allowed: boolean;
+  };
+}
+
+export interface StyleRuntimeConfiguration {
+  active_profile_version: string;
+  previous_profile_version: string | null;
+  revision: number;
+  updated_by: string;
+  updated_at: string | null;
+}
+
+export interface StyleIterationContext {
+  candidate_profile_versions: string[];
+  suggested_source_version: string;
+  runtime: StyleRuntimeConfiguration;
+  open_run: StyleIterationRun | null;
+  model_configured: boolean;
+  build_eligibility: {
+    eligible: boolean;
+    reasons: string[];
+    counts: StyleABStatistics["counts"] & { style_correction_count: number };
+    estimate: {
+      case_count_min: number;
+      case_count_max: number;
+      model_call_min: number;
+      model_call_max: number;
+    };
+  };
+}
+
+export interface StyleIterationEvent {
+  event_id: string;
+  sequence: number;
+  event_type: string;
+  stage: string;
+  status: string;
+  summary: string;
+  technical_metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface StyleActivationEvent {
+  event_id: string;
+  profile_id: string;
+  previous_version: string;
+  activated_version: string;
+  action: "activate" | "rollback";
+  actor: string;
+  reason: string;
+  runtime_revision: number;
+  created_at: string;
+}
+
+export interface StyleRuntimeContext {
+  runtime: StyleRuntimeConfiguration;
+  history: StyleActivationEvent[];
+}
+
 export interface TraceAgentInvocation {
   invocation_id: string;
   agent_role: AgentRole;
