@@ -74,6 +74,20 @@ async def test_iteration_api_requires_authentication_and_csrf(api):
     assert context["model_configured"] is True
     assert context["runtime"]["active_profile_version"] == "slimguard_default_v1"
     assert context["open_run"]["run_id"] == run["run_id"]
+    runtime = await api.get("/api/admin/style-runtime")
+    assert runtime.status_code == 200
+    assert runtime.json()["fallback_profile_version"] == "slimguard_default_v1"
+    assert runtime.json()["direct_activation_allowed"] is True
+    assert (
+        await api.post(
+            "/api/admin/style-runtime/activate",
+            json={
+                "version": "TEST-doctor_v1",
+                "expected_revision": 0,
+                "reason": "TEST direct activation",
+            },
+        )
+    ).status_code == 403
     assert (await api.get(PREFIX)).json()["total"] == 1
     assert (await api.get(f"{PREFIX}/{run['run_id']}")).status_code == 200
     events = (await api.get(f"{PREFIX}/{run['run_id']}/events")).json()["items"]

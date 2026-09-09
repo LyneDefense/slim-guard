@@ -437,6 +437,45 @@ export interface StyleProfileData {
   preferred_max_paragraphs: number;
 }
 
+export interface StyleExampleData {
+  example_id: string;
+  style_profile_version: string;
+  communication_act: string;
+  text: string;
+}
+
+export interface StyleRegressionCaseData {
+  case_id: string;
+  synthetic: boolean;
+  scenario: {
+    title: string;
+    user_situation: string;
+    known_context: string[];
+    response_goal: string;
+  };
+  response_plan: {
+    communication_act: string;
+    content_blocks: Array<{ block_id: string; kind: string; text: string }>;
+  };
+}
+
+export interface StyleAutomatedResultData {
+  case_id: string;
+  communication_act: string;
+  passed: boolean;
+  failure_code?: string | null;
+}
+
+export interface StyleComparisonData {
+  comparison_complete: boolean;
+  comparable_case_count: number;
+  evaluation: {
+    passed: boolean;
+    missing_acts: string[];
+    results: StyleAutomatedResultData[];
+  };
+}
+
 export interface StyleIterationClassification {
   source_kind: "ab_review" | "style_feedback";
   source_id: string;
@@ -464,13 +503,14 @@ export interface StyleIterationRun {
   started_at: string | null;
   completed_at: string | null;
   source_profile?: StyleProfileData | null;
+  source_examples?: StyleExampleData[];
   artifacts?: {
     input_snapshot: Record<string, unknown> | null;
     classification: StyleIterationClassification[] | null;
     profile: StyleProfileData | null;
-    bundle: Record<string, unknown> | null;
-    cases: Array<Record<string, unknown>> | null;
-    comparison: Record<string, unknown> | null;
+    bundle: { examples: StyleExampleData[] } | null;
+    cases: StyleRegressionCaseData[] | null;
+    comparison: StyleComparisonData | null;
   };
   review?: StyleABStatistics & {
     automated_passed: boolean;
@@ -531,6 +571,8 @@ export interface StyleActivationEvent {
 export interface StyleRuntimeContext {
   runtime: StyleRuntimeConfiguration;
   history: StyleActivationEvent[];
+  fallback_profile_version: string;
+  direct_activation_allowed?: boolean;
 }
 
 export interface TraceAgentInvocation {

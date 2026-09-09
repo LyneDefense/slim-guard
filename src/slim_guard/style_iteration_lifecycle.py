@@ -73,10 +73,16 @@ class StyleIterationLifecycle:
         source_asset = await self.profiles.get_profile_asset(run["source_version"])
         if source_asset is not None:
             run["source_profile"] = source_asset.to_profile().model_dump(mode="json")
+            run["source_examples"] = [
+                item.model_dump(mode="json") for item in source_asset.examples
+            ]
         else:
             source_run = await self.iterations.get_by_target_version(run["source_version"])
-            run["source_profile"] = (
-                source_run.get("artifacts", {}).get("profile") if source_run else None
+            source_artifacts = source_run.get("artifacts", {}) if source_run else {}
+            source_bundle = source_artifacts.get("bundle")
+            run["source_profile"] = source_artifacts.get("profile")
+            run["source_examples"] = (
+                source_bundle.get("examples", []) if isinstance(source_bundle, dict) else []
             )
         statistics = await self.reviews.statistics(candidate_profile_version=run["target_version"])
         automated_passed = self._automated_passed(run)
@@ -201,6 +207,7 @@ class StyleRuntimeService:
         return {
             "runtime": runtime,
             "history": [self._event_view(item) for item in events],
+            "fallback_profile_version": self.fallback_version,
         }
 
     async def activate(

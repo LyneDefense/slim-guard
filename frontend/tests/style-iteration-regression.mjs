@@ -17,6 +17,9 @@ test("style version page keeps build, publish and activation as separate actions
     "不会覆盖旧版本",
     "不暴露模型思维过程",
     "十二条之外的新场景",
+    "启用 / 回滚历史",
+    "回归 Case 与自动评测",
+    "表达示例",
   ]) assert.ok(source.includes(expected), expected);
   assert.doesNotMatch(source, /actor\s*:/);
 });

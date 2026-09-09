@@ -248,7 +248,10 @@ async def runtime_context(
     principal: Annotated[AdminPrincipal, Depends(_authenticate)],
 ) -> dict[str, Any]:
     del principal
-    return await _runtime_service(request).context()
+    result = await _runtime_service(request).context()
+    settings = cast(Settings, request.app.state.settings)
+    result["direct_activation_allowed"] = settings.app_env != "production"
+    return result
 
 
 def _ensure_direct_activation_allowed(request: Request) -> None:

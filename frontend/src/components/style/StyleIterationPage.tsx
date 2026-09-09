@@ -7,7 +7,10 @@ import type {
   StyleIterationClassification,
   StyleIterationRun,
   StyleIterationStatus,
+  StyleExampleData,
   StyleProfileData,
+  StyleRegressionCaseData,
+  StyleRuntimeContext,
 } from "../../types";
 
 const STATUS_LABELS: Record<StyleIterationStatus, string> = {
@@ -153,6 +156,8 @@ export function StyleIterationPage() {
         )}
       </header>
 
+      {runtime.data && <RuntimeOverview value={runtime.data} />}
+
       <section className="style-build-panel">
         <div>
           <p className="eyebrow">BUILD NEXT VERSION</p>
@@ -244,6 +249,7 @@ export function StyleIterationPage() {
               run={selected.data}
               events={events.data?.items ?? []}
               runtime={runtime.data?.runtime}
+              directActivationAllowed={runtime.data?.direct_activation_allowed ?? false}
               onChanged={invalidateAll}
             />
           )}
@@ -258,11 +264,13 @@ function StyleIterationDetail({
   run,
   events,
   runtime,
+  directActivationAllowed,
   onChanged,
 }: {
   run: StyleIterationRun;
   events: Array<{ sequence: number; summary: string; created_at: string; event_type: string }>;
   runtime?: { active_profile_version: string; previous_profile_version: string | null; revision: number };
+  directActivationAllowed: boolean;
   onChanged: () => Promise<void>;
 }) {
   const [reason, setReason] = useState("");
@@ -287,7 +295,16 @@ function StyleIterationDetail({
     ? Math.round((run.progress.current / run.progress.total) * 100)
     : 0;
   const candidate = run.artifacts?.profile;
+  const candidateExamples = run.artifacts?.bundle?.examples ?? [];
   const isActive = runtime?.active_profile_version === run.target_version;
+
+  const activate = () => {
+    if (!runtime) return;
+    const confirmed = window.confirm(
+      `确认全量启用 ${run.target_version}？\n当前版本：${runtime.active_profile_version}\n回滚版本：${runtime.previous_profile_version ?? runtime.active_profile_version}`,
+    );
+    if (confirmed) action.mutate("activate");
+  };
 
   return (
     <>
@@ -317,7 +334,19 @@ function StyleIterationDetail({
       )}
 
       {candidate && (
-        <ProfileDiff source={run.source_profile ?? null} candidate={candidate} />
+        <ProfileDiff
+          source={run.source_profile ?? null}
+          sourceExamples={run.source_examples ?? []}
+          candidate={candidate}
+          candidateExamples={candidateExamples}
+        />
+      )}
+
+      {run.artifacts?.cases && run.artifacts.comparison && (
+        <RegressionPanel
+          cases={run.artifacts.cases}
+          results={run.artifacts.comparison.evaluation.results}
+        />
       )}
 
       {run.artifacts?.classification && (
@@ -340,7 +369,7 @@ function StyleIterationDetail({
             <button type="button" disabled={!publishConfirmed || action.isPending} onClick={() => action.mutate("publish")}>采纳并发布该版本</button>
           )}
           {(run.status === "evaluated" || run.status === "active") && !isActive && (
-            <button type="button" disabled={!reason.trim() || action.isPending} onClick={() => action.mutate("activate")}>全量启用该版本</button>
+            <button type="button" disabled={!reason.trim() || action.isPending || !directActivationAllowed} onClick={activate}>全量启用该版本</button>
           )}
           {runtime?.previous_profile_version && isActive && (
             <button type="button" className="secondary" disabled={!reason.trim() || action.isPending} onClick={() => action.mutate("rollback")}>回滚到 {runtime.previous_profile_version}</button>
@@ -352,6 +381,7 @@ function StyleIterationDetail({
             <button type="button" className="danger" disabled={!reason.trim() || action.isPending} onClick={() => action.mutate("cancel")}>取消本次构建</button>
           )}
         </div>
+        {!directActivationAllowed && <small>当前环境禁止页面直接全量启用，请使用 Canary 放量。</small>}
         {action.error && <p className="style-action-error">{errorText(action.error)}</p>}
       </section>
 
@@ -373,17 +403,94 @@ function StyleIterationDetail({
   );
 }
 
-function ProfileDiff({ source, candidate }: { source: StyleProfileData | null; candidate: StyleProfileData }) {
+function RuntimeOverview({ value }: { value: StyleRuntimeContext }) {
+  return (
+    <section className="style-runtime-overview">
+      <div>
+        <p className="eyebrow">RUNTIME POINTER</p>
+        <h2>当前运行版本</h2>
+        <strong>{value.runtime.active_profile_version}</strong>
+        <small>上一版本：{value.runtime.previous_profile_version ?? "暂无"}</small>
+        <small>环境回退：{value.fallback_profile_version}</small>
+        <small>最后操作：{value.runtime.updated_by} · {formatDate(value.runtime.updated_at)}</small>
+      </div>
+      <div className="style-activation-history">
+        <h3>启用 / 回滚历史</h3>
+        {value.history.length === 0 && <p>暂无切换记录。</p>}
+        {value.history.slice(0, 5).map((event) => (
+          <article key={event.event_id}>
+            <strong>{event.action === "rollback" ? "回滚" : "启用"} {event.activated_version}</strong>
+            <span>来自 {event.previous_version} · revision {event.runtime_revision}</span>
+            <small>{event.actor} · {formatDate(event.created_at)} · {event.reason}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ProfileDiff({
+  source,
+  sourceExamples,
+  candidate,
+  candidateExamples,
+}: {
+  source: StyleProfileData | null;
+  sourceExamples: StyleExampleData[];
+  candidate: StyleProfileData;
+  candidateExamples: StyleExampleData[];
+}) {
   const newRules = useMemo(
     () => candidate.tone_rules.filter((rule) => !source?.tone_rules.includes(rule)),
     [source, candidate],
+  );
+  const newProhibited = candidate.prohibited_phrases.filter(
+    (phrase) => !source?.prohibited_phrases.includes(phrase),
   );
   return (
     <section className="style-profile-diff">
       <div className="section-heading"><div><h2>Profile 差异</h2><p>人工要审查的是可泛化表达规则，不是某一句回复。</p></div></div>
       <div>
-        <article><small>来源 · {source?.version ?? "历史素材未发布"}</small><h3>{source?.display_name ?? "—"}</h3><ul>{source?.tone_rules.map((rule) => <li key={rule}>{rule}</li>)}</ul></article>
-        <article><small>候选 · {candidate.version}</small><h3>{candidate.display_name}</h3><p>{candidate.description}</p><ul>{candidate.tone_rules.map((rule) => <li className={newRules.includes(rule) ? "new" : ""} key={rule}>{rule}</li>)}</ul></article>
+        <article><small>来源 · {source?.version ?? "历史素材未发布"}</small><h3>{source?.display_name ?? "—"}</h3><ul>{source?.tone_rules.map((rule) => <li key={rule}>{rule}</li>)}</ul><p>禁止短语：{source?.prohibited_phrases.join("、") || "无"}</p><ExampleList items={sourceExamples} /></article>
+        <article><small>候选 · {candidate.version}</small><h3>{candidate.display_name}</h3><p>{candidate.description}</p><ul>{candidate.tone_rules.map((rule) => <li className={newRules.includes(rule) ? "new" : ""} key={rule}>{rule}</li>)}</ul><p>禁止短语：{candidate.prohibited_phrases.map((phrase) => <span className={newProhibited.includes(phrase) ? "new" : ""} key={phrase}>{phrase}　</span>)}</p><ExampleList items={candidateExamples} /></article>
+      </div>
+    </section>
+  );
+}
+
+function ExampleList({ items }: { items: StyleExampleData[] }) {
+  return (
+    <details>
+      <summary>查看 {items.length} 条表达示例</summary>
+      <ul className="style-example-list">
+        {items.map((item) => <li key={item.example_id}><strong>{item.communication_act}</strong><span>{item.text}</span></li>)}
+      </ul>
+    </details>
+  );
+}
+
+function RegressionPanel({
+  cases,
+  results,
+}: {
+  cases: StyleRegressionCaseData[];
+  results: Array<{ case_id: string; passed: boolean; failure_code?: string | null }>;
+}) {
+  const byCase = new Map(results.map((item) => [item.case_id, item]));
+  return (
+    <section className="style-regression-cases">
+      <div className="section-heading"><div><h2>回归 Case 与自动评测</h2><p>基础 Case 与新增纠正派生 Case 都在这里；自动通过不代表人工采纳。</p></div><span>{cases.length} 条</span></div>
+      <div>
+        {cases.map((item) => {
+          const result = byCase.get(item.case_id);
+          return (
+            <article key={item.case_id}>
+              <header><strong>{item.scenario.title}</strong><span>{item.case_id.startsWith("feedback-") ? "新场景" : "基础/历史"}</span></header>
+              <p>{item.scenario.response_goal}</p>
+              <small>{item.response_plan.communication_act} · 自动评测 {result?.passed ? "通过" : result?.failure_code ?? "未完成"}</small>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
