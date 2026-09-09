@@ -23,6 +23,7 @@ from slim_guard.api.admin_routes import router as admin_router
 from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.routes import router
 from slim_guard.api.style_feedback_routes import router as style_feedback_router
+from slim_guard.api.style_iteration_routes import router as style_iteration_router
 from slim_guard.api.style_review_routes import router as style_review_router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
@@ -529,6 +530,7 @@ def create_app(
     application.include_router(admin_router)
     application.include_router(style_review_router)
     application.include_router(style_feedback_router)
+    application.include_router(style_iteration_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_graph_manifest = agent_graph_manifest

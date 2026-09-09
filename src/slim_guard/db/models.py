@@ -1361,6 +1361,215 @@ class StyleCorrectionFeedbackRecord(Base):
     )
 
 
+class StyleIterationRunRecord(Base):
+    """Durable state for one immutable candidate-version build."""
+
+    __tablename__ = "style_iteration_runs"
+    __table_args__ = (
+        UniqueConstraint("target_version", name="uq_style_iteration_target_version"),
+        UniqueConstraint(
+            "created_by",
+            "idempotency_key",
+            name="uq_style_iteration_actor_idempotency",
+        ),
+        CheckConstraint(
+            "status IN ("
+            "'queued','validating','freezing_inputs','classifying','building_profile',"
+            "'generating_cases','evaluating','importing_review','ready_for_review',"
+            "'needs_action','failed_transient','failed_terminal','rejected','evaluated',"
+            "'active','cancelled')",
+            name="ck_style_iteration_status",
+        ),
+        CheckConstraint(
+            "progress_current >= 0 AND progress_total >= 0 "
+            "AND progress_current <= progress_total",
+            name="ck_style_iteration_progress",
+        ),
+        CheckConstraint(
+            "source_sha256 IS NULL OR length(source_sha256) = 64",
+            name="ck_style_iteration_source_sha256",
+        ),
+        CheckConstraint(
+            "profile_sha256 IS NULL OR length(profile_sha256) = 64",
+            name="ck_style_iteration_profile_sha256",
+        ),
+        CheckConstraint(
+            "bundle_sha256 IS NULL OR length(bundle_sha256) = 64",
+            name="ck_style_iteration_bundle_sha256",
+        ),
+        CheckConstraint(
+            "cases_sha256 IS NULL OR length(cases_sha256) = 64",
+            name="ck_style_iteration_cases_sha256",
+        ),
+        CheckConstraint(
+            "evaluation_sha256 IS NULL OR length(evaluation_sha256) = 64",
+            name="ck_style_iteration_evaluation_sha256",
+        ),
+        Index("ix_style_iteration_profile_created", "profile_id", "created_at"),
+        Index("ix_style_iteration_status_created", "status", "created_at"),
+        Index(
+            "uq_style_iteration_open_profile",
+            "profile_id",
+            unique=True,
+            sqlite_where=text(
+                "status IN ('queued','validating','freezing_inputs','classifying',"
+                "'building_profile','generating_cases','evaluating','importing_review',"
+                "'ready_for_review','needs_action','failed_transient')"
+            ),
+            postgresql_where=text(
+                "status IN ('queued','validating','freezing_inputs','classifying',"
+                "'building_profile','generating_cases','evaluating','importing_review',"
+                "'ready_for_review','needs_action','failed_transient')"
+            ),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    target_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    progress_current: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    profile_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bundle_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cases_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evaluation_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generation_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    judge_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    classification_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    profile_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bundle_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cases_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    comparison_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    failure_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    published_version_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("style_profile_versions.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StyleIterationInputRecord(Base):
+    """Immutable source item frozen into a style iteration."""
+
+    __tablename__ = "style_iteration_inputs"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "source_kind",
+            "source_id",
+            name="uq_style_iteration_input_source",
+        ),
+        CheckConstraint(
+            "source_kind IN ('ab_review','style_feedback')",
+            name="ck_style_iteration_input_kind",
+        ),
+        CheckConstraint("length(source_sha256) = 64", name="ck_style_iteration_input_sha256"),
+        Index("ix_style_iteration_input_run", "run_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("style_iteration_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    classification: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    classification_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    derived_case_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class StyleIterationEventRecord(Base):
+    """Append-only operator-visible progress event without model chain-of-thought."""
+
+    __tablename__ = "style_iteration_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_style_iteration_event_sequence"),
+        CheckConstraint("sequence >= 1", name="ck_style_iteration_event_sequence"),
+        Index("ix_style_iteration_event_run", "run_id", "sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("style_iteration_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    public_summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    technical_metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class StyleRuntimeConfigurationRecord(Base):
+    """Mutable exact-version pointer; immutable activation events retain its history."""
+
+    __tablename__ = "style_runtime_configuration"
+    __table_args__ = (
+        CheckConstraint("revision >= 0", name="ck_style_runtime_revision"),
+        Index("ix_style_runtime_updated", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    active_profile_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    previous_profile_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class StyleActivationEventRecord(Base):
+    """Append-only activation and rollback audit event."""
+
+    __tablename__ = "style_activation_events"
+    __table_args__ = (
+        UniqueConstraint("runtime_revision", name="uq_style_activation_revision"),
+        CheckConstraint("runtime_revision >= 1", name="ck_style_activation_revision"),
+        CheckConstraint(
+            "action IN ('activate','rollback')",
+            name="ck_style_activation_action",
+        ),
+        Index("ix_style_activation_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    previous_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    activated_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    runtime_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class NutritionKnowledgeImportBatchRecord(Base):
     """Auditable lifecycle of one offline corpus import attempt."""
 

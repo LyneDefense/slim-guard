@@ -42,6 +42,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260908_01_style_ab_reviews",
             "20260908_02_style_ab_scenarios",
             "20260908_03_style_correction_feedback",
+            "20260909_01_style_iteration_control_plane",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -52,6 +53,11 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "style_ab_evaluation_cases",
             "style_ab_human_reviews",
             "style_correction_feedback",
+            "style_iteration_runs",
+            "style_iteration_inputs",
+            "style_iteration_events",
+            "style_runtime_configuration",
+            "style_activation_events",
         }.issubset(table_names)
     finally:
         await database.close()
@@ -109,6 +115,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260908_01_style_ab_reviews",
             "20260908_02_style_ab_scenarios",
             "20260908_03_style_correction_feedback",
+            "20260909_01_style_iteration_control_plane",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

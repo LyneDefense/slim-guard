@@ -14,6 +14,7 @@ from slim_guard.db.models import (
     SchemaMigrationRecord,
     StyleProfileRecord,
     StyleProfileVersionRecord,
+    StyleRuntimeConfigurationRecord,
 )
 
 _DEFAULT_STYLE_PROFILE_ID = "slimguard_default"
@@ -299,6 +300,64 @@ async def _create_style_correction_feedback(connection: AsyncConnection) -> None
         )
 
 
+async def _create_style_iteration_control_plane(connection: AsyncConnection) -> None:
+    """Create durable iteration jobs, immutable inputs/events, and runtime routing."""
+
+    await _create_application_tables(connection)
+    current = await connection.scalar(
+        select(StyleRuntimeConfigurationRecord.id).where(
+            StyleRuntimeConfigurationRecord.id == "default"
+        )
+    )
+    if current is None:
+        await connection.execute(
+            insert(StyleRuntimeConfigurationRecord).values(
+                id="default",
+                active_profile_version=_DEFAULT_STYLE_PROFILE_VERSION,
+                previous_profile_version=None,
+                revision=0,
+                updated_by="system-bootstrap",
+            )
+        )
+    immutable_tables = (
+        "style_iteration_inputs",
+        "style_iteration_events",
+        "style_activation_events",
+    )
+    if connection.dialect.name == "sqlite":
+        for table_name in immutable_tables:
+            for operation in ("UPDATE", "DELETE"):
+                await connection.execute(
+                    text(
+                        "CREATE TRIGGER IF NOT EXISTS "
+                        f"{table_name}_{operation.lower()}_blocked "
+                        f"BEFORE {operation} ON {table_name} BEGIN "
+                        f"SELECT RAISE(ABORT, '{table_name} records are append-only'); END"
+                    )
+                )
+    elif connection.dialect.name == "postgresql":
+        for table_name in immutable_tables:
+            function_name = f"block_{table_name}_mutation"
+            trigger_name = f"{table_name}_mutation_blocked"
+            await connection.execute(
+                text(
+                    f"CREATE OR REPLACE FUNCTION {function_name}() "
+                    "RETURNS trigger AS $$ BEGIN "
+                    f"RAISE EXCEPTION '{table_name} records are append-only'; "
+                    "END; $$ LANGUAGE plpgsql"
+                )
+            )
+            await connection.execute(
+                text(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}")
+            )
+            await connection.execute(
+                text(
+                    f"CREATE TRIGGER {trigger_name} BEFORE UPDATE OR DELETE ON {table_name} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {function_name}()"
+                )
+            )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -318,6 +377,10 @@ MIGRATIONS = (
     SchemaMigration(
         "20260908_03_style_correction_feedback",
         _create_style_correction_feedback,
+    ),
+    SchemaMigration(
+        "20260909_01_style_iteration_control_plane",
+        _create_style_iteration_control_plane,
     ),
 )
 
