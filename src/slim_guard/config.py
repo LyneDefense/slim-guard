@@ -43,6 +43,31 @@ class Settings(DatabaseSettings):
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
+    nutrition_rag_engine: Literal["v1", "v2"] = "v2"
+    nutrition_knowledge_worker_enabled: bool = False
+    nutrition_knowledge_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
+    nutrition_knowledge_job_lease_seconds: int = Field(default=300, ge=30, le=3600)
+    nutrition_knowledge_max_upload_bytes: int = Field(
+        default=26_214_400,
+        ge=1024,
+        le=104_857_600,
+    )
+    nutrition_knowledge_storage_backend: Literal["cos"] = "cos"
+    tencent_cos_region: str = Field(default="", max_length=64)
+    tencent_cos_bucket: str = Field(default="", max_length=255)
+    tencent_cos_prefix: str = Field(
+        default="slim-guard/nutrition-knowledge",
+        max_length=512,
+    )
+    tencent_cos_secret_id: str = ""
+    tencent_cos_secret_key: str = ""
+    tencent_cos_session_token: str = ""
+    tencent_cos_domain: str = Field(default="", max_length=512)
+    nutrition_embedding_provider: Literal["zhipu"] = "zhipu"
+    nutrition_embedding_model: str = Field(default="embedding-3", min_length=1, max_length=128)
+    nutrition_embedding_dimensions: Literal[1024] = 1024
+    nutrition_rerank_provider: Literal["zhipu"] = "zhipu"
+    nutrition_rerank_model: str = Field(default="rerank", min_length=1, max_length=128)
     meal_guidance_enabled: bool = False
     dish_recognition_enabled: bool = True
     nutrition_retrieval_enabled: bool = True
@@ -149,6 +174,19 @@ class Settings(DatabaseSettings):
             raise ValueError("STYLE_CANARY_PROFILE must be an exact version")
         if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
             raise ValueError("MEAL_GUIDANCE_ENABLED requires NUTRITION_AGENT_ENABLED")
+        if self.tencent_cos_prefix.startswith("/") or self.tencent_cos_prefix.endswith("/"):
+            raise ValueError("TENCENT_COS_PREFIX must not start or end with '/'")
+        if ".." in self.tencent_cos_prefix.split("/"):
+            raise ValueError("TENCENT_COS_PREFIX cannot contain '..' segments")
+        if self.nutrition_knowledge_worker_enabled and not self.tencent_cos_is_configured:
+            raise ValueError(
+                "NUTRITION_KNOWLEDGE_WORKER_ENABLED requires Tencent COS region, "
+                "bucket, SecretId, and SecretKey"
+            )
+        if self.nutrition_knowledge_worker_enabled and not self.zhipu_is_configured:
+            raise ValueError(
+                "NUTRITION_KNOWLEDGE_WORKER_ENABLED requires ZHIPU_API_KEY for embeddings"
+            )
         if bool(self.admin_username) != bool(self.admin_password):
             raise ValueError("Admin username and password must be configured together")
         if self.mobile_api_enabled and len(self.mobile_auth_secret) < 32:
@@ -156,16 +194,10 @@ class Settings(DatabaseSettings):
                 "MOBILE_AUTH_SECRET must contain at least 32 characters when the "
                 "mobile API is enabled"
             )
-        if (
-            self.mobile_api_enabled
-            and self.app_env == "production"
-            and self.mobile_dev_otp_enabled
-        ):
+        if self.mobile_api_enabled and self.app_env == "production" and self.mobile_dev_otp_enabled:
             raise ValueError("MOBILE_DEV_OTP_ENABLED must be false in production")
         if self.mobile_test_accounts_enabled and not self.mobile_api_enabled:
-            raise ValueError(
-                "MOBILE_TEST_ACCOUNTS_ENABLED requires MOBILE_API_ENABLED"
-            )
+            raise ValueError("MOBILE_TEST_ACCOUNTS_ENABLED requires MOBILE_API_ENABLED")
         if self.mobile_test_accounts_enabled and not self.mobile_test_account_password:
             raise ValueError(
                 "MOBILE_TEST_ACCOUNT_PASSWORD is required when test accounts are enabled"
@@ -187,6 +219,17 @@ class Settings(DatabaseSettings):
     @cached_property
     def zhipu_is_configured(self) -> bool:
         return bool(self.zhipu_api_key)
+
+    @cached_property
+    def tencent_cos_is_configured(self) -> bool:
+        return all(
+            (
+                self.tencent_cos_region.strip(),
+                self.tencent_cos_bucket.strip(),
+                self.tencent_cos_secret_id,
+                self.tencent_cos_secret_key,
+            )
+        )
 
     @cached_property
     def admin_is_configured(self) -> bool:

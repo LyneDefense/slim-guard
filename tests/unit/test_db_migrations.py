@@ -44,6 +44,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260908_03_style_correction_feedback",
             "20260909_01_style_iteration_control_plane",
             "20260910_01_dish_knowledge",
+            "20260911_01_nutrition_hybrid_rag",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -65,6 +66,17 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "dish_traits",
             "dish_rules",
             "dish_catalog_reviews",
+            "nutrition_knowledge_assets",
+            "nutrition_knowledge_source_labels",
+            "nutrition_knowledge_jobs",
+            "nutrition_knowledge_job_events",
+            "nutrition_knowledge_sections",
+            "nutrition_rag_chunks",
+            "nutrition_chunk_embeddings",
+            "nutrition_corpus_releases",
+            "nutrition_corpus_runtime",
+            "nutrition_retrieval_runs",
+            "nutrition_evaluation_datasets",
         }.issubset(table_names)
     finally:
         await database.close()
@@ -124,6 +136,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260908_03_style_correction_feedback",
             "20260909_01_style_iteration_control_plane",
             "20260910_01_dish_knowledge",
+            "20260911_01_nutrition_hybrid_rag",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
@@ -142,10 +155,7 @@ async def test_existing_style_ab_rows_receive_an_explicit_legacy_scenario(tmp_pa
                 )
             )
             await connection.execute(
-                text(
-                    "CREATE TABLE style_ab_evaluation_cases ("
-                    "id VARCHAR(36) PRIMARY KEY)"
-                )
+                text("CREATE TABLE style_ab_evaluation_cases (id VARCHAR(36) PRIMARY KEY)")
             )
             await connection.execute(
                 text("INSERT INTO style_ab_evaluation_cases (id) VALUES ('TEST-case')")
@@ -162,9 +172,7 @@ async def test_existing_style_ab_rows_receive_an_explicit_legacy_scenario(tmp_pa
             columns = await connection.run_sync(
                 lambda sync_connection: {
                     column["name"]
-                    for column in inspect(sync_connection).get_columns(
-                        "style_ab_evaluation_cases"
-                    )
+                    for column in inspect(sync_connection).get_columns("style_ab_evaluation_cases")
                 }
             )
             row = (

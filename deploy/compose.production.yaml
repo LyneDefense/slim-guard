@@ -8,7 +8,7 @@ x-default-logging: &default-logging
 
 services:
   slim-guard-db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:0.8.6-pg16-bookworm
     environment:
       POSTGRES_DB: ${SLIM_GUARD_POSTGRES_DB:-slim_guard}
       POSTGRES_USER: ${SLIM_GUARD_POSTGRES_USER:-slim_guard}
@@ -19,6 +19,7 @@ services:
       - slim_guard_data
     restart: unless-stopped
     init: true
+    shm_size: "256mb"
     healthcheck:
       test:
         - CMD-SHELL

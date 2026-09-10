@@ -219,6 +219,33 @@ def test_nutrition_rag_requires_agent_and_mandatory_citations() -> None:
         )
 
 
+def test_nutrition_worker_requires_cos_and_embedding_credentials() -> None:
+    with pytest.raises(ValidationError, match="Tencent COS"):
+        Settings(nutrition_knowledge_worker_enabled=True, _env_file=None)
+
+    with pytest.raises(ValidationError, match="ZHIPU_API_KEY"):
+        Settings(
+            nutrition_knowledge_worker_enabled=True,
+            tencent_cos_region="ap-shanghai",
+            tencent_cos_bucket="nutrition-1234567890",
+            tencent_cos_secret_id="secret-id",
+            tencent_cos_secret_key="secret-key",
+            _env_file=None,
+        )
+
+    settings = Settings(
+        nutrition_knowledge_worker_enabled=True,
+        tencent_cos_region="ap-shanghai",
+        tencent_cos_bucket="nutrition-1234567890",
+        tencent_cos_secret_id="secret-id",
+        tencent_cos_secret_key="secret-key",
+        zhipu_api_key="zhipu-key",
+        _env_file=None,
+    )
+    assert settings.tencent_cos_is_configured is True
+    assert settings.nutrition_rag_engine == "v2"
+
+
 def test_nutrition_rag_fails_closed_without_agent_and_citations() -> None:
     with pytest.raises(ValueError, match="requires NUTRITION_AGENT_ENABLED"):
         create_app(Settings(nutrition_rag_enabled=True))

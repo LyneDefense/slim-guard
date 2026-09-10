@@ -11,10 +11,26 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from slim_guard.db.models import (
     Base,
+    NutritionCorpusRuntimeRecord,
+    NutritionEmbeddingProfileRecord,
+    NutritionKnowledgeSourceLabelRecord,
+    NutritionKnowledgeSourceRecord,
+    NutritionLexicalProfileRecord,
+    NutritionRetrievalProfileRecord,
     SchemaMigrationRecord,
     StyleProfileRecord,
     StyleProfileVersionRecord,
     StyleRuntimeConfigurationRecord,
+)
+from slim_guard.nutrition_rag.profiles import (
+    DEFAULT_EMBEDDING_PROFILE_ID,
+    DEFAULT_EMBEDDING_PROFILE_KEY,
+    DEFAULT_LEXICAL_PROFILE_ID,
+    DEFAULT_LEXICAL_PROFILE_KEY,
+    DEFAULT_RETRIEVAL_PROFILE_ID,
+    DEFAULT_RETRIEVAL_PROFILE_KEY,
+    NUTRITION_LEXICON_SHA256,
+    QUERY_PLAN_VERSION,
 )
 
 _DEFAULT_STYLE_PROFILE_ID = "slimguard_default"
@@ -47,9 +63,7 @@ _LEGACY_STYLE_AB_SCENARIO = json.dumps(
     {
         "title": "历史 A/B 用例（未单独记录场景）",
         "user_situation": "该用例创建于结构化场景字段上线之前。",
-        "known_context": [
-            "请结合下方合成 ResponsePlan 和两侧输出查看；旧评分历史保持不变。"
-        ],
+        "known_context": ["请结合下方合成 ResponsePlan 和两侧输出查看；旧评分历史保持不变。"],
         "response_goal": "比较同一份合成 ResponsePlan 在两个风格版本下的表达。",
     },
     ensure_ascii=False,
@@ -57,9 +71,7 @@ _LEGACY_STYLE_AB_SCENARIO = json.dumps(
     separators=(",", ":"),
     sort_keys=True,
 )
-_LEGACY_STYLE_AB_SCENARIO_SHA256 = hashlib.sha256(
-    _LEGACY_STYLE_AB_SCENARIO.encode()
-).hexdigest()
+_LEGACY_STYLE_AB_SCENARIO_SHA256 = hashlib.sha256(_LEGACY_STYLE_AB_SCENARIO.encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +83,11 @@ class SchemaMigration:
 async def _create_application_tables(connection: AsyncConnection) -> None:
     """Additive migration safe for both an existing SQLite DB and a fresh DB."""
 
+    if connection.dialect.name == "postgresql":
+        # Base.metadata now contains pgvector columns. Extensions must exist before
+        # a fresh database can compile and create those tables.
+        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     await connection.run_sync(Base.metadata.create_all)
 
 
@@ -220,19 +237,14 @@ async def _add_style_ab_scenarios(connection: AsyncConnection) -> None:
             for column in inspect(sync_connection).get_columns("style_ab_evaluation_cases")
         }
     )
-    scenario_columns_added = (
-        "scenario_json" not in columns or "scenario_sha256" not in columns
-    )
+    scenario_columns_added = "scenario_json" not in columns or "scenario_sha256" not in columns
     if "scenario_json" not in columns:
         await connection.execute(
             text("ALTER TABLE style_ab_evaluation_cases ADD COLUMN scenario_json TEXT")
         )
     if "scenario_sha256" not in columns:
         await connection.execute(
-            text(
-                "ALTER TABLE style_ab_evaluation_cases "
-                "ADD COLUMN scenario_sha256 VARCHAR(64)"
-            )
+            text("ALTER TABLE style_ab_evaluation_cases ADD COLUMN scenario_sha256 VARCHAR(64)")
         )
     await connection.execute(
         text(
@@ -347,9 +359,7 @@ async def _create_style_iteration_control_plane(connection: AsyncConnection) -> 
                     "END; $$ LANGUAGE plpgsql"
                 )
             )
-            await connection.execute(
-                text(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}")
-            )
+            await connection.execute(text(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}"))
             await connection.execute(
                 text(
                     f"CREATE TRIGGER {trigger_name} BEFORE UPDATE OR DELETE ON {table_name} "
@@ -396,6 +406,215 @@ async def _create_dish_knowledge_tables(connection: AsyncConnection) -> None:
         )
 
 
+async def _create_nutrition_rag_control_plane(connection: AsyncConnection) -> None:
+    """Create production Hybrid RAG tables, profiles, indexes, and immutable ledgers."""
+
+    await _create_application_tables(connection)
+    source_columns = await connection.run_sync(
+        lambda sync_connection: {
+            column["name"]
+            for column in inspect(sync_connection).get_columns("nutrition_knowledge_sources")
+        }
+    )
+    if "asset_id" not in source_columns:
+        await connection.execute(
+            text("ALTER TABLE nutrition_knowledge_sources ADD COLUMN asset_id VARCHAR(36)")
+        )
+    if "parser_profile_key" not in source_columns:
+        await connection.execute(
+            text(
+                "ALTER TABLE nutrition_knowledge_sources ADD COLUMN parser_profile_key VARCHAR(128)"
+            )
+        )
+    if "supersedes_source_id" not in source_columns:
+        await connection.execute(
+            text(
+                "ALTER TABLE nutrition_knowledge_sources "
+                "ADD COLUMN supersedes_source_id VARCHAR(36)"
+            )
+        )
+    existing_sources = tuple(
+        (
+            await connection.execute(
+                select(
+                    NutritionKnowledgeSourceRecord.id,
+                    NutritionKnowledgeSourceRecord.metadata_json,
+                )
+            )
+        ).tuples()
+    )
+    existing_labels = set(
+        (
+            await connection.execute(
+                select(
+                    NutritionKnowledgeSourceLabelRecord.source_id,
+                    NutritionKnowledgeSourceLabelRecord.kind,
+                    NutritionKnowledgeSourceLabelRecord.value,
+                )
+            )
+        ).tuples()
+    )
+    for source_id, metadata_json in existing_sources:
+        try:
+            metadata = json.loads(metadata_json)
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            continue
+        for kind in ("tag", "applicability"):
+            key = "tags" if kind == "tag" else "applicability"
+            values = metadata.get(key, [])
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+                    continue
+                label = (source_id, kind, value.strip())
+                if label in existing_labels:
+                    continue
+                await connection.execute(
+                    insert(NutritionKnowledgeSourceLabelRecord).values(
+                        source_id=source_id,
+                        kind=kind,
+                        value=value.strip(),
+                    )
+                )
+                existing_labels.add(label)
+    embedding_exists = await connection.scalar(
+        select(NutritionEmbeddingProfileRecord.id).where(
+            NutritionEmbeddingProfileRecord.id == DEFAULT_EMBEDDING_PROFILE_ID
+        )
+    )
+    if embedding_exists is None:
+        await connection.execute(
+            insert(NutritionEmbeddingProfileRecord).values(
+                id=DEFAULT_EMBEDDING_PROFILE_ID,
+                profile_key=DEFAULT_EMBEDDING_PROFILE_KEY,
+                provider="zhipu",
+                model="embedding-3",
+                dimensions=1024,
+                distance="cosine",
+                request_options_json='{"dimensions":1024}',
+                status="ready",
+            )
+        )
+    lexical_exists = await connection.scalar(
+        select(NutritionLexicalProfileRecord.id).where(
+            NutritionLexicalProfileRecord.id == DEFAULT_LEXICAL_PROFILE_ID
+        )
+    )
+    if lexical_exists is None:
+        await connection.execute(
+            insert(NutritionLexicalProfileRecord).values(
+                id=DEFAULT_LEXICAL_PROFILE_ID,
+                profile_key=DEFAULT_LEXICAL_PROFILE_KEY,
+                analyzer="jieba",
+                analyzer_version="0.42.1",
+                dictionary_sha256=NUTRITION_LEXICON_SHA256,
+                status="ready",
+            )
+        )
+    retrieval_exists = await connection.scalar(
+        select(NutritionRetrievalProfileRecord.id).where(
+            NutritionRetrievalProfileRecord.id == DEFAULT_RETRIEVAL_PROFILE_ID
+        )
+    )
+    if retrieval_exists is None:
+        await connection.execute(
+            insert(NutritionRetrievalProfileRecord).values(
+                id=DEFAULT_RETRIEVAL_PROFILE_ID,
+                profile_key=DEFAULT_RETRIEVAL_PROFILE_KEY,
+                embedding_profile_id=DEFAULT_EMBEDDING_PROFILE_ID,
+                lexical_profile_id=DEFAULT_LEXICAL_PROFILE_ID,
+                dense_top_k=40,
+                lexical_top_k=40,
+                phrase_top_k=20,
+                rrf_k=60,
+                rerank_top_n=24,
+                final_top_k=4,
+                min_rerank_score=0.35,
+                max_context_chars=6000,
+                query_plan_version=QUERY_PLAN_VERSION,
+                status="ready",
+            )
+        )
+    runtime_exists = await connection.scalar(
+        select(NutritionCorpusRuntimeRecord.singleton_key).where(
+            NutritionCorpusRuntimeRecord.singleton_key == "default"
+        )
+    )
+    if runtime_exists is None:
+        await connection.execute(
+            insert(NutritionCorpusRuntimeRecord).values(
+                singleton_key="default",
+                active_release_id=None,
+                runtime_revision=0,
+                updated_by="system-bootstrap",
+            )
+        )
+
+    immutable_tables = (
+        "nutrition_knowledge_job_events",
+        "nutrition_knowledge_review_events",
+        "nutrition_corpus_activation_events",
+    )
+    if connection.dialect.name == "sqlite":
+        for table_name in immutable_tables:
+            for operation in ("UPDATE", "DELETE"):
+                await connection.execute(
+                    text(
+                        "CREATE TRIGGER IF NOT EXISTS "
+                        f"{table_name}_{operation.lower()}_blocked "
+                        f"BEFORE {operation} ON {table_name} BEGIN "
+                        f"SELECT RAISE(ABORT, '{table_name} records are append-only'); END"
+                    )
+                )
+        return
+
+    for table_name in immutable_tables:
+        function_name = f"block_{table_name}_mutation"
+        trigger_name = f"{table_name}_mutation_blocked"
+        await connection.execute(
+            text(
+                f"CREATE OR REPLACE FUNCTION {function_name}() "
+                "RETURNS trigger AS $$ BEGIN "
+                f"RAISE EXCEPTION '{table_name} records are append-only'; "
+                "END; $$ LANGUAGE plpgsql"
+            )
+        )
+        await connection.execute(text(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}"))
+        await connection.execute(
+            text(
+                f"CREATE TRIGGER {trigger_name} BEFORE UPDATE OR DELETE ON {table_name} "
+                f"FOR EACH ROW EXECUTE FUNCTION {function_name}()"
+            )
+        )
+    await connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_nutrition_rag_chunk_fts "
+            "ON nutrition_rag_chunks USING gin "
+            "(to_tsvector('simple', lexical_terms)) "
+            "WHERE chunk_kind = 'retrieval_child'"
+        )
+    )
+    await connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_nutrition_rag_chunk_trgm "
+            "ON nutrition_rag_chunks USING gist (lexical_text gist_trgm_ops) "
+            "WHERE chunk_kind = 'retrieval_child'"
+        )
+    )
+    await connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_nutrition_embedding_hnsw_1024 "
+            "ON nutrition_chunk_embeddings USING hnsw "
+            "((embedding::vector(1024)) vector_cosine_ops) "
+            f"WHERE embedding_profile_id = '{DEFAULT_EMBEDDING_PROFILE_ID}' "
+            "AND status = 'ready'"
+        )
+    )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -421,6 +640,10 @@ MIGRATIONS = (
         _create_style_iteration_control_plane,
     ),
     SchemaMigration("20260910_01_dish_knowledge", _create_dish_knowledge_tables),
+    SchemaMigration(
+        "20260911_01_nutrition_hybrid_rag",
+        _create_nutrition_rag_control_plane,
+    ),
 )
 
 

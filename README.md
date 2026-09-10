@@ -135,6 +135,29 @@ Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。资�
 “审核”和“发布”两个独立操作，才会被新 Turn 检索；资料退休后立即退出新检索，历史 Artifact 中已经
 冻结的 Citation 仍可审计。线上 Nutrition 工具全部只读，也不会自动把网页写入知识库。
 
+生产版 RAG v2 使用 PostgreSQL 16 + pgvector 保存切片向量，以中文词法检索、向量检索和短语匹配
+召回候选，再通过 RRF 合并并用智谱 `rerank` 重排。原始资料存放在腾讯云 COS 私有 Bucket，数据库只
+保存对象 Key、内容 Hash 和审核/Release 记录。启用后台导入 Worker 前需要配置：
+
+```dotenv
+NUTRITION_RAG_ENGINE=v2
+NUTRITION_KNOWLEDGE_WORKER_ENABLED=true
+TENCENT_COS_REGION=ap-shanghai
+TENCENT_COS_BUCKET=你的私有Bucket名称-APPID
+TENCENT_COS_PREFIX=slim-guard/nutrition-knowledge
+TENCENT_COS_SECRET_ID=CAM SecretId
+TENCENT_COS_SECRET_KEY=CAM SecretKey
+# 临时密钥才填写；长期密钥留空
+TENCENT_COS_SESSION_TOKEN=
+NUTRITION_EMBEDDING_MODEL=embedding-3
+NUTRITION_EMBEDDING_DIMENSIONS=1024
+NUTRITION_RERANK_MODEL=rerank
+```
+
+CAM 身份只需对上述 Prefix 授予 `cos:PutObject`、`cos:GetObject` 和 `cos:HeadObject`；Bucket 保持私有，
+不需要开放公网匿名读取。原文件按 SHA-256 寻址并启用 COS 服务端 AES256 加密，同一内容重复上传不会
+生成多份知识版本。建议同时开启 Bucket 版本控制。
+
 导入清单可以是 JSON 数组，也可以是包含 `documents` 数组的对象。每项至少包含 `source_key`、
 `version`、`title`、`publisher` 和 `content`；也可用 `content_path` 代替 `content`，引用相对清单文件
 的 UTF-8 文本或 Markdown 文件。运维命令如下：

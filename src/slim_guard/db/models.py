@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -1381,8 +1384,7 @@ class StyleIterationRunRecord(Base):
             name="ck_style_iteration_status",
         ),
         CheckConstraint(
-            "progress_current >= 0 AND progress_total >= 0 "
-            "AND progress_current <= progress_total",
+            "progress_current >= 0 AND progress_total >= 0 AND progress_current <= progress_total",
             name="ck_style_iteration_progress",
         ),
         CheckConstraint(
@@ -1643,6 +1645,11 @@ class NutritionKnowledgeSourceRecord(Base):
     published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str] = mapped_column(String(32), nullable=False)
+    supersedes_source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="RESTRICT"), nullable=True
+    )
+    asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    parser_profile_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     char_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1658,6 +1665,24 @@ class NutritionKnowledgeSourceRecord(Base):
         DateTime(timezone=True), nullable=True
     )
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionKnowledgeSourceLabelRecord(Base):
+    """Normalized labels used to filter eligible sources before vector search."""
+
+    __tablename__ = "nutrition_knowledge_source_labels"
+    __table_args__ = (
+        CheckConstraint("kind IN ('tag','applicability')", name="ck_nutrition_source_label_kind"),
+        UniqueConstraint("source_id", "kind", "value", name="uq_nutrition_source_label"),
+        Index("ix_nutrition_source_label_lookup", "kind", "value", "source_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    value: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
 class NutritionKnowledgeChunkRecord(Base):
@@ -1740,6 +1765,584 @@ class NutritionKnowledgeReviewRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
+
+
+class NutritionKnowledgeAssetRecord(Base):
+    """Immutable raw source object stored in a private Tencent COS bucket."""
+
+    __tablename__ = "nutrition_knowledge_assets"
+    __table_args__ = (
+        UniqueConstraint("sha256", name="uq_nutrition_asset_sha256"),
+        UniqueConstraint("storage_backend", "bucket", "storage_key", name="uq_nutrition_asset_key"),
+        CheckConstraint("byte_size > 0", name="ck_nutrition_asset_size"),
+        CheckConstraint("length(sha256) = 64", name="ck_nutrition_asset_sha256"),
+        CheckConstraint("storage_backend = 'cos'", name="ck_nutrition_asset_backend"),
+        CheckConstraint(
+            "source_method IN ('upload','url','pasted_text','legacy_manifest')",
+            name="ck_nutrition_asset_source_method",
+        ),
+        Index("ix_nutrition_asset_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    storage_backend: Mapped[str] = mapped_column(String(16), nullable=False, default="cos")
+    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    bucket: Mapped[str] = mapped_column(String(255), nullable=False)
+    region: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    etag: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionKnowledgeJobRecord(Base):
+    """Leased, retryable background work for ingestion, indexing, and evaluation."""
+
+    __tablename__ = "nutrition_knowledge_jobs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_nutrition_job_idempotency"),
+        CheckConstraint(
+            "job_type IN ('ingest','reparse','embed','build_release','evaluate')",
+            name="ck_nutrition_job_type",
+        ),
+        CheckConstraint(
+            "status IN ('queued','running','retry_wait','succeeded','failed','cancelled')",
+            name="ck_nutrition_job_status",
+        ),
+        CheckConstraint("completed_items >= 0", name="ck_nutrition_job_completed"),
+        CheckConstraint("total_items >= 0", name="ck_nutrition_job_total"),
+        CheckConstraint("attempt_count >= 0", name="ck_nutrition_job_attempt"),
+        CheckConstraint("max_attempts BETWEEN 1 AND 20", name="ck_nutrition_job_max_attempts"),
+        Index("ix_nutrition_job_claim", "status", "available_at", "created_at"),
+        Index("ix_nutrition_job_subject", "subject_type", "subject_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    job_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    stage: Mapped[str] = mapped_column(String(64), nullable=False, default="queued")
+    completed_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    output_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    safe_error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionKnowledgeJobEventRecord(Base):
+    """Append-only, sanitized progress event for one background job."""
+
+    __tablename__ = "nutrition_knowledge_job_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "sequence", name="uq_nutrition_job_event_sequence"),
+        Index("ix_nutrition_job_event_created", "job_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    message: Mapped[str] = mapped_column(String(1000), nullable=False)
+    completed_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionKnowledgeSectionRecord(Base):
+    """Document-aware section derived from an immutable source version."""
+
+    __tablename__ = "nutrition_knowledge_sections"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "parser_profile_key",
+            "ordinal",
+            name="uq_nutrition_section_ordinal",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_nutrition_section_ordinal"),
+        CheckConstraint("length(content_sha256) = 64", name="ck_nutrition_section_sha256"),
+        Index("ix_nutrition_section_source", "source_id", "ordinal"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    parent_section_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nutrition_knowledge_sections.id", ondelete="RESTRICT"), nullable=True
+    )
+    parser_profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading_path_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    page_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionRagChunkRecord(Base):
+    """Child/parent retrieval unit generated by a versioned chunker profile."""
+
+    __tablename__ = "nutrition_rag_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "chunker_profile_key",
+            "ordinal",
+            "chunk_kind",
+            name="uq_nutrition_rag_chunk",
+        ),
+        CheckConstraint(
+            "chunk_kind IN ('retrieval_child','context_parent','table','qa')",
+            name="ck_nutrition_rag_chunk_kind",
+        ),
+        CheckConstraint("char_count > 0", name="ck_nutrition_rag_chunk_chars"),
+        CheckConstraint("token_count > 0", name="ck_nutrition_rag_chunk_tokens"),
+        CheckConstraint("length(content_sha256) = 64", name="ck_nutrition_rag_chunk_sha256"),
+        Index("ix_nutrition_rag_chunk_source", "source_id", "chunk_kind", "ordinal"),
+        Index("ix_nutrition_rag_chunk_section", "section_id", "ordinal"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    section_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sections.id", ondelete="RESTRICT"), nullable=False
+    )
+    parent_chunk_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nutrition_rag_chunks.id", ondelete="RESTRICT"), nullable=True
+    )
+    chunker_profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    chunk_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    lexical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    lexical_terms: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionEmbeddingProfileRecord(Base):
+    __tablename__ = "nutrition_embedding_profiles"
+    __table_args__ = (
+        UniqueConstraint("profile_key", name="uq_nutrition_embedding_profile_key"),
+        CheckConstraint("dimensions BETWEEN 1 AND 16000", name="ck_nutrition_embedding_dims"),
+        CheckConstraint(
+            "distance IN ('cosine','inner_product','l2')", name="ck_nutrition_embedding_distance"
+        ),
+        CheckConstraint(
+            "status IN ('draft','ready','deprecated')", name="ck_nutrition_embedding_status"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    distance: Mapped[str] = mapped_column(String(32), nullable=False, default="cosine")
+    request_options_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionChunkEmbeddingRecord(Base):
+    __tablename__ = "nutrition_chunk_embeddings"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','ready','failed')", name="ck_nutrition_chunk_embedding_status"
+        ),
+        CheckConstraint("length(content_sha256) = 64", name="ck_nutrition_chunk_embedding_sha256"),
+        Index("ix_nutrition_embedding_profile_status", "embedding_profile_id", "status"),
+    )
+
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_rag_chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    embedding_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_embedding_profiles.id", ondelete="RESTRICT"), primary_key=True
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    provider_request_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionLexicalProfileRecord(Base):
+    __tablename__ = "nutrition_lexical_profiles"
+    __table_args__ = (
+        UniqueConstraint("profile_key", name="uq_nutrition_lexical_profile_key"),
+        CheckConstraint(
+            "status IN ('draft','ready','deprecated')", name="ck_nutrition_lexical_status"
+        ),
+        CheckConstraint(
+            "length(dictionary_sha256) = 64", name="ck_nutrition_lexical_dictionary_sha256"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    analyzer: Mapped[str] = mapped_column(String(64), nullable=False)
+    analyzer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    dictionary_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionRetrievalProfileRecord(Base):
+    __tablename__ = "nutrition_retrieval_profiles"
+    __table_args__ = (
+        UniqueConstraint("profile_key", name="uq_nutrition_retrieval_profile_key"),
+        CheckConstraint(
+            "status IN ('draft','ready','deprecated')", name="ck_nutrition_retrieval_status"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_embedding_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    lexical_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_lexical_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    dense_top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    lexical_top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    phrase_top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    rrf_k: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    rerank_top_n: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    final_top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    min_rerank_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.35)
+    max_context_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=6000)
+    query_plan_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionKnowledgeReviewEventRecord(Base):
+    """Append-only source/release attestations with explicit review domains."""
+
+    __tablename__ = "nutrition_knowledge_review_events"
+    __table_args__ = (
+        CheckConstraint(
+            "subject_type IN ('source','release','evaluation')",
+            name="ck_nutrition_review_event_subject",
+        ),
+        CheckConstraint(
+            "review_type IN ('content','applicability','rights','release_acceptance')",
+            name="ck_nutrition_review_event_type",
+        ),
+        CheckConstraint(
+            "decision IN ('approve','reject','revoke')", name="ck_nutrition_review_event_decision"
+        ),
+        CheckConstraint("length(subject_sha256) = 64", name="ck_nutrition_review_event_sha256"),
+        Index("ix_nutrition_review_event_subject", "subject_type", "subject_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    subject_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    review_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    attestations_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    subject_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionCorpusReleaseRecord(Base):
+    __tablename__ = "nutrition_corpus_releases"
+    __table_args__ = (
+        UniqueConstraint("version", name="uq_nutrition_corpus_release_version"),
+        UniqueConstraint("manifest_sha256", name="uq_nutrition_corpus_release_manifest"),
+        CheckConstraint(
+            "status IN ('draft','indexing_check','evaluating','review_ready',"
+            "'rejected','approved','active','retired')",
+            name="ck_nutrition_corpus_release_status",
+        ),
+        CheckConstraint("length(manifest_sha256) = 64", name="ck_nutrition_corpus_release_sha256"),
+        Index("ix_nutrition_corpus_release_status", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    embedding_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_embedding_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    lexical_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_lexical_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    retrieval_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_retrieval_profiles.id", ondelete="RESTRICT"), nullable=False
+    )
+    chunker_profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluation_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionCorpusReleaseSourceRecord(Base):
+    __tablename__ = "nutrition_corpus_release_sources"
+    __table_args__ = (
+        CheckConstraint(
+            "length(source_content_sha256) = 64", name="ck_nutrition_release_source_sha256"
+        ),
+        Index("ix_nutrition_release_source_source", "source_id", "release_id"),
+    )
+
+    release_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_corpus_releases.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_knowledge_sources.id", ondelete="RESTRICT"), primary_key=True
+    )
+    source_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class NutritionCorpusRuntimeRecord(Base):
+    __tablename__ = "nutrition_corpus_runtime"
+
+    singleton_key: Mapped[str] = mapped_column(String(32), primary_key=True, default="default")
+    active_release_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nutrition_corpus_releases.id", ondelete="RESTRICT"), nullable=True
+    )
+    runtime_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class NutritionCorpusActivationEventRecord(Base):
+    __tablename__ = "nutrition_corpus_activation_events"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('activate','rollback')", name="ck_nutrition_corpus_activation_action"
+        ),
+        Index("ix_nutrition_corpus_activation_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    previous_release_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    activated_release_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    runtime_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionRetrievalRunRecord(Base):
+    __tablename__ = "nutrition_retrieval_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('succeeded','degraded','insufficient','failed')",
+            name="ck_nutrition_retrieval_run_status",
+        ),
+        CheckConstraint("length(query_hash) = 64", name="ck_nutrition_retrieval_query_hash"),
+        Index("ix_nutrition_retrieval_created", "created_at"),
+        Index("ix_nutrition_retrieval_invocation", "invocation_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    invocation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    release_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    retrieval_profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    query_plan_json: Mapped[str] = mapped_column(Text, nullable=False)
+    query_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    safe_query_summary: Mapped[str] = mapped_column(String(1000), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_usage_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    total_latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionRetrievalCandidateRecord(Base):
+    __tablename__ = "nutrition_retrieval_candidates"
+    __table_args__ = (
+        UniqueConstraint("retrieval_run_id", "chunk_id", name="uq_nutrition_retrieval_candidate"),
+        Index("ix_nutrition_retrieval_candidate_rank", "retrieval_run_id", "rerank_rank"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    retrieval_run_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_retrieval_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_rag_chunks.id", ondelete="RESTRICT"), nullable=False
+    )
+    query_variant_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    dense_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dense_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lexical_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lexical_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    phrase_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phrase_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rrf_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    rrf_score: Mapped[float] = mapped_column(Float, nullable=False)
+    rerank_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rerank_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selection_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+
+class NutritionEvaluationDatasetRecord(Base):
+    __tablename__ = "nutrition_evaluation_datasets"
+    __table_args__ = (
+        UniqueConstraint("version", name="uq_nutrition_evaluation_dataset_version"),
+        CheckConstraint(
+            "status IN ('draft','ready','retired')", name="ck_nutrition_evaluation_dataset_status"
+        ),
+        CheckConstraint(
+            "length(manifest_sha256) = 64", name="ck_nutrition_evaluation_dataset_sha256"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionEvaluationCaseRecord(Base):
+    __tablename__ = "nutrition_evaluation_cases"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "case_key", name="uq_nutrition_evaluation_case"),
+        CheckConstraint(
+            "expected_outcome IN ('evidence','insufficient')", name="ck_nutrition_eval_case_outcome"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_evaluation_datasets.id", ondelete="CASCADE"), nullable=False
+    )
+    case_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    query_plan_input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_source_keys_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    expected_chunk_concepts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    forbidden_source_keys_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    expected_outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class NutritionEvaluationRunRecord(Base):
+    __tablename__ = "nutrition_evaluation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','succeeded','failed')",
+            name="ck_nutrition_eval_run_status",
+        ),
+        Index("ix_nutrition_eval_run_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    release_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_corpus_releases.id", ondelete="RESTRICT"), nullable=False
+    )
+    retrieval_profile_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_evaluation_datasets.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    metrics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NutritionEvaluationResultRecord(Base):
+    __tablename__ = "nutrition_evaluation_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "case_id", name="uq_nutrition_evaluation_result"),
+        Index("ix_nutrition_eval_result_passed", "run_id", "passed"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_evaluation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    case_id: Mapped[str] = mapped_column(
+        ForeignKey("nutrition_evaluation_cases.id", ondelete="RESTRICT"), nullable=False
+    )
+    retrieval_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    details_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
 
 
 class DishCatalogImportBatchRecord(Base):

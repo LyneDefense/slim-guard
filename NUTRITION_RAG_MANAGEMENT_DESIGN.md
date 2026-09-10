@@ -52,7 +52,7 @@
 | 资料管理 | 自建治理层，不使用供应商托管知识库作为权威存储 | 保留审核、版本、Hash、Trace、回滚和前端可视化控制 |
 | 线上启用单位 | 不再是单份 Source，而是不可变 Corpus Release | 可复现、可整体评测、可一键回滚 |
 | 后台任务 | PostgreSQL 租约队列 + 独立 Worker | 当前单机部署足够稳健；以后可横向扩 Worker，无需先引入 Redis/Celery |
-| 原始文件 | 私有对象存储接口；首版为 Docker 私有 Volume | 避免把大 PDF 塞入数据库，并为以后迁移 S3/OSS 保留接口 |
+| 原始文件 | 腾讯云 COS 私有 Bucket | 避免把大 PDF 塞入数据库；使用成熟对象存储的持久化、校验和权限能力 |
 
 ### 3.1 为什么不直接使用智谱托管知识库
 
@@ -67,7 +67,7 @@
 
 ### 3.2 为什么现在不引入 Elasticsearch 或独立向量数据库
 
-当前部署是一台服务器，资料规模远未达到必须拆分搜索集群的程度。PostgreSQL + pgvector + GIN/GiST 已能支持数十万级 Chunk 的常规场景，也显著减少备份、权限和一致性成本。检索层会通过 Repository/Gateway 抽象；只有真实容量和延迟数据证明需要时，再替换为独立搜索服务。
+当前部署是一台服务器，资料规模远未达到必须拆分搜索集群的程度。PostgreSQL + pgvector + GIN/GiST 已能支持数十万级 Chunk 的常规场景，也显著减少备份、权限和一致性成本。检索层会通过 Repository/Gateway 抽象；只有真实容量和延迟数据证明需要时，再替换为独立搜索服务。原始文件使用 COS 不改变这一判断：COS 只负责不可变文件，检索索引仍在主 PostgreSQL。
 
 ### 3.3 新增资料不是“重新训练模型”
 
@@ -83,7 +83,7 @@ Embedding/Rerank 模型或 Chunker Profile 时，才需要为受影响资料重�
   │
   ├─ 上传/URL/粘贴文本
   ▼
-Admin API ──→ Raw Object Store（私有 Volume，内容哈希寻址）
+Admin API ──→ 腾讯云 COS 私有 Bucket（内容哈希寻址）
   │
   ├─ 创建 Ingestion Job
   ▼
@@ -170,7 +170,9 @@ draft
 ```text
 nutrition_knowledge_assets
   id
+  storage_backend: cos
   storage_key
+  bucket / region
   original_filename
   media_type
   byte_size
@@ -393,7 +395,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 日常备份必须同时覆盖：
 
 - 主 PostgreSQL；
-- `nutrition_source_data` 私有 Volume 中的原始文件；
+- COS 私有 Bucket 中的原始文件清单、对象版本和完整性抽检；
 - 当前生效配置，但不把 API Key 写入备份日志。
 
 恢复演练必须验证 Source Hash、Chunk Hash、Embedding 行数、Active Release 和随机 Citation 回库。
@@ -798,7 +800,7 @@ GET  /evaluation-runs/{run_id}
 - 公开营养资料和用户健康数据分离；Source/Chunk 没有 `user_id`；
 - 发给 Embedding/Rerank 的 Query 去标识化，只包含完成检索所需的最小饮食语义；
 - Provider API Key 只在后端 Secret/环境变量中，数据库仅保存 Provider 名、Model、Request ID 和用量；
-- 原始上传文件在私有 Volume，不由 Nginx 静态暴露；下载必须经过 Admin API 授权和审计；
+- 原始上传文件在 COS 私有 Bucket，不由 Nginx 静态暴露；下载必须经过 Admin API 授权和审计；
 - Source URL 不能携带持久凭据；发现 Query Token 时拒绝保存或先清理；
 - Rights Review、Content Review 和 Applicability Review 分开记录，不能依赖可过期的自定义 Metadata 布尔值；
 - 被撤销资料不会从历史 Trace 消失，但立即禁止进入新检索；
@@ -812,8 +814,13 @@ GET  /evaluation-runs/{run_id}
 NUTRITION_RAG_ENABLED=true
 NUTRITION_RAG_ENGINE=v2
 NUTRITION_KNOWLEDGE_WORKER_ENABLED=true
-NUTRITION_KNOWLEDGE_STORAGE_BACKEND=local
-NUTRITION_KNOWLEDGE_STORAGE_PATH=/var/lib/slim-guard/nutrition-sources
+NUTRITION_KNOWLEDGE_STORAGE_BACKEND=cos
+TENCENT_COS_REGION=ap-shanghai
+TENCENT_COS_BUCKET=your-private-bucket-APPID
+TENCENT_COS_PREFIX=slim-guard/nutrition-knowledge
+TENCENT_COS_SECRET_ID=...
+TENCENT_COS_SECRET_KEY=...
+TENCENT_COS_SESSION_TOKEN=
 
 NUTRITION_EMBEDDING_PROVIDER=zhipu
 NUTRITION_EMBEDDING_MODEL=embedding-3
@@ -863,7 +870,7 @@ NUTRITION_RERANK_MODEL=rerank
 
 ### RAG-2：导入 Worker 与 Source 管理 API
 
-- 实现私有 Raw Object Store；
+- 实现 COS 私有 Raw Object Store；
 - 实现 PDF/MD/TXT/HTML 解析、质量检测、Parent/Child 切片；
 - 实现中文词法分析、Embedding 批处理、幂等重试；
 - 完成 Source/Job Admin API。
