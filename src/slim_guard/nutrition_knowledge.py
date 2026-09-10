@@ -532,6 +532,10 @@ class NutritionKnowledgeRepository:
                     updated_at=created_at,
                 )
                 session.add(row)
+                # There are intentionally no ORM relationships between immutable
+                # source and chunk records. Flush the parent explicitly so
+                # PostgreSQL never attempts a child INSERT before its FK target.
+                await session.flush()
                 session.add_all(
                     [
                         NutritionKnowledgeChunkRecord(
