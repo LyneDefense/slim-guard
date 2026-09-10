@@ -33,6 +33,18 @@
 不要把搜索结果、营销文章、自媒体菜谱或模型生成内容直接导入 published corpus。完整出版物即使能在线查看，
 也不等于可以整本复制进商业系统；无法确认授权时只导入允许使用的公开页面摘要，或取得出版方许可。
 
+仓库内维护了不含正文的固定来源目录 `resources/nutrition/source-catalog.v1.json`。可用以下命令下载原始 PDF、
+核验固定 SHA-256、机械抽取指定页，并生成待复核清单：
+
+```bash
+uv run python -m slim_guard.tools.prepare_nutrition_sources
+```
+
+输出位于被 Git 忽略的 `data/nutrition-knowledge/v1/`，包括原始 PDF、逐页 Markdown、
+`metadata/acquisition-report.json`、`knowledge-manifest.draft.json` 和 `REVIEW.md`。当前来源的
+`rights_status` 均为 `pending_human_review`，所以生成结果只能导入 draft，不能直接 approve/publish。
+重复执行时会复用通过哈希核验的本地文件；断网验收可加 `--offline`。
+
 ### 2.2 可选的食物成分来源
 
 中国食物成分数据中心：<https://fndc.chinanutri.cn/>。当前版本不输出热量和营养素数值，因此不需要以它作为
