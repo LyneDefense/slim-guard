@@ -124,3 +124,56 @@ async def test_zhipu_vision_normalizes_provider_and_invalid_response_errors() ->
         await provider.close()
         await invalid.close()
         await unstructured.close()
+
+
+async def test_zhipu_vision_normalizes_structured_dish_recognition() -> None:
+    gateway = ZhipuVisionModelGateway(
+        api_key="secret",
+        base_url="https://example.com",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "id": "dish-response-1",
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "image_kind": "meal",
+                                        "quality_flags": [],
+                                        "dishes": [
+                                            {
+                                                "candidates": [
+                                                    {
+                                                        "label": "番茄炒蛋",
+                                                        "confidence": 0.91,
+                                                    }
+                                                ],
+                                                "visible_ingredients": ["番茄", "鸡蛋"],
+                                                "preparation_candidates": ["炒"],
+                                                "uncertainty_reasons": [],
+                                            }
+                                        ],
+                                        "suggested_question": None,
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"total_tokens": 50},
+                },
+            )
+        ),
+    )
+    try:
+        response = await gateway.recognize_dishes(request())
+    finally:
+        await gateway.close()
+
+    assert response.image_kind == "meal"
+    assert response.dishes[0].candidates[0].label == "番茄炒蛋"
+    assert response.provider_request_id == "dish-response-1"
+    assert response.usage.total_tokens == 50

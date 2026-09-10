@@ -14,6 +14,7 @@ from slim_guard.agent_models.errors import (
 )
 from slim_guard.agent_models.gateway import ModelUsage
 from slim_guard.agent_models.vision import (
+    DishVisionResponse,
     VisionInspectionRequest,
     VisionInspectionResponse,
 )
@@ -42,6 +43,27 @@ class ZhipuVisionModelGateway:
         await self._http.aclose()
 
     async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse:
+        body = await self._request(request)
+        try:
+            return self._parse_response(body)
+        except (TypeError, ValueError, KeyError):
+            raise InvalidModelResponse("Zhipu vision response is invalid") from None
+
+    async def recognize_dishes(
+        self, request: VisionInspectionRequest
+    ) -> DishVisionResponse:
+        body = await self._request(request)
+        try:
+            structured, usage, request_id = self._response_parts(body)
+            return DishVisionResponse(
+                **structured,
+                usage=usage,
+                provider_request_id=request_id,
+            )
+        except (TypeError, ValueError, KeyError):
+            raise InvalidModelResponse("Zhipu dish recognition response is invalid") from None
+
+    async def _request(self, request: VisionInspectionRequest) -> Any:
         encoded = base64.b64encode(request.image_bytes).decode("ascii")
         payload: dict[str, Any] = {
             "model": request.model,
@@ -80,13 +102,32 @@ class ZhipuVisionModelGateway:
                 status_code=response.status_code,
             )
         try:
-            body = response.json()
-            return self._parse_response(body)
-        except (TypeError, ValueError, KeyError):
-            raise InvalidModelResponse("Zhipu vision response is invalid") from None
+            return response.json()
+        except (TypeError, ValueError):
+            raise InvalidModelResponse("Zhipu vision response is not JSON") from None
 
     @staticmethod
     def _parse_response(body: Any) -> VisionInspectionResponse:
+        structured, usage, request_id = ZhipuVisionModelGateway._response_parts(body)
+        required = {
+            "category",
+            "summary",
+            "observations",
+            "requires_user_confirmation",
+        }
+        if set(structured) != required:
+            raise ValueError("structured inspection response has unexpected fields")
+        return VisionInspectionResponse(
+            category=structured["category"],
+            description=structured["summary"],
+            observations=structured["observations"],
+            requires_user_confirmation=structured["requires_user_confirmation"],
+            usage=usage,
+            provider_request_id=request_id,
+        )
+
+    @staticmethod
+    def _response_parts(body: Any) -> tuple[dict[str, Any], ModelUsage, str | None]:
         if not isinstance(body, dict):
             raise ValueError("response body is not an object")
         choices = body.get("choices")
@@ -106,13 +147,10 @@ class ZhipuVisionModelGateway:
         if request_id is not None and not isinstance(request_id, str):
             raise ValueError("response id is not text")
         usage = body.get("usage")
-        return VisionInspectionResponse(
-            category=structured["category"],
-            description=structured["summary"],
-            observations=structured["observations"],
-            requires_user_confirmation=structured["requires_user_confirmation"],
-            usage=ZhipuVisionModelGateway._usage(usage),
-            provider_request_id=request_id,
+        return (
+            structured,
+            ZhipuVisionModelGateway._usage(usage),
+            request_id,
         )
 
     @staticmethod
@@ -126,14 +164,6 @@ class ZhipuVisionModelGateway:
         parsed = json.loads(normalized)
         if not isinstance(parsed, dict):
             raise ValueError("structured vision response is not an object")
-        required = {
-            "category",
-            "summary",
-            "observations",
-            "requires_user_confirmation",
-        }
-        if set(parsed) != required:
-            raise ValueError("structured vision response has unexpected fields")
         return parsed
 
     @staticmethod

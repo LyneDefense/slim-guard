@@ -4,7 +4,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from slim_guard.agent_models.vision import (
+    DishVisionResponse,
     VisionCertainty,
+    VisionDishCandidate,
+    VisionDishItem,
     VisionInspectionRequest,
     VisionInspectionResponse,
     VisionObservation,
@@ -40,6 +43,23 @@ class FakeVisionGateway:
 
     async def close(self) -> None:
         return None
+
+    async def recognize_dishes(
+        self, request: VisionInspectionRequest
+    ) -> DishVisionResponse:
+        self.requests.append(request)
+        return DishVisionResponse(
+            image_kind="meal",
+            dishes=(
+                VisionDishItem(
+                    candidates=(
+                        VisionDishCandidate(label="番茄炒蛋", confidence=0.91),
+                    ),
+                    visible_ingredients=("番茄", "鸡蛋"),
+                    preparation_candidates=("炒",),
+                ),
+            ),
+        )
 
 
 async def prepare_asset(
@@ -126,5 +146,28 @@ async def test_inspect_image_cannot_read_another_users_asset(tmp_path: Path) -> 
         assert result.failure is not None
         assert result.failure.code == "image_asset_unavailable"
         assert vision.requests == []
+    finally:
+        await database.close()
+
+
+async def test_meal_inspection_returns_governed_dish_recognition(tmp_path: Path) -> None:
+    database, assets, asset_id = await prepare_asset(tmp_path)
+    vision = FakeVisionGateway()
+    handlers = ImageToolHandlers(
+        assets=assets,
+        vision=vision,
+        vision_model="glm-5v-turbo",
+        clock=lambda: NOW,
+    )
+    try:
+        result = await handlers.inspect_image(
+            context(),
+            InspectImageArguments(asset_id=asset_id, focus="meal"),
+        )
+        recognition = result.output["dish_recognition"]
+        assert result.status is ToolResultStatus.SUCCEEDED
+        assert recognition["dishes"][0]["candidates"][0]["label"] == "番茄炒蛋"
+        assert recognition["overall_requires_confirmation"] is False
+        assert "不输出重量" in vision.requests[0].prompt
     finally:
         await database.close()

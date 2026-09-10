@@ -15,6 +15,9 @@ from slim_guard.agent_models.gateway import (
     ToolDefinition,
 )
 from slim_guard.agent_models.vision import (
+    DishVisionResponse,
+    VisionDishCandidate,
+    VisionDishItem,
     VisionInspectionRequest,
     VisionInspectionResponse,
     VisionModelGateway,
@@ -36,8 +39,11 @@ __all__ = [
     "ScriptedModelGateway",
     "ToolChoice",
     "ToolDefinition",
+    "DishVisionResponse",
     "VisionInspectionRequest",
     "VisionInspectionResponse",
+    "VisionDishCandidate",
+    "VisionDishItem",
     "VisionModelGateway",
     "ZhipuModelGateway",
     "ZhipuVisionModelGateway",

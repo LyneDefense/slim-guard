@@ -16,6 +16,10 @@ from slim_guard.agent_models.vision import (
     VisionInspectionRequest,
     VisionModelGateway,
 )
+from slim_guard.agents.dish_recognition import (
+    DISH_RECOGNITION_PROMPT,
+    DishRecognitionAgent,
+)
 from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.tools.contracts import (
     ToolArguments,
@@ -105,6 +109,13 @@ class ImageToolHandlers:
                 code="image_asset_unavailable",
                 message="The image is missing, expired, or not available to this user.",
             )
+        if arguments.focus == "meal" and hasattr(self._vision, "recognize_dishes"):
+            return await self._recognize_meal(
+                context=context,
+                asset_id=asset.ref.id,
+                content=asset.content,
+                mime_type=asset.ref.mime_type,
+            )
         try:
             response = await self._vision.inspect(
                 VisionInspectionRequest(
@@ -154,6 +165,70 @@ class ImageToolHandlers:
                 "requires_user_confirmation": response.requires_user_confirmation,
             },
             source_ids=(asset.ref.id,),
+        )
+
+    async def _recognize_meal(
+        self,
+        *,
+        context: ToolContext,
+        asset_id: str,
+        content: bytes,
+        mime_type: str,
+    ) -> ToolResult:
+        assert self._vision is not None
+        result = await DishRecognitionAgent(vision=self._vision).run(
+            asset_id=asset_id,
+            request=VisionInspectionRequest(
+                model=self._vision_model,
+                prompt=DISH_RECOGNITION_PROMPT,
+                image_bytes=content,
+                image_mime_type=mime_type,
+                max_output_tokens=self._max_output_tokens,
+                metadata={
+                    "user_id": hashlib.sha256(context.user_id.encode()).hexdigest()
+                },
+            ),
+        )
+        if result.recognition is None:
+            retryable = result.failure_code in {
+                "vision_temporary_failure",
+                "vision_provider_failure",
+            }
+            return ToolResult.failed(
+                code=result.failure_code or "dish_recognition_failed",
+                message="Dish recognition could not complete right now.",
+                retryable=retryable,
+            )
+        recognition = result.recognition
+        observations = [
+            {
+                "label": dish.candidates[0].label,
+                "detail": "、".join(
+                    (
+                        *dish.visible_ingredients,
+                        *dish.preparation_candidates,
+                        *dish.uncertainty_reasons,
+                    )
+                )
+                or "视觉菜品候选",
+                "certainty": "uncertain" if dish.requires_confirmation else "clear",
+            }
+            for dish in recognition.dishes
+        ]
+        return ToolResult.success(
+            output={
+                "asset_id": asset_id,
+                "focus": "meal",
+                "category": "meal" if recognition.image_kind.value == "meal" else "other",
+                "description": "、".join(
+                    dish.candidates[0].label for dish in recognition.dishes
+                )
+                or "未识别到可确认的菜品",
+                "observations": observations,
+                "requires_user_confirmation": recognition.overall_requires_confirmation,
+                "dish_recognition": recognition.model_dump(mode="json"),
+            },
+            source_ids=(asset_id,),
         )
 
     @staticmethod

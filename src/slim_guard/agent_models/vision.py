@@ -46,7 +46,40 @@ class VisionInspectionResponse(BaseModel):
     provider_request_id: str | None = None
 
 
+class VisionDishCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str = Field(min_length=1, max_length=128)
+    confidence: float = Field(ge=0, le=1)
+
+
+class VisionDishItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidates: tuple[VisionDishCandidate, ...] = Field(min_length=1, max_length=3)
+    visible_ingredients: tuple[str, ...] = Field(default=(), max_length=20)
+    preparation_candidates: tuple[str, ...] = Field(default=(), max_length=10)
+    uncertainty_reasons: tuple[str, ...] = Field(default=(), max_length=10)
+
+
+class DishVisionResponse(BaseModel):
+    """Provider-normalized visual observations; policy decisions happen outside the model."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    image_kind: Literal["meal", "non_food", "unusable"]
+    quality_flags: tuple[str, ...] = Field(default=(), max_length=20)
+    dishes: tuple[VisionDishItem, ...] = Field(default=(), max_length=20)
+    suggested_question: str | None = Field(default=None, min_length=1, max_length=500)
+    usage: ModelUsage = Field(default_factory=ModelUsage)
+    provider_request_id: str | None = None
+
+
 class VisionModelGateway(Protocol):
     async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse: ...
+
+    async def recognize_dishes(
+        self, request: VisionInspectionRequest
+    ) -> DishVisionResponse: ...
 
     async def close(self) -> None: ...

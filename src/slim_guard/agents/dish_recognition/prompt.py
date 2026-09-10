@@ -14,7 +14,20 @@ DISH_RECOGNITION_PROMPT = """
 5. 只列清晰可见的食材；油、糖、盐、酱料、馅料等不可见内容不得猜测。
 6. 不输出重量、份量、热量、营养素、能不能吃或健康建议。
 7. suggested_question 只提出一个最能消除当前歧义的中文问题。
-8. 只输出一个符合约定 Schema 的 JSON 对象，不输出 Markdown 或解释文字。
+8. 只输出一个符合下面结构的 JSON 对象，不输出 Markdown 或解释文字：
+{
+  "image_kind": "meal|non_food|unusable",
+  "quality_flags": ["画质或遮挡问题"],
+  "dishes": [
+    {
+      "candidates": [{"label": "菜名", "confidence": 0.0}],
+      "visible_ingredients": ["清晰可见的食材"],
+      "preparation_candidates": ["清晰可判断或待确认的做法"],
+      "uncertainty_reasons": ["不能唯一确认的原因"]
+    }
+  ],
+  "suggested_question": "一个用于消除最大歧义的问题，若没有歧义则为 null"
+}
 """.strip()
 
 
