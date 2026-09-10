@@ -1742,6 +1742,191 @@ class NutritionKnowledgeReviewRecord(Base):
     )
 
 
+class DishCatalogImportBatchRecord(Base):
+    """Auditable import of one versioned dish-catalog manifest."""
+
+    __tablename__ = "dish_catalog_import_batches"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running','completed','failed')",
+            name="ck_dish_catalog_import_status",
+        ),
+        CheckConstraint(
+            "length(manifest_sha256) = 64",
+            name="ck_dish_catalog_import_manifest_sha256",
+        ),
+        CheckConstraint("entity_count >= 0", name="ck_dish_catalog_import_entity_count"),
+        CheckConstraint("duplicate_count >= 0", name="ck_dish_catalog_import_duplicate_count"),
+        Index("ix_dish_catalog_import_created", "created_at"),
+        Index("ix_dish_catalog_import_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    imported_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    entity_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DishEntityRecord(Base):
+    """Immutable content for one version of a canonical dish entity."""
+
+    __tablename__ = "dish_entities"
+    __table_args__ = (
+        UniqueConstraint("entity_key", "version", name="uq_dish_entity_key_version"),
+        CheckConstraint(
+            "status IN ('draft','approved','rejected','published','retired')",
+            name="ck_dish_entity_status",
+        ),
+        CheckConstraint("length(document_sha256) = 64", name="ck_dish_entity_sha256"),
+        Index("ix_dish_entity_name_status", "canonical_name_normalized", "status"),
+        Index("ix_dish_entity_key_status", "entity_key", "status"),
+        Index("ix_dish_entity_import", "import_batch_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    import_batch_id: Mapped[str] = mapped_column(
+        ForeignKey("dish_catalog_import_batches.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    entity_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_name_normalized: Mapped[str] = mapped_column(String(128), nullable=False)
+    cuisine: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    document_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DishAliasRecord(Base):
+    __tablename__ = "dish_aliases"
+    __table_args__ = (
+        UniqueConstraint(
+            "dish_entity_id",
+            "alias_normalized",
+            name="uq_dish_alias_entity_normalized",
+        ),
+        Index("ix_dish_alias_normalized", "alias_normalized"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    dish_entity_id: Mapped[str] = mapped_column(
+        ForeignKey("dish_entities.id", ondelete="CASCADE"), nullable=False
+    )
+    alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    alias_normalized: Mapped[str] = mapped_column(String(128), nullable=False)
+    region: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+
+
+class DishTraitRecord(Base):
+    __tablename__ = "dish_traits"
+    __table_args__ = (
+        UniqueConstraint("dish_entity_id", "trait_key", name="uq_dish_trait_entity_key"),
+        CheckConstraint(
+            "certainty IN ('defined','typical','possible')",
+            name="ck_dish_trait_certainty",
+        ),
+        Index("ix_dish_trait_entity", "dish_entity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    dish_entity_id: Mapped[str] = mapped_column(
+        ForeignKey("dish_entities.id", ondelete="CASCADE"), nullable=False
+    )
+    trait_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    statement: Mapped[str] = mapped_column(String(1000), nullable=False)
+    certainty: Mapped[str] = mapped_column(String(16), nullable=False)
+    preparation_scope: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+
+
+class DishRuleRecord(Base):
+    __tablename__ = "dish_rules"
+    __table_args__ = (
+        UniqueConstraint("dish_entity_id", "rule_key", name="uq_dish_rule_entity_key"),
+        CheckConstraint(
+            "effect IN ('allow','adjust','limit','avoid','require_confirmation')",
+            name="ck_dish_rule_effect",
+        ),
+        CheckConstraint(
+            "condition_type IN ('general','goal','constraint','medical_boundary')",
+            name="ck_dish_rule_condition_type",
+        ),
+        Index("ix_dish_rule_entity", "dish_entity_id"),
+        Index("ix_dish_rule_condition", "condition_type", "condition_value"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    dish_entity_id: Mapped[str] = mapped_column(
+        ForeignKey("dish_entities.id", ondelete="CASCADE"), nullable=False
+    )
+    rule_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    condition_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    condition_value: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    effect: Mapped[str] = mapped_column(String(32), nullable=False)
+    statement: Mapped[str] = mapped_column(String(1000), nullable=False)
+    applicability_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class DishCatalogReviewRecord(Base):
+    """Append-only human governance decision for a dish entity version."""
+
+    __tablename__ = "dish_catalog_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('approve','reject','publish','retire')",
+            name="ck_dish_catalog_review_decision",
+        ),
+        CheckConstraint(
+            "status_from IN ('draft','approved','rejected','published','retired')",
+            name="ck_dish_catalog_review_status_from",
+        ),
+        CheckConstraint(
+            "status_to IN ('draft','approved','rejected','published','retired')",
+            name="ck_dish_catalog_review_status_to",
+        ),
+        CheckConstraint(
+            "length(document_sha256) = 64",
+            name="ck_dish_catalog_review_sha256",
+        ),
+        Index("ix_dish_catalog_review_entity", "dish_entity_id", "created_at"),
+        Index("ix_dish_catalog_review_actor", "reviewer", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    dish_entity_id: Mapped[str] = mapped_column(
+        ForeignKey("dish_entities.id", ondelete="RESTRICT"), nullable=False
+    )
+    reviewer: Mapped[str] = mapped_column(String(128), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    status_from: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_to: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    document_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
 class AgentInvocationRecord(Base):
     """A coordinator-issued, bounded agent invocation and its terminal result.
 

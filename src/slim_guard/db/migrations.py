@@ -358,6 +358,44 @@ async def _create_style_iteration_control_plane(connection: AsyncConnection) -> 
             )
 
 
+async def _create_dish_knowledge_tables(connection: AsyncConnection) -> None:
+    """Create the governed dish catalog and protect review history from mutation."""
+
+    await _create_application_tables(connection)
+    if connection.dialect.name == "sqlite":
+        for operation in ("UPDATE", "DELETE"):
+            await connection.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS "
+                    f"dish_catalog_reviews_{operation.lower()}_blocked "
+                    f"BEFORE {operation} ON dish_catalog_reviews BEGIN "
+                    "SELECT RAISE(ABORT, 'Dish catalog reviews are append-only'); END"
+                )
+            )
+    elif connection.dialect.name == "postgresql":
+        await connection.execute(
+            text(
+                "CREATE OR REPLACE FUNCTION block_dish_catalog_review_mutation() "
+                "RETURNS trigger AS $$ BEGIN "
+                "RAISE EXCEPTION 'Dish catalog reviews are append-only'; "
+                "END; $$ LANGUAGE plpgsql"
+            )
+        )
+        await connection.execute(
+            text(
+                "DROP TRIGGER IF EXISTS dish_catalog_reviews_mutation_blocked "
+                "ON dish_catalog_reviews"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE TRIGGER dish_catalog_reviews_mutation_blocked "
+                "BEFORE UPDATE OR DELETE ON dish_catalog_reviews "
+                "FOR EACH ROW EXECUTE FUNCTION block_dish_catalog_review_mutation()"
+            )
+        )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -382,6 +420,7 @@ MIGRATIONS = (
         "20260909_01_style_iteration_control_plane",
         _create_style_iteration_control_plane,
     ),
+    SchemaMigration("20260910_01_dish_knowledge", _create_dish_knowledge_tables),
 )
 
 
