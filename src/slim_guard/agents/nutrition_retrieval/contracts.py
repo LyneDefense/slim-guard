@@ -30,15 +30,20 @@ class DishLookupInput(ContractModel):
     preparation_terms: tuple[str, ...] = Field(default=(), max_length=10)
 
 
+class DishConstraintInput(ContractModel):
+    value: str = Field(min_length=1, max_length=256)
+    evidence_ref: str = Field(min_length=1, max_length=256)
+
+
 class DishLookupPlan(ContractModel):
     schema_version: Literal["1"] = "1"
     dishes: tuple[DishLookupInput, ...] = Field(min_length=1, max_length=20)
     user_goal_tags: tuple[str, ...] = Field(default=(), max_length=16)
     applicability_tags: tuple[str, ...] = Field(default=(), max_length=32)
-    constraint_refs: tuple[str, ...] = Field(default=(), max_length=32)
+    constraints: tuple[DishConstraintInput, ...] = Field(default=(), max_length=32)
     rag_queries: tuple[str, ...] = Field(default=(), max_length=20)
 
-    @field_validator("user_goal_tags", "applicability_tags", "constraint_refs", "rag_queries")
+    @field_validator("user_goal_tags", "applicability_tags", "rag_queries")
     @classmethod
     def validate_lists(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         normalized = tuple(" ".join(item.split()) for item in value)
@@ -78,12 +83,14 @@ class DishEntityMatch(ContractModel):
 class DishTraitEvidence(ContractModel):
     trait_id: str = Field(min_length=1, max_length=128)
     trait: str = Field(min_length=1, max_length=128)
+    statement: str = Field(min_length=1, max_length=1000)
     certainty: Literal["defined", "typical", "possible"]
     source_refs: tuple[str, ...] = Field(min_length=1, max_length=16)
 
 
 class DishRuleEvidence(ContractModel):
     rule_id: str = Field(min_length=1, max_length=128)
+    condition_type: Literal["general", "goal", "constraint", "medical_boundary"]
     effect: DishRuleEffect
     statement: str = Field(min_length=1, max_length=1000)
     applicability: tuple[str, ...] = Field(default=(), max_length=32)
@@ -92,11 +99,18 @@ class DishRuleEvidence(ContractModel):
 
     @model_validator(mode="after")
     def validate_avoid(self) -> Self:
-        if self.effect is DishRuleEffect.AVOID and not (
-            self.applicability or self.user_constraint_refs
+        if self.effect is DishRuleEffect.AVOID and (
+            self.condition_type not in {"constraint", "medical_boundary"}
+            or not self.user_constraint_refs
         ):
-            raise ValueError("Avoid rules require applicability or a user constraint")
+            raise ValueError("Avoid rules require a matching user constraint")
         return self
+
+
+class DishRagEvidence(ContractModel):
+    evidence_id: str = Field(min_length=1, max_length=128)
+    statement: str = Field(min_length=1, max_length=16_000)
+    citation_ref: str = Field(min_length=1, max_length=128)
 
 
 class DishEvidence(ContractModel):
@@ -104,6 +118,7 @@ class DishEvidence(ContractModel):
     entity_match: DishEntityMatch
     traits: tuple[DishTraitEvidence, ...] = Field(default=(), max_length=64)
     rules: tuple[DishRuleEvidence, ...] = Field(default=(), max_length=64)
+    rag_evidence: tuple[DishRagEvidence, ...] = Field(default=(), max_length=20)
     citations: tuple[KnowledgeCitation, ...] = Field(default=(), max_length=64)
     missing_information: tuple[str, ...] = Field(default=(), max_length=16)
 
@@ -112,6 +127,7 @@ class DishEvidence(ContractModel):
         groups = (
             tuple(item.trait_id for item in self.traits),
             tuple(item.rule_id for item in self.rules),
+            tuple(item.evidence_id for item in self.rag_evidence),
             tuple(item.citation_id for item in self.citations),
         )
         if any(len(group) != len(set(group)) for group in groups):
@@ -144,10 +160,12 @@ class NutritionRetrievalResult:
 __all__ = [
     "DishEntityMatch",
     "DishEntityMatchStatus",
+    "DishConstraintInput",
     "DishEvidence",
     "DishEvidenceBundle",
     "DishLookupInput",
     "DishLookupPlan",
+    "DishRagEvidence",
     "DishRuleEffect",
     "DishRuleEvidence",
     "DishTraitEvidence",

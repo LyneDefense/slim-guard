@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
-from slim_guard.agents.contracts import Confidence, ContractModel
+from slim_guard.agents.contracts import Confidence, ContractModel, InvocationStatus
 
 
 class DietGuidanceScope(StrEnum):
@@ -93,8 +94,16 @@ class DietGuidanceAssessment(ContractModel):
         return self
 
 
+@dataclass(frozen=True, slots=True)
+class DietGuidanceAgentResult:
+    status: InvocationStatus
+    assessment: DietGuidanceAssessment | None
+    failure_code: str | None = None
+
+
 __all__ = [
     "DietGuidanceAction",
+    "DietGuidanceAgentResult",
     "DietGuidanceAssessment",
     "DietGuidanceReason",
     "DietGuidanceScope",

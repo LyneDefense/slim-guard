@@ -85,6 +85,7 @@ def test_avoid_rule_and_guidance_need_hard_applicability() -> None:
     with pytest.raises(ValidationError, match="Avoid rules require"):
         DishRuleEvidence(
             rule_id="rule-1",
+            condition_type="goal",
             effect="avoid",
             statement="避免食用",
             source_refs=("source-1",),
