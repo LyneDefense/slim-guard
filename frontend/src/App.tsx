@@ -19,6 +19,7 @@ import { StyleABReviewPage } from "./components/style/StyleABReviewPage";
 import { StyleFeedbackPage } from "./components/style/StyleFeedbackPage";
 import { StyleIterationPage } from "./components/style/StyleIterationPage";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
+import { DishGuidanceTracePanel } from "./components/trace/DishGuidanceTracePanel";
 import { EvidencePanel } from "./components/trace/EvidencePanel";
 import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
 import { ShadowComparison } from "./components/trace/ShadowComparison";
@@ -391,6 +392,7 @@ function TracePage() {
       {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
       <ExecutionOverview data={data} />
       {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
+      <DishGuidanceTracePanel workflow={workflow} userId={user.id} traceId={traceId} />
       <EvidencePanel workflow={workflow} />
       <StyleTracePanel workflow={workflow} />
       <ReviewerTracePanel workflow={workflow} />

@@ -3,6 +3,7 @@ import type { TraceListFilters } from "../../types";
 const FILTER_KEYS = [
   "generation_status", "delivery_status", "mode", "agent_failure", "rag", "repair",
   "degraded", "graph_version", "agent_version", "profile_version",
+  "dish_confirmation", "dish_match", "dish_suitability", "review_verdict",
 ] as const satisfies readonly (keyof TraceListFilters)[];
 
 const SELECT_FILTERS: Array<{
@@ -17,6 +18,10 @@ const SELECT_FILTERS: Array<{
   { key: "rag", label: "RAG", options: [["true", "已使用"], ["false", "未使用"]] },
   { key: "repair", label: "返回修复", options: [["true", "已修复"], ["false", "未修复"]] },
   { key: "degraded", label: "工作流降级", options: [["true", "已降级"], ["false", "未降级"]] },
+  { key: "dish_confirmation", label: "菜名确认", options: [["pending", "等待确认"], ["confirmed", "用户已确认"], ["automatic", "高置信度采用"], ["not_applicable", "不涉及"]] },
+  { key: "dish_match", label: "菜品匹配", options: [["exact", "精确命中"], ["alias", "别名命中"], ["ambiguous", "多条歧义"], ["not_found", "未命中"]] },
+  { key: "dish_suitability", label: "饮食判断", options: [["suitable", "可以正常安排"], ["suitable_with_adjustment", "调整后适合"], ["limit", "建议限制"], ["avoid", "基于限制避免"], ["insufficient_information", "信息不足"]] },
+  { key: "review_verdict", label: "审查结论", options: [["pass", "通过"], ["repair", "返回修复"], ["reject", "拒绝"]] },
 ];
 
 export function traceFiltersFromParams(params: URLSearchParams): TraceListFilters {

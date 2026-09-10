@@ -459,3 +459,14 @@ curl -i https://enceladus.online/health/ready
 - `tests/unit/test_multi_agent_rollback.py` → 真正数据库回滚回归 → 真实 Runtime/记录工具先在 on 写入、关闭并重开 SQLite 后切 off，确认相同 Thread、记录保留/不重复、新 Turn 走原 Harness 且不创建图调用；模型仍为明确合成脚本，不代替现场演练。
 - 最终验收（2026-09-08）→ 523 项 Pytest、11 项前端 SSR 回归、Ruff 全仓、严格 Mypy（164 个源码文件）、Python compileall、前端 TypeScript 和生产构建全部通过。
 - 交付边界 → 通用运行时与运营工具完成，默认 off；医生专属资产等待需求评审/真实授权语料，真实模型固定集、人评、真实失败样本复测与线上灰度未执行。发布门槛与已知查询规模限制见 `MULTI_AGENT_ROLLOUT.md`。
+
+### `feat: integrate governed dish guidance workflow`
+
+- `agents/dish_recognition/`、`agent_models/vision.py`、`tools/image.py` → 菜品识别 → 复用现有视觉网关输出逐道菜 top-3、置信度、可见食材、做法候选和不确定原因；代码策略决定是否追问，禁止图片克重、热量和营养素估算。
+- `dish_knowledge.py`、数据库迁移、`manage_dish_knowledge.py` → 菜品知识治理 → 提供实体、别名、定性特征、适用规则和 append-only 审核状态机；线上只读检索 published 版本，`avoid` 不能成为无条件减脂禁食规则。
+- `agents/nutrition_retrieval/`、`agents/diet_guidance/` → 证据与判断分离 → 先匹配菜品库，再查询已发布 Nutrition RAG 并绑定当前 Invocation Citation；确定性 Guidance 只根据适用规则输出逐菜等级，无依据时返回信息不足。
+- `orchestration/coordinator.py`、`harness/runner.py`、`context_data.py` → 六 Agent 编排 → 文本菜名跳过识图；图片不确定时保存 24 小时待确认，下一轮复用不可变识别结果；Shadow 在旧回复生成后、Turn 封账前读取同轮工具回执，Canary/on 仍受 Reviewer 和 Output Guard 门禁。
+- `agents/reviewer/` → 餐食专用审查 → 拦截菜名确定性升级、无依据适宜性/绝对禁食、图片热量或克重数字以及 Style 改义。
+- `admin/`、`frontend/` → 可复核管理台 → 增加识别确认、实体命中、适宜性和 Reviewer 筛选，展示识别/确认/检索/建议四段 Trace；管理员更正生成带原 Artifact 父引用的新审计 Artifact，不覆盖原结果或自动修改线上知识。
+- `DISH_GUIDANCE_DATA_RUNBOOK.md` → 数据交付边界 → 列出权威来源、版权检查、菜品/RAG manifest、冻结图片集字段和 Shadow→Canary→On 门槛；当前缺口明确为生产数据和人工评审，不是运行框架。
+- 验证 → Ruff 全源码、严格 Mypy（195 个源码文件）、112 项餐食/知识/编排/Admin 定向 Pytest、31 项前端 SSR 回归、TypeScript 与生产构建通过；未用少量定向测试冒充生产数据人工验收。

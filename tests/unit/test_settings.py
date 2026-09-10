@@ -45,6 +45,10 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.nutrition_rag_enabled is False
     assert settings.nutrition_require_rag_citations is True
     assert settings.response_reviewer_enabled is False
+    assert settings.meal_guidance_enabled is False
+    assert settings.dish_recognition_enabled is True
+    assert settings.nutrition_retrieval_enabled is True
+    assert settings.diet_guidance_enabled is True
     assert settings.memory_health_review_days == 180
     assert settings.memory_recent_turn_count == 3
     assert settings.memory_recent_dialogue_max_chars == 1500
@@ -240,6 +244,11 @@ def test_response_reviewer_requires_style_rendering() -> None:
         )
 
 
+def test_meal_guidance_requires_nutrition_agent() -> None:
+    with pytest.raises(ValueError, match="MEAL_GUIDANCE_ENABLED"):
+        Settings(meal_guidance_enabled=True, nutrition_agent_enabled=False)
+
+
 def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     settings = Settings(
         agent_runtime_mode="harness",
@@ -255,7 +264,7 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "get_recent_weight_trend": "v1",
         "record_body_fat": "v1",
         "get_recent_body_fat_trend": "v1",
-        "inspect_image": "v2",
+        "inspect_image": "v3",
         "get_recent_meals": "v2",
         "record_meal": "v2",
         "get_recent_exercise": "v1",
@@ -283,13 +292,15 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
     assert app.state.agent_graph_manifest.graph_version == "typed-supervisor-v1"
     assert [role for role, _node in app.state.agent_graph_manifest.nodes] == [
+        "dish_recognition",
         "nutrition_expert",
+        "nutrition_retrieval",
         "orchestrator",
         "response_reviewer",
         "response_style",
     ]
     graph_nodes = dict(app.state.agent_graph_manifest.nodes)
-    assert graph_nodes["nutrition_expert"].prompt_version == "nutrition-assessment-v1"
+    assert graph_nodes["nutrition_expert"].prompt_version == "diet-guidance-zh-v1"
     assert dict(app.state.agent_graph_manifest.nutrition_tool_versions) == {
         "calculate_bmi": "1",
         "calculate_weight_trend": "1",

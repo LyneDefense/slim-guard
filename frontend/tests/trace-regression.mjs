@@ -17,7 +17,7 @@ const server = await createServer({
 });
 after(() => server.close());
 
-const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, apiModule] =
+const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, apiModule, dishModule] =
   await Promise.all([
     server.ssrLoadModule("/src/components/trace/WorkflowMetrics.tsx"),
     server.ssrLoadModule("/src/components/trace/TraceFilters.tsx"),
@@ -25,6 +25,7 @@ const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, a
     server.ssrLoadModule("/src/components/trace/WorkflowGraph.tsx"),
     server.ssrLoadModule("/src/components/trace/model.ts"),
     server.ssrLoadModule("/src/api.ts"),
+    server.ssrLoadModule("/src/components/trace/DishGuidanceTracePanel.tsx"),
   ]);
 
 function metricsHtml(metrics) {
@@ -53,6 +54,23 @@ function reviewerHtml(value, metrics) {
       QueryClientProvider,
       { client },
       createElement(reviewerModule.ReviewerTracePanel, { workflow: value }),
+    ));
+  } finally {
+    client.clear();
+  }
+}
+
+function dishHtml(value) {
+  const client = new QueryClient();
+  try {
+    return renderToStaticMarkup(createElement(
+      QueryClientProvider,
+      { client },
+      createElement(dishModule.DishGuidanceTracePanel, {
+        workflow: value,
+        userId: "TEST-user",
+        traceId: "TEST-trace",
+      }),
     ));
   } finally {
     client.clear();
@@ -165,6 +183,68 @@ test("trace requests encode identifiers and version values without dropping fals
     assert.equal(url.searchParams.get("limit"), "30");
     assert.equal(url.searchParams.has("profile_version"), false);
     assert.equal(options.credentials, "same-origin");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("dish trace shows all four stages and exposes append-only correction", () => {
+  const html = dishHtml(workflow({ artifacts: [
+    {
+      artifact_id: "TEST-recognition", artifact_type: "dish_recognition",
+      parent_artifact_ids: [], payload: {
+        image_kind: "meal", overall_requires_confirmation: true,
+        dishes: [{
+          dish_ref: "dish-1", requires_confirmation: true,
+          candidates: [{ label: "红烧茄子", confidence: 0.68 }, { label: "地三鲜", confidence: 0.63 }],
+          uncertainty_reasons: ["TEST 外观相似"],
+        }],
+      },
+    },
+    {
+      artifact_id: "TEST-confirmed", artifact_type: "confirmed_dish_set",
+      parent_artifact_ids: ["TEST-recognition"],
+      payload: { dishes: [{ dish_ref: "dish-1", name: "地三鲜", source: "user_confirmed" }] },
+    },
+    {
+      artifact_id: "TEST-evidence", artifact_type: "dish_evidence_bundle",
+      parent_artifact_ids: ["TEST-confirmed"], payload: {
+        corpus_status: "available", dishes: [{ dish_ref: "dish-1", entity_match: {
+          status: "exact", query_name: "地三鲜", canonical_name: "地三鲜",
+        }, rules: [{ rule_id: "TEST-rule" }], citations: [{ citation_id: "TEST-citation" }] }],
+      },
+    },
+    {
+      artifact_id: "TEST-guidance", artifact_type: "diet_guidance_assessment",
+      parent_artifact_ids: ["TEST-evidence"], payload: { dishes: [{
+        dish_ref: "dish-1", canonical_name: "地三鲜", suitability: "limit",
+        reason_count: 1, action_count: 1,
+      }] },
+    },
+  ] }));
+  for (const expected of [
+    "菜品识别与饮食建议", "红烧茄子 68%", "用户已确认", "知识库：available",
+    "建议少吃", "人工更正菜名", "追加更正记录",
+  ]) assert.ok(html.includes(expected), expected);
+  assert.match(html, /value="红烧茄子"/);
+  assert.ok(html.includes("不会静默改写本次识别"));
+});
+
+test("dish correction request is trace-scoped and CSRF protected", async () => {
+  const originalFetch = globalThis.fetch;
+  let seen;
+  globalThis.fetch = async (url, options) => {
+    seen = { url: new URL(url, "https://test.invalid"), options };
+    return new Response(JSON.stringify({ artifact_id: "TEST-correction" }), { status: 201 });
+  };
+  try {
+    await apiModule.api.appendDishRecognitionCorrection(
+      "TEST/user", "TEST/trace", "TEST/artifact",
+      { corrected_dishes: [{ dish_ref: "dish-1", corrected_name: "地三鲜" }], comment: "TEST 更正" },
+    );
+    assert.equal(seen.url.pathname, "/api/admin/users/TEST%2Fuser/traces/TEST%2Ftrace/dish-recognition-corrections/TEST%2Fartifact");
+    assert.equal(seen.options.method, "POST");
+    assert.equal(new Headers(seen.options.headers).get("X-SlimGuard-CSRF"), "1");
   } finally {
     globalThis.fetch = originalFetch;
   }

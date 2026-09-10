@@ -297,3 +297,33 @@ async def test_trace_facets_do_not_expose_candidate_bodies_or_invocation_context
     assert "private_raw_context" not in serialized
     assert "private_text" not in serialized
     assert await traces.list_traces(user_id="does-not-exist", limit=20, offset=0) is None
+
+
+def test_dish_trace_facets_cover_confirmation_match_suitability_and_review() -> None:
+    artifacts = [
+        {
+            "artifact_type": "dish_recognition",
+            "payload": {"overall_requires_confirmation": True},
+        },
+        {"artifact_type": "confirmed_dish_set", "payload": {"dishes": []}},
+        {
+            "artifact_type": "dish_evidence_bundle",
+            "payload": {
+                "dishes": [
+                    {"entity_match": {"status": "alias"}, "rag_evidence": []}
+                ]
+            },
+        },
+        {
+            "artifact_type": "diet_guidance_assessment",
+            "payload": {
+                "dishes": [{"suitability": "suitable_with_adjustment"}]
+            },
+        },
+        {"artifact_type": "reviewer_verdict", "payload": {"verdict": "pass"}},
+    ]
+    confirmation, matches, suitabilities = AdminQueryRepository._dish_facets(artifacts)
+    assert confirmation == "confirmed"
+    assert matches == ["alias"]
+    assert suitabilities == ["suitable_with_adjustment"]
+    assert AdminQueryRepository._review_verdict_facet(artifacts) == "pass"

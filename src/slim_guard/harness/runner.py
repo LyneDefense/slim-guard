@@ -219,32 +219,6 @@ class HarnessTurnRunner:
             },
         )
         shadow_result: ShadowWorkflowResult | None = None
-        if (
-            self._shadow_workflow is not None
-            and self._shadow_enabled_for(initialized.context.user_id)
-            and not safety_assessment.blocks_tools
-            and self._workflow_mode not in {"canary", "on"}
-        ):
-            shadow_result = await self._shadow_workflow.run_shadow(
-                ShadowWorkflowRequest(
-                    user_id=initialized.context.user_id,
-                    trace_id=current_trace_id() or initialized.turn.id,
-                    turn_id=initialized.turn.id,
-                    thread_id=initialized.thread.id,
-                    context=compiled.request.messages,
-                    user_request=self._user_request(initialized),
-                    current_items=tuple(
-                        {
-                            "id": item.id,
-                            "item_type": item.item_type.value,
-                            "payload": item.payload,
-                        }
-                        for item in initialized.input_items
-                    ),
-                    authoritative_context=authoritative_context,
-                    deadline_at=initialized.turn.deadline_at,
-                )
-            )
 
         async def finalize_response(
             baseline: str,
@@ -264,12 +238,19 @@ class HarnessTurnRunner:
                 return baseline
             try:
                 async with asyncio.timeout(timeout):
-                    remaining_calls = max(0, self._limits.max_model_calls - len(responses))
-                    remaining_tokens = max(
-                        0,
-                        self._limits.max_total_tokens
-                        - sum(response.usage.total_tokens for response in responses),
-                    )
+                    if self._workflow_mode == "shadow":
+                        # Shadow runs after the baseline loop so that it can inspect this
+                        # turn's real image-tool receipt. It retains its own configured
+                        # budget because its output is never eligible for delivery.
+                        remaining_calls = None
+                        remaining_tokens = None
+                    else:
+                        remaining_calls = max(0, self._limits.max_model_calls - len(responses))
+                        remaining_tokens = max(
+                            0,
+                            self._limits.max_total_tokens
+                            - sum(response.usage.total_tokens for response in responses),
+                        )
                     if remaining_calls == 0 or remaining_tokens == 0:
                         await self._recorder.record_workflow_event(
                             turn_id=initialized.turn.id,
@@ -336,7 +317,7 @@ class HarnessTurnRunner:
                             + receipts,
                             authoritative_context=refreshed_context,
                             legacy_response=baseline,
-                            mode="canary" if self._workflow_mode == "canary" else "on",
+                            mode=self._workflow_mode,
                             max_model_calls=remaining_calls,
                             max_total_tokens=remaining_tokens,
                             deadline_at=initialized.turn.deadline_at,
@@ -352,6 +333,8 @@ class HarnessTurnRunner:
                         "fallback_type": "legacy_response",
                     },
                 )
+                return baseline
+            if self._workflow_mode == "shadow":
                 return baseline
             candidate = shadow_result.shadow_candidate
             selected = next(
@@ -433,6 +416,12 @@ class HarnessTurnRunner:
             and self._workflow_adopts_for(initialized.context.user_id)
             and not safety_assessment.blocks_tools
         )
+        evaluate_shadow = (
+            self._workflow_mode == "shadow"
+            and self._shadow_workflow is not None
+            and self._shadow_enabled_for(initialized.context.user_id)
+            and not safety_assessment.blocks_tools
+        )
         loop_result = await self._loop.run(
             request=compiled.request,
             context=initialized.context,
@@ -441,7 +430,7 @@ class HarnessTurnRunner:
             now=current_time,
             trusted_evidence_item_ids=compiled.evidence_item_ids,
             safety_assessment=safety_assessment,
-            final_response_hook=finalize_with_usage if adopt else None,
+            final_response_hook=finalize_with_usage if adopt or evaluate_shadow else None,
         )
         if shadow_result is not None:
             shadow_result = replace(

@@ -652,6 +652,8 @@ function repairTargetLabel(value: string): string {
   const labels: Record<string, string> = {
     orchestrator: "对话编排 Agent",
     nutrition_expert: "营养专业 Agent",
+    dish_recognition: "菜品识别 Agent",
+    nutrition_retrieval: "营养证据检索 Agent",
     response_style: "表达风格 Agent",
     unknown: "未知目标",
   };
@@ -665,6 +667,8 @@ function targetForNode(value: string | undefined): string | null {
     expert_running: "nutrition_expert",
     nutrition_expert: "nutrition_expert",
     nutrition_running: "nutrition_expert",
+    dish_recognition_running: "dish_recognition",
+    nutrition_retrieval_running: "nutrition_retrieval",
     response_style: "response_style",
     style_running: "response_style",
   };
@@ -677,6 +681,10 @@ function issueTypeLabel(value: string): string {
     changed_meaning: "含义改变",
     changed_uncertainty: "不确定性被改变",
     medical_overreach: "医疗越界",
+    dish_identity_strengthened: "菜名不确定性被错误强化",
+    unsupported_dish_guidance: "菜品建议缺少依据",
+    unsupported_avoidance: "新增无依据禁食结论",
+    forbidden_nutrition_estimate: "生成了禁止的营养数值估算",
     missing_user_evidence: "缺少用户证据",
     omitted_required_content: "遗漏必需内容",
     style_drift: "风格偏移",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -29,6 +30,7 @@ from slim_guard.agents.contracts import (
     AgentResult,
     AgentRole,
     ArtifactProducerRole,
+    CommunicationAct,
     ContentBlockKind,
     InteractionKind,
     InvocationStatus,
@@ -42,6 +44,17 @@ from slim_guard.agents.contracts import (
     StyledResponse,
     TurnDirective,
 )
+from slim_guard.agents.diet_guidance import (
+    DietGuidanceAgent,
+    DietGuidanceAssessment,
+    DishSuitability,
+)
+from slim_guard.agents.dish_recognition import (
+    ConfirmedDish,
+    ConfirmedDishSet,
+    DishConfirmationSource,
+    DishRecognitionResult,
+)
 from slim_guard.agents.nutrition import (
     CalculationObservation,
     KnowledgeRetrieval,
@@ -53,7 +66,14 @@ from slim_guard.agents.nutrition.knowledge import (
     KnowledgeCandidateBinder,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry, NutritionToolResult
+from slim_guard.agents.nutrition_retrieval import (
+    DishConstraintInput,
+    DishLookupInput,
+    DishLookupPlan,
+    NutritionRetrievalAgent,
+)
 from slim_guard.agents.reviewer import (
+    RESPONSE_REVIEWER_PROMPT_VERSION,
     ResponseReviewerAgent,
     ReviewerContextCompiler,
     ReviewerEvidenceSummary,
@@ -75,7 +95,13 @@ from slim_guard.agents.style import (
     StyleProfileRepository,
 )
 from slim_guard.agents.style.contracts import StyleProfileSnapshot
-from slim_guard.harness.events import ItemStatus, ItemType
+from slim_guard.harness.events import (
+    ItemStatus,
+    ItemType,
+    PendingActionStatus,
+    PendingActionType,
+)
+from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.orchestration.artifacts import InMemoryArtifactStore
 from slim_guard.orchestration.evidence import EvidenceBuilder, EvidenceItem, EvidencePacket
@@ -88,13 +114,14 @@ from slim_guard.orchestration.graph import (
     LoopBudgetExceeded,
     TransitionReason,
 )
+from slim_guard.tools.contracts import ToolExecutionMode
 
 logger = logging.getLogger(__name__)
 _ACTIVE_INVOCATIONS: ContextVar[dict[str, AgentInvocation] | None] = ContextVar(
     "active_workflow_invocations", default=None
 )
 
-SHADOW_ORCHESTRATOR_PROMPT_VERSION = "shadow-orchestrator-v1"
+SHADOW_ORCHESTRATOR_PROMPT_VERSION = "shadow-orchestrator-v2"
 SHADOW_ORCHESTRATOR_PROMPT = """You are the read-only SlimGuard shadow orchestrator.
 Return only a TurnDirective JSON object. This rollout stage has no tools and must never
 claim that it wrote, changed, deleted, or sent anything. Use response_path=direct for
@@ -102,7 +129,13 @@ ordinary conversation and record acknowledgements. Use professional_assessment o
 when a nutrition judgment is actually needed, and then copy only evidence IDs supplied
 in the evidence catalog into evidence_refs. Produce a concise response_brief based only
 on the supplied context. Do not diagnose, prescribe, invent measurements, or reveal
-internal identifiers."""
+internal identifiers. Use response_path=dish_guidance only when the user asks whether
+named or photographed dishes are suitable, should be adjusted, limited, or avoided.
+Copy explicit dish names from user text into dish_names; leave dish_names empty when the
+current inspect_image tool result contains dish_recognition. If working memory contains a
+pending_dish_confirmation and the current user explicitly answers it, use dish_guidance and
+put only the user's confirmed replacement names in dish_names and set
+resolves_pending_dish_confirmation=true. Never infer dish names."""
 
 
 class ShadowWorkflowRequest(BaseModel):
@@ -200,6 +233,17 @@ class _UpstreamRepairStage:
     failure_code: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _DishGuidanceStage:
+    response_plan: ResponsePlan
+    parent_artifact_ids: tuple[str, ...]
+    assessment_artifact: AgentArtifact | None
+    style_entry_node: GraphNode
+    parent_invocation_id: str
+    status: InvocationStatus = InvocationStatus.SUCCEEDED
+    failure_code: str | None = None
+
+
 class WorkflowPersistence(Protocol):
     async def start_invocation(
         self,
@@ -257,6 +301,14 @@ class AgentWorkflowCoordinator:
         nutrition_compiler: NutritionContextCompiler | None = None,
         nutrition_tools: NutritionToolRegistry | None = None,
         nutrition_citation_policy: CitationValidationPolicy | None = None,
+        meal_guidance_enabled: bool = False,
+        dish_recognition_enabled: bool = True,
+        nutrition_retrieval_enabled: bool = True,
+        diet_guidance_enabled: bool = True,
+        nutrition_retrieval_agent: NutritionRetrievalAgent | None = None,
+        diet_guidance_agent: DietGuidanceAgent | None = None,
+        pending_dish_confirmations: PendingActionRepository | None = None,
+        dish_confirmation_ttl: timedelta = timedelta(hours=24),
         reviewer_enabled: bool = False,
         reviewer_agent: ResponseReviewerAgent | None = None,
         reviewer_compiler: ReviewerContextCompiler | None = None,
@@ -265,6 +317,8 @@ class AgentWorkflowCoordinator:
     ) -> None:
         if timeout <= timedelta(0):
             raise ValueError("Shadow workflow timeout must be positive")
+        if dish_confirmation_ttl <= timedelta(0):
+            raise ValueError("Dish confirmation TTL must be positive")
         self._recorder = recorder
         self._model_name = model_name
         self._graph_version = graph_version
@@ -296,6 +350,14 @@ class AgentWorkflowCoordinator:
         self._nutrition_tools = nutrition_tools or NutritionToolRegistry()
         self._nutrition_candidate_binder = KnowledgeCandidateBinder()
         self._nutrition_citation_policy = nutrition_citation_policy or CitationValidationPolicy()
+        self._meal_guidance_enabled = meal_guidance_enabled
+        self._dish_recognition_enabled = dish_recognition_enabled
+        self._nutrition_retrieval_enabled = nutrition_retrieval_enabled
+        self._diet_guidance_enabled = diet_guidance_enabled
+        self._nutrition_retrieval_agent = nutrition_retrieval_agent
+        self._diet_guidance_agent = diet_guidance_agent or DietGuidanceAgent()
+        self._pending_dish_confirmations = pending_dish_confirmations
+        self._dish_confirmation_ttl = dish_confirmation_ttl
         self._reviewer_enabled = reviewer_enabled
         self._reviewer_agent = reviewer_agent or ResponseReviewerAgent(
             runner=self._runner,
@@ -324,6 +386,8 @@ class AgentWorkflowCoordinator:
                                 status=InvocationStatus.FAILED,
                                 output_schema={
                                     AgentRole.ORCHESTRATOR: "TurnDirective",
+                                    AgentRole.DISH_RECOGNITION: "DishRecognitionResult",
+                                    AgentRole.NUTRITION_RETRIEVAL: "DishEvidenceBundle",
                                     AgentRole.NUTRITION_EXPERT: "ProfessionalAssessment",
                                     AgentRole.RESPONSE_STYLE: "StyledResponse",
                                     AgentRole.RESPONSE_REVIEWER: "ReviewerVerdict",
@@ -475,8 +539,45 @@ class AgentWorkflowCoordinator:
             evidence_artifact: AgentArtifact | None = None
             plan_parent_ids: tuple[str, ...] = (directive_artifact.artifact_id,)
             style_entry_node = GraphNode.RESPONSE_RENDERING
+            style_parent_invocation_id = invocation.invocation_id
+            preserve_guidance_blocks = False
 
             if (
+                directive.response_path is ResponsePath.DISH_GUIDANCE
+                and self._meal_guidance_enabled
+            ):
+                await self._complete_invocation(
+                    result=AgentResult(
+                        invocation_id=invocation.invocation_id,
+                        status=InvocationStatus.SUCCEEDED,
+                        output_schema="TurnDirective",
+                        output_schema_version="1",
+                        artifact_id=directive_artifact.artifact_id,
+                        model_call_count=structured.model_call_count,
+                        tool_call_count=0,
+                        token_usage=structured.total_token_count,
+                    ),
+                    turn_id=request.turn_id,
+                    completed_at=self._aware_now(),
+                )
+                dish_stage = await self._run_dish_guidance_stage(
+                    request=request,
+                    deadline=deadline,
+                    directive=directive,
+                    directive_artifact=directive_artifact,
+                    orchestrator_invocation=invocation,
+                    ledger=ledger,
+                    invocations=invocations,
+                    transition_log=transition_log,
+                    actual_nodes=actual_nodes,
+                )
+                response_plan = dish_stage.response_plan
+                plan_parent_ids = dish_stage.parent_artifact_ids
+                assessment_artifact = dish_stage.assessment_artifact
+                style_entry_node = dish_stage.style_entry_node
+                style_parent_invocation_id = dish_stage.parent_invocation_id
+                preserve_guidance_blocks = True
+            elif (
                 directive.response_path is ResponsePath.PROFESSIONAL_ASSESSMENT
                 and self._nutrition_enabled
             ):
@@ -572,6 +673,7 @@ class AgentWorkflowCoordinator:
                     },
                 )
                 invocations.append(nutrition_invocation)
+                style_parent_invocation_id = nutrition_invocation.invocation_id
                 await self._start_invocation(
                     nutrition_invocation,
                     reason="基于本轮证据和只读计算形成结构化营养评估",
@@ -708,7 +810,9 @@ class AgentWorkflowCoordinator:
                     source_refs=("harness:guarded-response",),
                 )
                 blocks = (
-                    (baseline,) if assessment is None else (baseline, *response_plan.content_blocks)
+                    (baseline, *response_plan.content_blocks)
+                    if assessment is not None or preserve_guidance_blocks
+                    else (baseline,)
                 )
                 response_plan = response_plan.model_copy(update={"content_blocks": blocks})
             plan_artifact = self._artifact(
@@ -831,11 +935,7 @@ class AgentWorkflowCoordinator:
                 agent_role=AgentRole.RESPONSE_STYLE,
                 agent_version=RESPONSE_STYLE_PROMPT_VERSION,
                 attempt=1,
-                parent_invocation_id=(
-                    invocations[-1].invocation_id
-                    if nutrition_result is not None
-                    else invocation.invocation_id
-                ),
+                parent_invocation_id=style_parent_invocation_id,
                 input_artifact_ids=tuple(
                     artifact_id
                     for artifact_id in (
@@ -1049,6 +1149,805 @@ class AgentWorkflowCoordinator:
                 total_token_count=total_tokens,
                 failure_code="shadow_internal_error",
             )
+
+    async def _run_dish_guidance_stage(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        deadline: datetime,
+        directive: TurnDirective,
+        directive_artifact: AgentArtifact,
+        orchestrator_invocation: AgentInvocation,
+        ledger: InMemoryArtifactStore,
+        invocations: list[AgentInvocation],
+        transition_log: list[GraphTransition],
+        actual_nodes: list[str],
+    ) -> _DishGuidanceStage:
+        recognition = self._dish_recognition_from_items(request.current_items)
+        source_node = GraphNode.ORCHESTRATOR_RUNNING
+        parent_invocation_id = orchestrator_invocation.invocation_id
+        parent_artifact_id = directive_artifact.artifact_id
+
+        if recognition is not None and self._dish_recognition_enabled:
+            recognition_invocation = AgentInvocation(
+                invocation_id=f"inv-{uuid4()}",
+                trace_id=request.trace_id,
+                thread_id=request.thread_id,
+                turn_id=request.turn_id,
+                graph_version=self._graph_version,
+                agent_role=AgentRole.DISH_RECOGNITION,
+                agent_version=recognition.prompt_version,
+                parent_invocation_id=orchestrator_invocation.invocation_id,
+                input_artifact_ids=(directive_artifact.artifact_id,),
+                input_schema="InspectImageReceipt",
+                allowed_tools=(),
+                privacy_scopes=("current_image_receipt",),
+                deadline_at=deadline,
+                max_model_calls=1,
+                max_tool_calls=0,
+                max_total_tokens=max(self._max_output_tokens, 1),
+                payload={
+                    "asset_id": recognition.asset_id,
+                    "reused_existing_vision_result": True,
+                },
+            )
+            invocations.append(recognition_invocation)
+            await self._start_invocation(
+                recognition_invocation,
+                reason="复用本轮 inspect_image 的结构化菜品识别结果",
+                started_at=self._aware_now(),
+            )
+            running = GraphTransition(
+                source=GraphNode.ORCHESTRATOR_RUNNING,
+                target=GraphNode.DISH_RECOGNITION_RUNNING,
+                reason=TransitionReason.DISH_RECOGNITION,
+                invocation_id=recognition_invocation.invocation_id,
+            )
+            await self._record_transition(request.turn_id, running, attempt=1)
+            transition_log.append(running)
+            actual_nodes.append(GraphNode.DISH_RECOGNITION_RUNNING.value)
+            recognition_artifact = self._artifact(
+                turn_id=request.turn_id,
+                producer=ArtifactProducerRole.DISH_RECOGNITION,
+                artifact_type="dish_recognition",
+                payload=recognition.model_dump(mode="json"),
+                created_at=self._aware_now(),
+                parents=(directive_artifact.artifact_id,),
+            )
+            await self._persist_artifact(
+                ledger,
+                recognition_artifact,
+                recognition_invocation.invocation_id,
+            )
+            await self._complete_invocation(
+                result=AgentResult(
+                    invocation_id=recognition_invocation.invocation_id,
+                    status=InvocationStatus.SUCCEEDED,
+                    output_schema="DishRecognitionResult",
+                    output_schema_version="1",
+                    artifact_id=recognition_artifact.artifact_id,
+                    model_call_count=0,
+                    tool_call_count=0,
+                    token_usage=0,
+                ),
+                turn_id=request.turn_id,
+                completed_at=self._aware_now(),
+            )
+            parent_invocation_id = recognition_invocation.invocation_id
+            parent_artifact_id = recognition_artifact.artifact_id
+            source_node = GraphNode.DISH_RECOGNITION_RUNNING
+            if recognition.overall_requires_confirmation:
+                pending = GraphTransition(
+                    source=GraphNode.DISH_RECOGNITION_RUNNING,
+                    target=GraphNode.DISH_CONFIRMATION_PENDING,
+                    reason=TransitionReason.DISH_CONFIRMATION_REQUIRED,
+                    invocation_id=recognition_invocation.invocation_id,
+                    artifact_id=recognition_artifact.artifact_id,
+                )
+                rendering = GraphTransition(
+                    source=GraphNode.DISH_CONFIRMATION_PENDING,
+                    target=GraphNode.RESPONSE_RENDERING,
+                    reason=TransitionReason.NEEDS_USER_INPUT,
+                    invocation_id=recognition_invocation.invocation_id,
+                    artifact_id=recognition_artifact.artifact_id,
+                )
+                await self._record_transition(request.turn_id, pending, attempt=1)
+                await self._record_transition(request.turn_id, rendering, attempt=1)
+                transition_log.extend((pending, rendering))
+                actual_nodes.extend(
+                    (
+                        GraphNode.DISH_CONFIRMATION_PENDING.value,
+                        GraphNode.RESPONSE_RENDERING.value,
+                    )
+                )
+                question = recognition.suggested_question or "请确认图片中的具体菜名。"
+                await self._store_pending_dish_confirmation(
+                    request=request,
+                    recognition=recognition,
+                    recognition_artifact_id=recognition_artifact.artifact_id,
+                    question=question,
+                )
+                return _DishGuidanceStage(
+                    response_plan=self._dish_question_plan(directive, question),
+                    parent_artifact_ids=(recognition_artifact.artifact_id,),
+                    assessment_artifact=None,
+                    style_entry_node=GraphNode.RESPONSE_RENDERING,
+                    parent_invocation_id=recognition_invocation.invocation_id,
+                )
+            if not recognition.dishes:
+                return await self._dish_stage_unavailable(
+                    request=request,
+                    directive=directive,
+                    source_node=source_node,
+                    parent_artifact_id=parent_artifact_id,
+                    parent_invocation_id=parent_invocation_id,
+                    transition_log=transition_log,
+                    actual_nodes=actual_nodes,
+                    message="这张图片里没有识别到可以确认的菜品，请换一张更清晰的餐食照片。",
+                )
+            confirmed = ConfirmedDishSet(
+                source_artifact_id=recognition_artifact.artifact_id,
+                dishes=tuple(
+                    ConfirmedDish(
+                        dish_ref=item.dish_ref,
+                        name=item.candidates[0].label,
+                        source=DishConfirmationSource.HIGH_CONFIDENCE_VISUAL,
+                        recognition_confidence=item.candidates[0].confidence,
+                    )
+                    for item in recognition.dishes
+                ),
+            )
+        elif directive.dish_names:
+            if directive.resolves_pending_dish_confirmation:
+                resolved_dishes, pending_question = await self._resolve_pending_dish_confirmation(
+                    request=request,
+                    names=directive.dish_names,
+                )
+                if resolved_dishes is None:
+                    return await self._dish_stage_unavailable(
+                        request=request,
+                        directive=directive,
+                        source_node=source_node,
+                        parent_artifact_id=parent_artifact_id,
+                        parent_invocation_id=parent_invocation_id,
+                        transition_log=transition_log,
+                        actual_nodes=actual_nodes,
+                        message=pending_question or "请把还不确定的菜名补充完整。",
+                    )
+                confirmed = resolved_dishes
+            else:
+                confirmed = ConfirmedDishSet(
+                    dishes=tuple(
+                        ConfirmedDish(
+                            dish_ref=f"dish-{index}",
+                            name=name,
+                            source=DishConfirmationSource.USER_TEXT,
+                        )
+                        for index, name in enumerate(directive.dish_names, start=1)
+                    )
+                )
+        else:
+            return await self._dish_stage_unavailable(
+                request=request,
+                directive=directive,
+                source_node=source_node,
+                parent_artifact_id=parent_artifact_id,
+                parent_invocation_id=parent_invocation_id,
+                transition_log=transition_log,
+                actual_nodes=actual_nodes,
+                message="请告诉我具体菜名，或者发一张清晰的餐食照片。",
+            )
+
+        confirmed_artifact = self._artifact(
+            turn_id=request.turn_id,
+            producer=(
+                ArtifactProducerRole.USER_DISH_CONFIRMATION
+                if directive.resolves_pending_dish_confirmation
+                else ArtifactProducerRole.COORDINATOR
+            ),
+            artifact_type="confirmed_dish_set",
+            payload=confirmed.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(parent_artifact_id,),
+        )
+        await self._persist_artifact(ledger, confirmed_artifact, None)
+        if not self._nutrition_retrieval_enabled or self._nutrition_retrieval_agent is None:
+            return await self._dish_stage_unavailable(
+                request=request,
+                directive=directive,
+                source_node=source_node,
+                parent_artifact_id=confirmed_artifact.artifact_id,
+                parent_invocation_id=parent_invocation_id,
+                transition_log=transition_log,
+                actual_nodes=actual_nodes,
+                message="菜品资料检索暂不可用，我先不判断哪些能吃或不能吃。",
+            )
+
+        retrieval_invocation = AgentInvocation(
+            invocation_id=f"inv-{uuid4()}",
+            trace_id=request.trace_id,
+            thread_id=request.thread_id,
+            turn_id=request.turn_id,
+            graph_version=self._graph_version,
+            agent_role=AgentRole.NUTRITION_RETRIEVAL,
+            agent_version="nutrition-retrieval-v1",
+            parent_invocation_id=parent_invocation_id,
+            input_artifact_ids=(confirmed_artifact.artifact_id,),
+            input_schema="ConfirmedDishSet",
+            allowed_tools=(),
+            privacy_scopes=("confirmed_dishes", "published_nutrition_knowledge"),
+            deadline_at=deadline,
+            max_model_calls=1,
+            max_tool_calls=40,
+            max_total_tokens=max(self._max_output_tokens, 1),
+            payload={"dish_count": len(confirmed.dishes), "read_only": True},
+        )
+        invocations.append(retrieval_invocation)
+        await self._start_invocation(
+            retrieval_invocation,
+            reason="只读检索已发布菜品规则和营养资料",
+            started_at=self._aware_now(),
+        )
+        retrieval_running = GraphTransition(
+            source=source_node,
+            target=GraphNode.NUTRITION_RETRIEVAL_RUNNING,
+            reason=TransitionReason.NUTRITION_RETRIEVAL,
+            invocation_id=retrieval_invocation.invocation_id,
+            artifact_id=confirmed_artifact.artifact_id,
+        )
+        await self._record_transition(request.turn_id, retrieval_running, attempt=1)
+        transition_log.append(retrieval_running)
+        actual_nodes.append(GraphNode.NUTRITION_RETRIEVAL_RUNNING.value)
+        retrieval_result = await self._nutrition_retrieval_agent.run(
+            invocation_id=retrieval_invocation.invocation_id,
+            dishes=confirmed,
+            plan=self._dish_lookup_plan(
+                confirmed,
+                authoritative_context=request.authoritative_context,
+            ),
+        )
+        if retrieval_result.evidence is None:
+            await self._finish_failed_invocation(
+                invocation=retrieval_invocation,
+                model_calls=0,
+                tokens=0,
+                failure_code=retrieval_result.failure_code or "nutrition_retrieval_failed",
+            )
+            evidence_failed = GraphTransition(
+                source=GraphNode.NUTRITION_RETRIEVAL_RUNNING,
+                target=GraphNode.NUTRITION_EVIDENCE_READY,
+                reason=TransitionReason.NUTRITION_EVIDENCE_BUILT,
+                invocation_id=retrieval_invocation.invocation_id,
+            )
+            rendering = GraphTransition(
+                source=GraphNode.NUTRITION_EVIDENCE_READY,
+                target=GraphNode.RESPONSE_RENDERING,
+                reason=TransitionReason.INSUFFICIENT_EVIDENCE,
+                invocation_id=retrieval_invocation.invocation_id,
+            )
+            await self._record_transition(request.turn_id, evidence_failed, attempt=1)
+            await self._record_transition(request.turn_id, rendering, attempt=1)
+            transition_log.extend((evidence_failed, rendering))
+            actual_nodes.extend(
+                (GraphNode.NUTRITION_EVIDENCE_READY.value, GraphNode.RESPONSE_RENDERING.value)
+            )
+            return _DishGuidanceStage(
+                response_plan=self._dish_question_plan(
+                    directive,
+                    "菜品资料检索暂时失败，我先不判断能不能吃。",
+                ),
+                parent_artifact_ids=(confirmed_artifact.artifact_id,),
+                assessment_artifact=None,
+                style_entry_node=GraphNode.RESPONSE_RENDERING,
+                parent_invocation_id=retrieval_invocation.invocation_id,
+                status=InvocationStatus.DEGRADED,
+                failure_code=retrieval_result.failure_code,
+            )
+        evidence_artifact = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.NUTRITION_RETRIEVAL,
+            artifact_type="dish_evidence_bundle",
+            payload=retrieval_result.evidence.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(confirmed_artifact.artifact_id,),
+        )
+        await self._persist_artifact(
+            ledger,
+            evidence_artifact,
+            retrieval_invocation.invocation_id,
+        )
+        await self._complete_invocation(
+            result=AgentResult(
+                invocation_id=retrieval_invocation.invocation_id,
+                status=retrieval_result.status,
+                output_schema="DishEvidenceBundle",
+                output_schema_version="1",
+                artifact_id=evidence_artifact.artifact_id,
+                model_call_count=0,
+                tool_call_count=retrieval_result.tool_call_count,
+                token_usage=0,
+                failure_code=retrieval_result.failure_code,
+            ),
+            turn_id=request.turn_id,
+            completed_at=self._aware_now(),
+        )
+        evidence_ready = GraphTransition(
+            source=GraphNode.NUTRITION_RETRIEVAL_RUNNING,
+            target=GraphNode.NUTRITION_EVIDENCE_READY,
+            reason=TransitionReason.NUTRITION_EVIDENCE_BUILT,
+            invocation_id=retrieval_invocation.invocation_id,
+            artifact_id=evidence_artifact.artifact_id,
+        )
+        await self._record_transition(request.turn_id, evidence_ready, attempt=1)
+        transition_log.append(evidence_ready)
+        actual_nodes.append(GraphNode.NUTRITION_EVIDENCE_READY.value)
+
+        if not self._diet_guidance_enabled:
+            rendering = GraphTransition(
+                source=GraphNode.NUTRITION_EVIDENCE_READY,
+                target=GraphNode.RESPONSE_RENDERING,
+                reason=TransitionReason.INSUFFICIENT_EVIDENCE,
+                invocation_id=retrieval_invocation.invocation_id,
+                artifact_id=evidence_artifact.artifact_id,
+            )
+            await self._record_transition(request.turn_id, rendering, attempt=1)
+            transition_log.append(rendering)
+            actual_nodes.append(GraphNode.RESPONSE_RENDERING.value)
+            return _DishGuidanceStage(
+                response_plan=self._dish_question_plan(
+                    directive,
+                    "饮食判断暂不可用，我已经识别菜品，但先不下结论。",
+                ),
+                parent_artifact_ids=(evidence_artifact.artifact_id,),
+                assessment_artifact=None,
+                style_entry_node=GraphNode.RESPONSE_RENDERING,
+                parent_invocation_id=retrieval_invocation.invocation_id,
+            )
+
+        guidance_invocation = AgentInvocation(
+            invocation_id=f"inv-{uuid4()}",
+            trace_id=request.trace_id,
+            thread_id=request.thread_id,
+            turn_id=request.turn_id,
+            graph_version=self._graph_version,
+            agent_role=AgentRole.NUTRITION_EXPERT,
+            agent_version="diet-guidance-v1",
+            parent_invocation_id=retrieval_invocation.invocation_id,
+            input_artifact_ids=(evidence_artifact.artifact_id,),
+            input_schema="DishEvidenceBundle",
+            allowed_tools=(),
+            privacy_scopes=("dish_evidence", "user_constraints"),
+            deadline_at=deadline,
+            max_model_calls=1,
+            max_tool_calls=0,
+            max_total_tokens=max(self._max_output_tokens, 1),
+            payload={"dish_count": len(retrieval_result.evidence.dishes), "deterministic": True},
+        )
+        invocations.append(guidance_invocation)
+        await self._start_invocation(
+            guidance_invocation,
+            reason="仅依据已绑定证据形成逐菜饮食适宜性",
+            started_at=self._aware_now(),
+        )
+        expert_running = GraphTransition(
+            source=GraphNode.NUTRITION_EVIDENCE_READY,
+            target=GraphNode.EXPERT_RUNNING,
+            reason=TransitionReason.EVIDENCE_BUILT,
+            invocation_id=guidance_invocation.invocation_id,
+            artifact_id=evidence_artifact.artifact_id,
+        )
+        await self._record_transition(request.turn_id, expert_running, attempt=1)
+        transition_log.append(expert_running)
+        actual_nodes.append(GraphNode.EXPERT_RUNNING.value)
+        guidance_result = self._diet_guidance_agent.run(retrieval_result.evidence)
+        if guidance_result.assessment is None:
+            await self._finish_failed_invocation(
+                invocation=guidance_invocation,
+                model_calls=0,
+                tokens=0,
+                failure_code=guidance_result.failure_code or "diet_guidance_failed",
+            )
+            rendering = GraphTransition(
+                source=GraphNode.EXPERT_RUNNING,
+                target=GraphNode.RESPONSE_RENDERING,
+                reason=TransitionReason.INSUFFICIENT_EVIDENCE,
+                invocation_id=guidance_invocation.invocation_id,
+            )
+            await self._record_transition(request.turn_id, rendering, attempt=1)
+            transition_log.append(rendering)
+            actual_nodes.append(GraphNode.RESPONSE_RENDERING.value)
+            return _DishGuidanceStage(
+                response_plan=self._dish_question_plan(
+                    directive,
+                    "当前证据不足，我先不判断这些菜能不能吃。",
+                ),
+                parent_artifact_ids=(evidence_artifact.artifact_id,),
+                assessment_artifact=None,
+                style_entry_node=GraphNode.RESPONSE_RENDERING,
+                parent_invocation_id=guidance_invocation.invocation_id,
+                status=InvocationStatus.DEGRADED,
+                failure_code=guidance_result.failure_code,
+            )
+        guidance_artifact = self._artifact(
+            turn_id=request.turn_id,
+            producer=ArtifactProducerRole.NUTRITION_EXPERT,
+            artifact_type="diet_guidance_assessment",
+            payload=guidance_result.assessment.model_dump(mode="json"),
+            created_at=self._aware_now(),
+            parents=(evidence_artifact.artifact_id,),
+        )
+        await self._persist_artifact(
+            ledger,
+            guidance_artifact,
+            guidance_invocation.invocation_id,
+        )
+        await self._complete_invocation(
+            result=AgentResult(
+                invocation_id=guidance_invocation.invocation_id,
+                status=guidance_result.status,
+                output_schema="DietGuidanceAssessment",
+                output_schema_version="1",
+                artifact_id=guidance_artifact.artifact_id,
+                model_call_count=0,
+                tool_call_count=0,
+                token_usage=0,
+                failure_code=guidance_result.failure_code,
+            ),
+            turn_id=request.turn_id,
+            completed_at=self._aware_now(),
+        )
+        return _DishGuidanceStage(
+            response_plan=self._dish_guidance_response_plan(
+                directive,
+                guidance_result.assessment,
+            ),
+            parent_artifact_ids=(guidance_artifact.artifact_id,),
+            assessment_artifact=guidance_artifact,
+            style_entry_node=GraphNode.EXPERT_RUNNING,
+            parent_invocation_id=guidance_invocation.invocation_id,
+        )
+
+    async def _dish_stage_unavailable(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        directive: TurnDirective,
+        source_node: GraphNode,
+        parent_artifact_id: str,
+        parent_invocation_id: str,
+        transition_log: list[GraphTransition],
+        actual_nodes: list[str],
+        message: str,
+    ) -> _DishGuidanceStage:
+        transition = GraphTransition(
+            source=source_node,
+            target=GraphNode.RESPONSE_RENDERING,
+            reason=(
+                TransitionReason.NEEDS_USER_INPUT
+                if source_node is GraphNode.ORCHESTRATOR_RUNNING
+                else TransitionReason.INSUFFICIENT_EVIDENCE
+            ),
+            invocation_id=parent_invocation_id,
+            artifact_id=parent_artifact_id,
+        )
+        await self._record_transition(request.turn_id, transition, attempt=1)
+        transition_log.append(transition)
+        actual_nodes.append(GraphNode.RESPONSE_RENDERING.value)
+        return _DishGuidanceStage(
+            response_plan=self._dish_question_plan(directive, message),
+            parent_artifact_ids=(parent_artifact_id,),
+            assessment_artifact=None,
+            style_entry_node=GraphNode.RESPONSE_RENDERING,
+            parent_invocation_id=parent_invocation_id,
+        )
+
+    @staticmethod
+    def _dish_recognition_from_items(
+        items: tuple[dict[str, Any], ...],
+    ) -> DishRecognitionResult | None:
+        for item in reversed(items):
+            payload = item.get("payload")
+            if not isinstance(payload, dict) or payload.get("tool_name") != "inspect_image":
+                continue
+            output = payload.get("output")
+            if not isinstance(output, dict):
+                continue
+            raw = output.get("dish_recognition")
+            if not isinstance(raw, dict):
+                continue
+            try:
+                return DishRecognitionResult.model_validate(raw)
+            except ValueError:
+                return None
+        return None
+
+    async def _store_pending_dish_confirmation(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        recognition: DishRecognitionResult,
+        recognition_artifact_id: str,
+        question: str,
+    ) -> None:
+        repository = self._pending_dish_confirmations
+        if (
+            repository is None
+            or request.mode == "shadow"
+            or request.user_id is None
+            or request.thread_id is None
+        ):
+            return
+        digest = hashlib.sha256(
+            f"{request.user_id}:{recognition.asset_id}:{recognition_artifact_id}".encode()
+        ).hexdigest()
+        await repository.create(
+            thread_id=request.thread_id,
+            turn_id=request.turn_id,
+            source_item_id=self._current_user_evidence_ref(request.current_items),
+            execution_key=f"dish-confirmation:{digest}",
+            tool_call_id=f"dish-confirmation-{recognition.asset_id}"[:256],
+            tool_name="confirm_dishes",
+            tool_version="v1",
+            canonical_arguments={
+                "recognition": recognition.model_dump(mode="json"),
+                "recognition_artifact_id": recognition_artifact_id,
+            },
+            execution_mode=ToolExecutionMode.EVALUATION,
+            isolated_write_environment=False,
+            action_type=PendingActionType.USER_CONFIRMATION,
+            reason=question,
+            expires_at=self._aware_now() + self._dish_confirmation_ttl,
+        )
+
+    async def _resolve_pending_dish_confirmation(
+        self,
+        *,
+        request: ShadowWorkflowRequest,
+        names: tuple[str, ...],
+    ) -> tuple[ConfirmedDishSet | None, str | None]:
+        repository = self._pending_dish_confirmations
+        if repository is None or request.user_id is None:
+            return None, "没有找到仍在等待确认的菜品，请重新发送餐食照片。"
+        actions = await repository.list_open_for_user(
+            user_id=request.user_id,
+            at=self._aware_now(),
+        )
+        action = next(
+            (item for item in reversed(actions) if item.tool_name == "confirm_dishes"),
+            None,
+        )
+        if action is None:
+            return None, "之前的菜品确认已经失效，请重新发送餐食照片。"
+        raw = action.canonical_arguments.get("recognition")
+        artifact_id = action.canonical_arguments.get("recognition_artifact_id")
+        if not isinstance(raw, dict) or not isinstance(artifact_id, str):
+            return None, "之前的菜品识别记录不可用，请重新发送餐食照片。"
+        try:
+            recognition = DishRecognitionResult.model_validate(raw)
+        except ValueError:
+            return None, "之前的菜品识别记录不可用，请重新发送餐食照片。"
+        uncertain = tuple(item for item in recognition.dishes if item.requires_confirmation)
+        expected_names = len(uncertain) if uncertain else len(names)
+        if len(names) != expected_names:
+            return None, f"还有 {expected_names} 道不确定的菜，请按图片顺序把菜名都告诉我。"
+        user_evidence_ref = self._current_user_evidence_ref(request.current_items)
+        if user_evidence_ref is None:
+            return None, "请直接用文字告诉我不确定的菜名。"
+        replacements = iter(names)
+        confirmed: list[ConfirmedDish] = []
+        if recognition.dishes:
+            for item in recognition.dishes:
+                if item.requires_confirmation:
+                    confirmed.append(
+                        ConfirmedDish(
+                            dish_ref=item.dish_ref,
+                            name=next(replacements),
+                            source=DishConfirmationSource.USER_CONFIRMED,
+                            recognition_confidence=item.candidates[0].confidence,
+                            user_evidence_ref=user_evidence_ref,
+                        )
+                    )
+                else:
+                    confirmed.append(
+                        ConfirmedDish(
+                            dish_ref=item.dish_ref,
+                            name=item.candidates[0].label,
+                            source=DishConfirmationSource.HIGH_CONFIDENCE_VISUAL,
+                            recognition_confidence=item.candidates[0].confidence,
+                        )
+                    )
+        else:
+            confirmed.extend(
+                ConfirmedDish(
+                    dish_ref=f"dish-{index}",
+                    name=name,
+                    source=DishConfirmationSource.USER_CONFIRMED,
+                    user_evidence_ref=user_evidence_ref,
+                )
+                for index, name in enumerate(names, start=1)
+            )
+        if request.mode != "shadow":
+            await repository.resolve(
+                action_id=action.id,
+                resolution=PendingActionStatus.APPROVED,
+                resolved_by=request.user_id,
+                resolved_at=self._aware_now(),
+            )
+        return (
+            ConfirmedDishSet(
+                source_artifact_id=artifact_id,
+                dishes=tuple(confirmed),
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _current_user_evidence_ref(items: tuple[dict[str, Any], ...]) -> str | None:
+        return next(
+            (
+                str(item["id"])
+                for item in reversed(items)
+                if item.get("item_type") == "user_message" and item.get("id")
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _dish_lookup_plan(
+        dishes: ConfirmedDishSet,
+        *,
+        authoritative_context: dict[str, Any],
+    ) -> DishLookupPlan:
+        """Project only active structured user constraints into dish retrieval."""
+
+        raw_memories = authoritative_context.get("profile_memory")
+        constraints: list[DishConstraintInput] = []
+        seen: set[str] = set()
+        if isinstance(raw_memories, list):
+            for index, raw in enumerate(raw_memories):
+                if not isinstance(raw, dict) or raw.get("stale") is True:
+                    continue
+                key = raw.get("key")
+                if key not in {"constraint.dietary", "constraint.health_context"}:
+                    continue
+                value = raw.get("value")
+                subject = value.get("subject") if isinstance(value, dict) else None
+                if not isinstance(subject, str):
+                    continue
+                normalized = " ".join(subject.split())
+                folded = normalized.casefold()
+                if not normalized or folded in seen:
+                    continue
+                memory_id = raw.get("memory_id")
+                constraints.append(
+                    DishConstraintInput(
+                        value=normalized,
+                        evidence_ref=(
+                            str(memory_id)
+                            if isinstance(memory_id, str) and memory_id
+                            else f"profile_memory:{index}"
+                        ),
+                    )
+                )
+                seen.add(folded)
+                if len(constraints) >= 32:
+                    break
+        return DishLookupPlan(
+            dishes=tuple(
+                DishLookupInput(dish_ref=item.dish_ref, name=item.name) for item in dishes.dishes
+            ),
+            user_goal_tags=("weight_management",),
+            applicability_tags=("adult",),
+            constraints=tuple(constraints),
+            rag_queries=tuple(item.name for item in dishes.dishes),
+        )
+
+    @staticmethod
+    def _dish_question_plan(directive: TurnDirective, question: str) -> ResponsePlan:
+        return ResponsePlan(
+            communication_act=CommunicationAct.ASK,
+            requested_detail=directive.requested_detail,
+            content_blocks=(
+                ResponseContentBlock(
+                    block_id="dish-guidance-question",
+                    kind=ContentBlockKind.QUESTION,
+                    text=question,
+                ),
+            ),
+            prohibited_transformations=(
+                "guess_dish_identity",
+                "add_nutrition_estimate",
+                "add_diet_guidance",
+            ),
+        )
+
+    @staticmethod
+    def _dish_guidance_response_plan(
+        directive: TurnDirective,
+        assessment: DietGuidanceAssessment,
+    ) -> ResponsePlan:
+        labels = {
+            DishSuitability.SUITABLE: "可以正常安排",
+            DishSuitability.SUITABLE_WITH_ADJUSTMENT: "可以吃，建议调整",
+            DishSuitability.LIMIT: "建议少吃或降低频率",
+            DishSuitability.AVOID: "基于你的明确限制，应避免",
+            DishSuitability.INSUFFICIENT_INFORMATION: "信息不足，暂不判断",
+        }
+        blocks: list[ResponseContentBlock] = []
+        citation_refs: list[str] = []
+        for index, dish in enumerate(assessment.dishes, start=1):
+            sources = tuple(
+                dict.fromkeys(
+                    (
+                        *(reason.reason_id for reason in dish.reasons),
+                        *dish.hard_rule_refs,
+                        *dish.user_constraint_refs,
+                        dish.dish_ref,
+                    )
+                )
+            )
+            blocks.append(
+                ResponseContentBlock(
+                    block_id=f"dish-conclusion-{index}",
+                    kind=(
+                        ContentBlockKind.UNCERTAINTY
+                        if dish.suitability is DishSuitability.INSUFFICIENT_INFORMATION
+                        else ContentBlockKind.CLAIM
+                    ),
+                    text=f"{dish.canonical_name}：{labels[dish.suitability]}。",
+                    source_refs=sources,
+                )
+            )
+            for reason_index, reason in enumerate(dish.reasons, start=1):
+                citation_refs.extend(reason.citation_refs)
+                blocks.append(
+                    ResponseContentBlock(
+                        block_id=f"dish-reason-{index}-{reason_index}",
+                        kind=ContentBlockKind.CLAIM,
+                        text=reason.statement,
+                        source_refs=reason.evidence_refs,
+                    )
+                )
+            for action_index, action in enumerate(dish.actions, start=1):
+                blocks.append(
+                    ResponseContentBlock(
+                        block_id=f"dish-action-{index}-{action_index}",
+                        kind=ContentBlockKind.ACTION,
+                        text=action.statement,
+                        source_refs=action.basis_reason_ids,
+                    )
+                )
+            if dish.uncertainty_note is not None:
+                blocks.append(
+                    ResponseContentBlock(
+                        block_id=f"dish-uncertainty-{index}",
+                        kind=ContentBlockKind.UNCERTAINTY,
+                        text=dish.uncertainty_note,
+                        source_refs=(dish.dish_ref,),
+                    )
+                )
+        blocks.extend(
+            ResponseContentBlock(
+                block_id=f"dish-question-{index}",
+                kind=ContentBlockKind.QUESTION,
+                text=question,
+            )
+            for index, question in enumerate(assessment.questions, start=1)
+        )
+        return ResponsePlan(
+            communication_act=directive.voice_act,
+            requested_detail=directive.requested_detail,
+            content_blocks=tuple(blocks),
+            citation_refs=tuple(dict.fromkeys(citation_refs)),
+            prohibited_transformations=(
+                "change_dish_identity",
+                "strengthen_dish_suitability",
+                "remove_uncertainty",
+                "add_avoidance",
+                "add_nutrition_estimate",
+                "add_citation",
+            ),
+        )
 
     def _model_request(
         self,
@@ -1319,7 +2218,7 @@ class AgentWorkflowCoordinator:
                 turn_id=request.turn_id,
                 graph_version=self._graph_version,
                 agent_role=AgentRole.RESPONSE_REVIEWER,
-                agent_version="response-reviewer-v1",
+                agent_version=RESPONSE_REVIEWER_PROMPT_VERSION,
                 attempt=reviewer_attempt,
                 parent_invocation_id=current_parent_invocation_id,
                 input_artifact_ids=tuple(

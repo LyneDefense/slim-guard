@@ -31,7 +31,7 @@ from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
 INSPECT_IMAGE_TOOL_NAME = "inspect_image"
-IMAGE_TOOL_VERSION = "v2"
+IMAGE_TOOL_VERSION = "v3"
 
 _FOCUS_PROMPTS = {
     "auto": (
@@ -245,6 +245,7 @@ def image_tool_definitions() -> tuple[RegisteredTool, ...]:
                 "asset_id from the current image_attachment or working_memory.recent_images. "
                 "Never invent an asset ID. The result contains model-authored visual "
                 "observations and explicit uncertainty, not an authoritative health record."
+                " Use focus=meal for dish identification or diet-suitability questions."
             ),
             version=IMAGE_TOOL_VERSION,
             arguments_model=InspectImageArguments,

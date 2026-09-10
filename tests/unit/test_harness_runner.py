@@ -215,6 +215,7 @@ def build_runner(
         limits=HarnessLimits(),
         shadow_workflow=shadow_workflow,
         shadow_enabled_for=lambda _user_id: shadow_workflow is not None,
+        workflow_mode="shadow" if shadow_workflow is not None else "off",
         clock=lambda: current_time,
     )
 
@@ -278,6 +279,7 @@ async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_pat
     directive = direct_shadow_directive("影子候选回复，不应发送。")
     model = ScriptedModelGateway(
         (
+            final_response("当前 Harness 的真实回复。"),
             final_response(directive.model_dump_json()),
             final_response(
                 json.dumps(
@@ -294,7 +296,6 @@ async def test_shadow_workflow_is_audited_without_replacing_legacy_reply(tmp_pat
                     ensure_ascii=False,
                 )
             ),
-            final_response("当前 Harness 的真实回复。"),
         )
     )
     current_time = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
@@ -491,10 +492,10 @@ async def test_style_failure_uses_neutral_candidate_and_legacy_reply_continues(t
     directive = direct_shadow_directive("只保留这条既定内容。")
     model = ScriptedModelGateway(
         (
+            final_response("线上回复仍正常。"),
             final_response(directive.model_dump_json()),
             final_response("{}"),
             final_response("{}"),
-            final_response("线上回复仍正常。"),
         )
     )
     current_time = datetime(2026, 9, 6, 9, 0, tzinfo=UTC)

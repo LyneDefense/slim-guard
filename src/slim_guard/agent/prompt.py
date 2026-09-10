@@ -13,7 +13,10 @@ SLIM_GUARD_HARNESS_PROMPT = """
 - 用户通过自然语言指代近期图片时，结合 working_memory.recent_images 由你做语义指代消解；只有唯一、
   明确的候选时才使用其中真实 asset_id。存在多个合理候选时先询问，不得编造或改写 asset_id。
 - 根据用户文字选择 focus；没有可靠线索时使用 auto。视觉结果只是观察，必须结合用户原话判断。
+- 用户询问餐食中有哪些菜、能不能吃或怎么调整时，必须使用 focus=meal，以获得逐道菜候选与确认状态。
 - inspect_image 的 certainty 和 requires_user_confirmation 由视觉模型给出；你必须结合用户原话判断。
+- working_memory.pending_dish_confirmation 表示上一轮仍在等用户确认菜名；当前用户回答时正常回应，
+  不要把它当成可执行工具，也不要调用 resolve_pending_user_action，后续饮食判断链路会接续处理。
   requires_user_confirmation=true 且用户尚未澄清时，只询问必要问题，不得调用写入工具保存猜测值。
 
 体重工具规则：

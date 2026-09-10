@@ -67,6 +67,10 @@ export interface TraceSummary {
   graph_version?: string | null;
   agent_versions?: string[];
   profile_versions?: string[];
+  dish_confirmation?: string;
+  dish_matches?: string[];
+  dish_suitabilities?: string[];
+  review_verdict?: string | null;
 }
 
 export interface TraceListFilters {
@@ -80,10 +84,16 @@ export interface TraceListFilters {
   graph_version?: string;
   agent_version?: string;
   profile_version?: string;
+  dish_confirmation?: string;
+  dish_match?: string;
+  dish_suitability?: string;
+  review_verdict?: string;
 }
 
 export type AgentRole =
   | "orchestrator"
+  | "dish_recognition"
+  | "nutrition_retrieval"
   | "nutrition_expert"
   | "response_style"
   | "response_reviewer";
@@ -602,6 +612,11 @@ export interface TraceAgentArtifact extends ArtifactCreatedDetails {
   body_redacted?: boolean;
   integrity_status: string;
   created_at: string | null;
+}
+
+export interface DishRecognitionCorrectionInput {
+  corrected_dishes: Array<{ dish_ref: string; corrected_name: string }>;
+  comment: string;
 }
 
 export interface TraceResponsePlanBlock {

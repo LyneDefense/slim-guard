@@ -144,11 +144,43 @@ class ConfirmedDishSet(ContractModel):
         refs = tuple(item.dish_ref for item in self.dishes)
         if len(refs) != len(set(refs)):
             raise ValueError("Confirmed dish references must be unique")
-        if any(
-            item.source is DishConfirmationSource.HIGH_CONFIDENCE_VISUAL
-            for item in self.dishes
-        ) and self.source_artifact_id is None:
+        if (
+            any(
+                item.source is DishConfirmationSource.HIGH_CONFIDENCE_VISUAL for item in self.dishes
+            )
+            and self.source_artifact_id is None
+        ):
             raise ValueError("Visual confirmations require a recognition artifact")
+        return self
+
+
+class DishRecognitionCorrectionItem(ContractModel):
+    dish_ref: str = Field(pattern=r"^dish-[A-Za-z0-9_-]+$", max_length=128)
+    corrected_name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("corrected_name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Corrected dish name cannot be blank")
+        return normalized
+
+
+class DishRecognitionCorrection(ContractModel):
+    """Append-only admin review; it never rewrites the recognition artifact."""
+
+    schema_version: Literal["1"] = "1"
+    recognition_artifact_id: str = Field(min_length=1, max_length=128)
+    corrected_dishes: tuple[DishRecognitionCorrectionItem, ...] = Field(min_length=1, max_length=20)
+    reviewer: str = Field(min_length=1, max_length=128)
+    comment: str = Field(min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_refs(self) -> Self:
+        refs = tuple(item.dish_ref for item in self.corrected_dishes)
+        if len(refs) != len(set(refs)):
+            raise ValueError("Dish correction references must be unique")
         return self
 
 
@@ -168,6 +200,8 @@ __all__ = [
     "DishCandidate",
     "DishConfirmationSource",
     "DishImageKind",
+    "DishRecognitionCorrection",
+    "DishRecognitionCorrectionItem",
     "DishRecognitionAgentResult",
     "DishRecognitionResult",
     "RecognizedDish",

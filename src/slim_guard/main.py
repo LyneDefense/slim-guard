@@ -133,6 +133,10 @@ def create_app(
         nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
         nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
         nutrition_require_rag_citations=app_settings.nutrition_require_rag_citations,
+        meal_guidance_enabled=app_settings.meal_guidance_enabled,
+        dish_recognition_enabled=app_settings.dish_recognition_enabled,
+        nutrition_retrieval_enabled=app_settings.nutrition_retrieval_enabled,
+        diet_guidance_enabled=app_settings.diet_guidance_enabled,
         response_reviewer_enabled=app_settings.response_reviewer_enabled,
     )
     agent_graph_manifest = build_agent_graph_manifest(runtime_definition)

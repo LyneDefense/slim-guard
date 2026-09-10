@@ -43,6 +43,10 @@ class Settings(DatabaseSettings):
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
+    meal_guidance_enabled: bool = False
+    dish_recognition_enabled: bool = True
+    nutrition_retrieval_enabled: bool = True
+    diet_guidance_enabled: bool = True
     response_reviewer_enabled: bool = False
     style_iteration_worker_enabled: bool = True
     style_iteration_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
@@ -143,6 +147,8 @@ class Settings(DatabaseSettings):
             raise ValueError("DEFAULT_STYLE_PROFILE must be a nonblank exact version")
         if self.style_canary_profile != self.style_canary_profile.strip():
             raise ValueError("STYLE_CANARY_PROFILE must be an exact version")
+        if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
+            raise ValueError("MEAL_GUIDANCE_ENABLED requires NUTRITION_AGENT_ENABLED")
         if bool(self.admin_username) != bool(self.admin_password):
             raise ValueError("Admin username and password must be configured together")
         if self.mobile_api_enabled and len(self.mobile_auth_secret) < 32:

@@ -360,6 +360,36 @@ def test_omitted_required_citation_and_risk_prevent_pass() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("text", "issue"),
+    [
+        ("番茄炒蛋大约 500 千卡。", "forbidden_nutrition_estimate"),
+        ("这道菜减脂期绝对不能吃。", "unsupported_avoidance"),
+    ],
+)
+def test_dish_guidance_guards_detect_numeric_estimates_and_new_avoidance(
+    text: str,
+    issue: str,
+) -> None:
+    review_context = context()
+    plan = review_context.response_plan.model_copy(
+        update={
+            "prohibited_transformations": (
+                "add_nutrition_estimate",
+                "add_avoidance",
+            )
+        }
+    )
+    styled = review_context.styled_response.model_copy(update={"text": text})
+    report = ReviewerVerdictValidator().validate(
+        review_context.model_copy(
+            update={"response_plan": plan, "styled_response": styled}
+        ),
+        ReviewerVerdict(verdict="pass"),
+    )
+    assert issue in report.detected_issue_types
+
+
 async def test_wrong_repair_direction_is_schema_repaired_before_being_accepted() -> None:
     verdict = {
         "verdict": "repair",

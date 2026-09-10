@@ -116,9 +116,7 @@ class DishRecognitionAgent:
                     requires_confirmation=requires_confirmation,
                 )
             )
-        overall = raw.image_kind == "unusable" or any(
-            item.requires_confirmation for item in dishes
-        )
+        overall = raw.image_kind == "unusable" or any(item.requires_confirmation for item in dishes)
         question = raw.suggested_question if overall else None
         if overall and question is None:
             question = "图片里有菜品还不能确定，请告诉我它具体是什么菜？"

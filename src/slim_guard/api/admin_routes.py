@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -11,8 +13,15 @@ from pydantic import BaseModel, Field
 
 from slim_guard.admin.auth import ADMIN_SESSION_COOKIE, AdminSessionCodec
 from slim_guard.admin.repository import AdminQueryRepository
+from slim_guard.agents.contracts import AgentArtifact, ArtifactProducerRole
+from slim_guard.agents.dish_recognition import (
+    DishRecognitionCorrection,
+    DishRecognitionCorrectionItem,
+    DishRecognitionResult,
+)
 from slim_guard.config import Settings
 from slim_guard.db.session import Database
+from slim_guard.orchestration.repository import OrchestrationRepository
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -26,6 +35,11 @@ class AdminPrincipal:
 class AdminLoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=4096)
+
+
+class DishRecognitionCorrectionRequest(BaseModel):
+    corrected_dishes: tuple[DishRecognitionCorrectionItem, ...] = Field(min_length=1, max_length=20)
+    comment: str = Field(min_length=3, max_length=2000)
 
 
 def _session_codec(settings: Settings) -> AdminSessionCodec:
@@ -62,6 +76,11 @@ def _authenticate(request: Request) -> AdminPrincipal:
 
 def _repository(request: Request) -> AdminQueryRepository:
     return AdminQueryRepository(cast(Database, request.app.state.database))
+
+
+def _require_csrf(request: Request) -> None:
+    if request.headers.get("X-SlimGuard-CSRF") != "1":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF header required")
 
 
 def _remote_ref(request: Request) -> str | None:
@@ -207,6 +226,10 @@ async def list_user_traces(
     graph_version: str | None = Query(default=None, max_length=128),
     agent_version: str | None = Query(default=None, max_length=128),
     profile_version: str | None = Query(default=None, max_length=128),
+    dish_confirmation: str | None = Query(default=None, max_length=32),
+    dish_match: str | None = Query(default=None, max_length=32),
+    dish_suitability: str | None = Query(default=None, max_length=32),
+    review_verdict: str | None = Query(default=None, max_length=32),
 ) -> dict[str, Any]:
     del principal
     result = await _repository(request).list_traces(
@@ -223,6 +246,10 @@ async def list_user_traces(
         graph_version=graph_version,
         agent_version=agent_version,
         profile_version=profile_version,
+        dish_confirmation=dish_confirmation,
+        dish_match=dish_match,
+        dish_suitability=dish_suitability,
+        review_verdict=review_verdict,
     )
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -249,6 +276,93 @@ async def get_user_trace(
         trace_id=trace_id,
     )
     return result
+
+
+@router.post(
+    "/users/{user_id}/traces/{trace_id}/dish-recognition-corrections/{artifact_id}",
+    status_code=status.HTTP_201_CREATED,
+)
+async def append_dish_recognition_correction(
+    user_id: str,
+    trace_id: str,
+    artifact_id: str,
+    payload: DishRecognitionCorrectionRequest,
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    csrf: Annotated[None, Depends(_require_csrf)],
+) -> dict[str, Any]:
+    del csrf
+    trace = await _repository(request).get_trace(user_id=user_id, trace_id=trace_id)
+    if trace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    turn = trace.get("turn")
+    turn_id = turn.get("id") if isinstance(turn, dict) else None
+    if not isinstance(turn_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trace has no agent turn to attach the correction to",
+        )
+
+    database = cast(Database, request.app.state.database)
+    orchestration = OrchestrationRepository(database)
+    source = await orchestration.get_artifact(artifact_id)
+    if (
+        source is None
+        or source.turn_id != turn_id
+        or source.artifact_type.lower().replace("_", "") != "dishrecognition"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dish recognition artifact was not found in this trace",
+        )
+    try:
+        recognition = DishRecognitionResult.model_validate(source.payload)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Dish recognition artifact failed schema validation",
+        ) from error
+    expected_refs = {item.dish_ref for item in recognition.dishes}
+    submitted_refs = {item.dish_ref for item in payload.corrected_dishes}
+    if len(submitted_refs) != len(payload.corrected_dishes) or submitted_refs != expected_refs:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Correction must provide exactly one name for every recognized dish",
+        )
+
+    correction = DishRecognitionCorrection(
+        recognition_artifact_id=source.artifact_id,
+        corrected_dishes=payload.corrected_dishes,
+        reviewer=principal.username,
+        comment=payload.comment,
+    )
+    created_at = datetime.now(UTC)
+    artifact = AgentArtifact.create(
+        artifact_id=f"dish-correction-{uuid.uuid4().hex}",
+        turn_id=turn_id,
+        producer_role=ArtifactProducerRole.ADMIN_REVIEWER,
+        artifact_type="dish_recognition_correction",
+        schema_version="1",
+        payload=correction.model_dump(mode="json"),
+        parent_artifact_ids=(source.artifact_id,),
+        created_at=created_at,
+    )
+    await orchestration.append_artifact(artifact)
+    await _audit(
+        request,
+        principal,
+        action="append_dish_recognition_correction",
+        resource_type="dish_recognition_artifact",
+        resource_id=artifact.artifact_id,
+        user_id=user_id,
+        trace_id=trace_id,
+    )
+    return {
+        **artifact.model_dump(mode="json"),
+        "invocation_id": None,
+        "body_redacted": True,
+        "integrity_status": "verified",
+    }
 
 
 @router.get("/users/{user_id}/memories")

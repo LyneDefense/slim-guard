@@ -20,6 +20,7 @@ from slim_guard.agents.nutrition.tools import NutritionToolRegistry
 from slim_guard.agents.nutrition_retrieval import (
     NUTRITION_RETRIEVAL_PROMPT,
     NUTRITION_RETRIEVAL_PROMPT_VERSION,
+    NutritionRetrievalAgent,
 )
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
@@ -27,6 +28,7 @@ from slim_guard.agents.reviewer import (
 )
 from slim_guard.agents.style import RESPONSE_STYLE_PROMPT, RESPONSE_STYLE_PROMPT_VERSION
 from slim_guard.db.session import Database
+from slim_guard.dish_knowledge import DishCatalogRepository
 from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
@@ -133,12 +135,18 @@ class AgentRuntimeDefinition(BaseModel):
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
+    meal_guidance_enabled: bool = False
+    dish_recognition_enabled: bool = True
+    nutrition_retrieval_enabled: bool = True
+    diet_guidance_enabled: bool = True
     response_reviewer_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_nutrition_rag(self) -> AgentRuntimeDefinition:
         if self.nutrition_rag_enabled and not self.nutrition_agent_enabled:
             raise ValueError("Nutrition RAG requires the Nutrition Agent")
+        if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
+            raise ValueError("Meal guidance requires the Nutrition Agent")
         if self.nutrition_rag_enabled and not self.nutrition_require_rag_citations:
             raise ValueError("Nutrition RAG citations cannot be disabled")
         if self.response_reviewer_enabled and not self.style_render_all_normal_replies:
@@ -324,6 +332,19 @@ def build_agent_runtime(
                 style_canary_users=definition.style_canary_users,
                 style_enabled=definition.style_render_all_normal_replies,
                 nutrition_enabled=definition.nutrition_agent_enabled,
+                meal_guidance_enabled=definition.meal_guidance_enabled,
+                dish_recognition_enabled=definition.dish_recognition_enabled,
+                nutrition_retrieval_enabled=definition.nutrition_retrieval_enabled,
+                diet_guidance_enabled=definition.diet_guidance_enabled,
+                nutrition_retrieval_agent=NutritionRetrievalAgent(
+                    catalog=DishCatalogRepository(database),
+                    knowledge=(
+                        NutritionKnowledgeService(NutritionKnowledgeRepository(database))
+                        if definition.nutrition_rag_enabled
+                        else None
+                    ),
+                ),
+                pending_dish_confirmations=pending_actions,
                 reviewer_enabled=definition.response_reviewer_enabled,
                 nutrition_tools=NutritionToolRegistry(
                     knowledge_repository=(

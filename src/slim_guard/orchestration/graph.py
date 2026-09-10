@@ -125,6 +125,12 @@ _TRANSITION_REASONS: dict[tuple[GraphNode, GraphNode], frozenset[TransitionReaso
     (GraphNode.DISH_CONFIRMATION_PENDING, GraphNode.DISH_CONFIRMATION_RESOLVED): frozenset(
         {TransitionReason.DISH_CONFIRMATION_ACCEPTED}
     ),
+    (GraphNode.DISH_CONFIRMATION_PENDING, GraphNode.RESPONSE_RENDERING): frozenset(
+        {TransitionReason.NEEDS_USER_INPUT}
+    ),
+    (GraphNode.DISH_RECOGNITION_RUNNING, GraphNode.RESPONSE_RENDERING): frozenset(
+        {TransitionReason.INSUFFICIENT_EVIDENCE}
+    ),
     (GraphNode.DISH_RECOGNITION_RUNNING, GraphNode.NUTRITION_RETRIEVAL_RUNNING): frozenset(
         {TransitionReason.NUTRITION_RETRIEVAL}
     ),
@@ -139,6 +145,9 @@ _TRANSITION_REASONS: dict[tuple[GraphNode, GraphNode], frozenset[TransitionReaso
     ),
     (GraphNode.NUTRITION_EVIDENCE_READY, GraphNode.EXPERT_RUNNING): frozenset(
         {TransitionReason.EVIDENCE_BUILT}
+    ),
+    (GraphNode.NUTRITION_EVIDENCE_READY, GraphNode.RESPONSE_RENDERING): frozenset(
+        {TransitionReason.INSUFFICIENT_EVIDENCE}
     ),
     (GraphNode.ORCHESTRATOR_RUNNING, GraphNode.BUSINESS_TOOL_RUNNING): frozenset(
         {TransitionReason.TOOL_CALL}

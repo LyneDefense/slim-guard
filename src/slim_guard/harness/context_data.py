@@ -267,15 +267,29 @@ class AuthoritativeContextDataProvider:
                 at=current_time,
             )
             if pending:
-                working_memory["pending_user_confirmations"] = [
+                ordinary = [action for action in pending if action.tool_name != "confirm_dishes"]
+                dish_confirmations = [
+                    action for action in pending if action.tool_name == "confirm_dishes"
+                ]
+                if ordinary:
+                    working_memory["pending_user_confirmations"] = [
+                        {
+                            "action_id": action.id,
+                            "tool_name": action.tool_name,
+                            "reason": action.reason,
+                            "expires_at": action.expires_at.isoformat(),
+                        }
+                        for action in ordinary
+                    ]
+                if dish_confirmations:
+                    working_memory["pending_dish_confirmation"] = [
                     {
                         "action_id": action.id,
-                        "tool_name": action.tool_name,
-                        "reason": action.reason,
+                        "question": action.reason,
                         "expires_at": action.expires_at.isoformat(),
                     }
-                    for action in pending
-                ]
+                        for action in dish_confirmations
+                    ]
         if working_memory:
             context["working_memory"] = working_memory
         if self._routines is not None:

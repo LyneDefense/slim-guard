@@ -47,6 +47,7 @@ class ArtifactProducerRole(StrEnum):
     ORCHESTRATOR = "orchestrator"
     DISH_RECOGNITION = "dish_recognition"
     USER_DISH_CONFIRMATION = "user_dish_confirmation"
+    ADMIN_REVIEWER = "admin_reviewer"
     NUTRITION_RETRIEVAL = "nutrition_retrieval"
     BUSINESS_TOOL = "business_tool"
     EVIDENCE_BUILDER = "evidence_builder"
@@ -66,6 +67,7 @@ class InvocationStatus(StrEnum):
 
 class ResponsePath(StrEnum):
     DIRECT = "direct"
+    DISH_GUIDANCE = "dish_guidance"
     PROFESSIONAL_ASSESSMENT = "professional_assessment"
     SAFETY = "safety"
 
@@ -353,10 +355,12 @@ class TurnDirective(ContractModel):
     response_brief: str = Field(min_length=1, max_length=4000)
     evidence_refs: tuple[str, ...] = Field(default=(), max_length=128)
     professional_question: str | None = Field(default=None, min_length=1, max_length=2000)
+    dish_names: tuple[str, ...] = Field(default=(), max_length=20)
+    resolves_pending_dish_confirmation: bool = False
     voice_act: CommunicationAct
     requested_detail: RequestedDetail = RequestedDetail.NORMAL
 
-    @field_validator("evidence_refs")
+    @field_validator("evidence_refs", "dish_names")
     @classmethod
     def validate_evidence_refs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if any(not item.strip() for item in value):
@@ -372,8 +376,20 @@ class TurnDirective(ContractModel):
                 raise ValueError("Professional assessment requires professional_question")
             if not self.evidence_refs:
                 raise ValueError("Professional assessment requires evidence_refs")
+        elif self.response_path is ResponsePath.DISH_GUIDANCE:
+            if self.professional_question is None:
+                raise ValueError("Dish guidance requires professional_question")
         elif self.professional_question is not None:
             raise ValueError("professional_question is only valid for professional assessment")
+        if self.response_path is not ResponsePath.DISH_GUIDANCE and self.dish_names:
+            raise ValueError("dish_names are only valid for dish guidance")
+        if (
+            self.response_path is not ResponsePath.DISH_GUIDANCE
+            and self.resolves_pending_dish_confirmation
+        ):
+            raise ValueError("Only dish guidance may resolve a pending dish confirmation")
+        if self.resolves_pending_dish_confirmation and not self.dish_names:
+            raise ValueError("Resolving a dish confirmation requires user-supplied dish names")
         return self
 
 

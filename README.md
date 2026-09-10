@@ -83,6 +83,10 @@ DEFAULT_STYLE_PROFILE=slimguard_default_v1
 NUTRITION_AGENT_ENABLED=false
 NUTRITION_RAG_ENABLED=false
 NUTRITION_REQUIRE_RAG_CITATIONS=true
+MEAL_GUIDANCE_ENABLED=false
+DISH_RECOGNITION_ENABLED=true
+NUTRITION_RETRIEVAL_ENABLED=true
+DIET_GUIDANCE_ENABLED=true
 RESPONSE_REVIEWER_ENABLED=false
 ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
@@ -147,6 +151,32 @@ uv run python -m slim_guard.tools.manage_nutrition_knowledge show SOURCE_ID
 完成资料审核后，才在 Shadow 模式打开 `NUTRITION_AGENT_ENABLED=true` 和
 `NUTRITION_RAG_ENABLED=true`。RAG 打开时不能关闭 `NUTRITION_REQUIRE_RAG_CITATIONS`；每条知识性
 Claim 都必须保留当前 Nutrition invocation 的 Citation，并完整通过 Style 渲染。
+
+菜品识别与饮食判断使用 `MEAL_GUIDANCE_ENABLED` 总开关。餐食图片会输出逐道菜候选；置信度不足、
+候选接近或图片质量有问题时只问一个确认问题，不会先给饮食结论。Canary/on 模式会把待确认菜名保存
+24 小时，用户下一轮明确更正后复用原识别结果，不会重复调用视觉模型。确认后的菜名先查版本化菜品库，
+再查已发布的 Nutrition RAG；资料不足时明确返回 `insufficient_information`，不会猜热量、克重或营养素。
+管理台 Trace 会分开展示识别、确认、检索和建议；“人工更正菜名”只追加审核 Artifact，原识别结果保持
+不变，也不会未经审核自动修改 Prompt 或菜品库。生产资料准备步骤见 `DISH_GUIDANCE_DATA_RUNBOOK.md`。
+
+菜品库导入清单可以是 JSON 数组，也可以是包含 `dishes` 数组的对象。每项至少包含 `entity_key`、
+`version`、`canonical_name`、`source_refs`；别名、菜品特征和规则均需逐项填写 `source_ref`。规则只支持
+`allow/adjust/limit/avoid/require_confirmation`，其中 `avoid` 必须绑定用户限制或医疗边界，不能写成
+对所有减脂用户生效的通用禁食规则。运维命令如下：
+
+```bash
+uv run python -m slim_guard.tools.manage_dish_knowledge import ./dish-manifest.json --actor importer@example
+uv run python -m slim_guard.tools.manage_dish_knowledge approve ENTITY_ID --reviewer reviewer@example
+uv run python -m slim_guard.tools.manage_dish_knowledge publish ENTITY_ID --reviewer publisher@example
+uv run python -m slim_guard.tools.manage_dish_knowledge search "西红柿炒鸡蛋"
+uv run python -m slim_guard.tools.manage_dish_knowledge retire ENTITY_ID --reviewer reviewer@example --reason "已由新版本替代"
+uv run python -m slim_guard.tools.manage_dish_knowledge show ENTITY_ID
+```
+
+建议先用 `MULTI_AGENT_MODE=shadow`、`MEAL_GUIDANCE_ENABLED=true`、
+`NUTRITION_AGENT_ENABLED=true` 验证识别和空资料降级。只有菜品库与 RAG 数据完成审核、Reviewer 人工样本
+通过后，才打开 `NUTRITION_RAG_ENABLED=true` 并进入 canary/on。三个内部开关只用于排障；任一关闭时
+流程会保守退出，不绕过缺失模块继续生成建议。
 
 `RESPONSE_REVIEWER_ENABLED=true` 开启候选回复审查，要求同时开启 Style 渲染。
 审查将风格问题返回 Style、无依据专业结论返回 Nutrition、缺少用户信息返回 Orchestrator 询问。

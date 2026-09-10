@@ -11,6 +11,8 @@ from slim_guard.agents.dish_recognition.contracts import (
     DishConfirmationSource,
     DishImageKind,
     DishRecognitionAgentResult,
+    DishRecognitionCorrection,
+    DishRecognitionCorrectionItem,
     DishRecognitionResult,
     RecognizedDish,
 )
@@ -31,6 +33,8 @@ __all__ = [
     "DishCandidate",
     "DishConfirmationSource",
     "DishImageKind",
+    "DishRecognitionCorrection",
+    "DishRecognitionCorrectionItem",
     "DishRecognitionAgentResult",
     "DishRecognitionResult",
     "RecognizedDish",

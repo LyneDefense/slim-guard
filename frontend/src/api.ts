@@ -15,6 +15,7 @@ import type {
   StyleIterationRun,
   StyleRuntimeContext,
   TraceDetail,
+  DishRecognitionCorrectionInput,
   TraceListFilters,
   TraceSummary,
   TraceWorkflowReviewMetrics,
@@ -92,6 +93,20 @@ export const api = {
     request<TraceDetail>(
       `/users/${encodeURIComponent(userId)}/traces/${encodeURIComponent(traceId)}`,
     ),
+  appendDishRecognitionCorrection: (
+    userId: string,
+    traceId: string,
+    artifactId: string,
+    input: DishRecognitionCorrectionInput,
+  ) => request(
+    `/users/${encodeURIComponent(userId)}/traces/${encodeURIComponent(traceId)}`
+      + `/dish-recognition-corrections/${encodeURIComponent(artifactId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
+      body: JSON.stringify(input),
+    },
+  ),
   workflowMetrics: (windowDays = 7) =>
     request<TraceWorkflowReviewMetrics>(
       `/metrics/workflows?window_days=${encodeURIComponent(windowDays)}`,

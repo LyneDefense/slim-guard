@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from slim_guard.agents.contracts import (
     ContentBlockKind,
     RepairTarget,
@@ -98,6 +100,10 @@ class ReviewerVerdictValidator:
                     ReviewerIssueType.CHANGED_UNCERTAINTY,
                     ReviewerIssueType.ABUSIVE_TONE,
                     ReviewerIssueType.OMITTED_REQUIRED_CONTENT,
+                    ReviewerIssueType.DISH_IDENTITY_STRENGTHENED,
+                    ReviewerIssueType.UNSUPPORTED_DISH_GUIDANCE,
+                    ReviewerIssueType.UNSUPPORTED_AVOIDANCE,
+                    ReviewerIssueType.FORBIDDEN_NUTRITION_ESTIMATE,
                 }
             )
         if target is RepairTarget.NUTRITION_EXPERT:
@@ -106,6 +112,9 @@ class ReviewerVerdictValidator:
                     ReviewerIssueType.UNSUPPORTED_CLAIM,
                     ReviewerIssueType.UNSUPPORTED_PROFESSIONAL_CLAIM,
                     ReviewerIssueType.MEDICAL_OVERREACH,
+                    ReviewerIssueType.UNSUPPORTED_DISH_GUIDANCE,
+                    ReviewerIssueType.UNSUPPORTED_AVOIDANCE,
+                    ReviewerIssueType.FORBIDDEN_NUTRITION_ESTIMATE,
                 }
             )
         if target is RepairTarget.ORCHESTRATOR:
@@ -178,6 +187,20 @@ class ReviewerVerdictValidator:
                 )
             if not referenced.issubset(context.available_evidence_ids):
                 detected.add(ReviewerIssueType.MISSING_USER_EVIDENCE)
+        if "add_nutrition_estimate" in plan.prohibited_transformations and re.search(
+            r"(?:\d+(?:\.\d+)?\s*(?:千卡|卡路里|kcal|克|g\b)|"
+            r"(?:热量|蛋白质|脂肪|碳水)[^。；，,]{0,12}\d)",
+            styled.text,
+            re.IGNORECASE,
+        ):
+            detected.add(ReviewerIssueType.FORBIDDEN_NUTRITION_ESTIMATE)
+        plan_text = "\n".join(block.text for block in plan.content_blocks)
+        if (
+            "add_avoidance" in plan.prohibited_transformations
+            and not re.search(r"(?:避免|不能吃|禁食)", plan_text)
+            and re.search(r"(?:绝对不能吃|禁止食用|必须避免|千万别吃)", styled.text)
+        ):
+            detected.add(ReviewerIssueType.UNSUPPORTED_AVOIDANCE)
         return detected
 
 

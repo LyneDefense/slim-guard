@@ -236,6 +236,10 @@ class AdminQueryRepository:
         graph_version: str | None = None,
         agent_version: str | None = None,
         profile_version: str | None = None,
+        dish_confirmation: str | None = None,
+        dish_match: str | None = None,
+        dish_suitability: str | None = None,
+        review_verdict: str | None = None,
     ) -> dict[str, Any] | None:
         """List user traces, enriching only one SQL page unless facet filtering is used.
 
@@ -263,12 +267,14 @@ class AdminQueryRepository:
                     graph_version,
                     agent_version,
                     profile_version,
+                    dish_confirmation,
+                    dish_match,
+                    dish_suitability,
+                    review_verdict,
                 )
             )
             unfiltered_total = int(
-                await session.scalar(
-                    select(func.count(InteractionTraceRecord.id)).where(*filters)
-                )
+                await session.scalar(select(func.count(InteractionTraceRecord.id)).where(*filters))
                 or 0
             )
             trace_statement = (
@@ -281,17 +287,12 @@ class AdminQueryRepository:
             )
             if not facet_filters_active:
                 trace_statement = trace_statement.offset(offset).limit(limit)
-            traces = tuple(
-                await session.scalars(trace_statement)
-            )
+            traces = tuple(await session.scalars(trace_statement))
             trace_ids = [trace.id for trace in traces]
             turn_ids = list(
                 dict.fromkeys(
-                    trace.agent_turn_id
-                    for trace in traces
-                    if isinstance(trace.agent_turn_id, str)
+                    trace.agent_turn_id for trace in traces if isinstance(trace.agent_turn_id, str)
                 )
-
             )
             invocation_rows = (
                 tuple(
@@ -374,16 +375,16 @@ class AdminQueryRepository:
                 graph_version=graph_version,
                 agent_version=agent_version,
                 profile_version=profile_version,
+                dish_confirmation=dish_confirmation,
+                dish_match=dish_match,
+                dish_suitability=dish_suitability,
+                review_verdict=review_verdict,
             ):
                 continue
             enriched.append({**self._trace_summary(trace), **facets})
 
         return {
-            "items": (
-                enriched[offset : offset + limit]
-                if facet_filters_active
-                else enriched
-            ),
+            "items": (enriched[offset : offset + limit] if facet_filters_active else enriched),
             "total": len(enriched) if facet_filters_active else unfiltered_total,
             "limit": limit,
             "offset": offset,
@@ -417,6 +418,8 @@ class AdminQueryRepository:
         graph_versions = cls._unique_string_field(invocations, "graph_version")
         agent_versions = cls._unique_string_field(invocations, "agent_version")
         profile_versions = cls._unique_string_field(artifacts, "style_profile_version")
+        dish_confirmation, dish_matches, dish_suitabilities = cls._dish_facets(artifacts)
+        review_verdict = cls._review_verdict_facet(artifacts)
         transition_events = cls._workflow_events(timeline, "workflow_transition")
         repair = any(
             isinstance(event.get("details"), dict)
@@ -439,15 +442,17 @@ class AdminQueryRepository:
             "rag": any(cls._artifact_used_rag(artifact) for artifact in artifacts),
             "repair": repair,
             "degraded": degraded,
+            "dish_confirmation": dish_confirmation,
+            "dish_matches": dish_matches,
+            "dish_suitabilities": dish_suitabilities,
+            "review_verdict": review_verdict,
         }
 
     @staticmethod
     def _unique_string_field(items: list[dict[str, Any]], field: str) -> list[str]:
         return list(
             dict.fromkeys(
-                value
-                for item in items
-                if isinstance((value := item.get(field)), str) and value
+                value for item in items if isinstance((value := item.get(field)), str) and value
             )
         )
 
@@ -456,12 +461,21 @@ class AdminQueryRepository:
         if cls._normalized_artifact_type(str(artifact.get("artifact_type", ""))) not in {
             "nutritionobservation",
             "nutritionobservations",
+            "dishevidencebundle",
         }:
             return False
         payload = artifact.get("payload")
         rag_enabled = payload.get("rag_enabled") if isinstance(payload, dict) else None
         if isinstance(rag_enabled, bool):
             return rag_enabled
+        if cls._normalized_artifact_type(str(artifact.get("artifact_type", ""))) == (
+            "dishevidencebundle"
+        ):
+            dishes = payload.get("dishes") if isinstance(payload, dict) else None
+            return isinstance(dishes, list) and any(
+                isinstance(dish, dict) and bool(dish.get("rag_evidence") or dish.get("citations"))
+                for dish in dishes
+            )
         knowledge = payload.get("knowledge") if isinstance(payload, dict) else None
         if not isinstance(knowledge, dict):
             return False
@@ -485,6 +499,10 @@ class AdminQueryRepository:
         graph_version: str | None,
         agent_version: str | None,
         profile_version: str | None,
+        dish_confirmation: str | None,
+        dish_match: str | None,
+        dish_suitability: str | None,
+        review_verdict: str | None,
     ) -> bool:
         boolean_filters = {
             "agent_failure": agent_failure,
@@ -503,10 +521,71 @@ class AdminQueryRepository:
             return False
         if agent_version is not None and agent_version not in facets.get("agent_versions", []):
             return False
+        if dish_confirmation is not None and facets.get("dish_confirmation") != dish_confirmation:
+            return False
+        if dish_match is not None and dish_match not in facets.get("dish_matches", []):
+            return False
+        if dish_suitability is not None and dish_suitability not in facets.get(
+            "dish_suitabilities", []
+        ):
+            return False
+        if review_verdict is not None and facets.get("review_verdict") != review_verdict:
+            return False
         return not (
             profile_version is not None
             and profile_version not in facets.get("profile_versions", [])
         )
+
+    @classmethod
+    def _dish_facets(
+        cls,
+        artifacts: list[dict[str, Any]],
+    ) -> tuple[str, list[str], list[str]]:
+        confirmation = "not_applicable"
+        matches: list[str] = []
+        suitabilities: list[str] = []
+        for artifact in artifacts:
+            payload = artifact.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            normalized = cls._normalized_artifact_type(str(artifact.get("artifact_type", "")))
+            if normalized == "dishrecognition":
+                confirmation = (
+                    "pending"
+                    if payload.get("overall_requires_confirmation") is True
+                    else "automatic"
+                )
+            elif normalized == "confirmeddishset":
+                confirmation = "confirmed"
+            elif normalized == "dishevidencebundle":
+                dishes = payload.get("dishes")
+                if isinstance(dishes, list):
+                    for dish in dishes:
+                        entity_match = dish.get("entity_match") if isinstance(dish, dict) else None
+                        status = (
+                            entity_match.get("status") if isinstance(entity_match, dict) else None
+                        )
+                        if isinstance(status, str) and status not in matches:
+                            matches.append(status)
+            elif normalized == "dietguidanceassessment":
+                dishes = payload.get("dishes")
+                if isinstance(dishes, list):
+                    for dish in dishes:
+                        value = dish.get("suitability") if isinstance(dish, dict) else None
+                        if isinstance(value, str) and value not in suitabilities:
+                            suitabilities.append(value)
+        return confirmation, matches, suitabilities
+
+    @classmethod
+    def _review_verdict_facet(cls, artifacts: list[dict[str, Any]]) -> str | None:
+        verdicts = [
+            artifact.get("payload", {}).get("verdict")
+            for artifact in artifacts
+            if cls._normalized_artifact_type(str(artifact.get("artifact_type", "")))
+            == "reviewerverdict"
+            and isinstance(artifact.get("payload"), dict)
+        ]
+        return next((value for value in reversed(verdicts) if isinstance(value, str)), None)
 
     async def get_trace(self, *, user_id: str, trace_id: str) -> dict[str, Any] | None:
         async with self._database.session() as session:
@@ -872,9 +951,7 @@ class AdminQueryRepository:
             trace_ids = [trace.id for trace in traces]
             turn_ids = list(
                 dict.fromkeys(
-                    trace.agent_turn_id
-                    for trace in traces
-                    if isinstance(trace.agent_turn_id, str)
+                    trace.agent_turn_id for trace in traces if isinstance(trace.agent_turn_id, str)
                 )
             )
             invocation_rows = (
@@ -945,10 +1022,9 @@ class AdminQueryRepository:
         legacy_tokens_by_turn: dict[str, int] = {}
         for item_row in item_rows:
             if item_row.item_type == "model_message":
-                legacy_tokens_by_turn[item_row.turn_id] = (
-                    legacy_tokens_by_turn.get(item_row.turn_id, 0)
-                    + self._model_message_token_count(item_row)
-                )
+                legacy_tokens_by_turn[item_row.turn_id] = legacy_tokens_by_turn.get(
+                    item_row.turn_id, 0
+                ) + self._model_message_token_count(item_row)
                 continue
             timeline_by_turn.setdefault(item_row.turn_id, []).append(
                 self._item_view(item_row, None)
@@ -967,9 +1043,7 @@ class AdminQueryRepository:
                     }
                 )
             elif item_row.item_type == "response_degraded":
-                degraded_by_turn.setdefault(item_row.turn_id, []).append(
-                    {"details": details}
-                )
+                degraded_by_turn.setdefault(item_row.turn_id, []).append({"details": details})
 
         workflows: list[dict[str, Any]] = []
         seen_turn_ids: set[str] = set()
@@ -1060,13 +1134,9 @@ class AdminQueryRepository:
             }
             for role, counts in sorted(node_counts.items())
         }
-        citation_metrics = self._citation_metrics(
-            [workflow["evidence"] for workflow in workflows]
-        )
+        citation_metrics = self._citation_metrics([workflow["evidence"] for workflow in workflows])
         outcomes_by_mode: dict[str, dict[str, int]] = {}
-        workflow_by_turn_id = {
-            str(workflow["turn_id"]): workflow for workflow in workflows
-        }
+        workflow_by_turn_id = {str(workflow["turn_id"]): workflow for workflow in workflows}
         outcome_keys: set[str] = set()
         for trace in traces:
             turn_id = trace.agent_turn_id
@@ -1078,9 +1148,7 @@ class AdminQueryRepository:
                 workflow_by_turn_id.get(turn_id) if isinstance(turn_id, str) else None
             )
             mode_name = (
-                str(selected_workflow["facets"]["mode"])
-                if selected_workflow is not None
-                else "off"
+                str(selected_workflow["facets"]["mode"]) if selected_workflow is not None else "off"
             )
             outcomes = outcomes_by_mode.setdefault(
                 mode_name,
@@ -1109,9 +1177,7 @@ class AdminQueryRepository:
                 "rejected_workflow_count": rejected_workflow_count,
                 "repair_workflow_count": repair_workflow_count,
                 "degraded_workflow_count": degraded_workflow_count,
-                "repair_attempt_count": sum(
-                    len(item["repair_attempts"]) for item in summaries
-                ),
+                "repair_attempt_count": sum(len(item["repair_attempts"]) for item in summaries),
             },
             "rates": {
                 "rejection_rate": rate(
@@ -1129,9 +1195,7 @@ class AdminQueryRepository:
             },
             "denominators": denominators,
             "by_repair_target": {
-                target: sum(
-                    int(item["repair_counts"].get(target, 0)) for item in summaries
-                )
+                target: sum(int(item["repair_counts"].get(target, 0)) for item in summaries)
                 for target in target_names
             },
             "latency_ms": {
@@ -1167,8 +1231,7 @@ class AdminQueryRepository:
         upper_index = min(lower_index + 1, len(ordered) - 1)
         fraction = position - lower_index
         return float(
-            ordered[lower_index]
-            + (ordered[upper_index] - ordered[lower_index]) * fraction
+            ordered[lower_index] + (ordered[upper_index] - ordered[lower_index]) * fraction
         )
 
     @classmethod
@@ -1183,9 +1246,7 @@ class AdminQueryRepository:
         for evidence in evidence_summaries:
             citations = evidence.get("adopted_citations")
             citations = citations if isinstance(citations, list) else []
-            unresolved = cls._safe_string_values(
-                evidence.get("unresolved_knowledge_refs")
-            )
+            unresolved = cls._safe_string_values(evidence.get("unresolved_knowledge_refs"))
             citation_count += len(citations) + len(unresolved)
             valid_refs: set[str] = set()
             for citation in citations:
@@ -1214,8 +1275,7 @@ class AdminQueryRepository:
                     continue
                 knowledge_refs = cls._safe_string_values(claim.get("knowledge_refs"))
                 basis_types = {
-                    value.lower()
-                    for value in cls._safe_string_values(claim.get("basis_types"))
+                    value.lower() for value in cls._safe_string_values(claim.get("basis_types"))
                 }
                 if not knowledge_refs and "rag_evidence" not in basis_types:
                     continue
@@ -1229,13 +1289,9 @@ class AdminQueryRepository:
             "citation_count": citation_count,
             "invalid_citation_count": invalid_citation_count,
             "coverage_rate": (
-                covered_claim_count / knowledge_claim_count
-                if knowledge_claim_count
-                else 0.0
+                covered_claim_count / knowledge_claim_count if knowledge_claim_count else 0.0
             ),
-            "invalid_rate": (
-                invalid_citation_count / citation_count if citation_count else 0.0
-            ),
+            "invalid_rate": (invalid_citation_count / citation_count if citation_count else 0.0),
         }
 
     @staticmethod
@@ -1480,9 +1536,7 @@ class AdminQueryRepository:
         input_payload = cls._json_load(row.input_payload_json)
         workflow_mode = input_payload.get("mode") if isinstance(input_payload, dict) else None
         workflow_mode = (
-            workflow_mode
-            if workflow_mode in {"off", "shadow", "canary", "on"}
-            else None
+            workflow_mode if workflow_mode in {"off", "shadow", "canary", "on"} else None
         )
         return {
             "invocation_id": row.id,
@@ -1622,6 +1676,11 @@ class AdminQueryRepository:
                 payload=safe_payload,
             )
         professional_body_redacted = cls._normalized_artifact_type(row.artifact_type) in {
+            "confirmeddishset",
+            "dietguidanceassessment",
+            "dishevidencebundle",
+            "dishrecognition",
+            "dishrecognitioncorrection",
             "evidencepacket",
             "nutritionobservations",
             "nutritionobservation",
@@ -1652,6 +1711,16 @@ class AdminQueryRepository:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         normalized = cls._normalized_artifact_type(artifact_type)
+        if normalized == "dishrecognition":
+            return cls._safe_dish_recognition(payload)
+        if normalized == "confirmeddishset":
+            return cls._safe_confirmed_dish_set(payload)
+        if normalized == "dishevidencebundle":
+            return cls._safe_dish_evidence_bundle(payload)
+        if normalized == "dietguidanceassessment":
+            return cls._safe_diet_guidance_assessment(payload)
+        if normalized == "dishrecognitioncorrection":
+            return cls._safe_dish_recognition_correction(payload)
         if normalized == "evidencepacket":
             return cls._safe_evidence_packet(payload)
         if normalized in {"nutritionobservations", "nutritionobservation"}:
@@ -1661,6 +1730,212 @@ class AdminQueryRepository:
         if normalized == "reviewerverdict":
             return cls._safe_reviewer_verdict(payload)
         return payload
+
+    @classmethod
+    def _safe_dish_recognition(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_dishes = payload.get("dishes")
+        dishes: list[dict[str, Any]] = []
+        if isinstance(raw_dishes, list):
+            for dish in raw_dishes:
+                if not isinstance(dish, dict):
+                    continue
+                raw_candidates = dish.get("candidates")
+                candidates = (
+                    [
+                        {
+                            "label": candidate.get("label"),
+                            "confidence": candidate.get("confidence"),
+                        }
+                        for candidate in raw_candidates
+                        if isinstance(candidate, dict)
+                    ]
+                    if isinstance(raw_candidates, list)
+                    else []
+                )
+                dishes.append(
+                    {
+                        "dish_ref": dish.get("dish_ref"),
+                        "candidates": candidates,
+                        "visible_ingredients": cls._safe_string_values(
+                            dish.get("visible_ingredients")
+                        ),
+                        "preparation_candidates": cls._safe_string_values(
+                            dish.get("preparation_candidates")
+                        ),
+                        "uncertainty_reasons": cls._safe_string_values(
+                            dish.get("uncertainty_reasons")
+                        ),
+                        "requires_confirmation": bool(dish.get("requires_confirmation")),
+                    }
+                )
+        return {
+            "schema_version": payload.get("schema_version"),
+            "asset_id": payload.get("asset_id"),
+            "model": payload.get("model"),
+            "prompt_version": payload.get("prompt_version"),
+            "policy_version": payload.get("policy_version"),
+            "image_kind": payload.get("image_kind"),
+            "quality_flags": cls._safe_string_values(payload.get("quality_flags")),
+            "dishes": dishes,
+            "suggested_question_present": bool(payload.get("suggested_question")),
+            "overall_requires_confirmation": bool(payload.get("overall_requires_confirmation")),
+        }
+
+    @classmethod
+    def _safe_confirmed_dish_set(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_dishes = payload.get("dishes")
+        return {
+            "schema_version": payload.get("schema_version"),
+            "source_artifact_id": payload.get("source_artifact_id"),
+            "dishes": [
+                {
+                    "dish_ref": item.get("dish_ref"),
+                    "name": item.get("name"),
+                    "source": item.get("source"),
+                    "recognition_confidence": item.get("recognition_confidence"),
+                    "user_evidence_present": bool(item.get("user_evidence_ref")),
+                }
+                for item in raw_dishes
+                if isinstance(item, dict)
+            ]
+            if isinstance(raw_dishes, list)
+            else [],
+        }
+
+    @classmethod
+    def _safe_dish_evidence_bundle(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_dishes = payload.get("dishes")
+        dishes: list[dict[str, Any]] = []
+        if isinstance(raw_dishes, list):
+            for item in raw_dishes:
+                if not isinstance(item, dict):
+                    continue
+                match = item.get("entity_match")
+                rules = item.get("rules")
+                citations = item.get("citations")
+                dishes.append(
+                    {
+                        "dish_ref": item.get("dish_ref"),
+                        "entity_match": {
+                            key: match.get(key)
+                            for key in (
+                                "status",
+                                "query_name",
+                                "dish_entity_id",
+                                "canonical_name",
+                                "source_version",
+                                "candidate_entity_ids",
+                            )
+                        }
+                        if isinstance(match, dict)
+                        else None,
+                        "rules": [
+                            {
+                                key: rule.get(key)
+                                for key in (
+                                    "rule_id",
+                                    "condition_type",
+                                    "effect",
+                                    "applicability",
+                                    "source_refs",
+                                    "user_constraint_refs",
+                                )
+                            }
+                            for rule in rules
+                            if isinstance(rule, dict)
+                        ]
+                        if isinstance(rules, list)
+                        else [],
+                        "rag_evidence_count": len(item.get("rag_evidence", []))
+                        if isinstance(item.get("rag_evidence"), list)
+                        else 0,
+                        "citations": [
+                            {
+                                key: citation.get(key)
+                                for key in (
+                                    "citation_id",
+                                    "source_id",
+                                    "chunk_id",
+                                    "title",
+                                    "publisher",
+                                    "version",
+                                    "applicability",
+                                    "review_status",
+                                    "active",
+                                    "content_sha256",
+                                )
+                            }
+                            for citation in citations
+                            if isinstance(citation, dict)
+                        ]
+                        if isinstance(citations, list)
+                        else [],
+                        "missing_information": cls._safe_string_values(
+                            item.get("missing_information")
+                        ),
+                    }
+                )
+        return {
+            "schema_version": payload.get("schema_version"),
+            "corpus_status": payload.get("corpus_status"),
+            "retrieval_receipt_ids": cls._safe_string_values(payload.get("retrieval_receipt_ids")),
+            "dishes": dishes,
+        }
+
+    @classmethod
+    def _safe_diet_guidance_assessment(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_dishes = payload.get("dishes")
+        return {
+            "schema_version": payload.get("schema_version"),
+            "scope": payload.get("scope"),
+            "dishes": [
+                {
+                    "dish_ref": item.get("dish_ref"),
+                    "canonical_name": item.get("canonical_name"),
+                    "suitability": item.get("suitability"),
+                    "reason_count": len(item.get("reasons", []))
+                    if isinstance(item.get("reasons"), list)
+                    else 0,
+                    "action_count": len(item.get("actions", []))
+                    if isinstance(item.get("actions"), list)
+                    else 0,
+                    "hard_rule_refs": cls._safe_string_values(item.get("hard_rule_refs")),
+                    "user_constraint_refs": cls._safe_string_values(
+                        item.get("user_constraint_refs")
+                    ),
+                    "uncertainty_present": bool(item.get("uncertainty_note")),
+                }
+                for item in raw_dishes
+                if isinstance(item, dict)
+            ]
+            if isinstance(raw_dishes, list)
+            else [],
+            "question_count": len(payload.get("questions", []))
+            if isinstance(payload.get("questions"), list)
+            else 0,
+            "risk_flags": cls._safe_string_values(payload.get("risk_flags")),
+            "referral_present": bool(payload.get("referral")),
+        }
+
+    @classmethod
+    def _safe_dish_recognition_correction(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_dishes = payload.get("corrected_dishes")
+        return {
+            "schema_version": payload.get("schema_version"),
+            "recognition_artifact_id": payload.get("recognition_artifact_id"),
+            "corrected_dishes": [
+                {
+                    "dish_ref": item.get("dish_ref"),
+                    "corrected_name": item.get("corrected_name"),
+                }
+                for item in raw_dishes
+                if isinstance(item, dict)
+            ]
+            if isinstance(raw_dishes, list)
+            else [],
+            "reviewer": payload.get("reviewer"),
+            "comment_present": bool(payload.get("comment")),
+        }
 
     @classmethod
     def _safe_reviewer_verdict(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1673,8 +1948,7 @@ class AdminQueryRepository:
             issues = []
         issue_types = cls._review_issue_types(payload)
         reviewed_ids = cls._safe_string_values(
-            payload.get("reviewed_artifact_ids")
-            or payload.get("input_artifact_ids")
+            payload.get("reviewed_artifact_ids") or payload.get("input_artifact_ids")
         )
         candidate_id = payload.get("candidate_artifact_id")
         if isinstance(candidate_id, str) and candidate_id not in reviewed_ids:
@@ -1713,9 +1987,7 @@ class AdminQueryRepository:
             "issue_count": max(len(issues), len(issue_types)),
             "issues": issues,
             "reason_summary_present": bool(
-                payload.get("reason_summary")
-                or payload.get("reason")
-                or payload.get("explanation")
+                payload.get("reason_summary") or payload.get("reason") or payload.get("explanation")
             ),
             "reviewed_artifact_ids": reviewed_ids,
             "repair_attempt": (
@@ -1751,9 +2023,7 @@ class AdminQueryRepository:
             ),
             "excerpt_present": bool(issue.get("excerpt")),
             "explanation_present": bool(
-                issue.get("explanation")
-                or issue.get("reason")
-                or issue.get("message")
+                issue.get("explanation") or issue.get("reason") or issue.get("message")
             ),
         }
 
@@ -1854,9 +2124,7 @@ class AdminQueryRepository:
         return {
             "schema_version": payload.get("schema_version"),
             "rag_enabled": (
-                payload.get("rag_enabled")
-                if isinstance(payload.get("rag_enabled"), bool)
-                else None
+                payload.get("rag_enabled") if isinstance(payload.get("rag_enabled"), bool) else None
             ),
             "evidence": [
                 cls._safe_evidence_item(item) for item in raw_evidence if isinstance(item, dict)
@@ -2158,11 +2426,7 @@ class AdminQueryRepository:
     @staticmethod
     def _first_string(*values: Any) -> str | None:
         return next(
-            (
-                value
-                for value in values
-                if isinstance(value, str) and value
-            ),
+            (value for value in values if isinstance(value, str) and value),
             None,
         )
 
@@ -2189,15 +2453,12 @@ class AdminQueryRepository:
         reviewer_invocations = [
             invocation
             for invocation in invocations
-            if str(invocation.get("agent_role", "")).lower()
-            in {"response_reviewer", "reviewer"}
+            if str(invocation.get("agent_role", "")).lower() in {"response_reviewer", "reviewer"}
         ]
         verdict_artifacts = [
             artifact
             for artifact in artifacts
-            if cls._normalized_artifact_type(
-                str(artifact.get("artifact_type", ""))
-            )
+            if cls._normalized_artifact_type(str(artifact.get("artifact_type", "")))
             == "reviewerverdict"
         ]
         verdicts: list[dict[str, Any]] = []
@@ -2205,9 +2466,7 @@ class AdminQueryRepository:
             payload = artifact.get("payload")
             payload = payload if isinstance(payload, dict) else {}
             parents = cls._safe_string_values(artifact.get("parent_artifact_ids"))
-            reviewed_ids = cls._safe_string_values(
-                payload.get("reviewed_artifact_ids")
-            )
+            reviewed_ids = cls._safe_string_values(payload.get("reviewed_artifact_ids"))
             for parent in parents:
                 if parent not in reviewed_ids:
                     reviewed_ids.append(parent)
@@ -2247,9 +2506,7 @@ class AdminQueryRepository:
                         else max(len(issue_types), len(issues))
                     ),
                     "issues": issues,
-                    "reason_summary_present": bool(
-                        payload.get("reason_summary_present")
-                    ),
+                    "reason_summary_present": bool(payload.get("reason_summary_present")),
                     "reviewed_artifact_ids": reviewed_ids,
                     "parent_artifact_ids": parents,
                     "attempt": invocation.get("attempt") if invocation else None,
@@ -2261,13 +2518,9 @@ class AdminQueryRepository:
             )
 
         repair_transitions = [
-            transition
-            for transition in transitions
-            if cls._is_review_repair_transition(transition)
+            transition for transition in transitions if cls._is_review_repair_transition(transition)
         ]
-        repair_verdicts = [
-            verdict for verdict in verdicts if verdict.get("verdict") == "repair"
-        ]
+        repair_verdicts = [verdict for verdict in verdicts if verdict.get("verdict") == "repair"]
         repair_invocations = [
             invocation
             for invocation in invocations
@@ -2282,11 +2535,7 @@ class AdminQueryRepository:
         repair_attempts: list[dict[str, Any]] = []
         for index, transition in enumerate(repair_transitions):
             verdict = repair_verdicts[index] if index < len(repair_verdicts) else None
-            target = (
-                verdict.get("repair_target")
-                if verdict is not None
-                else None
-            )
+            target = verdict.get("repair_target") if verdict is not None else None
             if not isinstance(target, str) or not target:
                 target = cls._repair_target_from_transition(transition)
             invocation = next(
@@ -2294,16 +2543,11 @@ class AdminQueryRepository:
                     candidate
                     for candidate in repair_invocations
                     if candidate.get("invocation_id") not in used_invocation_ids
-                    and (
-                        target is None
-                        or str(candidate.get("agent_role", "")).lower() == target
-                    )
+                    and (target is None or str(candidate.get("agent_role", "")).lower() == target)
                 ),
                 None,
             )
-            if invocation is not None and isinstance(
-                invocation.get("invocation_id"), str
-            ):
+            if invocation is not None and isinstance(invocation.get("invocation_id"), str):
                 used_invocation_ids.add(invocation["invocation_id"])
             reviewed_ids = (
                 cls._safe_string_values(verdict.get("reviewed_artifact_ids"))
@@ -2323,14 +2567,10 @@ class AdminQueryRepository:
                     ),
                     "input_artifact_id": reviewed_ids[0] if reviewed_ids else None,
                     "output_artifact_id": (
-                        invocation.get("output_artifact_id")
-                        if invocation is not None
-                        else None
+                        invocation.get("output_artifact_id") if invocation is not None else None
                     ),
                     "status": (
-                        invocation.get("status")
-                        if invocation is not None
-                        else "transitioned"
+                        invocation.get("status") if invocation is not None else "transitioned"
                     ),
                     "transition": dict(transition),
                 }
@@ -2338,30 +2578,21 @@ class AdminQueryRepository:
 
         target_names = ("orchestrator", "nutrition_expert", "response_style")
         repair_counts = {
-            target: sum(
-                1 for attempt in repair_attempts if attempt["target"] == target
-            )
+            target: sum(1 for attempt in repair_attempts if attempt["target"] == target)
             for target in target_names
         }
         repair_counts["unknown"] = sum(
-            1
-            for attempt in repair_attempts
-            if attempt["target"] not in target_names
+            1 for attempt in repair_attempts if attempt["target"] not in target_names
         )
         repair_counts["total"] = len(repair_attempts)
         budget_transitions = [
-            transition
-            for transition in transitions
-            if cls._is_review_budget_transition(transition)
+            transition for transition in transitions if cls._is_review_budget_transition(transition)
         ]
         exhausted_targets = list(
             dict.fromkeys(
                 target
                 for transition in budget_transitions
-                if (
-                    target := cls._repair_target_from_transition(transition)
-                )
-                is not None
+                if (target := cls._repair_target_from_transition(transition)) is not None
             )
         )
         if budget_transitions and not exhausted_targets and repair_verdicts:
@@ -2392,9 +2623,7 @@ class AdminQueryRepository:
             ):
                 repaired_ids.append(artifact_id)
         for verdict in verdicts[1:]:
-            for artifact_id in cls._safe_string_values(
-                verdict.get("reviewed_artifact_ids")
-            ):
+            for artifact_id in cls._safe_string_values(verdict.get("reviewed_artifact_ids")):
                 if (
                     artifact_id != original_id
                     and artifact_id not in repaired_ids
@@ -2430,8 +2659,7 @@ class AdminQueryRepository:
         }
         latest_verdict = verdicts[-1].get("verdict") if verdicts else None
         rejected = latest_verdict == "reject" or any(
-            transition.get("reason_code") == "review_rejected"
-            for transition in transitions
+            transition.get("reason_code") == "review_rejected" for transition in transitions
         )
         review_degraded_events = [
             event
@@ -2442,9 +2670,7 @@ class AdminQueryRepository:
                 or "review" in str(event["details"].get("fallback_type", "")).lower()
             )
         ]
-        degraded = rejected or bool(budget_transitions) or bool(
-            review_degraded_events
-        )
+        degraded = rejected or bool(budget_transitions) or bool(review_degraded_events)
         if rejected:
             status = "rejected"
         elif degraded:
@@ -2487,14 +2713,10 @@ class AdminQueryRepository:
         artifact_by_id: dict[str, dict[str, Any]],
     ) -> str | None:
         candidates = (
-            cls._safe_string_values(verdicts[0].get("reviewed_artifact_ids"))
-            if verdicts
-            else []
+            cls._safe_string_values(verdicts[0].get("reviewed_artifact_ids")) if verdicts else []
         )
         if not candidates and reviewer_invocations:
-            candidates = cls._safe_string_values(
-                reviewer_invocations[0].get("input_artifact_ids")
-            )
+            candidates = cls._safe_string_values(reviewer_invocations[0].get("input_artifact_ids"))
         response_types = {
             "styledresponse",
             "neutralresponse",
@@ -2544,11 +2766,9 @@ class AdminQueryRepository:
 
     @staticmethod
     def _is_review_budget_transition(transition: dict[str, Any]) -> bool:
-        return (
-            str(transition.get("reason_code", "")).lower() == "budget_exhausted"
-            and str(transition.get("from_node", "")).lower()
-            in {"review", "review_running", "response_reviewer"}
-        )
+        return str(transition.get("reason_code", "")).lower() == "budget_exhausted" and str(
+            transition.get("from_node", "")
+        ).lower() in {"review", "review_running", "response_reviewer"}
 
     @classmethod
     def _repair_target_from_transition(

@@ -12,6 +12,11 @@ const NODE_LABELS: Record<string, string> = {
   memory_recall: "记忆召回",
   context_ready: "上下文就绪",
   orchestrator_running: "对话编排",
+  dish_recognition_running: "菜品识别",
+  dish_confirmation_pending: "等待确认菜名",
+  dish_confirmation_resolved: "菜名已确认",
+  nutrition_retrieval_running: "营养证据检索",
+  nutrition_evidence_ready: "营养证据就绪",
   evidence_ready: "证据包就绪",
   expert_running: "营养分析",
   nutrition_running: "营养分析",
@@ -127,6 +132,8 @@ function roleForNode(node: string): AgentRole | null {
   const roles: Partial<Record<string, AgentRole>> = {
     orchestrator: "orchestrator",
     orchestrator_running: "orchestrator",
+    dish_recognition_running: "dish_recognition",
+    nutrition_retrieval_running: "nutrition_retrieval",
     nutrition_expert: "nutrition_expert",
     expert_running: "nutrition_expert",
     nutrition_running: "nutrition_expert",
@@ -141,6 +148,8 @@ function roleForNode(node: string): AgentRole | null {
 function nodeForRole(role: AgentRole): string {
   return {
     orchestrator: "orchestrator_running",
+    dish_recognition: "dish_recognition_running",
+    nutrition_retrieval: "nutrition_retrieval_running",
     nutrition_expert: "expert_running",
     response_style: "style_running",
     response_reviewer: "review_running",
