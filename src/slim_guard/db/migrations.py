@@ -721,6 +721,7 @@ MIGRATIONS = (
         "20260911_02_nutrition_release_governance",
         _migrate_legacy_nutrition_publication_state,
     ),
+    SchemaMigration("20260912_01_mobile_coach_profiles", _create_application_tables),
 )
 
 

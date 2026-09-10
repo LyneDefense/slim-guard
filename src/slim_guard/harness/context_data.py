@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from slim_guard.db.models import SlimGuardUser
+from slim_guard.db.models import MobileCoachProfileRecord, SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.domain.body_fat.contracts import BodyFatTrend
 from slim_guard.domain.body_fat.repository import BodyFatRepository
@@ -326,10 +326,57 @@ class AuthoritativeContextDataProvider:
             )
             if row is None:
                 return None
-            return {
+            coach = await session.get(MobileCoachProfileRecord, user_id)
+            profile: dict[str, Any] = {
                 **({"nickname": row.nickname} if row.nickname else {}),
                 "first_seen_at": self._as_aware(row.first_seen_at).isoformat(),
             }
+            if coach is not None:
+                profile["coach_profile"] = {
+                    "source": "user_completed_mobile_profile",
+                    "schema_version": coach.schema_version,
+                    "revision": coach.revision,
+                    "age_band": coach.age_band,
+                    "adult_coach_eligible": coach.age_band not in {"0_9", "10_17"},
+                    "height_cm": self._decimal_text(
+                        Decimal(coach.height_millimeters) / Decimal("10")
+                    ),
+                    "current_weight_kg": self._decimal_text(
+                        Decimal(coach.current_weight_grams) / Decimal("1000")
+                    ),
+                    "weight_measured_on": coach.weight_measured_on.isoformat(),
+                    "goal_type": coach.goal_type,
+                    "target_weight_kg": self._decimal_text(
+                        Decimal(coach.target_weight_grams) / Decimal("1000")
+                    ),
+                    "target_date": coach.target_date.isoformat(),
+                    **(
+                        {
+                            "current_body_fat_percent": self._decimal_text(
+                                Decimal(coach.current_body_fat_basis_points) / Decimal("100")
+                            )
+                        }
+                        if coach.current_body_fat_basis_points is not None
+                        else {}
+                    ),
+                    **(
+                        {
+                            "target_body_fat_percent": self._decimal_text(
+                                Decimal(coach.target_body_fat_basis_points) / Decimal("100")
+                            )
+                        }
+                        if coach.target_body_fat_basis_points is not None
+                        else {}
+                    ),
+                    **(
+                        {"exercise_frequency": coach.exercise_frequency}
+                        if coach.exercise_frequency is not None
+                        else {}
+                    ),
+                    "completed_at": self._as_aware(coach.completed_at).isoformat(),
+                    "updated_at": self._as_aware(coach.updated_at).isoformat(),
+                }
+            return profile
 
     @staticmethod
     async def _empty_body_fat() -> BodyFatTrend:

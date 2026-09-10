@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from slim_guard.db.models import (
     AgentThreadRecord,
     MobileAgentRequestRecord,
     MobileAuthIdentityRecord,
+    MobileCoachProfileRecord,
     SlimGuardUser,
 )
 from slim_guard.db.session import Database
@@ -38,6 +40,12 @@ from slim_guard.mobile.contracts import (
     ChatMessageView,
     ChatRequest,
     ChatResponse,
+    CoachAgeBand,
+    CoachExerciseFrequency,
+    CoachGoalType,
+    CoachProfileData,
+    CoachProfileRequest,
+    CoachProfileStatusView,
     MemoryView,
     MobileUserView,
     ProgressView,
@@ -115,7 +123,89 @@ class MobileApplicationService:
             user.updated_at = datetime.now(UTC)
         return await self.user(user_id)
 
+    async def coach_profile(self, user_id: str) -> CoachProfileStatusView:
+        async with self._database.session() as session:
+            if await session.get(SlimGuardUser, user_id) is None:
+                raise MobileServiceError("user_not_found", "User was not found")
+            row = await session.get(MobileCoachProfileRecord, user_id)
+            return self._coach_profile_view(row)
+
+    async def save_coach_profile(
+        self,
+        user_id: str,
+        request: CoachProfileRequest,
+        *,
+        now: datetime,
+    ) -> CoachProfileStatusView:
+        current = self._aware(now)
+        today = current.date()
+        if request.weight_measured_on > today:
+            raise MobileServiceError(
+                "invalid_coach_profile",
+                "体重测量日期不能晚于今天",
+            )
+        if request.target_date <= today:
+            raise MobileServiceError(
+                "invalid_coach_profile",
+                "目标日期必须晚于今天",
+            )
+        values = {
+            "schema_version": 1,
+            "age_band": request.age_band.value,
+            "height_millimeters": self._scaled_integer(request.height_cm, 10),
+            "current_weight_grams": self._scaled_integer(request.current_weight_kg, 1000),
+            "weight_measured_on": request.weight_measured_on,
+            "goal_type": request.goal_type.value,
+            "target_weight_grams": self._scaled_integer(request.target_weight_kg, 1000),
+            "target_date": request.target_date,
+            "current_body_fat_basis_points": self._optional_scaled_integer(
+                request.current_body_fat_percent,
+                100,
+            ),
+            "target_body_fat_basis_points": self._optional_scaled_integer(
+                request.target_body_fat_percent,
+                100,
+            ),
+            "exercise_frequency": (
+                request.exercise_frequency.value
+                if request.exercise_frequency is not None
+                else None
+            ),
+            "updated_at": current,
+        }
+        async with self._database.session() as session, session.begin():
+            if await session.get(SlimGuardUser, user_id) is None:
+                raise MobileServiceError("user_not_found", "User was not found")
+            row = await session.get(MobileCoachProfileRecord, user_id, with_for_update=True)
+            if row is None:
+                row = MobileCoachProfileRecord(
+                    user_id=user_id,
+                    revision=1,
+                    completed_at=current,
+                    created_at=current,
+                    **values,
+                )
+                session.add(row)
+            else:
+                for field, value in values.items():
+                    setattr(row, field, value)
+                row.revision += 1
+            await session.flush()
+            view = self._coach_profile_view(row)
+        return view
+
     async def chat(self, user_id: str, request: ChatRequest) -> ChatResponse:
+        profile = await self.coach_profile(user_id)
+        if profile.status == "required":
+            raise MobileServiceError(
+                "coach_profile_required",
+                "使用教练前，请先完成健康档案",
+            )
+        if not profile.coach_enabled:
+            raise MobileServiceError(
+                "coach_age_not_supported",
+                "当前成人减脂教练暂不适用于未满 18 岁的用户",
+            )
         if self._runtime is None:
             raise MobileServiceError("agent_unavailable", "SlimGuard Agent is unavailable")
         image = self._decode_image(request.image_base64)
@@ -394,6 +484,21 @@ class MobileApplicationService:
         routine = await self.routine(user_id)
         local_date = self._aware(now).astimezone(ZoneInfo(routine.timezone)).date()
         progress = await self.progress(user_id, limit=30)
+        coach_profile = (await self.coach_profile(user_id)).profile
+        profile_is_latest_weight = coach_profile is not None and (
+            not progress.weights
+            or coach_profile.weight_measured_on
+            > self._aware(progress.weights[-1].occurred_at).date()
+        )
+        profile_is_latest_body_fat = (
+            coach_profile is not None
+            and coach_profile.current_body_fat_percent is not None
+            and (
+                not progress.body_fat
+                or coach_profile.weight_measured_on
+                > self._aware(progress.body_fat[-1].occurred_at).date()
+            )
+        )
         meals_logged = sum(
             1
             for item in progress.meals
@@ -408,9 +513,15 @@ class MobileApplicationService:
         )
         return TodayView(
             date=local_date.isoformat(),
-            current_weight_kg=(progress.weights[-1].value if progress.weights else None),
+            current_weight_kg=(
+                coach_profile.current_weight_kg
+                if profile_is_latest_weight and coach_profile is not None
+                else (progress.weights[-1].value if progress.weights else None)
+            ),
             current_body_fat_percent=(
-                progress.body_fat[-1].value if progress.body_fat else None
+                coach_profile.current_body_fat_percent
+                if profile_is_latest_body_fat and coach_profile is not None
+                else (progress.body_fat[-1].value if progress.body_fat else None)
             ),
             meals_logged=meals_logged,
             exercise_logged=exercise_logged,
@@ -554,6 +665,58 @@ class MobileApplicationService:
             failure_code=row.failure_code,
             created=created,
         )
+
+    @classmethod
+    def _coach_profile_view(
+        cls,
+        row: MobileCoachProfileRecord | None,
+    ) -> CoachProfileStatusView:
+        if row is None:
+            return CoachProfileStatusView(
+                status="required",
+                coach_enabled=False,
+            )
+        age_band = CoachAgeBand(row.age_band)
+        enabled = age_band.supports_adult_coach
+        return CoachProfileStatusView(
+            status="ready" if enabled else "unsupported_minor",
+            coach_enabled=enabled,
+            profile=CoachProfileData(
+                age_band=age_band,
+                height_cm=row.height_millimeters / 10,
+                current_weight_kg=row.current_weight_grams / 1000,
+                weight_measured_on=row.weight_measured_on,
+                goal_type=CoachGoalType(row.goal_type),
+                target_weight_kg=row.target_weight_grams / 1000,
+                target_date=row.target_date,
+                current_body_fat_percent=(
+                    row.current_body_fat_basis_points / 100
+                    if row.current_body_fat_basis_points is not None
+                    else None
+                ),
+                target_body_fat_percent=(
+                    row.target_body_fat_basis_points / 100
+                    if row.target_body_fat_basis_points is not None
+                    else None
+                ),
+                exercise_frequency=(
+                    CoachExerciseFrequency(row.exercise_frequency)
+                    if row.exercise_frequency is not None
+                    else None
+                ),
+                revision=row.revision,
+                completed_at=cls._aware(row.completed_at),
+                updated_at=cls._aware(row.updated_at),
+            ),
+        )
+
+    @staticmethod
+    def _scaled_integer(value: Decimal, factor: int) -> int:
+        return int((value * factor).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    @classmethod
+    def _optional_scaled_integer(cls, value: Decimal | None, factor: int) -> int | None:
+        return cls._scaled_integer(value, factor) if value is not None else None
 
     @staticmethod
     def _json(value: str) -> dict[str, object]:

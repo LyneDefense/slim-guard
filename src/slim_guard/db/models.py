@@ -572,6 +572,88 @@ class MobileAgentRequestRecord(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class MobileCoachProfileRecord(Base):
+    """Authoritative, user-entered profile required before mobile coaching."""
+
+    __tablename__ = "mobile_coach_profiles"
+    __table_args__ = (
+        CheckConstraint("schema_version = 1", name="ck_mobile_coach_profile_schema"),
+        CheckConstraint("revision >= 1", name="ck_mobile_coach_profile_revision"),
+        CheckConstraint(
+            "age_band IN ("
+            "'0_9','10_17','18_29','30_39','40_49','50_59','60_69','70_79','80_plus'"
+            ")",
+            name="ck_mobile_coach_profile_age_band",
+        ),
+        CheckConstraint(
+            "height_millimeters BETWEEN 500 AND 2500",
+            name="ck_mobile_coach_profile_height",
+        ),
+        CheckConstraint(
+            "current_weight_grams BETWEEN 10000 AND 500000",
+            name="ck_mobile_coach_profile_current_weight",
+        ),
+        CheckConstraint(
+            "goal_type IN ('lose_weight','maintain_weight','improve_habits')",
+            name="ck_mobile_coach_profile_goal_type",
+        ),
+        CheckConstraint(
+            "target_weight_grams BETWEEN 10000 AND 500000",
+            name="ck_mobile_coach_profile_target_weight",
+        ),
+        CheckConstraint(
+            "target_date > weight_measured_on",
+            name="ck_mobile_coach_profile_target_date",
+        ),
+        CheckConstraint(
+            "goal_type != 'lose_weight' OR target_weight_grams < current_weight_grams",
+            name="ck_mobile_coach_profile_weight_loss_target",
+        ),
+        CheckConstraint(
+            "current_body_fat_basis_points IS NULL OR "
+            "current_body_fat_basis_points BETWEEN 100 AND 7500",
+            name="ck_mobile_coach_profile_current_body_fat",
+        ),
+        CheckConstraint(
+            "target_body_fat_basis_points IS NULL OR "
+            "target_body_fat_basis_points BETWEEN 100 AND 7500",
+            name="ck_mobile_coach_profile_target_body_fat",
+        ),
+        CheckConstraint(
+            "exercise_frequency IS NULL OR exercise_frequency IN ("
+            "'rarely','weekly_1_2','weekly_3_4','weekly_5_plus'"
+            ")",
+            name="ck_mobile_coach_profile_exercise_frequency",
+        ),
+        Index("ix_mobile_coach_profile_updated", "updated_at"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    age_band: Mapped[str] = mapped_column(String(16), nullable=False)
+    height_millimeters: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_weight_grams: Mapped[int] = mapped_column(Integer, nullable=False)
+    weight_measured_on: Mapped[date] = mapped_column(Date, nullable=False)
+    goal_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_weight_grams: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    current_body_fat_basis_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_body_fat_basis_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exercise_frequency: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
 class MobileDeviceRecord(Base):
     """One app installation eligible for local/remote notification coordination."""
 

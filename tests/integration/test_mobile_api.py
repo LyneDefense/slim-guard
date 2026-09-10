@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
@@ -10,6 +12,7 @@ from slim_guard.db.models import (
     InteractionTraceRecord,
     MobileAgentRequestRecord,
     MobileAuthIdentityRecord,
+    MobileCoachProfileRecord,
     MobileDeviceRecord,
     SlimGuardUser,
 )
@@ -61,10 +64,36 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
                 headers=headers,
                 json={"nickname": "阿杰"},
             )
+            required_profile = await http.get(
+                "/api/mobile/v1/coach-profile",
+                headers=headers,
+            )
             chat_payload = {
                 "text": "今天开始认真记录",
                 "idempotency_key": "mobile-message-0001",
             }
+            blocked_chat = await http.post(
+                "/api/mobile/v1/chat/messages",
+                headers=headers,
+                json=chat_payload,
+            )
+            today_date = datetime.now(UTC).date()
+            saved_profile = await http.put(
+                "/api/mobile/v1/coach-profile",
+                headers=headers,
+                json={
+                    "age_band": "30_39",
+                    "height_cm": 168.5,
+                    "current_weight_kg": 72.5,
+                    "weight_measured_on": today_date.isoformat(),
+                    "goal_type": "lose_weight",
+                    "target_weight_kg": 65,
+                    "target_date": (today_date + timedelta(days=120)).isoformat(),
+                    "current_body_fat_percent": 28.2,
+                    "target_body_fat_percent": 22,
+                    "exercise_frequency": "weekly_1_2",
+                },
+            )
             chat = await http.post(
                 "/api/mobile/v1/chat/messages",
                 headers=headers,
@@ -113,6 +142,19 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
         assert login.json()["token_type"] == "Bearer"
         assert me.status_code == 200
         assert me.json()["nickname"] == "阿杰"
+        assert required_profile.json() == {
+            "schema_version": 1,
+            "status": "required",
+            "coach_enabled": False,
+            "profile": None,
+        }
+        assert blocked_chat.status_code == 428
+        assert blocked_chat.json()["detail"]["code"] == "coach_profile_required"
+        assert saved_profile.status_code == 200
+        assert saved_profile.json()["status"] == "ready"
+        assert saved_profile.json()["coach_enabled"] is True
+        assert saved_profile.json()["profile"]["height_cm"] == 168.5
+        assert saved_profile.json()["profile"]["revision"] == 1
         assert chat.status_code == 200
         assert chat.json()["text"] == "记下了，我们慢慢来。"
         assert replayed.status_code == 200
@@ -123,6 +165,8 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
         ]
         assert routine.json()["weight_reminder_time"] == "08:00"
         assert today.status_code == 200
+        assert today.json()["current_weight_kg"] == 72.5
+        assert today.json()["current_body_fat_percent"] == 28.2
         assert today.json()["routine"]["daily_review_time"] == "21:00"
         assert device.status_code == 200
         assert "push_token" not in device.json()
@@ -135,12 +179,15 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
             request_count = await session.scalar(select(func.count(MobileAgentRequestRecord.id)))
             trace = await session.scalar(select(InteractionTraceRecord))
             stored_device = await session.scalar(select(MobileDeviceRecord))
+            stored_profile = await session.scalar(select(MobileCoachProfileRecord))
         assert request_count == 1
         assert trace is not None
         assert trace.channel_id == "mobile"
         assert trace.generation_status == "succeeded"
         assert trace.delivery_status == "accepted"
         assert stored_device is not None
+        assert stored_profile is not None
+        assert stored_profile.target_weight_grams == 65_000
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as http:
             deleted = await http.request(
@@ -156,6 +203,82 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
             deleted_user = await session.get(SlimGuardUser, login.json()["user"]["id"])
         assert deleted_user is None
     await model.close()
+
+
+async def test_mobile_coach_profile_rejects_invalid_dates_and_blocks_minors(tmp_path) -> None:
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'mobile-profile-gate.sqlite3'}",
+        mobile_api_enabled=True,
+        mobile_auth_secret="mobile-api-test-secret-with-at-least-32-characters",
+        mobile_test_accounts_enabled=True,
+        mobile_test_account_password="123456",
+        memory_ingestion_enabled=False,
+        memory_recall_enabled=False,
+        routine_scheduler_enabled=False,
+        log_level="WARNING",
+    )
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="https://test",
+        ) as http:
+            login = await http.post(
+                "/api/mobile/v1/auth/password/login",
+                json={"username": "test1", "password": "123456"},
+            )
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            today_date = datetime.now(UTC).date()
+            payload = {
+                "age_band": "10_17",
+                "height_cm": 165,
+                "current_weight_kg": 60,
+                "weight_measured_on": today_date.isoformat(),
+                "goal_type": "lose_weight",
+                "target_weight_kg": 55,
+                "target_date": (today_date + timedelta(days=90)).isoformat(),
+                "current_body_fat_percent": None,
+                "target_body_fat_percent": None,
+                "exercise_frequency": None,
+            }
+            future_measurement = await http.put(
+                "/api/mobile/v1/coach-profile",
+                headers=headers,
+                json={
+                    **payload,
+                    "weight_measured_on": (today_date + timedelta(days=1)).isoformat(),
+                },
+            )
+            minor = await http.put(
+                "/api/mobile/v1/coach-profile",
+                headers=headers,
+                json=payload,
+            )
+            blocked = await http.post(
+                "/api/mobile/v1/chat/messages",
+                headers=headers,
+                json={"text": "帮我看看今天吃什么", "idempotency_key": "minor-chat-1"},
+            )
+            edited = await http.put(
+                "/api/mobile/v1/coach-profile",
+                headers=headers,
+                json={**payload, "age_band": "18_29"},
+            )
+
+        assert future_measurement.status_code == 422
+        assert future_measurement.json()["detail"]["code"] == "invalid_coach_profile"
+        assert minor.status_code == 200
+        assert minor.json()["status"] == "unsupported_minor"
+        assert minor.json()["coach_enabled"] is False
+        assert blocked.status_code == 403
+        assert blocked.json()["detail"]["code"] == "coach_age_not_supported"
+        assert edited.status_code == 200
+        assert edited.json()["status"] == "ready"
+        assert edited.json()["profile"]["revision"] == 2
+
+        async with app.state.database.session() as session:
+            assert await session.scalar(select(func.count(MobileAgentRequestRecord.id))) == 0
 
 
 async def test_mobile_test_accounts_login_and_keep_edited_nickname(tmp_path) -> None:

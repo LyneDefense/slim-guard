@@ -7,10 +7,12 @@ import { Button, Card, EmptyState, SectionTitle } from '../components/ui';
 import { useApp } from '../context/AppContext';
 import { memoryLabel, memoryText } from '../lib/memoryFormat';
 import { colors, radius, spacing } from '../theme';
-import type { Routine } from '../types';
-import type { WeComBinding } from '../types';
+import type { CoachProfileData, Routine, WeComBinding } from '../types';
 
-export function ProfileScreen({ openCoach }: { openCoach: (draft?: string) => void }) {
+export function ProfileScreen({ openCoach, openCoachProfile }: {
+  openCoach: (draft?: string) => void;
+  openCoachProfile: () => void;
+}) {
   const { data, updateProfile, updateRoutine, logout, loading, createWeComBinding, getWeComBinding, deleteAccount } = useApp();
   const [nickname, setNickname] = useState('');
   const [routine, setRoutine] = useState<Routine | null>(null);
@@ -123,6 +125,19 @@ export function ProfileScreen({ openCoach }: { openCoach: (draft?: string) => vo
           <Button title="保存称呼" variant="secondary" loading={savingProfile} onPress={() => void saveName()} />
         </Card>
 
+        <SectionTitle title="健康档案" action={data.coach_profile.profile ? <Pressable onPress={openCoachProfile}><Text style={styles.textAction}>修改</Text></Pressable> : undefined} />
+        <Card>
+          {data.coach_profile.profile ? (
+            <CoachProfileSummary profile={data.coach_profile.profile} unsupported={data.coach_profile.status === 'unsupported_minor'} />
+          ) : (
+            <View>
+              <Text style={styles.infoTitle}>使用教练前需要填写</Text>
+              <Text style={styles.infoBody}>填写年龄段、身高、当前体重和目标后，才能开始使用教练。</Text>
+              <Button title="填写健康档案" variant="secondary" onPress={openCoachProfile} style={{ marginTop: spacing.md }} />
+            </View>
+          )}
+        </Card>
+
         <SectionTitle title="教练记住的你" action={<Pressable onPress={() => openCoach('我想更新一项个人资料：')}><Text style={styles.textAction}>告诉教练有变化</Text></Pressable>} />
         <Card>
           {data.memories.length === 0 ? (
@@ -188,6 +203,55 @@ export function ProfileScreen({ openCoach }: { openCoach: (draft?: string) => vo
   );
 }
 
+const AGE_LABELS: Record<CoachProfileData['age_band'], string> = {
+  '0_9': '0～9 岁',
+  '10_17': '10～17 岁',
+  '18_29': '18～29 岁',
+  '30_39': '30～39 岁',
+  '40_49': '40～49 岁',
+  '50_59': '50～59 岁',
+  '60_69': '60～69 岁',
+  '70_79': '70～79 岁',
+  '80_plus': '80 岁及以上',
+};
+
+const GOAL_LABELS: Record<CoachProfileData['goal_type'], string> = {
+  lose_weight: '减重',
+  maintain_weight: '维持体重',
+  improve_habits: '改善习惯',
+};
+
+const EXERCISE_LABELS = {
+  rarely: '基本不运动',
+  weekly_1_2: '每周 1～2 次',
+  weekly_3_4: '每周 3～4 次',
+  weekly_5_plus: '每周 5 次及以上',
+};
+
+function CoachProfileSummary({ profile, unsupported }: { profile: CoachProfileData; unsupported: boolean }) {
+  return (
+    <View>
+      {unsupported ? <Text style={styles.profileWarning}>当前减脂教练只面向年满 18 岁的用户</Text> : null}
+      <ProfileFact label="年龄段" value={AGE_LABELS[profile.age_band]} />
+      <ProfileFact label="身高" value={`${profile.height_cm} cm`} />
+      <ProfileFact label="当前体重" value={`${profile.current_weight_kg} kg · ${profile.weight_measured_on}`} />
+      <ProfileFact label="目标" value={`${GOAL_LABELS[profile.goal_type]} · ${profile.target_weight_kg} kg · ${profile.target_date}`} />
+      {profile.current_body_fat_percent !== null ? <ProfileFact label="当前体脂" value={`${profile.current_body_fat_percent}%`} /> : null}
+      {profile.target_body_fat_percent !== null ? <ProfileFact label="目标体脂" value={`${profile.target_body_fat_percent}%`} /> : null}
+      {profile.exercise_frequency ? <ProfileFact label="运动习惯" value={EXERCISE_LABELS[profile.exercise_frequency]} /> : null}
+    </View>
+  );
+}
+
+function ProfileFact({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.profileFact}>
+      <Text style={styles.profileFactLabel}>{label}</Text>
+      <Text style={styles.profileFactValue}>{value}</Text>
+    </View>
+  );
+}
+
 function ReminderRow({ icon, title, value, fallback, onChange }: { icon: keyof typeof Ionicons.glyphMap; title: string; value: string | null; fallback: string; onChange: (value: string | null) => void }) {
   return (
     <View style={styles.reminderRow}>
@@ -214,6 +278,10 @@ const styles = StyleSheet.create({
   profileMeta: { marginLeft: spacing.md },
   profileName: { color: colors.ink, fontSize: 18, fontWeight: '800' },
   profileHint: { color: colors.inkMuted, fontSize: 13, marginTop: 4 },
+  profileWarning: { color: colors.warning, backgroundColor: colors.accentSoft, padding: spacing.md, borderRadius: radius.md, fontSize: 12, lineHeight: 18, fontWeight: '700', marginBottom: spacing.sm },
+  profileFact: { minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  profileFactLabel: { width: 70, color: colors.inkMuted, fontSize: 12 },
+  profileFactValue: { flex: 1, color: colors.ink, fontSize: 13, lineHeight: 19, fontWeight: '700', textAlign: 'right' },
   help: { color: colors.inkMuted, fontSize: 12, marginBottom: spacing.sm },
   input: { backgroundColor: colors.surfaceMuted, borderRadius: radius.md, minHeight: 48, paddingHorizontal: spacing.md, color: colors.ink, fontSize: 16, marginBottom: spacing.md },
   textAction: { color: colors.primary, fontSize: 12, fontWeight: '700' },

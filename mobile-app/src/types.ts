@@ -5,6 +5,51 @@ export type MobileUser = {
   created_at: string;
 };
 
+export type CoachAgeBand =
+  | '0_9'
+  | '10_17'
+  | '18_29'
+  | '30_39'
+  | '40_49'
+  | '50_59'
+  | '60_69'
+  | '70_79'
+  | '80_plus';
+
+export type CoachGoalType = 'lose_weight' | 'maintain_weight' | 'improve_habits';
+
+export type CoachExerciseFrequency =
+  | 'rarely'
+  | 'weekly_1_2'
+  | 'weekly_3_4'
+  | 'weekly_5_plus';
+
+export type CoachProfileInput = {
+  age_band: CoachAgeBand;
+  height_cm: number;
+  current_weight_kg: number;
+  weight_measured_on: string;
+  goal_type: CoachGoalType;
+  target_weight_kg: number;
+  target_date: string;
+  current_body_fat_percent: number | null;
+  target_body_fat_percent: number | null;
+  exercise_frequency: CoachExerciseFrequency | null;
+};
+
+export type CoachProfileData = CoachProfileInput & {
+  revision: number;
+  completed_at: string;
+  updated_at: string;
+};
+
+export type CoachProfileStatus = {
+  schema_version: 1;
+  status: 'required' | 'ready' | 'unsupported_minor';
+  coach_enabled: boolean;
+  profile: CoachProfileData | null;
+};
+
 export type AuthTokens = {
   token_type: 'Bearer';
   access_token: string;
@@ -97,6 +142,7 @@ export type Progress = {
 
 export type DashboardData = {
   user: MobileUser;
+  coach_profile: CoachProfileStatus;
   today: Today;
   progress: Progress;
   memories: MemoryItem[];

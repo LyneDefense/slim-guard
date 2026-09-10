@@ -28,6 +28,7 @@ from slim_guard.db.models import (
     MemoryIndexOutboxRecord,
     MobileAgentRequestRecord,
     MobileAuthIdentityRecord,
+    MobileCoachProfileRecord,
     MobileDeviceRecord,
     MobileSessionRecord,
     MobileWeComBindingRecord,
@@ -377,6 +378,7 @@ class MobilePlatformService:
                 delete(UserMemoryEventRecord).where(UserMemoryEventRecord.user_id == user_id)
             )
             for user_data_model in (
+                MobileCoachProfileRecord,
                 MemoryIndexOutboxRecord,
                 MemoryBulkOperationRecord,
                 MemoryHandoffRecord,
@@ -478,6 +480,17 @@ class MobilePlatformService:
                 )
             else:
                 await session.delete(source_routine)
+        source_profile = await session.get(MobileCoachProfileRecord, source_id)
+        target_profile = await session.get(MobileCoachProfileRecord, target_id)
+        if source_profile is not None:
+            if target_profile is None:
+                await session.execute(
+                    update(MobileCoachProfileRecord)
+                    .where(MobileCoachProfileRecord.user_id == source_id)
+                    .values(user_id=target_id)
+                )
+            else:
+                await session.delete(source_profile)
 
     @staticmethod
     def _device_view(row: MobileDeviceRecord) -> DeviceView:

@@ -55,6 +55,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260910_01_dish_knowledge",
             "20260911_01_nutrition_hybrid_rag",
             "20260911_02_nutrition_release_governance",
+            "20260912_01_mobile_coach_profiles",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -87,6 +88,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "nutrition_corpus_runtime",
             "nutrition_retrieval_runs",
             "nutrition_evaluation_datasets",
+            "mobile_coach_profiles",
         }.issubset(table_names)
     finally:
         await database.close()
@@ -198,6 +200,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260910_01_dish_knowledge",
             "20260911_01_nutrition_hybrid_rag",
             "20260911_02_nutrition_release_governance",
+            "20260912_01_mobile_coach_profiles",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

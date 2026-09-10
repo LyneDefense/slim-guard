@@ -12,8 +12,13 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
   const { data, loading, refresh, online, pending } = useApp();
   if (!data) return null;
   const { today, memories, user } = data;
-  const targetWeight = findGoal(memories, 'goal.target_weight');
-  const targetFat = findGoal(memories, 'goal.target_body_fat');
+  const targetWeight = data.coach_profile.profile
+    ? `${data.coach_profile.profile.target_weight_kg} kg`
+    : findGoal(memories, 'goal.target_weight');
+  const targetFat = data.coach_profile.profile?.target_body_fat_percent !== null
+    && data.coach_profile.profile?.target_body_fat_percent !== undefined
+    ? `${data.coach_profile.profile.target_body_fat_percent}%`
+    : findGoal(memories, 'goal.target_body_fat');
   const hour = new Date().getHours();
   const greeting = hour < 11 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
   const displayName = user.nickname || '今天的你';
@@ -73,16 +78,6 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
           </View>
         </Card>
 
-        {memories.length === 0 ? (
-          <Pressable style={styles.onboarding} onPress={() => openCoach('我想先告诉你我的身体情况和减脂目标')}>
-            <View style={styles.onboardingIcon}><Ionicons name="compass-outline" size={25} color={colors.primaryDark} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.onboardingTitle}>先让教练认识你</Text>
-              <Text style={styles.onboardingText}>告诉我身高、当前体重、目标和生活习惯，我会自己理解并记住。</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.primary} />
-          </Pressable>
-        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -147,8 +142,4 @@ const styles = StyleSheet.create({
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginVertical: spacing.sm },
   coachNote: { backgroundColor: colors.surfaceMuted, borderRadius: radius.md, padding: spacing.md, flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   coachText: { color: colors.inkMuted, fontSize: 13, lineHeight: 19, flex: 1 },
-  onboarding: { marginTop: spacing.xl, padding: spacing.lg, backgroundColor: colors.accentSoft, borderRadius: radius.lg, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  onboardingIcon: { width: 46, height: 46, borderRadius: 17, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
-  onboardingTitle: { color: colors.ink, fontSize: 16, fontWeight: '800' },
-  onboardingText: { color: colors.inkMuted, fontSize: 12, lineHeight: 18, marginTop: 3 },
 });

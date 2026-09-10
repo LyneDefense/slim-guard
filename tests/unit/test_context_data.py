@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from slim_guard.db.models import SlimGuardUser
+from slim_guard.db.models import MobileCoachProfileRecord, SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.domain.exercise.contracts import ExerciseRecordCommand
 from slim_guard.domain.exercise.repository import ExerciseRepository
@@ -42,6 +42,24 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
                 nickname="小明",
                 first_seen_at=NOW,
                 last_seen_at=NOW,
+            )
+        )
+        session.add(
+            MobileCoachProfileRecord(
+                user_id="user-1",
+                age_band="30_39",
+                height_millimeters=1680,
+                current_weight_grams=77600,
+                weight_measured_on=NOW.date(),
+                goal_type="lose_weight",
+                target_weight_grams=68000,
+                target_date=(NOW + timedelta(days=120)).date(),
+                current_body_fat_basis_points=2560,
+                target_body_fat_basis_points=2200,
+                exercise_frequency="weekly_1_2",
+                completed_at=NOW,
+                created_at=NOW,
+                updated_at=NOW,
             )
         )
     manifest = AgentManifest.build(
@@ -143,6 +161,24 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
         assert context["profile"] == {
             "nickname": "小明",
             "first_seen_at": NOW.isoformat(),
+            "coach_profile": {
+                "source": "user_completed_mobile_profile",
+                "schema_version": 1,
+                "revision": 1,
+                "age_band": "30_39",
+                "adult_coach_eligible": True,
+                "height_cm": "168",
+                "current_weight_kg": "77.6",
+                "weight_measured_on": NOW.date().isoformat(),
+                "goal_type": "lose_weight",
+                "target_weight_kg": "68",
+                "target_date": (NOW + timedelta(days=120)).date().isoformat(),
+                "current_body_fat_percent": "25.6",
+                "target_body_fat_percent": "22",
+                "exercise_frequency": "weekly_1_2",
+                "completed_at": NOW.isoformat(),
+                "updated_at": NOW.isoformat(),
+            },
         }
         assert context["recent_weights"] == [
             {

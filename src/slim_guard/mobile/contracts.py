@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -103,6 +105,109 @@ class ProfileUpdateRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+
+class CoachAgeBand(StrEnum):
+    AGE_0_9 = "0_9"
+    AGE_10_17 = "10_17"
+    AGE_18_29 = "18_29"
+    AGE_30_39 = "30_39"
+    AGE_40_49 = "40_49"
+    AGE_50_59 = "50_59"
+    AGE_60_69 = "60_69"
+    AGE_70_79 = "70_79"
+    AGE_80_PLUS = "80_plus"
+
+    @property
+    def supports_adult_coach(self) -> bool:
+        return self not in {CoachAgeBand.AGE_0_9, CoachAgeBand.AGE_10_17}
+
+
+class CoachGoalType(StrEnum):
+    LOSE_WEIGHT = "lose_weight"
+    MAINTAIN_WEIGHT = "maintain_weight"
+    IMPROVE_HABITS = "improve_habits"
+
+
+class CoachExerciseFrequency(StrEnum):
+    RARELY = "rarely"
+    WEEKLY_1_2 = "weekly_1_2"
+    WEEKLY_3_4 = "weekly_3_4"
+    WEEKLY_5_PLUS = "weekly_5_plus"
+
+
+class CoachProfileRequest(BaseModel):
+    """Complete profile payload; drafts are deliberately not persisted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    age_band: CoachAgeBand
+    height_cm: Decimal = Field(ge=Decimal("50"), le=Decimal("250"))
+    current_weight_kg: Decimal = Field(ge=Decimal("10"), le=Decimal("500"))
+    weight_measured_on: date
+    goal_type: CoachGoalType
+    target_weight_kg: Decimal = Field(ge=Decimal("10"), le=Decimal("500"))
+    target_date: date
+    current_body_fat_percent: Decimal | None = Field(
+        default=None,
+        ge=Decimal("1"),
+        le=Decimal("75"),
+    )
+    target_body_fat_percent: Decimal | None = Field(
+        default=None,
+        ge=Decimal("1"),
+        le=Decimal("75"),
+    )
+    exercise_frequency: CoachExerciseFrequency | None = None
+
+    @field_validator(
+        "height_cm",
+        "current_weight_kg",
+        "target_weight_kg",
+        "current_body_fat_percent",
+        "target_body_fat_percent",
+    )
+    @classmethod
+    def require_at_most_one_decimal(cls, value: Decimal | None) -> Decimal | None:
+        if value is None:
+            return None
+        if not value.is_finite() or value != value.quantize(Decimal("0.1")):
+            raise ValueError("Numeric profile values support at most one decimal place")
+        return value
+
+    @model_validator(mode="after")
+    def validate_goal(self) -> CoachProfileRequest:
+        if self.target_date <= self.weight_measured_on:
+            raise ValueError("Target date must be after the weight measurement date")
+        if (
+            self.goal_type is CoachGoalType.LOSE_WEIGHT
+            and self.target_weight_kg >= self.current_weight_kg
+        ):
+            raise ValueError("A weight-loss target must be below the current weight")
+        return self
+
+
+class CoachProfileData(BaseModel):
+    age_band: CoachAgeBand
+    height_cm: float
+    current_weight_kg: float
+    weight_measured_on: date
+    goal_type: CoachGoalType
+    target_weight_kg: float
+    target_date: date
+    current_body_fat_percent: float | None
+    target_body_fat_percent: float | None
+    exercise_frequency: CoachExerciseFrequency | None
+    revision: int
+    completed_at: datetime
+    updated_at: datetime
+
+
+class CoachProfileStatusView(BaseModel):
+    schema_version: Literal[1] = 1
+    status: Literal["required", "ready", "unsupported_minor"]
+    coach_enabled: bool
+    profile: CoachProfileData | None = None
 
 
 class ChatRequest(BaseModel):

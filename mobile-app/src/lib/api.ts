@@ -4,6 +4,8 @@ import type {
   ChatMessage,
   ChatPayload,
   ChatResponse,
+  CoachProfileInput,
+  CoachProfileStatus,
   DashboardData,
   MemoryItem,
   MobileUser,
@@ -98,15 +100,16 @@ class MobileApi {
   }
 
   async dashboard(): Promise<DashboardData> {
-    const [user, today, progress, memories, routine, history] = await Promise.all([
+    const [user, coachProfile, today, progress, memories, routine, history] = await Promise.all([
       this.authorized<MobileUser>('/api/mobile/v1/me'),
+      this.authorized<CoachProfileStatus>('/api/mobile/v1/coach-profile'),
       this.authorized<Today>('/api/mobile/v1/today'),
       this.authorized<Progress>('/api/mobile/v1/progress?limit=60'),
       this.authorized<MemoryItem[]>('/api/mobile/v1/memories'),
       this.authorized<Routine>('/api/mobile/v1/routine'),
       this.authorized<{ items: ChatMessage[] }>('/api/mobile/v1/chat/messages?limit=100'),
     ]);
-    return { user, today, progress, memories, routine, messages: history.items };
+    return { user, coach_profile: coachProfile, today, progress, memories, routine, messages: history.items };
   }
 
   sendChat(payload: ChatPayload): Promise<ChatResponse> {
@@ -120,6 +123,13 @@ class MobileApi {
     return this.authorized('/api/mobile/v1/me', {
       method: 'PATCH',
       body: JSON.stringify({ nickname }),
+    });
+  }
+
+  saveCoachProfile(profile: CoachProfileInput): Promise<CoachProfileStatus> {
+    return this.authorized('/api/mobile/v1/coach-profile', {
+      method: 'PUT',
+      body: JSON.stringify(profile),
     });
   }
 

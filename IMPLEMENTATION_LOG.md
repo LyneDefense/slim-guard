@@ -470,3 +470,12 @@ curl -i https://enceladus.online/health/ready
 - `admin/`、`frontend/` → 可复核管理台 → 增加识别确认、实体命中、适宜性和 Reviewer 筛选，展示识别/确认/检索/建议四段 Trace；管理员更正生成带原 Artifact 父引用的新审计 Artifact，不覆盖原结果或自动修改线上知识。
 - `DISH_GUIDANCE_DATA_RUNBOOK.md` → 数据交付边界 → 列出权威来源、版权检查、菜品/RAG manifest、冻结图片集字段和 Shadow→Canary→On 门槛；当前缺口明确为生产数据和人工评审，不是运行框架。
 - 验证 → Ruff 全源码、严格 Mypy（195 个源码文件）、112 项餐食/知识/编排/Admin 定向 Pytest、31 项前端 SSR 回归、TypeScript 与生产构建通过；未用少量定向测试冒充生产数据人工验收。
+
+### `feat: require a complete mobile coach profile`
+
+- `mobile-app/` → 教练入口硬门槛 → 用户从教练 Tab、今日快捷操作或趋势页进入教练时，若尚无完整档案，统一进入原生健康档案表单；类别点选、日期选择、数值手动输入且最多一位小数，不保存草稿或显示完成进度。
+- 健康档案字段 → 必填年龄段、身高、当前体重及测量日期、目标类型、目标体重和日期；选填当前体脂、目标体脂和运动频率。年龄段明确拆分 `10～17` 与 `18～29`，未满 18 岁资料可保存但不能使用当前成人减脂教练。
+- `mobile/contracts.py`、`mobile/service.py`、`api/mobile_routes.py` → 服务端强制边界 → 新增档案读取/完整替换 API、数值和日期交叉校验及 revision；没有档案返回 428，未成年人返回 403，绕过 App 也不能调用教练。
+- `db/models.py`、`db/migrations.py`、`mobile/platform.py` → 持久化生命周期 → 使用整数毫米、克和基点无损保存，部署迁移自动建表；账号删除清除档案，微信身份绑定时安全迁移且不覆盖目标账号已有档案。
+- `harness/context_data.py`、`agent/prompt.py` → Agent 权威上下文 → 注入用户填写的完整档案，并明确更新的实际测量优先；未采集过敏、疾病、医嘱和孕哺信息不等于不存在，只能按普通人群给一般建议并保留专业升级边界。
+- 验证 → 后端 Ruff、严格 Mypy（207 个源码文件）、11 项相关 Pytest、移动端 TypeScript 和 iOS Expo 生产导出通过。

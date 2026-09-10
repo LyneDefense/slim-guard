@@ -12,6 +12,8 @@ import type {
   AuthTokens,
   ChatMessage,
   ChatPayload,
+  CoachProfileInput,
+  CoachProfileStatus,
   DashboardData,
   OtpChallenge,
   PendingChat,
@@ -37,6 +39,7 @@ type AppContextValue = {
   refresh: () => Promise<void>;
   sendMessage: (text: string, image?: ImageInput) => Promise<'sent' | 'queued'>;
   updateProfile: (nickname: string) => Promise<void>;
+  saveCoachProfile: (profile: CoachProfileInput) => Promise<CoachProfileStatus>;
   updateRoutine: (routine: Routine) => Promise<boolean>;
   createWeComBinding: () => Promise<WeComBinding>;
   getWeComBinding: () => Promise<WeComBinding | null>;
@@ -252,6 +255,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setData((current) => current ? { ...current, user } : current);
   }, []);
 
+  const saveCoachProfile = useCallback(async (profile: CoachProfileInput) => {
+    const saved = await mobileApi.saveCoachProfile(profile);
+    setData(await mobileApi.dashboard());
+    return saved;
+  }, []);
+
   const updateRoutine = useCallback(async (routine: Routine) => {
     const saved = await mobileApi.updateRoutine(routine);
     setData((current) => current ? { ...current, routine: saved, today: { ...current.today, routine: saved } } : current);
@@ -287,12 +296,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refresh,
     sendMessage,
     updateProfile,
+    saveCoachProfile,
     updateRoutine,
     createWeComBinding,
     getWeComBinding,
     deleteAccount,
     clearError: () => setError(null),
-  }), [booting, tokens, authOptions, data, pending, online, loading, error, requestOtp, verifyOtp, loginWithPassword, logout, refresh, sendMessage, updateProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
+  }), [booting, tokens, authOptions, data, pending, online, loading, error, requestOtp, verifyOtp, loginWithPassword, logout, refresh, sendMessage, updateProfile, saveCoachProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

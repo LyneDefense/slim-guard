@@ -8,6 +8,7 @@ from sqlalchemy import select
 from slim_guard.db.models import (
     ChannelIdentity,
     MobileAuthIdentityRecord,
+    MobileCoachProfileRecord,
     MobileDeviceRecord,
     MobileSessionRecord,
     MobileWeComBindingRecord,
@@ -65,6 +66,22 @@ async def platform_service(tmp_path) -> tuple[Database, MobilePlatformService, s
 async def test_binding_moves_fresh_mobile_login_to_existing_wecom_user(tmp_path) -> None:
     database, service, mobile_id, wecom_id = await platform_service(tmp_path)
     try:
+        async with database.session() as session, session.begin():
+            session.add(
+                MobileCoachProfileRecord(
+                    user_id=mobile_id,
+                    age_band="18_29",
+                    height_millimeters=1700,
+                    current_weight_grams=70000,
+                    weight_measured_on=NOW.date(),
+                    goal_type="lose_weight",
+                    target_weight_grams=65000,
+                    target_date=(NOW + timedelta(days=90)).date(),
+                    completed_at=NOW,
+                    created_at=NOW,
+                    updated_at=NOW,
+                )
+            )
         binding = await service.create_binding(mobile_id, now=NOW)
         assert binding.code is not None
         result = await service.claim_wecom_message(
@@ -88,10 +105,12 @@ async def test_binding_moves_fresh_mobile_login_to_existing_wecom_user(tmp_path)
             identity = await session.scalar(select(MobileAuthIdentityRecord))
             mobile_session = await session.scalar(select(MobileSessionRecord))
             stored_binding = await session.scalar(select(MobileWeComBindingRecord))
+            coach_profile = await session.get(MobileCoachProfileRecord, wecom_id)
             old_user = await session.get(SlimGuardUser, mobile_id)
         assert identity is not None and identity.user_id == wecom_id
         assert mobile_session is not None and mobile_session.user_id == wecom_id
         assert stored_binding is not None and stored_binding.mobile_user_id == wecom_id
+        assert coach_profile is not None and coach_profile.user_id == wecom_id
         assert old_user is None
     finally:
         await database.close()

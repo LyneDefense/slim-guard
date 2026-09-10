@@ -8,12 +8,14 @@ import { LoadingScreen } from './src/components/ui';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { CoachScreen } from './src/screens/CoachScreen';
+import { CoachProfileScreen } from './src/screens/CoachProfileScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { ProgressScreen } from './src/screens/ProgressScreen';
 import { TodayScreen } from './src/screens/TodayScreen';
 import { colors, radius, spacing } from './src/theme';
 
 type Tab = 'today' | 'coach' | 'progress' | 'profile';
+type ProfileGate = { intent: 'coach' | 'edit'; draft: string };
 
 const tabs: Array<{ id: Tab; title: string; icon: keyof typeof Ionicons.glyphMap; activeIcon: keyof typeof Ionicons.glyphMap }> = [
   { id: 'today', title: '今天', icon: 'sunny-outline', activeIcon: 'sunny' },
@@ -37,11 +39,19 @@ function AppShell() {
   const { booting, authenticated, data, error, clearError } = useApp();
   const [tab, setTab] = useState<Tab>('today');
   const [coachDraft, setCoachDraft] = useState('');
+  const [profileGate, setProfileGate] = useState<ProfileGate | null>(null);
   const insets = useSafeAreaInsets();
 
   const openCoach = useCallback((draft = '') => {
+    if (!data?.coach_profile.coach_enabled) {
+      setProfileGate({ intent: 'coach', draft });
+      return;
+    }
     setCoachDraft(draft);
     setTab('coach');
+  }, [data?.coach_profile.coach_enabled]);
+  const openCoachProfile = useCallback(() => {
+    setProfileGate({ intent: 'edit', draft: '' });
   }, []);
   const consumeDraft = useCallback(() => setCoachDraft(''), []);
 
@@ -49,13 +59,35 @@ function AppShell() {
   if (!authenticated) return <AuthScreen />;
   if (!data) return <LoadingScreen />;
 
+  const activeGate = profileGate ?? (
+    tab === 'coach' && !data.coach_profile.coach_enabled
+      ? { intent: 'coach' as const, draft: coachDraft }
+      : null
+  );
+  if (activeGate) {
+    return (
+      <CoachProfileScreen
+        intent={activeGate.intent}
+        onClose={() => {
+          setProfileGate(null);
+          if (tab === 'coach' && !data.coach_profile.coach_enabled) setTab('today');
+        }}
+        onReady={() => {
+          setCoachDraft(activeGate.draft);
+          setProfileGate(null);
+          setTab('coach');
+        }}
+      />
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.screen}>
         {tab === 'today' ? <TodayScreen openCoach={openCoach} /> : null}
         {tab === 'coach' ? <CoachScreen draft={coachDraft} consumeDraft={consumeDraft} /> : null}
         {tab === 'progress' ? <ProgressScreen openCoach={openCoach} /> : null}
-        {tab === 'profile' ? <ProfileScreen openCoach={openCoach} /> : null}
+        {tab === 'profile' ? <ProfileScreen openCoach={openCoach} openCoachProfile={openCoachProfile} /> : null}
       </View>
       {error ? (
         <Pressable onPress={clearError} style={[styles.errorBanner, { bottom: 76 + insets.bottom }]}>
@@ -68,7 +100,7 @@ function AppShell() {
         {tabs.map((item) => {
           const active = tab === item.id;
           return (
-            <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: active }} onPress={() => setTab(item.id)} style={styles.tab}>
+            <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: active }} onPress={() => item.id === 'coach' ? openCoach() : setTab(item.id)} style={styles.tab}>
               <View style={[styles.tabIcon, active && styles.tabIconActive]}><Ionicons name={active ? item.activeIcon : item.icon} size={21} color={active ? colors.white : colors.inkMuted} /></View>
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{item.title}</Text>
             </Pressable>
