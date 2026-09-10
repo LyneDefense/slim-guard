@@ -21,6 +21,7 @@ from slim_guard.agent_models.zhipu import ZhipuModelGateway
 from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 from slim_guard.api.admin_routes import router as admin_router
 from slim_guard.api.mobile_routes import router as mobile_router
+from slim_guard.api.nutrition_knowledge_routes import router as nutrition_knowledge_router
 from slim_guard.api.routes import router
 from slim_guard.api.style_feedback_routes import router as style_feedback_router
 from slim_guard.api.style_iteration_routes import (
@@ -51,6 +52,20 @@ from slim_guard.mobile.auth import (
 )
 from slim_guard.mobile.platform import MobilePlatformService
 from slim_guard.mobile.service import MobileApplicationService
+from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
+from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
+from slim_guard.nutrition_rag.gateways import (
+    ZhipuEmbeddingGateway,
+    ZhipuRerankGateway,
+)
+from slim_guard.nutrition_rag.ingestion import (
+    NutritionKnowledgeIngestionService,
+    NutritionKnowledgeWorker,
+    NutritionRemoteDocumentFetcher,
+)
+from slim_guard.nutrition_rag.repository import NutritionRagRepository
+from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService
+from slim_guard.nutrition_rag.storage import TencentCosNutritionObjectStore
 from slim_guard.observability.logging import configure_logging
 from slim_guard.observability.tracing import InteractionTraceRepository
 from slim_guard.services.conversation_state import ConversationStateMachine
@@ -98,6 +113,12 @@ def create_app(
         raise ValueError(
             "NUTRITION_REQUIRE_RAG_CITATIONS must stay enabled when Nutrition RAG is enabled"
         )
+    if (
+        app_settings.nutrition_rag_enabled
+        and app_settings.nutrition_rag_engine == "v2"
+        and not app_settings.zhipu_is_configured
+    ):
+        raise ValueError("NUTRITION_RAG_ENGINE=v2 requires ZHIPU_API_KEY")
     model_parameters = {
         "thinking": {"type": "disabled"},
         "do_sample": False,
@@ -162,11 +183,16 @@ def create_app(
     owned_model_gateway: ZhipuModelGateway | None = None
     owned_vision_gateway: ZhipuVisionModelGateway | None = None
     owned_memory_engine: Mem0HttpMemoryEngine | None = None
+    owned_nutrition_embedding: ZhipuEmbeddingGateway | None = None
+    owned_nutrition_reranker: ZhipuRerankGateway | None = None
+    owned_nutrition_fetcher: NutritionRemoteDocumentFetcher | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         nonlocal owned_client, owned_memory_engine, owned_model_gateway
         nonlocal owned_reply_agent, owned_vision_gateway
+        nonlocal owned_nutrition_embedding, owned_nutrition_reranker
+        nonlocal owned_nutrition_fetcher
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
@@ -182,6 +208,55 @@ def create_app(
             raise
         repository = MessageRepository(database)
         traces = InteractionTraceRepository(database)
+        nutrition_control = NutritionRagRepository(database)
+        nutrition_object_store = (
+            TencentCosNutritionObjectStore(
+                region=app_settings.tencent_cos_region,
+                bucket=app_settings.tencent_cos_bucket,
+                prefix=app_settings.tencent_cos_prefix,
+                secret_id=app_settings.tencent_cos_secret_id,
+                secret_key=app_settings.tencent_cos_secret_key,
+                session_token=app_settings.tencent_cos_session_token,
+                domain=app_settings.tencent_cos_domain,
+            )
+            if app_settings.tencent_cos_is_configured
+            else None
+        )
+        active_nutrition_knowledge = None
+        if (
+            app_settings.nutrition_rag_engine == "v2"
+            and app_settings.zhipu_is_configured
+            and (
+                app_settings.nutrition_rag_enabled
+                or app_settings.nutrition_knowledge_worker_enabled
+            )
+        ):
+            owned_nutrition_embedding = ZhipuEmbeddingGateway(
+                api_key=app_settings.zhipu_api_key,
+                base_url=app_settings.zhipu_base_url,
+                model=app_settings.nutrition_embedding_model,
+                dimensions=app_settings.nutrition_embedding_dimensions,
+                timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+            )
+        if (
+            app_settings.nutrition_rag_engine == "v2"
+            and (
+                app_settings.nutrition_rag_enabled
+                or app_settings.nutrition_knowledge_worker_enabled
+            )
+            and owned_nutrition_embedding is not None
+        ):
+            owned_nutrition_reranker = ZhipuRerankGateway(
+                api_key=app_settings.zhipu_api_key,
+                base_url=app_settings.zhipu_base_url,
+                model=app_settings.nutrition_rerank_model,
+                timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+            )
+            active_nutrition_knowledge = HybridNutritionRagService(
+                repository=nutrition_control,
+                embedding_gateway=owned_nutrition_embedding,
+                rerank_gateway=owned_nutrition_reranker,
+            )
         await repository.backfill_users_from_messages()
         backfilled_trace_count = await traces.backfill_existing()
         if backfilled_trace_count:
@@ -244,6 +319,7 @@ def create_app(
                     ),
                     memory_engine=active_memory_engine,
                     vision=active_vision,
+                    nutrition_knowledge=active_nutrition_knowledge,
                     definition=runtime_definition,
                     manifest=agent_manifest,
                 )
@@ -322,6 +398,8 @@ def create_app(
         memory_index_task: asyncio.Task[None] | None = None
         style_iteration_stop: asyncio.Event | None = None
         style_iteration_task: asyncio.Task[None] | None = None
+        nutrition_knowledge_stop: asyncio.Event | None = None
+        nutrition_knowledge_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
             crypto = WeComCallbackCrypto(
                 app_settings.wecom_callback_token,
@@ -465,6 +543,39 @@ def create_app(
                 style_iteration_worker.run_forever(style_iteration_stop),
                 name="slim-guard-style-iteration",
             )
+        if app_settings.nutrition_knowledge_worker_enabled:
+            if nutrition_object_store is None or owned_nutrition_embedding is None:
+                raise RuntimeError("Nutrition knowledge worker dependencies are not configured")
+            owned_nutrition_fetcher = NutritionRemoteDocumentFetcher(
+                max_bytes=app_settings.nutrition_knowledge_max_upload_bytes,
+                timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+            )
+            nutrition_worker = NutritionKnowledgeWorker(
+                ingestion=NutritionKnowledgeIngestionService(
+                    repository=nutrition_control,
+                    object_store=nutrition_object_store,
+                    embedding_gateway=owned_nutrition_embedding,
+                    max_asset_bytes=app_settings.nutrition_knowledge_max_upload_bytes,
+                    legacy_repository=NutritionKnowledgeRepository(database),
+                    remote_fetcher=owned_nutrition_fetcher,
+                ),
+                worker_id=f"web-nutrition-{id(app):x}",
+                poll_seconds=app_settings.nutrition_knowledge_poll_seconds,
+                lease_seconds=app_settings.nutrition_knowledge_job_lease_seconds,
+                evaluation=(
+                    NutritionEvaluationService(
+                        repository=nutrition_control,
+                        retrieval=active_nutrition_knowledge,
+                    )
+                    if active_nutrition_knowledge is not None
+                    else None
+                ),
+            )
+            nutrition_knowledge_stop = asyncio.Event()
+            nutrition_knowledge_task = asyncio.create_task(
+                nutrition_worker.run_forever(nutrition_knowledge_stop),
+                name="slim-guard-nutrition-knowledge",
+            )
 
         app.state.settings = app_settings
         app.state.database = database
@@ -474,6 +585,9 @@ def create_app(
         app.state.mobile_auth = mobile_auth
         app.state.mobile_service = mobile_service
         app.state.mobile_platform = mobile_platform
+        app.state.nutrition_rag = nutrition_control
+        app.state.nutrition_object_store = nutrition_object_store
+        app.state.nutrition_knowledge = active_nutrition_knowledge
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
         try:
@@ -493,6 +607,8 @@ def create_app(
                 memory_index_stop.set()
             if style_iteration_stop is not None:
                 style_iteration_stop.set()
+            if nutrition_knowledge_stop is not None:
+                nutrition_knowledge_stop.set()
             if watchdog_task is not None:
                 await watchdog_task
             if routine_task is not None:
@@ -507,6 +623,8 @@ def create_app(
                 await memory_index_task
             if style_iteration_task is not None:
                 await style_iteration_task
+            if nutrition_knowledge_task is not None:
+                await nutrition_knowledge_task
             if owned_client is not None:
                 await owned_client.close()
             if owned_reply_agent is not None:
@@ -517,6 +635,12 @@ def create_app(
                 await owned_vision_gateway.close()
             if owned_memory_engine is not None:
                 await owned_memory_engine.close()
+            if owned_nutrition_fetcher is not None:
+                await owned_nutrition_fetcher.close()
+            if owned_nutrition_reranker is not None:
+                await owned_nutrition_reranker.close()
+            if owned_nutrition_embedding is not None:
+                await owned_nutrition_embedding.close()
             await database.close()
 
     application = FastAPI(
@@ -544,6 +668,7 @@ def create_app(
     application.include_router(style_feedback_router)
     application.include_router(style_iteration_router)
     application.include_router(style_runtime_router)
+    application.include_router(nutrition_knowledge_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_graph_manifest = agent_graph_manifest
@@ -554,6 +679,9 @@ def create_app(
     application.state.mobile_auth = None
     application.state.mobile_service = None
     application.state.mobile_platform = None
+    application.state.nutrition_rag = None
+    application.state.nutrition_object_store = None
+    application.state.nutrition_knowledge = None
     return application
 
 

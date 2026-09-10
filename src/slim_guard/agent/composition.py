@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -91,6 +91,24 @@ from slim_guard.tools.routine import routine_tool_definitions, routine_tool_exec
 from slim_guard.tools.weight import weight_tool_definitions, weight_tool_executors
 
 
+class NutritionKnowledgeRuntime(Protocol):
+    async def search(
+        self,
+        *,
+        query: str,
+        max_results: int,
+        metadata_filter: Mapping[str, Any] | None = None,
+        retrieved_in_invocation_id: str | None = None,
+    ) -> Mapping[str, Any]: ...
+
+    async def get_source(
+        self,
+        *,
+        source_id: str,
+        chunk_id: str | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
 class AgentRuntimeDefinition(BaseModel):
     """Versioned runtime choices needed to construct one Agent graph."""
 
@@ -164,6 +182,7 @@ def build_agent_runtime(
     memory_recall_model: ModelGateway | None = None,
     memory_engine: MemoryEngine | None = None,
     vision: VisionModelGateway | None = None,
+    nutrition_knowledge: NutritionKnowledgeRuntime | None = None,
     definition: AgentRuntimeDefinition,
     manifest: AgentManifest | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -282,6 +301,11 @@ def build_agent_runtime(
         if memory_recall_model is not None
         else None
     )
+    active_nutrition_knowledge = (
+        nutrition_knowledge
+        if nutrition_knowledge is not None
+        else NutritionKnowledgeService(NutritionKnowledgeRepository(database))
+    )
     runner = HarnessTurnRunner(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
@@ -339,18 +363,14 @@ def build_agent_runtime(
                 nutrition_retrieval_agent=NutritionRetrievalAgent(
                     catalog=DishCatalogRepository(database),
                     knowledge=(
-                        NutritionKnowledgeService(NutritionKnowledgeRepository(database))
-                        if definition.nutrition_rag_enabled
-                        else None
+                        active_nutrition_knowledge if definition.nutrition_rag_enabled else None
                     ),
                 ),
                 pending_dish_confirmations=pending_actions,
                 reviewer_enabled=definition.response_reviewer_enabled,
                 nutrition_tools=NutritionToolRegistry(
                     knowledge_repository=(
-                        NutritionKnowledgeService(NutritionKnowledgeRepository(database))
-                        if definition.nutrition_rag_enabled
-                        else None
+                        active_nutrition_knowledge if definition.nutrition_rag_enabled else None
                     )
                 ),
                 clock=clock,

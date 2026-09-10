@@ -17,6 +17,10 @@ from slim_guard.db.models import (
     NutritionCorpusReleaseSourceRecord,
     NutritionCorpusRuntimeRecord,
     NutritionEmbeddingProfileRecord,
+    NutritionEvaluationCaseRecord,
+    NutritionEvaluationDatasetRecord,
+    NutritionEvaluationResultRecord,
+    NutritionEvaluationRunRecord,
     NutritionKnowledgeAssetRecord,
     NutritionKnowledgeJobEventRecord,
     NutritionKnowledgeJobRecord,
@@ -25,7 +29,9 @@ from slim_guard.db.models import (
     NutritionKnowledgeSourceLabelRecord,
     NutritionKnowledgeSourceRecord,
     NutritionRagChunkRecord,
+    NutritionRetrievalCandidateRecord,
     NutritionRetrievalProfileRecord,
+    NutritionRetrievalRunRecord,
     new_uuid,
     utc_now,
 )
@@ -163,6 +169,28 @@ class NutritionRuntime:
     runtime_revision: int
     updated_by: str
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class NutritionEvaluationCase:
+    id: str
+    case_key: str
+    query_plan_input: dict[str, Any]
+    expected_source_keys: tuple[str, ...]
+    expected_chunk_concepts: tuple[str, ...]
+    forbidden_source_keys: tuple[str, ...]
+    expected_outcome: str
+
+
+@dataclass(frozen=True, slots=True)
+class NutritionEvaluationDataset:
+    id: str
+    version: str
+    manifest_sha256: str
+    status: str
+    cases: tuple[NutritionEvaluationCase, ...]
+    created_by: str
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -817,6 +845,344 @@ class NutritionRagRepository:
             source.status = "approved"
             source.updated_at = utc_now()
 
+    async def list_sources(
+        self,
+        *,
+        status: str | None = None,
+        search: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 500 or offset < 0:
+            raise ValueError("Invalid source page")
+        statement = select(NutritionKnowledgeSourceRecord)
+        count_statement = select(func.count(NutritionKnowledgeSourceRecord.id))
+        predicates = []
+        if status is not None:
+            if status not in {"draft", "approved", "rejected", "published", "retired"}:
+                raise ValueError("Invalid source status")
+            predicates.append(NutritionKnowledgeSourceRecord.status == status)
+        if search and search.strip():
+            pattern = f"%{search.strip()[:256]}%"
+            predicates.append(
+                or_(
+                    NutritionKnowledgeSourceRecord.title.ilike(pattern),
+                    NutritionKnowledgeSourceRecord.source_key.ilike(pattern),
+                    NutritionKnowledgeSourceRecord.publisher.ilike(pattern),
+                )
+            )
+        if predicates:
+            statement = statement.where(*predicates)
+            count_statement = count_statement.where(*predicates)
+        statement = (
+            statement.order_by(
+                NutritionKnowledgeSourceRecord.created_at.desc(),
+                NutritionKnowledgeSourceRecord.id,
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        async with self.database.session() as session:
+            rows = tuple(await session.scalars(statement))
+            total = int(await session.scalar(count_statement) or 0)
+            chunk_counts = dict(
+                (
+                    await session.execute(
+                        select(
+                            NutritionRagChunkRecord.source_id,
+                            func.count(NutritionRagChunkRecord.id),
+                        )
+                        .where(
+                            NutritionRagChunkRecord.source_id.in_(tuple(row.id for row in rows)),
+                            NutritionRagChunkRecord.chunk_kind == "retrieval_child",
+                        )
+                        .group_by(NutritionRagChunkRecord.source_id)
+                    )
+                )
+                .tuples()
+                .all()
+            )
+            ready_counts = dict(
+                (
+                    await session.execute(
+                        select(
+                            NutritionRagChunkRecord.source_id,
+                            func.count(NutritionChunkEmbeddingRecord.chunk_id),
+                        )
+                        .join(
+                            NutritionChunkEmbeddingRecord,
+                            NutritionChunkEmbeddingRecord.chunk_id == NutritionRagChunkRecord.id,
+                        )
+                        .where(
+                            NutritionRagChunkRecord.source_id.in_(tuple(row.id for row in rows)),
+                            NutritionChunkEmbeddingRecord.status == "ready",
+                        )
+                        .group_by(NutritionRagChunkRecord.source_id)
+                    )
+                )
+                .tuples()
+                .all()
+            )
+        items = []
+        for row in rows:
+            review = await self.get_source_review_state(row.id)
+            metadata = _load_json(row.metadata_json)
+            items.append(
+                {
+                    "id": row.id,
+                    "source_key": row.source_key,
+                    "version": row.version,
+                    "title": row.title,
+                    "publisher": row.publisher,
+                    "published_at": row.published_at,
+                    "source_url": row.source_url,
+                    "language": row.language,
+                    "content_sha256": row.content_sha256,
+                    "char_count": row.char_count,
+                    "status": row.status,
+                    "asset_id": row.asset_id,
+                    "tags": metadata.get("tags", []),
+                    "applicability": metadata.get("applicability", []),
+                    "review": asdict(review),
+                    "review_approved": review.approved,
+                    "retrieval_chunk_count": chunk_counts.get(row.id, 0),
+                    "ready_embedding_count": ready_counts.get(row.id, 0),
+                    "created_at": _aware(row.created_at),
+                    "updated_at": _aware(row.updated_at),
+                }
+            )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    async def get_source_detail(self, source_id: str) -> dict[str, Any] | None:
+        async with self.database.session() as session:
+            source = await session.get(NutritionKnowledgeSourceRecord, source_id)
+            if source is None:
+                return None
+            asset = (
+                await session.get(NutritionKnowledgeAssetRecord, source.asset_id)
+                if source.asset_id is not None
+                else None
+            )
+            labels = tuple(
+                (
+                    await session.execute(
+                        select(
+                            NutritionKnowledgeSourceLabelRecord.kind,
+                            NutritionKnowledgeSourceLabelRecord.value,
+                        )
+                        .where(NutritionKnowledgeSourceLabelRecord.source_id == source_id)
+                        .order_by(
+                            NutritionKnowledgeSourceLabelRecord.kind,
+                            NutritionKnowledgeSourceLabelRecord.value,
+                        )
+                    )
+                ).tuples()
+            )
+            section_count = int(
+                await session.scalar(
+                    select(func.count(NutritionKnowledgeSectionRecord.id)).where(
+                        NutritionKnowledgeSectionRecord.source_id == source_id
+                    )
+                )
+                or 0
+            )
+            chunk_count = int(
+                await session.scalar(
+                    select(func.count(NutritionRagChunkRecord.id)).where(
+                        NutritionRagChunkRecord.source_id == source_id
+                    )
+                )
+                or 0
+            )
+            reviews = tuple(
+                await session.scalars(
+                    select(NutritionKnowledgeReviewEventRecord)
+                    .where(
+                        NutritionKnowledgeReviewEventRecord.subject_type == "source",
+                        NutritionKnowledgeReviewEventRecord.subject_id == source_id,
+                    )
+                    .order_by(
+                        NutritionKnowledgeReviewEventRecord.created_at,
+                        NutritionKnowledgeReviewEventRecord.id,
+                    )
+                )
+            )
+        review_state = await self.get_source_review_state(source_id)
+        return {
+            "source": {
+                "id": source.id,
+                "source_key": source.source_key,
+                "version": source.version,
+                "title": source.title,
+                "publisher": source.publisher,
+                "published_at": source.published_at,
+                "source_url": source.source_url,
+                "language": source.language,
+                "content_sha256": source.content_sha256,
+                "char_count": source.char_count,
+                "status": source.status,
+                "parser_profile_key": source.parser_profile_key,
+                "created_at": _aware(source.created_at),
+                "updated_at": _aware(source.updated_at),
+            },
+            "asset": asdict(self._asset(asset)) if asset is not None else None,
+            "labels": [{"kind": kind, "value": value} for kind, value in labels],
+            "review": asdict(review_state),
+            "review_approved": review_state.approved,
+            "section_count": section_count,
+            "chunk_count": chunk_count,
+            "reviews": [
+                {
+                    "id": review.id,
+                    "review_type": review.review_type,
+                    "decision": review.decision,
+                    "attestations": _load_json(review.attestations_json),
+                    "reason": review.reason,
+                    "actor": review.actor,
+                    "subject_sha256": review.subject_sha256,
+                    "created_at": _aware(review.created_at),
+                }
+                for review in reviews
+            ],
+        }
+
+    async def list_source_sections(
+        self, source_id: str, *, limit: int, offset: int
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 100 or offset < 0:
+            raise ValueError("Invalid section page")
+        async with self.database.session() as session:
+            total = int(
+                await session.scalar(
+                    select(func.count(NutritionKnowledgeSectionRecord.id)).where(
+                        NutritionKnowledgeSectionRecord.source_id == source_id
+                    )
+                )
+                or 0
+            )
+            rows = tuple(
+                await session.scalars(
+                    select(NutritionKnowledgeSectionRecord)
+                    .where(NutritionKnowledgeSectionRecord.source_id == source_id)
+                    .order_by(NutritionKnowledgeSectionRecord.ordinal)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            )
+        return {
+            "items": [
+                {
+                    "id": row.id,
+                    "ordinal": row.ordinal,
+                    "heading_path": json.loads(row.heading_path_json),
+                    "page_from": row.page_from,
+                    "page_to": row.page_to,
+                    "content": row.content_text,
+                    "content_sha256": row.content_sha256,
+                }
+                for row in rows
+            ],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def list_source_chunks(
+        self,
+        source_id: str,
+        *,
+        kind: str | None,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 100 or offset < 0:
+            raise ValueError("Invalid chunk page")
+        predicates = [NutritionRagChunkRecord.source_id == source_id]
+        if kind is not None:
+            predicates.append(NutritionRagChunkRecord.chunk_kind == kind)
+        async with self.database.session() as session:
+            total = int(
+                await session.scalar(
+                    select(func.count(NutritionRagChunkRecord.id)).where(*predicates)
+                )
+                or 0
+            )
+            rows = tuple(
+                await session.scalars(
+                    select(NutritionRagChunkRecord)
+                    .where(*predicates)
+                    .order_by(NutritionRagChunkRecord.ordinal)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            )
+        return {
+            "items": [
+                {
+                    "id": row.id,
+                    "section_id": row.section_id,
+                    "parent_chunk_id": row.parent_chunk_id,
+                    "kind": row.chunk_kind,
+                    "ordinal": row.ordinal,
+                    "page_from": row.page_from,
+                    "page_to": row.page_to,
+                    "content": row.content_text,
+                    "content_sha256": row.content_sha256,
+                    "lexical_terms": row.lexical_terms,
+                    "token_count": row.token_count,
+                    "char_count": row.char_count,
+                }
+                for row in rows
+            ],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def retire_source(self, source_id: str, *, actor: str, reason: str) -> None:
+        actor = _text(actor, "actor", 128)
+        reason = _text(reason, "reason", 2000)
+        async with self.database.session() as session, session.begin():
+            source = await session.get(
+                NutritionKnowledgeSourceRecord, source_id, with_for_update=True
+            )
+            if source is None:
+                raise NutritionRagNotFound("Nutrition source does not exist")
+            active_membership = await session.scalar(
+                select(NutritionCorpusReleaseSourceRecord.source_id)
+                .join(
+                    NutritionCorpusRuntimeRecord,
+                    NutritionCorpusRuntimeRecord.active_release_id
+                    == NutritionCorpusReleaseSourceRecord.release_id,
+                )
+                .where(
+                    NutritionCorpusRuntimeRecord.singleton_key == "default",
+                    NutritionCorpusReleaseSourceRecord.source_id == source_id,
+                )
+            )
+            if active_membership is not None:
+                raise NutritionRagGovernanceError(
+                    "An active release source must be replaced by a new release before retirement"
+                )
+            if source.status == "retired":
+                return
+            source.status = "retired"
+            source.retired_at = utc_now()
+            source.updated_at = source.retired_at
+            session.add(
+                NutritionKnowledgeReviewEventRecord(
+                    id=new_uuid(),
+                    subject_type="source",
+                    subject_id=source_id,
+                    review_type="content",
+                    decision="revoke",
+                    attestations_json="{}",
+                    reason=reason,
+                    actor=actor,
+                    subject_sha256=source.content_sha256,
+                )
+            )
+
     async def create_release(
         self,
         *,
@@ -865,7 +1231,7 @@ class NutritionRagRepository:
             row = NutritionCorpusReleaseRecord(
                 id=new_uuid(),
                 version=version,
-                status="review_ready",
+                status="indexing_check",
                 embedding_profile_id=DEFAULT_EMBEDDING_PROFILE_ID,
                 lexical_profile_id=DEFAULT_LEXICAL_PROFILE_ID,
                 retrieval_profile_id=DEFAULT_RETRIEVAL_PROFILE_ID,
@@ -887,6 +1253,240 @@ class NutritionRagRepository:
             )
             await session.flush()
             return await self._release(session, row)
+
+    async def complete_release_index_check(self, release_id: str) -> NutritionRelease:
+        async with self.database.session() as session, session.begin():
+            release = await session.get(
+                NutritionCorpusReleaseRecord, release_id, with_for_update=True
+            )
+            if release is None:
+                raise NutritionRagNotFound("Nutrition release does not exist")
+            if release.status not in {"indexing_check", "evaluating"}:
+                raise NutritionRagGovernanceError("Release is not awaiting index validation")
+            counts = (
+                await session.execute(
+                    select(
+                        func.count(NutritionRagChunkRecord.id),
+                        func.count(NutritionChunkEmbeddingRecord.chunk_id),
+                    )
+                    .select_from(NutritionCorpusReleaseSourceRecord)
+                    .join(
+                        NutritionRagChunkRecord,
+                        NutritionRagChunkRecord.source_id
+                        == NutritionCorpusReleaseSourceRecord.source_id,
+                    )
+                    .outerjoin(
+                        NutritionChunkEmbeddingRecord,
+                        and_(
+                            NutritionChunkEmbeddingRecord.chunk_id == NutritionRagChunkRecord.id,
+                            NutritionChunkEmbeddingRecord.embedding_profile_id
+                            == release.embedding_profile_id,
+                            NutritionChunkEmbeddingRecord.status == "ready",
+                        ),
+                    )
+                    .where(
+                        NutritionCorpusReleaseSourceRecord.release_id == release_id,
+                        NutritionRagChunkRecord.chunker_profile_key == release.chunker_profile_key,
+                        NutritionRagChunkRecord.chunk_kind == "retrieval_child",
+                    )
+                )
+            ).one()
+            if counts[0] == 0 or counts[0] != counts[1]:
+                raise NutritionRagGovernanceError("Release has missing retrieval embeddings")
+            release.status = "evaluating"
+            await session.flush()
+            return await self._release(session, release)
+
+    async def create_evaluation_dataset(
+        self,
+        *,
+        version: str,
+        cases: Sequence[Mapping[str, Any]],
+        created_by: str,
+    ) -> NutritionEvaluationDataset:
+        version = _text(version, "version", 128)
+        created_by = _text(created_by, "created_by", 128)
+        if not 1 <= len(cases) <= 1000:
+            raise ValueError("An evaluation dataset requires 1 to 1000 cases")
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in cases:
+            case_key = _text(str(raw.get("case_key", "")), "case_key", 128)
+            if case_key in seen:
+                raise ValueError("Evaluation case keys must be unique")
+            seen.add(case_key)
+            query_plan = raw.get("query_plan_input")
+            if not isinstance(query_plan, Mapping):
+                raise ValueError("Evaluation query_plan_input must be an object")
+            query = _text(str(query_plan.get("query", "")), "query", 1000)
+            filters = query_plan.get("metadata_filter", {})
+            if not isinstance(filters, Mapping):
+                raise ValueError("Evaluation metadata_filter must be an object")
+            expected_outcome = str(raw.get("expected_outcome", "evidence"))
+            if expected_outcome not in {"evidence", "insufficient"}:
+                raise ValueError("Invalid expected evaluation outcome")
+            normalized.append(
+                {
+                    "case_key": case_key,
+                    "query_plan_input": {"query": query, "metadata_filter": dict(filters)},
+                    "expected_source_keys": list(
+                        _labels(_mapping_strings(raw, "expected_source_keys"))
+                    ),
+                    "expected_chunk_concepts": list(
+                        _labels(_mapping_strings(raw, "expected_chunk_concepts"))
+                    ),
+                    "forbidden_source_keys": list(
+                        _labels(_mapping_strings(raw, "forbidden_source_keys"))
+                    ),
+                    "expected_outcome": expected_outcome,
+                }
+            )
+        manifest = {"version": version, "cases": normalized}
+        manifest_sha256 = hashlib.sha256(_canonical_json(manifest).encode()).hexdigest()
+        negative_count = sum(item["expected_outcome"] == "insufficient" for item in normalized)
+        dataset_status = (
+            "ready"
+            if len(normalized) >= 100 and negative_count / len(normalized) >= 0.25
+            else "draft"
+        )
+        async with self.database.session() as session, session.begin():
+            existing = await session.scalar(
+                select(NutritionEvaluationDatasetRecord).where(
+                    or_(
+                        NutritionEvaluationDatasetRecord.version == version,
+                        NutritionEvaluationDatasetRecord.manifest_sha256 == manifest_sha256,
+                    )
+                )
+            )
+            if existing is not None:
+                return await self._dataset(session, existing)
+            dataset = NutritionEvaluationDatasetRecord(
+                id=new_uuid(),
+                version=version,
+                manifest_sha256=manifest_sha256,
+                status=dataset_status,
+                created_by=created_by,
+            )
+            session.add(dataset)
+            await session.flush()
+            session.add_all(
+                [
+                    NutritionEvaluationCaseRecord(
+                        id=new_uuid(),
+                        dataset_id=dataset.id,
+                        case_key=item["case_key"],
+                        query_plan_input_json=_canonical_json(item["query_plan_input"]),
+                        expected_source_keys_json=_canonical_json(item["expected_source_keys"]),
+                        expected_chunk_concepts_json=_canonical_json(
+                            item["expected_chunk_concepts"]
+                        ),
+                        forbidden_source_keys_json=_canonical_json(item["forbidden_source_keys"]),
+                        expected_outcome=item["expected_outcome"],
+                    )
+                    for item in normalized
+                ]
+            )
+            await session.flush()
+            return await self._dataset(session, dataset)
+
+    async def list_evaluation_datasets(self) -> tuple[NutritionEvaluationDataset, ...]:
+        async with self.database.session() as session:
+            rows = tuple(
+                await session.scalars(
+                    select(NutritionEvaluationDatasetRecord).order_by(
+                        NutritionEvaluationDatasetRecord.created_at.desc()
+                    )
+                )
+            )
+            return tuple([await self._dataset(session, row) for row in rows])
+
+    async def create_evaluation_run(
+        self,
+        *,
+        release_id: str,
+        dataset_id: str,
+        created_by: str,
+        idempotency_key: str,
+    ) -> tuple[str, NutritionJob]:
+        created_by = _text(created_by, "created_by", 128)
+        idempotency_key = _text(idempotency_key, "idempotency_key", 200)
+        existing_job = await self.get_job_by_idempotency_key(f"evaluate:{idempotency_key}")
+        if existing_job is not None and existing_job.subject_id is not None:
+            return existing_job.subject_id, existing_job
+        async with self.database.session() as session, session.begin():
+            release = await session.get(
+                NutritionCorpusReleaseRecord, release_id, with_for_update=True
+            )
+            dataset = await session.get(NutritionEvaluationDatasetRecord, dataset_id)
+            if release is None or dataset is None:
+                raise NutritionRagNotFound("Release or evaluation dataset does not exist")
+            if release.status not in {"indexing_check", "evaluating", "review_ready"}:
+                raise NutritionRagGovernanceError(
+                    "Release cannot be evaluated in its current state"
+                )
+            if dataset.status != "ready":
+                raise NutritionRagGovernanceError("Evaluation dataset is not ready")
+            run = NutritionEvaluationRunRecord(
+                id=new_uuid(),
+                release_id=release_id,
+                retrieval_profile_id=release.retrieval_profile_id,
+                dataset_id=dataset_id,
+                status="queued",
+                created_by=created_by,
+            )
+            release.status = "evaluating"
+            session.add(run)
+            await session.flush()
+            run_id = run.id
+        job = await self.enqueue_job(
+            job_type="evaluate",
+            subject_type="evaluation_run",
+            subject_id=run_id,
+            input={"evaluation_run_id": run_id},
+            idempotency_key=f"evaluate:{idempotency_key}",
+            created_by=created_by,
+            max_attempts=2,
+        )
+        return run_id, job
+
+    async def list_evaluation_runs(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        if not 1 <= limit <= 200:
+            raise ValueError("Invalid evaluation run limit")
+        async with self.database.session() as session:
+            rows = tuple(
+                await session.scalars(
+                    select(NutritionEvaluationRunRecord)
+                    .order_by(NutritionEvaluationRunRecord.created_at.desc())
+                    .limit(limit)
+                )
+            )
+        return tuple(self._evaluation_run(row) for row in rows)
+
+    async def get_evaluation_run(self, run_id: str) -> dict[str, Any] | None:
+        async with self.database.session() as session:
+            row = await session.get(NutritionEvaluationRunRecord, run_id)
+            if row is None:
+                return None
+            results = tuple(
+                await session.scalars(
+                    select(NutritionEvaluationResultRecord)
+                    .where(NutritionEvaluationResultRecord.run_id == run_id)
+                    .order_by(NutritionEvaluationResultRecord.id)
+                )
+            )
+        value = self._evaluation_run(row)
+        value["results"] = [
+            {
+                "id": item.id,
+                "case_id": item.case_id,
+                "retrieval_run_id": item.retrieval_run_id,
+                "passed": item.passed,
+                "rank": item.rank,
+                "details": _load_json(item.details_json),
+            }
+            for item in results
+        ]
+        return value
 
     async def list_releases(self) -> tuple[NutritionRelease, ...]:
         async with self.database.session() as session:
@@ -920,6 +1520,25 @@ class NutritionRagRepository:
                 raise NutritionRagNotFound("Nutrition release does not exist")
             if row.status not in {"review_ready", "rejected"}:
                 raise NutritionRagGovernanceError("Release is not ready for review")
+            if decision == "approve":
+                evaluation = (
+                    await session.get(NutritionEvaluationRunRecord, row.evaluation_run_id)
+                    if row.evaluation_run_id is not None
+                    else None
+                )
+                if evaluation is None or evaluation.status != "succeeded":
+                    raise NutritionRagGovernanceError(
+                        "A passing evaluation run is required before release approval"
+                    )
+                metrics = (
+                    _load_json(evaluation.metrics_json)
+                    if evaluation.metrics_json is not None
+                    else {}
+                )
+                if metrics.get("gates_passed") is not True:
+                    raise NutritionRagGovernanceError(
+                        "Release evaluation did not pass the frozen quality gates"
+                    )
             row.status = "approved" if decision == "approve" else "rejected"
             row.approved_at = utc_now() if decision == "approve" else None
             session.add(
@@ -1005,54 +1624,78 @@ class NutritionRagRepository:
             release_row = await session.get(NutritionCorpusReleaseRecord, runtime.active_release_id)
             if release_row is None or release_row.status != "active":
                 return None
-            profile_row = await session.get(
-                NutritionRetrievalProfileRecord, release_row.retrieval_profile_id
-            )
-            if profile_row is None or profile_row.status != "ready":
+            return await self._profile_bundle(session, release_row)
+
+    async def get_release_profile(
+        self, release_id: str
+    ) -> tuple[NutritionRelease, RetrievalProfile] | None:
+        async with self.database.session() as session:
+            release_row = await session.get(NutritionCorpusReleaseRecord, release_id)
+            if release_row is None or release_row.status in {"draft", "rejected"}:
                 return None
-            embedding = await session.get(
-                NutritionEmbeddingProfileRecord, profile_row.embedding_profile_id
-            )
-            if embedding is None or embedding.status != "ready":
-                return None
-            return (
-                await self._release(session, release_row),
-                RetrievalProfile(
-                    id=profile_row.id,
-                    profile_key=profile_row.profile_key,
-                    embedding_profile_id=profile_row.embedding_profile_id,
-                    lexical_profile_id=profile_row.lexical_profile_id,
-                    dimensions=embedding.dimensions,
-                    dense_top_k=profile_row.dense_top_k,
-                    lexical_top_k=profile_row.lexical_top_k,
-                    phrase_top_k=profile_row.phrase_top_k,
-                    rrf_k=profile_row.rrf_k,
-                    rerank_top_n=profile_row.rerank_top_n,
-                    final_top_k=profile_row.final_top_k,
-                    min_rerank_score=profile_row.min_rerank_score,
-                    max_context_chars=profile_row.max_context_chars,
-                    query_plan_version=profile_row.query_plan_version,
-                ),
-            )
+            return await self._profile_bundle(session, release_row)
+
+    async def _profile_bundle(
+        self,
+        session: AsyncSession,
+        release_row: NutritionCorpusReleaseRecord,
+    ) -> tuple[NutritionRelease, RetrievalProfile] | None:
+        profile_row = await session.get(
+            NutritionRetrievalProfileRecord, release_row.retrieval_profile_id
+        )
+        if profile_row is None or profile_row.status != "ready":
+            return None
+        embedding = await session.get(
+            NutritionEmbeddingProfileRecord, profile_row.embedding_profile_id
+        )
+        if embedding is None or embedding.status != "ready":
+            return None
+        return (
+            await self._release(session, release_row),
+            RetrievalProfile(
+                id=profile_row.id,
+                profile_key=profile_row.profile_key,
+                embedding_profile_id=profile_row.embedding_profile_id,
+                lexical_profile_id=profile_row.lexical_profile_id,
+                dimensions=embedding.dimensions,
+                dense_top_k=profile_row.dense_top_k,
+                lexical_top_k=profile_row.lexical_top_k,
+                phrase_top_k=profile_row.phrase_top_k,
+                rrf_k=profile_row.rrf_k,
+                rerank_top_n=profile_row.rerank_top_n,
+                final_top_k=profile_row.final_top_k,
+                min_rerank_score=profile_row.min_rerank_score,
+                max_context_chars=profile_row.max_context_chars,
+                query_plan_version=profile_row.query_plan_version,
+            ),
+        )
 
     async def dashboard(self) -> dict[str, Any]:
         async with self.database.session() as session:
             source_rows = (
-                await session.execute(
-                    select(
-                        NutritionKnowledgeSourceRecord.status,
-                        func.count(NutritionKnowledgeSourceRecord.id),
-                    ).group_by(NutritionKnowledgeSourceRecord.status)
+                (
+                    await session.execute(
+                        select(
+                            NutritionKnowledgeSourceRecord.status,
+                            func.count(NutritionKnowledgeSourceRecord.id),
+                        ).group_by(NutritionKnowledgeSourceRecord.status)
+                    )
                 )
-            ).tuples()
+                .tuples()
+                .all()
+            )
             job_rows = (
-                await session.execute(
-                    select(
-                        NutritionKnowledgeJobRecord.status,
-                        func.count(NutritionKnowledgeJobRecord.id),
-                    ).group_by(NutritionKnowledgeJobRecord.status)
+                (
+                    await session.execute(
+                        select(
+                            NutritionKnowledgeJobRecord.status,
+                            func.count(NutritionKnowledgeJobRecord.id),
+                        ).group_by(NutritionKnowledgeJobRecord.status)
+                    )
                 )
-            ).tuples()
+                .tuples()
+                .all()
+            )
             ready_embeddings = await session.scalar(
                 select(func.count(NutritionChunkEmbeddingRecord.chunk_id)).where(
                     NutritionChunkEmbeddingRecord.status == "ready"
@@ -1070,6 +1713,90 @@ class NutritionRagRepository:
             "ready_embeddings": ready_embeddings or 0,
             "pending_embeddings": pending_embeddings or 0,
             "runtime": asdict(runtime),
+        }
+
+    async def get_retrieval_run(self, run_id: str) -> dict[str, Any] | None:
+        async with self.database.session() as session:
+            run = await session.get(NutritionRetrievalRunRecord, run_id)
+            if run is None:
+                return None
+            rows = tuple(
+                (
+                    await session.execute(
+                        select(
+                            NutritionRetrievalCandidateRecord,
+                            NutritionRagChunkRecord,
+                            NutritionKnowledgeSourceRecord,
+                        )
+                        .join(
+                            NutritionRagChunkRecord,
+                            NutritionRagChunkRecord.id
+                            == NutritionRetrievalCandidateRecord.chunk_id,
+                        )
+                        .join(
+                            NutritionKnowledgeSourceRecord,
+                            NutritionKnowledgeSourceRecord.id == NutritionRagChunkRecord.source_id,
+                        )
+                        .where(NutritionRetrievalCandidateRecord.retrieval_run_id == run_id)
+                        .order_by(
+                            NutritionRetrievalCandidateRecord.rerank_rank,
+                            NutritionRetrievalCandidateRecord.rrf_rank,
+                        )
+                    )
+                ).tuples()
+            )
+            parent_ids = tuple(
+                chunk.parent_chunk_id for _, chunk, _ in rows if chunk.parent_chunk_id is not None
+            )
+            parents = {
+                row.id: row
+                for row in await session.scalars(
+                    select(NutritionRagChunkRecord).where(
+                        NutritionRagChunkRecord.id.in_(parent_ids)
+                    )
+                )
+            }
+        return {
+            "id": run.id,
+            "invocation_id": run.invocation_id,
+            "release_id": run.release_id,
+            "retrieval_profile_id": run.retrieval_profile_id,
+            "query_plan": _load_json(run.query_plan_json),
+            "query_hash": run.query_hash,
+            "safe_query_summary": run.safe_query_summary,
+            "status": run.status,
+            "provider_usage": _load_json(run.provider_usage_json),
+            "total_latency_ms": run.total_latency_ms,
+            "created_at": _aware(run.created_at),
+            "candidates": [
+                {
+                    "id": candidate.id,
+                    "chunk_id": chunk.id,
+                    "parent_chunk_id": chunk.parent_chunk_id,
+                    "source_id": source.id,
+                    "source_key": source.source_key,
+                    "source_title": source.title,
+                    "child_content": chunk.content_text,
+                    "parent_context": (
+                        parents[chunk.parent_chunk_id].content_text
+                        if chunk.parent_chunk_id in parents
+                        else chunk.content_text
+                    ),
+                    "dense_rank": candidate.dense_rank,
+                    "dense_score": candidate.dense_score,
+                    "lexical_rank": candidate.lexical_rank,
+                    "lexical_score": candidate.lexical_score,
+                    "phrase_rank": candidate.phrase_rank,
+                    "phrase_score": candidate.phrase_score,
+                    "rrf_rank": candidate.rrf_rank,
+                    "rrf_score": candidate.rrf_score,
+                    "rerank_rank": candidate.rerank_rank,
+                    "rerank_score": candidate.rerank_score,
+                    "selection_status": candidate.selection_status,
+                    "rejection_reason": candidate.rejection_reason,
+                }
+                for candidate, chunk, source in rows
+            ],
         }
 
     async def _locked_owned_job(
@@ -1111,6 +1838,53 @@ class NutritionRagRepository:
                 completed_items=row.completed_items,
                 total_items=row.total_items,
             )
+        )
+
+    @staticmethod
+    def _evaluation_run(row: NutritionEvaluationRunRecord) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "release_id": row.release_id,
+            "retrieval_profile_id": row.retrieval_profile_id,
+            "dataset_id": row.dataset_id,
+            "status": row.status,
+            "metrics": _load_json(row.metrics_json) if row.metrics_json else None,
+            "result_sha256": row.result_sha256,
+            "created_by": row.created_by,
+            "created_at": _aware(row.created_at),
+            "completed_at": _optional_aware(row.completed_at),
+        }
+
+    @staticmethod
+    async def _dataset(
+        session: AsyncSession, row: NutritionEvaluationDatasetRecord
+    ) -> NutritionEvaluationDataset:
+        rows = tuple(
+            await session.scalars(
+                select(NutritionEvaluationCaseRecord)
+                .where(NutritionEvaluationCaseRecord.dataset_id == row.id)
+                .order_by(NutritionEvaluationCaseRecord.case_key)
+            )
+        )
+        return NutritionEvaluationDataset(
+            id=row.id,
+            version=row.version,
+            manifest_sha256=row.manifest_sha256,
+            status=row.status,
+            cases=tuple(
+                NutritionEvaluationCase(
+                    id=item.id,
+                    case_key=item.case_key,
+                    query_plan_input=_load_json(item.query_plan_input_json),
+                    expected_source_keys=_load_string_tuple(item.expected_source_keys_json),
+                    expected_chunk_concepts=_load_string_tuple(item.expected_chunk_concepts_json),
+                    forbidden_source_keys=_load_string_tuple(item.forbidden_source_keys_json),
+                    expected_outcome=item.expected_outcome,
+                )
+                for item in rows
+            ),
+            created_by=row.created_by,
+            created_at=_aware(row.created_at),
         )
 
     @staticmethod
@@ -1235,6 +2009,15 @@ def _labels(values: Sequence[str]) -> tuple[str, ...]:
     return normalized
 
 
+def _mapping_strings(value: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    raw = value.get(key, ())
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise ValueError(f"{key} must be a string list")
+    if any(not isinstance(item, str) for item in raw):
+        raise ValueError(f"{key} must be a string list")
+    return tuple(raw)
+
+
 def _canonical_json(value: Any, maximum: int = 128_000) -> str:
     encoded = json.dumps(
         value,
@@ -1255,6 +2038,13 @@ def _load_json(value: str) -> dict[str, Any]:
     return decoded
 
 
+def _load_string_tuple(value: str) -> tuple[str, ...]:
+    decoded = json.loads(value)
+    if not isinstance(decoded, list) or any(not isinstance(item, str) for item in decoded):
+        raise NutritionRagConflict("Stored nutrition string list is invalid")
+    return tuple(decoded)
+
+
 def _stable_id(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
@@ -1269,6 +2059,8 @@ def _optional_aware(value: datetime | None) -> datetime | None:
 
 __all__ = [
     "NutritionAsset",
+    "NutritionEvaluationCase",
+    "NutritionEvaluationDataset",
     "NutritionJob",
     "NutritionJobEvent",
     "NutritionRagConflict",

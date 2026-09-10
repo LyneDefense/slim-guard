@@ -608,7 +608,7 @@ async def _create_nutrition_rag_control_plane(connection: AsyncConnection) -> No
         text(
             "CREATE INDEX IF NOT EXISTS ix_nutrition_embedding_hnsw_1024 "
             "ON nutrition_chunk_embeddings USING hnsw "
-            "((embedding::vector(1024)) vector_cosine_ops) "
+            "(embedding vector_cosine_ops) "
             f"WHERE embedding_profile_id = '{DEFAULT_EMBEDDING_PROFILE_ID}' "
             "AND status = 'ready'"
         )

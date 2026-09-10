@@ -9,7 +9,7 @@ import socket
 from collections.abc import Mapping
 from datetime import date
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -44,6 +44,18 @@ from slim_guard.nutrition_rag.storage import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class NutritionEvaluationRunner(Protocol):
+    async def execute(
+        self,
+        job: NutritionJob,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> None: ...
+
+    async def fail(self, job: NutritionJob) -> None: ...
 
 
 class NutritionRemoteFetchError(RuntimeError):
@@ -334,12 +346,14 @@ class NutritionKnowledgeWorker:
         worker_id: str,
         poll_seconds: float,
         lease_seconds: int,
+        evaluation: NutritionEvaluationRunner | None = None,
     ) -> None:
         self.ingestion = ingestion
         self.repository = ingestion.repository
         self.worker_id = worker_id
         self.poll_seconds = poll_seconds
         self.lease_seconds = lease_seconds
+        self.evaluation = evaluation
 
     async def run_forever(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -358,11 +372,18 @@ class NutritionKnowledgeWorker:
         if job is None:
             return False
         try:
-            if job.job_type != "ingest":
+            if job.job_type == "evaluate" and self.evaluation is not None:
+                await self.evaluation.execute(
+                    job,
+                    worker_id=self.worker_id,
+                    lease_seconds=self.lease_seconds,
+                )
+            elif job.job_type != "ingest":
                 raise NutritionRagConflict("This worker does not support the queued job type")
-            await self.ingestion.execute_ingest(
-                job, worker_id=self.worker_id, lease_seconds=self.lease_seconds
-            )
+            else:
+                await self.ingestion.execute_ingest(
+                    job, worker_id=self.worker_id, lease_seconds=self.lease_seconds
+                )
         except (
             NutritionModelGatewayError,
             NutritionObjectStoreError,
@@ -401,6 +422,14 @@ class NutritionKnowledgeWorker:
                 safe_message="资料处理发生未预期错误",
                 retryable=False,
             )
+        latest = await self.repository.get_job(job.id)
+        if (
+            job.job_type == "evaluate"
+            and self.evaluation is not None
+            and latest is not None
+            and latest.status == "failed"
+        ):
+            await self.evaluation.fail(job)
         return True
 
 

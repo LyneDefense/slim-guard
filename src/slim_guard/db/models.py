@@ -2005,7 +2005,7 @@ class NutritionChunkEmbeddingRecord(Base):
     embedding_profile_id: Mapped[str] = mapped_column(
         ForeignKey("nutrition_embedding_profiles.id", ondelete="RESTRICT"), primary_key=True
     )
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     provider_request_id: Mapped[str | None] = mapped_column(String(256), nullable=True)

@@ -66,8 +66,7 @@ class NutritionRetrievalAgent:
     ) -> NutritionRetrievalResult:
         active_plan = plan or DishLookupPlan(
             dishes=tuple(
-                DishLookupInput(dish_ref=item.dish_ref, name=item.name)
-                for item in dishes.dishes
+                DishLookupInput(dish_ref=item.dish_ref, name=item.name) for item in dishes.dishes
             ),
             user_goal_tags=("weight_management",),
             applicability_tags=("adult",),
@@ -86,12 +85,15 @@ class NutritionRetrievalAgent:
             evidence: list[DishEvidence] = []
             any_catalog = False
             rag_statuses: list[KnowledgeCorpusStatus] = []
-            for dish in active_plan.dishes:
+            retrieval_receipt_ids: list[str] = []
+            for dish_index, dish in enumerate(active_plan.dishes):
                 item, matched = await self._retrieve_dish(
                     invocation_id=invocation_id,
                     dish=dish,
+                    dish_index=dish_index,
                     plan=active_plan,
                     rag_statuses=rag_statuses,
+                    retrieval_receipt_ids=retrieval_receipt_ids,
                 )
                 evidence.append(item)
                 any_catalog = any_catalog or matched
@@ -114,7 +116,7 @@ class NutritionRetrievalAgent:
         bundle = DishEvidenceBundle(
             dishes=tuple(evidence),
             corpus_status=corpus_status,
-            retrieval_receipt_ids=(),
+            retrieval_receipt_ids=tuple(dict.fromkeys(retrieval_receipt_ids)),
         )
         return NutritionRetrievalResult(
             status=InvocationStatus.SUCCEEDED,
@@ -127,8 +129,10 @@ class NutritionRetrievalAgent:
         *,
         invocation_id: str,
         dish: DishLookupInput,
+        dish_index: int,
         plan: DishLookupPlan,
         rag_statuses: list[KnowledgeCorpusStatus],
+        retrieval_receipt_ids: list[str],
     ) -> tuple[DishEvidence, bool]:
         result = await self._catalog.search_published(dish.name)
         matched = result.status in {
@@ -183,7 +187,7 @@ class NutritionRetrievalAgent:
         rag_evidence: tuple[DishRagEvidence, ...] = ()
         if self._knowledge is not None:
             raw = await self._knowledge.search(
-                query=dish.name,
+                query=self._rag_query(dish=dish, dish_index=dish_index, plan=plan),
                 max_results=self._max_rag_results,
                 metadata_filter={"applicability": list(plan.applicability_tags)},
                 retrieved_in_invocation_id=invocation_id,
@@ -196,6 +200,9 @@ class NutritionRetrievalAgent:
                 ),
             )
             rag_statuses.append(bound.corpus_status)
+            receipt_id = raw.get("retrieval_run_id")
+            if isinstance(receipt_id, str) and receipt_id:
+                retrieval_receipt_ids.append(receipt_id)
             citations = bound.citations
             selected = {item.citation_id for item in citations}
             rag_evidence = tuple(
@@ -224,6 +231,15 @@ class NutritionRetrievalAgent:
             ),
             matched,
         )
+
+    @staticmethod
+    def _rag_query(*, dish: DishLookupInput, dish_index: int, plan: DishLookupPlan) -> str:
+        parts = [dish.name, *dish.preparation_terms, *plan.user_goal_tags]
+        if len(plan.rag_queries) == len(plan.dishes):
+            parts.append(plan.rag_queries[dish_index])
+        elif len(plan.dishes) == 1:
+            parts.extend(plan.rag_queries)
+        return " ".join(dict.fromkeys(part.strip() for part in parts if part.strip()))[:1000]
 
     @staticmethod
     def _applicable_rule(rule: DishRule, plan: DishLookupPlan) -> DishRuleEvidence | None:

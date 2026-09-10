@@ -465,6 +465,11 @@ class KnowledgeCitation(ContractModel):
     applicability: tuple[str, ...] = Field(default=(), max_length=32)
     review_status: KnowledgeReviewStatus
     retrieved_in_invocation_id: str = Field(min_length=1, max_length=128)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    corpus_release_id: str | None = Field(default=None, min_length=1, max_length=128)
+    corpus_release_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    retrieval_run_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("applicability")
     @classmethod

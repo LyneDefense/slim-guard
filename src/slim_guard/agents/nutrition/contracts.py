@@ -63,6 +63,10 @@ class KnowledgeCandidate(ContractModel):
     active: bool
     content: str = Field(min_length=1, max_length=16_000)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    corpus_release_id: str | None = Field(default=None, min_length=1, max_length=128)
+    corpus_release_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    retrieval_run_id: str | None = Field(default=None, min_length=1, max_length=128)
     rank: int | None = Field(default=None, ge=1, le=10_000, strict=True)
     keyword_score: float | None = Field(default=None, ge=0)
     vector_score: float | None = Field(default=None, ge=0)
@@ -114,6 +118,11 @@ class KnowledgeCandidate(ContractModel):
             applicability=self.applicability,
             review_status=self.review_status,
             retrieved_in_invocation_id=invocation_id,
+            content_sha256=self.content_sha256,
+            source_content_sha256=self.source_content_sha256,
+            corpus_release_id=self.corpus_release_id,
+            corpus_release_sha256=self.corpus_release_sha256,
+            retrieval_run_id=self.retrieval_run_id,
         )
 
     @property
@@ -166,9 +175,7 @@ class NutritionEvidence(ContractModel):
     @model_validator(mode="after")
     def validate_visual_provenance(self) -> NutritionEvidence:
         source_type = self.source_type.casefold()
-        is_visual = any(
-            marker in source_type for marker in ("visual", "vision", "image", "photo")
-        )
+        is_visual = any(marker in source_type for marker in ("visual", "vision", "image", "photo"))
         if is_visual and self.authority is not EvidenceAuthority.OBSERVATION:
             raise ValueError("Visual evidence must retain observation authority")
         if is_visual and (self.confidence is None or self.uncertainty is None):
@@ -228,9 +235,7 @@ class KnowledgeRetrieval(ContractModel):
         candidate_ids = tuple(candidate.candidate_id for candidate in self.candidates)
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("Knowledge retrieval candidate IDs must be unique")
-        candidate_citation_ids = tuple(
-            candidate.citation_id for candidate in self.candidates
-        )
+        candidate_citation_ids = tuple(candidate.citation_id for candidate in self.candidates)
         if len(candidate_citation_ids) != len(set(candidate_citation_ids)):
             raise ValueError("Knowledge candidate citation IDs must be unique")
         rejected_ids = tuple(item.candidate_id for item in self.rejected_candidates)
@@ -248,17 +253,14 @@ class KnowledgeRetrieval(ContractModel):
         if not set(citation_ids).issubset(candidate_citation_ids):
             raise ValueError("Bound citations must come from retrieved candidates")
         rejection_by_candidate_id = {
-            rejection.candidate_id: rejection.reason
-            for rejection in self.rejected_candidates
+            rejection.candidate_id: rejection.reason for rejection in self.rejected_candidates
         }
         eligible_candidate_ids = {
             candidate.candidate_id
             for candidate in self.candidates
             if candidate.citation_id in citation_ids
         }
-        if set(rejection_by_candidate_id) != set(candidate_ids).difference(
-            eligible_candidate_ids
-        ):
+        if set(rejection_by_candidate_id) != set(candidate_ids).difference(eligible_candidate_ids):
             raise ValueError("Every ineligible candidate requires one rejection reason")
         for candidate in self.candidates:
             rejection_reason: CandidateRejectionReason | None = None
@@ -266,9 +268,7 @@ class KnowledgeRetrieval(ContractModel):
                 rejection_reason = CandidateRejectionReason.INACTIVE
             elif candidate.review_status is not KnowledgeReviewStatus.APPROVED:
                 rejection_reason = CandidateRejectionReason.NOT_APPROVED
-            elif not set(self.required_applicability).issubset(
-                candidate.applicability
-            ):
+            elif not set(self.required_applicability).issubset(candidate.applicability):
                 rejection_reason = CandidateRejectionReason.INAPPLICABLE
             elif not candidate.selected_for_adoption:
                 rejection_reason = CandidateRejectionReason.NOT_SELECTED

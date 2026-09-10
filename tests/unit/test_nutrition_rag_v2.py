@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
+from slim_guard.agents.nutrition import KnowledgeCandidateBinder
 from slim_guard.db.session import Database
 from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
-from slim_guard.nutrition_rag.gateways import EmbeddingBatch
+from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
+from slim_guard.nutrition_rag.gateways import (
+    EmbeddingBatch,
+    RerankItem,
+    RerankResult,
+)
 from slim_guard.nutrition_rag.ingestion import (
     NutritionKnowledgeIngestionService,
     NutritionKnowledgeWorker,
@@ -19,6 +27,7 @@ from slim_guard.nutrition_rag.processing import (
     ParentChildNutritionChunker,
 )
 from slim_guard.nutrition_rag.repository import NutritionRagRepository
+from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService
 from slim_guard.nutrition_rag.storage import (
     InMemoryNutritionObjectStore,
     NutritionObjectIntegrityError,
@@ -26,7 +35,11 @@ from slim_guard.nutrition_rag.storage import (
 
 
 class FakeEmbeddingGateway:
-    async def embed(self, texts: tuple[str, ...]) -> EmbeddingBatch:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def embed(self, texts: Sequence[str]) -> EmbeddingBatch:
+        self.calls += 1
         return EmbeddingBatch(
             vectors=tuple((0.01,) * 1024 for _ in texts),
             model="fake-embedding",
@@ -39,7 +52,30 @@ class FakeEmbeddingGateway:
         return None
 
 
-async def test_ingestion_review_release_and_activation_are_separate(tmp_path) -> None:
+class FakeRerankGateway:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def rerank(self, *, query: str, documents: Sequence[str], top_n: int) -> RerankResult:
+        self.calls += 1
+        assert query
+        base_score = 0.1 if "无结果" in query else 0.9
+        return RerankResult(
+            items=tuple(
+                RerankItem(index=index, score=base_score - (index * 0.01))
+                for index in range(min(top_n, len(documents)))
+            ),
+            model="fake-rerank",
+            request_id="rerank-request-1",
+            prompt_tokens=len(documents),
+            latency_ms=1,
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_ingestion_review_release_and_activation_are_separate(tmp_path: Path) -> None:
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'nutrition-v2.sqlite3'}")
     await database.create_schema()
     store = InMemoryNutritionObjectStore()
@@ -130,7 +166,70 @@ async def test_ingestion_review_release_and_activation_are_separate(tmp_path) ->
             source_ids=(source_id,),
             created_by="admin",
         )
-        assert release.status == "review_ready"
+        assert release.status == "indexing_check"
+        release = await repository.complete_release_index_check(release.id)
+        assert release.status == "evaluating"
+        cases = tuple(
+            {
+                "case_key": f"positive-{index}",
+                "query_plan_input": {
+                    "query": f"成年人减重 食物多样 {index}",
+                    "metadata_filter": {"applicability": ["adult", "china"]},
+                },
+                "expected_source_keys": ["adult-weight-guide"],
+                "expected_chunk_concepts": ["食物多样"],
+                "forbidden_source_keys": [],
+                "expected_outcome": "evidence",
+            }
+            for index in range(75)
+        ) + tuple(
+            {
+                "case_key": f"negative-{index}",
+                "query_plan_input": {
+                    "query": f"无结果 火箭发动机 {index}",
+                    "metadata_filter": {"applicability": ["adult", "china"]},
+                },
+                "expected_source_keys": [],
+                "expected_chunk_concepts": [],
+                "forbidden_source_keys": [],
+                "expected_outcome": "insufficient",
+            }
+            for index in range(25)
+        )
+        dataset = await repository.create_evaluation_dataset(
+            version="nutrition-eval-v1",
+            cases=cases,
+            created_by="admin",
+        )
+        assert dataset.status == "ready"
+        run_id, evaluation_job = await repository.create_evaluation_run(
+            release_id=release.id,
+            dataset_id=dataset.id,
+            created_by="admin",
+            idempotency_key="first-release-evaluation",
+        )
+        retrieval = HybridNutritionRagService(
+            repository=repository,
+            embedding_gateway=FakeEmbeddingGateway(),
+            rerank_gateway=FakeRerankGateway(),
+        )
+        evaluation_worker = NutritionKnowledgeWorker(
+            ingestion=ingestion,
+            worker_id="evaluation-worker",
+            poll_seconds=0.01,
+            lease_seconds=60,
+            evaluation=NutritionEvaluationService(
+                repository=repository,
+                retrieval=retrieval,
+            ),
+        )
+        assert await evaluation_worker.run_once() is True
+        evaluation_job_result = await repository.get_job(evaluation_job.id)
+        assert evaluation_job_result is not None
+        assert evaluation_job_result.status == "succeeded"
+        evaluation_run = await repository.get_evaluation_run(run_id)
+        assert evaluation_run is not None
+        assert evaluation_run["metrics"]["gates_passed"] is True
         approved = await repository.review_release(
             release.id,
             decision="approve",
@@ -152,7 +251,7 @@ async def test_ingestion_review_release_and_activation_are_separate(tmp_path) ->
         await database.close()
 
 
-async def test_job_idempotency_and_required_reject_reason(tmp_path) -> None:
+async def test_job_idempotency_and_required_reject_reason(tmp_path: Path) -> None:
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'jobs.sqlite3'}")
     await database.create_schema()
     repository = NutritionRagRepository(database)
@@ -182,6 +281,121 @@ async def test_job_idempotency_and_required_reject_reason(tmp_path) -> None:
                 actor="admin",
                 attestations={},
             )
+    finally:
+        await database.close()
+
+
+async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'retrieval.sqlite3'}")
+    await database.create_schema()
+    store = InMemoryNutritionObjectStore()
+    repository = NutritionRagRepository(database)
+    embeddings = FakeEmbeddingGateway()
+    raw = (
+        "# 烹饪与搭配\n\n"
+        "减重期间可以吃番茄炒蛋。建议搭配蔬菜和全谷物，烹饪时控制用油和盐，"
+        "不需要因为减重而完全禁食普通菜品。"
+    ).encode()
+    digest = hashlib.sha256(raw).hexdigest()
+    stored = await store.put(
+        key=store.object_key(sha256=digest, filename="meal.md"),
+        content=raw,
+        sha256=digest,
+        media_type="text/markdown",
+    )
+    asset = await repository.create_asset(
+        stored=stored,
+        original_filename="meal.md",
+        source_method="upload",
+        source_url=None,
+        created_by="admin",
+    )
+    job = await repository.enqueue_job(
+        job_type="ingest",
+        subject_type="asset",
+        subject_id=asset.id,
+        input={
+            "asset_id": asset.id,
+            "source_key": "meal-composition",
+            "version": "v1",
+            "title": "减重餐食搭配",
+            "publisher": "测试机构",
+            "tags": ["减重", "烹饪方式"],
+            "applicability": ["adult", "china"],
+        },
+        idempotency_key="ingest-meal-v1",
+        created_by="admin",
+    )
+    worker = NutritionKnowledgeWorker(
+        ingestion=NutritionKnowledgeIngestionService(
+            repository=repository,
+            object_store=store,
+            embedding_gateway=embeddings,
+            max_asset_bytes=1024 * 1024,
+            legacy_repository=NutritionKnowledgeRepository(database),
+        ),
+        worker_id="test-worker",
+        poll_seconds=0.01,
+        lease_seconds=60,
+    )
+    try:
+        await worker.run_once()
+        completed = await repository.get_job(job.id)
+        assert completed is not None and completed.output is not None
+        source_id = completed.output["source_id"]
+        for review_type in ("content", "applicability", "rights"):
+            await repository.append_source_review(
+                source_id=source_id,
+                review_type=review_type,
+                decision="approve",
+                actor="admin",
+                attestations={"confirmed": True},
+            )
+        await repository.mark_source_approved(source_id)
+        release = await repository.create_release(
+            version="nutrition-test-v1",
+            source_ids=(source_id,),
+            created_by="admin",
+        )
+        await repository.complete_release_index_check(release.id)
+        reranker = FakeRerankGateway()
+        service = HybridNutritionRagService(
+            repository=repository,
+            embedding_gateway=embeddings,
+            rerank_gateway=reranker,
+        )
+
+        raw_result = await service.search(
+            query="番茄炒蛋 减重 少油 搭配",
+            max_results=3,
+            metadata_filter={"applicability": ["adult", "china"]},
+            retrieved_in_invocation_id="nutrition-invocation-1",
+            release_id=release.id,
+        )
+        bound = KnowledgeCandidateBinder().bind_search_result(
+            invocation_id="nutrition-invocation-1",
+            result=raw_result,
+        )
+        assert raw_result["retrieval_run_id"]
+        assert bound.corpus_status.value == "available"
+        assert len(bound.citations) == 1
+        assert "番茄炒蛋" in bound.candidates[0].content
+        assert reranker.calls == 1
+
+        model_calls = embeddings.calls
+        excluded = await service.search(
+            query="番茄炒蛋",
+            max_results=3,
+            metadata_filter={"applicability": ["child"]},
+            release_id=release.id,
+        )
+        assert excluded["candidates"] == []
+        assert embeddings.calls == model_calls
+        assert reranker.calls == 1
+        source = await service.get_source(source_id=source_id)
+        assert source["eligibility"]["active"] is False
     finally:
         await database.close()
 
