@@ -205,7 +205,7 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
     await model.close()
 
 
-async def test_mobile_coach_profile_rejects_invalid_dates_and_blocks_minors(tmp_path) -> None:
+async def test_mobile_coach_profile_rejects_invalid_dates_and_allows_minors(tmp_path) -> None:
     settings = Settings(
         app_env="test",
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'mobile-profile-gate.sqlite3'}",
@@ -218,7 +218,8 @@ async def test_mobile_coach_profile_rejects_invalid_dates_and_blocks_minors(tmp_
         routine_scheduler_enabled=False,
         log_level="WARNING",
     )
-    app = create_app(settings)
+    model = ScriptedModelGateway((reply("可以，我们先从今天这顿饭开始。"),))
+    app = create_app(settings, model_gateway=model)
     async with app.router.lifespan_context(app):
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -255,7 +256,7 @@ async def test_mobile_coach_profile_rejects_invalid_dates_and_blocks_minors(tmp_
                 headers=headers,
                 json=payload,
             )
-            blocked = await http.post(
+            chat = await http.post(
                 "/api/mobile/v1/chat/messages",
                 headers=headers,
                 json={"text": "帮我看看今天吃什么", "idempotency_key": "minor-chat-1"},
@@ -269,16 +270,23 @@ async def test_mobile_coach_profile_rejects_invalid_dates_and_blocks_minors(tmp_
         assert future_measurement.status_code == 422
         assert future_measurement.json()["detail"]["code"] == "invalid_coach_profile"
         assert minor.status_code == 200
-        assert minor.json()["status"] == "unsupported_minor"
-        assert minor.json()["coach_enabled"] is False
-        assert blocked.status_code == 403
-        assert blocked.json()["detail"]["code"] == "coach_age_not_supported"
+        assert minor.json()["status"] == "ready"
+        assert minor.json()["coach_enabled"] is True
+        assert chat.status_code == 200
+        assert chat.json()["text"] == "可以，我们先从今天这顿饭开始。"
         assert edited.status_code == 200
         assert edited.json()["status"] == "ready"
         assert edited.json()["profile"]["revision"] == 2
 
         async with app.state.database.session() as session:
-            assert await session.scalar(select(func.count(MobileAgentRequestRecord.id))) == 0
+            assert await session.scalar(select(func.count(MobileAgentRequestRecord.id))) == 1
+        trusted_context = next(
+            message.content
+            for message in model.requests[0].messages
+            if message.content and message.content.startswith("权威用户事实")
+        )
+        assert '"weight_assessment_standard":"minor"' in trusted_context
+    await model.close()
 
 
 async def test_mobile_test_accounts_login_and_keep_edited_nickname(tmp_path) -> None:

@@ -45,7 +45,7 @@ export type CoachProfileData = CoachProfileInput & {
 
 export type CoachProfileStatus = {
   schema_version: 1;
-  status: 'required' | 'ready' | 'unsupported_minor';
+  status: 'required' | 'ready';
   coach_enabled: boolean;
   profile: CoachProfileData | null;
 };

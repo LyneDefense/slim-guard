@@ -69,7 +69,6 @@ export function CoachProfileScreen({ intent, onClose, onReady }: Props) {
   const [targetBodyFat, setTargetBodyFat] = useState(numberText(existing?.target_body_fat_percent));
   const [exercise, setExercise] = useState<CoachExerciseFrequency | null>(existing?.exercise_frequency ?? null);
   const [saving, setSaving] = useState(false);
-  const [unsupportedSaved, setUnsupportedSaved] = useState(data?.coach_profile.status === 'unsupported_minor');
 
   const validation = useMemo(() => validateForm({
     ageBand,
@@ -89,13 +88,8 @@ export function CoachProfileScreen({ intent, onClose, onReady }: Props) {
     setSaving(true);
     try {
       const result = await saveCoachProfile(validation.payload);
-      if (result.coach_enabled) {
-        setUnsupportedSaved(false);
-        if (intent === 'coach') onReady();
-        else onClose();
-        return;
-      }
-      setUnsupportedSaved(true);
+      if (result.coach_enabled && intent === 'coach') onReady();
+      else onClose();
     } catch (caught) {
       Alert.alert('没有保存成功', caught instanceof Error ? caught.message : '请稍后重试');
     } finally {
@@ -118,18 +112,10 @@ export function CoachProfileScreen({ intent, onClose, onReady }: Props) {
           <Text style={styles.title}>先把必要资料{`\n`}填写完整。</Text>
           <Text style={styles.intro}>教练会依据这些数据理解你的当前状态和目标。必填项保存后才能使用教练。</Text>
 
-          {unsupportedSaved ? (
-            <View style={styles.unsupported}>
-              <Ionicons name="information-circle" size={21} color={colors.warning} />
-              <Text style={styles.unsupportedText}>当前减脂教练只面向年满 18 岁的用户。资料已经保存，你可以修改年龄段或返回其他页面。</Text>
-            </View>
-          ) : null}
-
           <SectionLabel title="基本情况" required />
           <Card>
             <ChoiceField label="年龄段" options={AGE_OPTIONS} value={ageBand} onChange={(value) => {
               setAgeBand(value);
-              setUnsupportedSaved(false);
             }} />
             <FieldDivider />
             <NumberField label="身高" unit="cm" value={height} onChange={setHeight} placeholder="例如 168.0" />
@@ -159,7 +145,7 @@ export function CoachProfileScreen({ intent, onClose, onReady }: Props) {
 
           {validation.error ? <Text style={styles.validation}>{validation.error}</Text> : null}
           <Button
-            title={intent === 'coach' && ageBand !== '0_9' && ageBand !== '10_17' ? '保存并进入教练' : '保存资料'}
+            title={intent === 'coach' ? '保存并进入教练' : '保存资料'}
             loading={saving}
             disabled={!validation.payload}
             onPress={() => void save()}
@@ -402,8 +388,6 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.primary, fontSize: 11, fontWeight: '800', letterSpacing: 1.7 },
   title: { color: colors.ink, fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.9, marginTop: spacing.sm },
   intro: { color: colors.inkMuted, fontSize: 13, lineHeight: 20, marginTop: spacing.md },
-  unsupported: { flexDirection: 'row', gap: spacing.sm, padding: spacing.md, marginTop: spacing.lg, borderRadius: radius.md, backgroundColor: colors.accentSoft },
-  unsupportedText: { flex: 1, color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   sectionLabel: { marginTop: spacing.xl, marginBottom: spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { color: colors.ink, fontSize: 19, fontWeight: '800' },
   required: { color: colors.primary, fontSize: 11, fontWeight: '800' },

@@ -206,13 +206,13 @@ curl -i https://enceladus.online/health/ready
 
 ### `feat: enforce health safety output guard`
 
-- `src/slim_guard/harness/safety.py` → 健康安全硬门禁与最终回复校验器 → 确定性识别明确急症、自伤、高风险减重和未成年人信号，禁止此类 Turn 调用 Tool，并替换诊断、处方、危险建议或失败写入却声称成功的输出。
+- `src/slim_guard/harness/safety.py` → 健康安全门禁与最终回复校验器 → 确定性识别明确急症、自伤和高风险减重并禁止此类 Turn 调用 Tool；未成年人信号只切换为儿童青少年安全边界，不阻断正常记录和教练对话；同时替换诊断、处方、危险建议或失败写入却声称成功的输出。
 - `src/slim_guard/harness/runner.py` → 单轮 Agent 编排入口 → 在上下文编译前评估本轮风险，高风险时清空可用 Tool 并把不可覆盖的安全状态加入系统上下文。
 - `src/slim_guard/harness/loop.py` → 有界 Model-Tool 内循环 → 在最终回复落库前执行 Output Guard，并将实际交付文本作为 Turn 结果。
 - `src/slim_guard/harness/trace.py` → Harness 可重建运行轨迹 → 仅在门禁修改回复时追加不含敏感正文的 Guard 事件和原因码。
 - `src/slim_guard/harness/events.py` → Harness 事件类型定义 → 新增 `output_guard` 审计事件。
 - `src/slim_guard/agent/composition.py` → Agent 依赖装配模块 → 在生产 Runtime 启用 SlimGuard Output Guard 并升级冻结安全策略版本。
-- `tests/unit/test_safety_guard.py` → 安全策略单元测试 → 覆盖明确急症、未成年人、普通打卡以及诊断处方输出替换。
+- `tests/unit/test_safety_guard.py` → 安全策略单元测试 → 覆盖明确急症硬门禁、未成年人不阻断、普通打卡以及诊断处方输出替换。
 - `tests/unit/test_agent_runtime.py` → Agent Runtime 闭环测试 → 验证急症输入无法调用任何 Tool、错误模型回复被安全升级信息替换且 Guard 事件可追溯。
 - `IMPLEMENTATION_LOG.md` → 无人值守开发的持久交接日志 → 记录本次提交的文件职责与作用。
 
@@ -474,8 +474,8 @@ curl -i https://enceladus.online/health/ready
 ### `feat: require a complete mobile coach profile`
 
 - `mobile-app/` → 教练入口硬门槛 → 用户从教练 Tab、今日快捷操作或趋势页进入教练时，若尚无完整档案，统一进入原生健康档案表单；类别点选、日期选择、数值手动输入且最多一位小数，不保存草稿或显示完成进度。
-- 健康档案字段 → 必填年龄段、身高、当前体重及测量日期、目标类型、目标体重和日期；选填当前体脂、目标体脂和运动频率。年龄段明确拆分 `10～17` 与 `18～29`，未满 18 岁资料可保存但不能使用当前成人减脂教练。
-- `mobile/contracts.py`、`mobile/service.py`、`api/mobile_routes.py` → 服务端强制边界 → 新增档案读取/完整替换 API、数值和日期交叉校验及 revision；没有档案返回 428，未成年人返回 403，绕过 App 也不能调用教练。
+- 健康档案字段 → 必填年龄段、身高、当前体重及测量日期、目标类型、目标体重和日期；选填当前体脂、目标体脂和运动频率。年龄段明确拆分 `10～17` 与 `18～29`，未成年人完成档案后同样可以使用教练，但必须采用儿童青少年标准。
+- `mobile/contracts.py`、`mobile/service.py`、`api/mobile_routes.py` → 服务端强制边界 → 新增档案读取/完整替换 API、数值和日期交叉校验及 revision；只有档案缺失返回 428，绕过 App 也不能在资料不完整时调用教练。
 - `db/models.py`、`db/migrations.py`、`mobile/platform.py` → 持久化生命周期 → 使用整数毫米、克和基点无损保存，部署迁移自动建表；账号删除清除档案，微信身份绑定时安全迁移且不覆盖目标账号已有档案。
 - `harness/context_data.py`、`agent/prompt.py` → Agent 权威上下文 → 注入用户填写的完整档案，并明确更新的实际测量优先；未采集过敏、疾病、医嘱和孕哺信息不等于不存在，只能按普通人群给一般建议并保留专业升级边界。
 - 验证 → 后端 Ruff、严格 Mypy（207 个源码文件）、11 项相关 Pytest、移动端 TypeScript 和 iOS Expo 生产导出通过。

@@ -5,7 +5,7 @@ SlimGuard 是一个 Python 编写的企业微信“微信客服”减脂助手�
 仓库现在也包含基于 Expo/React Native 的 iOS 与 Android 客户端。它复用同一套 Harness
 Agent、健康记录和记忆数据库，提供手机号登录、对话与饮食图片、今日概览、趋势、目标与记忆、
 本地提醒、离线可靠发送、微信身份绑定和账号删除。用户首次进入教练前必须完成由服务端校验的
-健康档案；未满 18 岁的档案可以保存，但当前成人减脂教练不会开放。开发入口见
+健康档案；不同年龄段会进入相应的体重判断和建议边界。开发入口见
 [`mobile-app/README.md`](mobile-app/README.md)，服务器与双端构建步骤见
 [`MOBILE_APP_DEPLOYMENT.md`](MOBILE_APP_DEPLOYMENT.md)，交付范围见
 [`MOBILE_MVP_REPORT.md`](MOBILE_MVP_REPORT.md)。

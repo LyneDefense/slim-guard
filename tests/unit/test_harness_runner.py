@@ -174,6 +174,7 @@ def initialization_request(
     user_id: str,
     agent_version_id: str,
     deadline_at: datetime | None = None,
+    text: str = "今天 77.6kg",
 ) -> TurnInitializationRequest:
     return TurnInitializationRequest(
         user_id=user_id,
@@ -183,7 +184,7 @@ def initialization_request(
         deadline_at=deadline_at,
         inputs=(
             TurnInput.user_message(
-                text="今天 77.6kg",
+                text=text,
                 source_message_id="wecom-message-1",
                 channel_id="default",
             ),
@@ -267,6 +268,45 @@ async def test_runner_executes_and_persists_one_complete_turn(tmp_path) -> None:
         }
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
+    finally:
+        await database.close()
+
+
+async def test_minor_signal_keeps_coaching_tools_and_enters_trusted_context(tmp_path) -> None:
+    database, user = await prepare_database(tmp_path)
+    manifest = build_manifest(with_tools=True)
+    await AgentVersionRepository(database).register(manifest)
+    repository = HarnessStateRepository(database)
+    model = ScriptedModelGateway((final_response("可以继续记录。"),))
+    current_time = datetime(2026, 9, 10, 9, 0, tzinfo=UTC)
+    runner = build_runner(
+        repository=repository,
+        manifest=manifest,
+        registry=tool_registry(),
+        model=model,
+        tool_calls=NoToolRunner(),
+        current_time=current_time,
+    )
+    try:
+        result = await runner.run(
+            request=initialization_request(
+                user_id=user.id,
+                agent_version_id=manifest.version_id,
+                text="我今年 15 岁，想先记录今天的饮食",
+            ),
+            grants=HarnessTurnGrants(allowed_tool_names=("record_weight",)),
+        )
+
+        assert result.compiled is not None
+        assert [tool.name for tool in result.compiled.request.tools] == ["record_weight"]
+        trusted_context = next(
+            message.content
+            for message in result.compiled.request.messages
+            if message.content and message.content.startswith("权威用户事实")
+        )
+        assert '"blocks_tools":false' in trusted_context
+        assert '"code":"minor"' in trusted_context
+        assert result.final_text == "可以继续记录。"
     finally:
         await database.close()
 

@@ -337,7 +337,9 @@ class AuthoritativeContextDataProvider:
                     "schema_version": coach.schema_version,
                     "revision": coach.revision,
                     "age_band": coach.age_band,
-                    "adult_coach_eligible": coach.age_band not in {"0_9", "10_17"},
+                    "weight_assessment_standard": (
+                        "minor" if coach.age_band in {"0_9", "10_17"} else "adult"
+                    ),
                     "height_cm": self._decimal_text(
                         Decimal(coach.height_millimeters) / Decimal("10")
                     ),

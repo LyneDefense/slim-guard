@@ -201,11 +201,6 @@ class MobileApplicationService:
                 "coach_profile_required",
                 "使用教练前，请先完成健康档案",
             )
-        if not profile.coach_enabled:
-            raise MobileServiceError(
-                "coach_age_not_supported",
-                "当前成人减脂教练暂不适用于未满 18 岁的用户",
-            )
         if self._runtime is None:
             raise MobileServiceError("agent_unavailable", "SlimGuard Agent is unavailable")
         image = self._decode_image(request.image_base64)
@@ -677,10 +672,9 @@ class MobileApplicationService:
                 coach_enabled=False,
             )
         age_band = CoachAgeBand(row.age_band)
-        enabled = age_band.supports_adult_coach
         return CoachProfileStatusView(
-            status="ready" if enabled else "unsupported_minor",
-            coach_enabled=enabled,
+            status="ready",
+            coach_enabled=True,
             profile=CoachProfileData(
                 age_band=age_band,
                 height_cm=row.height_millimeters / 10,

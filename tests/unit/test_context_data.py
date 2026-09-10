@@ -166,7 +166,7 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
                 "schema_version": 1,
                 "revision": 1,
                 "age_band": "30_39",
-                "adult_coach_eligible": True,
+                "weight_assessment_standard": "adult",
                 "height_cm": "168",
                 "current_weight_kg": "77.6",
                 "weight_measured_on": NOW.date().isoformat(),

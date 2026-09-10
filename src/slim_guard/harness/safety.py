@@ -91,7 +91,7 @@ class DefaultInputSafetyPolicy:
             )
         match = self._AGE_PATTERN.search(text)
         if (match is not None and int(match.group("age")) < 18) or "未成年" in text:
-            return SafetyAssessment(HealthRiskLevel.HIGH, "minor", True)
+            return SafetyAssessment(HealthRiskLevel.HIGH, "minor", False)
         if any(signal in text for signal in self._DANGEROUS_WEIGHT_LOSS):
             return SafetyAssessment(
                 HealthRiskLevel.HIGH,
@@ -151,12 +151,6 @@ class SlimGuardOutputGuard:
                 "你描述的情况可能需要立即处理。请停止当前减脂或运动安排，尽快联系当地急救"
                 "服务或前往急诊，不要等待线上减脂建议。",
                 "medical_emergency_escalation",
-            )
-        if assessment.code == "minor":
-            return self._replacement(
-                "未成年人不适合自行执行成人减脂方案。请和监护人一起咨询儿科或专业营养人员，"
-                "优先保证正常生长发育。",
-                "minor_safety_boundary",
             )
         if assessment.code == "dangerous_weight_loss":
             return self._replacement(

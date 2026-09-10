@@ -43,13 +43,13 @@ function AppShell() {
   const insets = useSafeAreaInsets();
 
   const openCoach = useCallback((draft = '') => {
-    if (!data?.coach_profile.coach_enabled) {
+    if (!data?.coach_profile.profile) {
       setProfileGate({ intent: 'coach', draft });
       return;
     }
     setCoachDraft(draft);
     setTab('coach');
-  }, [data?.coach_profile.coach_enabled]);
+  }, [data?.coach_profile.profile]);
   const openCoachProfile = useCallback(() => {
     setProfileGate({ intent: 'edit', draft: '' });
   }, []);
@@ -60,7 +60,7 @@ function AppShell() {
   if (!data) return <LoadingScreen />;
 
   const activeGate = profileGate ?? (
-    tab === 'coach' && !data.coach_profile.coach_enabled
+    tab === 'coach' && !data.coach_profile.profile
       ? { intent: 'coach' as const, draft: coachDraft }
       : null
   );
@@ -70,7 +70,7 @@ function AppShell() {
         intent={activeGate.intent}
         onClose={() => {
           setProfileGate(null);
-          if (tab === 'coach' && !data.coach_profile.coach_enabled) setTab('today');
+          if (tab === 'coach' && !data.coach_profile.profile) setTab('today');
         }}
         onReady={() => {
           setCoachDraft(activeGate.draft);

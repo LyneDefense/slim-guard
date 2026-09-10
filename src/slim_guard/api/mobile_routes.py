@@ -372,7 +372,6 @@ async def _mobile_call(awaitable: Awaitable[T]) -> T:
             "request_not_found": status.HTTP_404_NOT_FOUND,
             "idempotency_key_reused": status.HTTP_409_CONFLICT,
             "coach_profile_required": status.HTTP_428_PRECONDITION_REQUIRED,
-            "coach_age_not_supported": status.HTTP_403_FORBIDDEN,
             "agent_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
             "mobile_agent_failed": status.HTTP_502_BAD_GATEWAY,
             "invalid_image": status.HTTP_422_UNPROCESSABLE_CONTENT,

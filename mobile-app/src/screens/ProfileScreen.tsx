@@ -128,7 +128,7 @@ export function ProfileScreen({ openCoach, openCoachProfile }: {
         <SectionTitle title="健康档案" action={data.coach_profile.profile ? <Pressable onPress={openCoachProfile}><Text style={styles.textAction}>修改</Text></Pressable> : undefined} />
         <Card>
           {data.coach_profile.profile ? (
-            <CoachProfileSummary profile={data.coach_profile.profile} unsupported={data.coach_profile.status === 'unsupported_minor'} />
+            <CoachProfileSummary profile={data.coach_profile.profile} />
           ) : (
             <View>
               <Text style={styles.infoTitle}>使用教练前需要填写</Text>
@@ -228,10 +228,9 @@ const EXERCISE_LABELS = {
   weekly_5_plus: '每周 5 次及以上',
 };
 
-function CoachProfileSummary({ profile, unsupported }: { profile: CoachProfileData; unsupported: boolean }) {
+function CoachProfileSummary({ profile }: { profile: CoachProfileData }) {
   return (
     <View>
-      {unsupported ? <Text style={styles.profileWarning}>当前减脂教练只面向年满 18 岁的用户</Text> : null}
       <ProfileFact label="年龄段" value={AGE_LABELS[profile.age_band]} />
       <ProfileFact label="身高" value={`${profile.height_cm} cm`} />
       <ProfileFact label="当前体重" value={`${profile.current_weight_kg} kg · ${profile.weight_measured_on}`} />
@@ -278,7 +277,6 @@ const styles = StyleSheet.create({
   profileMeta: { marginLeft: spacing.md },
   profileName: { color: colors.ink, fontSize: 18, fontWeight: '800' },
   profileHint: { color: colors.inkMuted, fontSize: 13, marginTop: 4 },
-  profileWarning: { color: colors.warning, backgroundColor: colors.accentSoft, padding: spacing.md, borderRadius: radius.md, fontSize: 12, lineHeight: 18, fontWeight: '700', marginBottom: spacing.sm },
   profileFact: { minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   profileFactLabel: { width: 70, color: colors.inkMuted, fontSize: 12 },
   profileFactValue: { flex: 1, color: colors.ink, fontSize: 13, lineHeight: 19, fontWeight: '700', textAlign: 'right' },

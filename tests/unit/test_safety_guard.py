@@ -23,7 +23,7 @@ def user_item(text: str) -> tuple[ItemRef, ...]:
     )
 
 
-def test_input_policy_hard_gates_explicit_emergency_and_minor_signals() -> None:
+def test_input_policy_hard_gates_emergency_but_marks_minor_without_blocking() -> None:
     policy = DefaultInputSafetyPolicy()
 
     emergency = policy.assess(user_item("我刚跑完步，现在胸痛而且呼吸困难"))
@@ -33,10 +33,22 @@ def test_input_policy_hard_gates_explicit_emergency_and_minor_signals() -> None:
     assert emergency.level is HealthRiskLevel.EMERGENCY
     assert emergency.code == "medical_emergency"
     assert emergency.blocks_tools is True
+    assert minor.level is HealthRiskLevel.HIGH
     assert minor.code == "minor"
-    assert minor.blocks_tools is True
+    assert minor.blocks_tools is False
     assert normal.level is HealthRiskLevel.NORMAL
     assert normal.blocks_tools is False
+
+
+def test_output_guard_does_not_replace_safe_minor_coaching() -> None:
+    result = SlimGuardOutputGuard().review(
+        text="可以继续记录今天的饮食，我们会优先保证正常生长发育。",
+        assessment=SafetyAssessment(HealthRiskLevel.HIGH, "minor", False),
+        tool_outcomes=(),
+    )
+
+    assert result.modified is False
+    assert result.code == "passed"
 
 
 def test_output_guard_replaces_diagnosis_and_dangerous_advice() -> None:

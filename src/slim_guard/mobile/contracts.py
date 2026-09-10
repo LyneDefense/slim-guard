@@ -118,10 +118,6 @@ class CoachAgeBand(StrEnum):
     AGE_70_79 = "70_79"
     AGE_80_PLUS = "80_plus"
 
-    @property
-    def supports_adult_coach(self) -> bool:
-        return self not in {CoachAgeBand.AGE_0_9, CoachAgeBand.AGE_10_17}
-
 
 class CoachGoalType(StrEnum):
     LOSE_WEIGHT = "lose_weight"
@@ -205,7 +201,7 @@ class CoachProfileData(BaseModel):
 
 class CoachProfileStatusView(BaseModel):
     schema_version: Literal[1] = 1
-    status: Literal["required", "ready", "unsupported_minor"]
+    status: Literal["required", "ready"]
     coach_enabled: bool
     profile: CoachProfileData | None = None
 
