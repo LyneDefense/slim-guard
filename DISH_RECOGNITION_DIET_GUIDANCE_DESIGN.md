@@ -471,8 +471,10 @@ DietGuidanceAssessment
 - `draft → approved → published → retired` 生命周期；
 - 只允许检索已发布资料的服务和引用校验。
 
-当前组合代码没有注入 `KnowledgeVectorScorer`，因此线上知识检索主要是词法候选和代码重排；接口虽支持
-向量候选，但还没有形成完整的向量检索链路。这不妨碍第一版上线，RAG 不等于必须先部署向量数据库。
+当前组合代码没有注入 `KnowledgeVectorScorer`，因此线上知识检索主要是词法候选和代码线性排序；接口虽支持
+向量候选，但还没有形成完整的向量检索链路。这只能作为 Shadow 阶段的过渡骨架，不满足长期生产 RAG 和
+全量启用要求。目标 Hybrid RAG、Corpus Release 和前端可视化管理以
+`NUTRITION_RAG_MANAGEMENT_DESIGN.md` 为准。
 
 ### 9.2 需要新增的结构化数据
 
@@ -792,7 +794,9 @@ RESPONSE_STYLE → NUTRITION_RETRIEVAL            # 风格 Agent 扩大事实范
 - 增加版本化只读菜品/规则工具；
 - 复用现有 Nutrition Knowledge 生命周期和引用校验；
 - 导入、审核和发布第一批权威资料；
-- 词法检索先上线，只有离线评测证明需要时再接向量召回。
+- 实现 pgvector Dense、中文词法、Phrase、RRF 和真实 Rerank 的 Hybrid Retrieval；
+- 实现不可变 Corpus Release，只有 Active Release 能供 Agent 检索；
+- 增加营养资料导入、审核、检索调试、评测、发布和回滚的可视化管理后台。
 
 验收：未发布资料泄漏率为 0；实体和引用全部可回库验证；无结果时不编造。
 
@@ -869,12 +873,15 @@ DG-1 至 DG-6 的可运行框架已经落地：六 Agent 契约与 Graph、结�
 Nutrition RAG 绑定、确定性饮食建议、Style/Reviewer、管理端四段 Trace、筛选和追加式人工菜名更正均已接通。
 Shadow 在本轮旧回复已经生成、Turn 尚未封账时执行，因此能够复用本轮 `inspect_image` 回执且不替换线上回复。
 
-当前尚未满足“全量启用专业建议”的是数据和人工验收，而不是代码入口：
+当前尚未满足“全量启用专业建议”的既包括数据和人工验收，也包括生产级 RAG 与知识库管理能力：
 
 - 菜品库尚无生产级中国家常菜、别名、特征和规则覆盖；
-- Nutrition RAG 尚未导入、审核并发布本项目要采用的权威资料；
+- Nutrition RAG 已导入并发布 3 篇初始资料，但覆盖范围不足，且尚未按生产级 Hybrid RAG 流程重新索引和评测；
+- 当前检索仍是应用内词法扫描，没有真实 Embedding、pgvector、RRF、Rerank 和 Corpus Release；
+- 管理后台尚不能完成营养资料导入、审核、检索实验、评测、发布和回滚；
 - 识别阈值尚未用目标用户真实拍摄条件下的冻结图片集校准；
 - 逐菜建议、过敏边界、Reviewer 和回退尚未完成医生/营养师人工黄金集评审。
 
-在上述门槛完成前，生产环境应保持 `MULTI_AGENT_MODE=shadow`，不得将空资料或少量示例数据当作正式营养
-服务。资料准备、来源建议和导入步骤见 `DISH_GUIDANCE_DATA_RUNBOOK.md`。
+在上述门槛完成前，生产环境应保持 `MULTI_AGENT_MODE=shadow`，不得将少量资料或过渡检索当作正式营养
+服务。资料准备、来源建议和导入步骤见 `DISH_GUIDANCE_DATA_RUNBOOK.md`；生产级 RAG 和前端管理实施见
+`NUTRITION_RAG_MANAGEMENT_DESIGN.md`。
