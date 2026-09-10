@@ -187,6 +187,22 @@ async def test_admin_can_import_review_build_and_inspect_hybrid_rag(tmp_path: Pa
             assert dataset.status_code == 200
             assert dataset.json()["dataset"]["status"] == "draft"
 
+            appended = await client.post(
+                f"/api/admin/nutrition-knowledge/retrieval-lab/runs/{run_id}/evaluation-cases",
+                headers={"X-SlimGuard-CSRF": "1"},
+                json={
+                    "base_dataset_id": dataset.json()["dataset"]["id"],
+                    "dataset_version": "draft-small-v2",
+                    "case_key": "meal-lab-regression",
+                    "expected_source_keys": ["meal-guidance"],
+                    "expected_chunk_concepts": ["家常菜", "搭配"],
+                    "forbidden_source_keys": [],
+                    "expected_outcome": "evidence",
+                },
+            )
+            assert appended.status_code == 200, appended.text
+            assert len(appended.json()["dataset"]["cases"]) == 2
+
             dashboard = await client.get("/api/admin/nutrition-knowledge/dashboard")
             assert dashboard.status_code == 200
             assert dashboard.json()["sources"]["approved"] == 1

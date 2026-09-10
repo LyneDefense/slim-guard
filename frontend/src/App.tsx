@@ -18,6 +18,7 @@ import { api, UnauthorizedError } from "./api";
 import { StyleABReviewPage } from "./components/style/StyleABReviewPage";
 import { StyleFeedbackPage } from "./components/style/StyleFeedbackPage";
 import { StyleIterationPage } from "./components/style/StyleIterationPage";
+import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
 import { DishGuidanceTracePanel } from "./components/trace/DishGuidanceTracePanel";
 import { EvidencePanel } from "./components/trace/EvidencePanel";
@@ -200,6 +201,9 @@ function Shell({ username }: { username: string }) {
           </NavLink>
           <NavLink to="/style-feedback" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>✎</span> 风格纠正
+          </NavLink>
+          <NavLink to="/nutrition-knowledge" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+            <span>⌘</span> 营养知识库
           </NavLink>
         </nav>
         <div className="sidebar-note">
@@ -643,6 +647,7 @@ export function App() {
         <Route path="style-ab" element={<StyleABReviewPage />} />
         <Route path="style-feedback" element={<StyleFeedbackPage />} />
         <Route path="style-iterations" element={<StyleIterationPage />} />
+        <Route path="nutrition-knowledge" element={<NutritionKnowledgePage />} />
         <Route path="users/:userId" element={<UserLayout />}>
           <Route index element={<TraceList />} />
           <Route path="traces/:traceId" element={<TracePage />} />

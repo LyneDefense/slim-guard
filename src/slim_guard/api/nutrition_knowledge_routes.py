@@ -121,6 +121,18 @@ class RetrievalLabRequest(BaseModel):
     metadata_filter: dict[str, Any] = Field(default_factory=dict)
 
 
+class RetrievalLabEvaluationCaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_dataset_id: str | None = Field(default=None, min_length=1, max_length=128)
+    dataset_version: str = Field(min_length=1, max_length=128)
+    case_key: str = Field(min_length=1, max_length=128)
+    expected_source_keys: tuple[str, ...] = Field(default=(), max_length=64)
+    expected_chunk_concepts: tuple[str, ...] = Field(default=(), max_length=64)
+    forbidden_source_keys: tuple[str, ...] = Field(default=(), max_length=64)
+    expected_outcome: Literal["evidence", "insufficient"]
+
+
 def _repository(request: Request) -> NutritionRagRepository:
     return cast(NutritionRagRepository, request.app.state.nutrition_rag)
 
@@ -728,6 +740,42 @@ async def retrieval_lab_run(
         resource_id=run_id,
     )
     return result
+
+
+@router.post("/retrieval-lab/runs/{run_id}/evaluation-cases")
+async def append_retrieval_lab_evaluation_case(
+    run_id: str,
+    payload: RetrievalLabEvaluationCaseRequest,
+    request: Request,
+    principal: Annotated[AdminPrincipal, Depends(_authenticate)],
+    csrf: Annotated[None, Depends(_require_csrf)],
+) -> dict[str, Any]:
+    del csrf
+    try:
+        dataset = await _repository(request).create_evaluation_dataset_from_lab_run(
+            run_id=run_id,
+            base_dataset_id=payload.base_dataset_id,
+            version=payload.dataset_version,
+            case=payload.model_dump(
+                mode="json",
+                exclude={"base_dataset_id", "dataset_version"},
+            ),
+            created_by=principal.username,
+        )
+    except (
+        NutritionRagNotFound,
+        NutritionRagGovernanceError,
+        ValueError,
+    ) as error:
+        raise _handle_control_error(error) from error
+    await _audit(
+        request,
+        principal,
+        action="append_case",
+        resource_type="nutrition_evaluation_dataset",
+        resource_id=dataset.id,
+    )
+    return {"dataset": asdict(dataset)}
 
 
 @router.get("/evaluation-datasets")

@@ -8,7 +8,11 @@ import pytest
 
 from slim_guard.agents.nutrition import KnowledgeCandidateBinder
 from slim_guard.db.session import Database
-from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
+from slim_guard.nutrition_knowledge import (
+    KnowledgeDocument,
+    NutritionKnowledgeRepository,
+    NutritionKnowledgeService,
+)
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
 from slim_guard.nutrition_rag.gateways import (
     EmbeddingBatch,
@@ -26,7 +30,10 @@ from slim_guard.nutrition_rag.processing import (
     NutritionDocumentParser,
     ParentChildNutritionChunker,
 )
-from slim_guard.nutrition_rag.repository import NutritionRagRepository
+from slim_guard.nutrition_rag.repository import (
+    NutritionRagGovernanceError,
+    NutritionRagRepository,
+)
 from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService
 from slim_guard.nutrition_rag.storage import (
     InMemoryNutritionObjectStore,
@@ -281,6 +288,30 @@ async def test_job_idempotency_and_required_reject_reason(tmp_path: Path) -> Non
                 actor="admin",
                 attestations={},
             )
+        legacy = NutritionKnowledgeService(NutritionKnowledgeRepository(database))
+        imported = await legacy.import_documents(
+            (
+                KnowledgeDocument(
+                    source_key="not-indexed",
+                    version="v1",
+                    title="尚未索引的资料",
+                    publisher="测试机构",
+                    content="这是尚未建立检索切片的营养资料。",
+                ),
+            ),
+            imported_by="admin",
+        )
+        source_id = imported.documents[0].source.id
+        for review_type in ("content", "applicability", "rights"):
+            await repository.append_source_review(
+                source_id=source_id,
+                review_type=review_type,
+                decision="approve",
+                actor="admin",
+                attestations={"confirmed": True},
+            )
+        with pytest.raises(NutritionRagGovernanceError, match="indexing has not completed"):
+            await repository.mark_source_approved(source_id)
     finally:
         await database.close()
 
@@ -384,7 +415,46 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
         assert "番茄炒蛋" in bound.candidates[0].content
         assert reranker.calls == 1
 
+        lab_result = await service.search(
+            query="晚餐可以吃番茄炒蛋吗",
+            max_results=3,
+            metadata_filter={"applicability": ["adult", "china"]},
+            retrieved_in_invocation_id="admin-lab-reviewer",
+            release_id=release.id,
+        )
+        lab_dataset = await repository.create_evaluation_dataset_from_lab_run(
+            run_id=str(lab_result["retrieval_run_id"]),
+            base_dataset_id=None,
+            version="lab-regressions-v1",
+            case={
+                "case_key": "tomato-eggs-dinner",
+                "expected_source_keys": ["meal-composition"],
+                "expected_chunk_concepts": ["番茄炒蛋"],
+                "forbidden_source_keys": [],
+                "expected_outcome": "evidence",
+            },
+            created_by="admin",
+        )
+        assert lab_dataset.status == "draft"
+        assert lab_dataset.cases[0].query_plan_input["query"] == "晚餐可以吃番茄炒蛋吗"
+        assert lab_dataset.cases[0].query_plan_input["metadata_filter"]["applicability"] == [
+            "adult",
+            "china",
+        ]
+        with pytest.raises(NutritionRagGovernanceError, match="admin retrieval-lab run"):
+            await repository.create_evaluation_dataset_from_lab_run(
+                run_id=str(raw_result["retrieval_run_id"]),
+                base_dataset_id=None,
+                version="must-not-copy-user-query",
+                case={
+                    "case_key": "unsafe-copy",
+                    "expected_outcome": "insufficient",
+                },
+                created_by="admin",
+            )
+
         model_calls = embeddings.calls
+        rerank_calls = reranker.calls
         excluded = await service.search(
             query="番茄炒蛋",
             max_results=3,
@@ -393,7 +463,7 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
         )
         assert excluded["candidates"] == []
         assert embeddings.calls == model_calls
-        assert reranker.calls == 1
+        assert reranker.calls == rerank_calls
         source = await service.get_source(source_id=source_id)
         assert source["eligibility"]["active"] is False
     finally:

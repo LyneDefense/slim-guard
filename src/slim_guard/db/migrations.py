@@ -13,6 +13,8 @@ from slim_guard.db.models import (
     Base,
     NutritionCorpusRuntimeRecord,
     NutritionEmbeddingProfileRecord,
+    NutritionKnowledgeReviewEventRecord,
+    NutritionKnowledgeReviewRecord,
     NutritionKnowledgeSourceLabelRecord,
     NutritionKnowledgeSourceRecord,
     NutritionLexicalProfileRecord,
@@ -21,6 +23,7 @@ from slim_guard.db.models import (
     StyleProfileRecord,
     StyleProfileVersionRecord,
     StyleRuntimeConfigurationRecord,
+    new_uuid,
 )
 from slim_guard.nutrition_rag.profiles import (
     DEFAULT_EMBEDDING_PROFILE_ID,
@@ -615,6 +618,76 @@ async def _create_nutrition_rag_control_plane(connection: AsyncConnection) -> No
     )
 
 
+async def _migrate_legacy_nutrition_publication_state(
+    connection: AsyncConnection,
+) -> None:
+    """Move legacy per-source publication into the release-based review workflow."""
+
+    await _create_application_tables(connection)
+    legacy_sources = tuple(
+        (
+            await connection.execute(
+                select(
+                    NutritionKnowledgeSourceRecord.id,
+                    NutritionKnowledgeSourceRecord.content_sha256,
+                ).where(NutritionKnowledgeSourceRecord.status == "published")
+            )
+        ).tuples()
+    )
+    for source_id, content_sha256 in legacy_sources:
+        existing = await connection.scalar(
+            select(NutritionKnowledgeReviewEventRecord.id).where(
+                NutritionKnowledgeReviewEventRecord.subject_type == "source",
+                NutritionKnowledgeReviewEventRecord.subject_id == source_id,
+                NutritionKnowledgeReviewEventRecord.review_type == "content",
+            )
+        )
+        if existing is None:
+            historical = (
+                await connection.execute(
+                    select(
+                        NutritionKnowledgeReviewRecord.reviewer,
+                        NutritionKnowledgeReviewRecord.reason,
+                    )
+                    .where(
+                        NutritionKnowledgeReviewRecord.source_id == source_id,
+                        NutritionKnowledgeReviewRecord.decision.in_(("approve", "publish")),
+                    )
+                    .order_by(
+                        NutritionKnowledgeReviewRecord.created_at.desc(),
+                        NutritionKnowledgeReviewRecord.id.desc(),
+                    )
+                    .limit(1)
+                )
+            ).one_or_none()
+            if historical is not None:
+                await connection.execute(
+                    insert(NutritionKnowledgeReviewEventRecord).values(
+                        id=new_uuid(),
+                        subject_type="source",
+                        subject_id=source_id,
+                        review_type="content",
+                        decision="approve",
+                        attestations_json=json.dumps(
+                            {
+                                "migrated_from": "nutrition_knowledge_reviews",
+                                "legacy_publication_preserved": True,
+                            },
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                        reason=historical.reason,
+                        actor=historical.reviewer,
+                        subject_sha256=content_sha256,
+                    )
+                )
+        await connection.execute(
+            update(NutritionKnowledgeSourceRecord)
+            .where(NutritionKnowledgeSourceRecord.id == source_id)
+            .values(status="draft")
+        )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -643,6 +716,10 @@ MIGRATIONS = (
     SchemaMigration(
         "20260911_01_nutrition_hybrid_rag",
         _create_nutrition_rag_control_plane,
+    ),
+    SchemaMigration(
+        "20260911_02_nutrition_release_governance",
+        _migrate_legacy_nutrition_publication_state,
     ),
 )
 

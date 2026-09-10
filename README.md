@@ -131,9 +131,10 @@ Eval 输入必须是实际 `response_plan` 与 `styled_response` 配对，并覆
 导出只产生 `draft`，要求当前精确版本的最新评估同时通过表达、忠实度和隐私检查；修改或撤销审核后
 旧评估失效。评审记录 append-only，离线数据库和导出文件应限权存放，不提交仓库或暴露给普通管理员。
 
-Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。资料必须先离线导入为 `draft`，再经过
-“审核”和“发布”两个独立操作，才会被新 Turn 检索；资料退休后立即退出新检索，历史 Artifact 中已经
-冻结的 Citation 仍可审计。线上 Nutrition 工具全部只读，也不会自动把网页写入知识库。
+Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。v2 资料必须先导入为 `draft`，完成内容、
+适用范围、版权三项审核，再加入不可变 Corpus Release；Release 通过离线评测、人工验收并全量启用后，
+才会被新 Turn 检索。资料退休后立即退出新检索，历史 Artifact 中已经冻结的 Citation 仍可审计。线上
+Nutrition 工具全部只读，也不会自动把网页写入知识库。
 
 生产版 RAG v2 使用 PostgreSQL 16 + pgvector 保存切片向量，以中文词法检索、向量检索和短语匹配
 召回候选，再通过 RRF 合并并用智谱 `rerank` 重排。原始资料存放在腾讯云 COS 私有 Bucket，数据库只
@@ -158,7 +159,13 @@ CAM 身份只需对上述 Prefix 授予 `cos:PutObject`、`cos:GetObject` 和 `c
 不需要开放公网匿名读取。原文件按 SHA-256 寻址并启用 COS 服务端 AES256 加密，同一内容重复上传不会
 生成多份知识版本。建议同时开启 Bucket 版本控制。
 
-导入清单可以是 JSON 数组，也可以是包含 `documents` 数组的对象。每项至少包含 `source_key`、
+部署后访问 `/admin/nutrition-knowledge`。管理台提供资料上传/URL 导入、COS 原件下载、解析章节与切片
+检查、三项准入审核、后台任务进度、Hybrid Retrieval 分数、不可变评测集、Release 验收、全量启用和
+回滚。检索实验室中的测试结果可以复制已有评测集并追加为新版本 Case，不会覆盖旧评测集，也不能从
+真实用户 Trace 自动复制 Query。
+
+下面的 `manage_nutrition_knowledge` 是迁移期 v1 兼容/应急只读入口，不是 v2 日常管理入口。旧清单可以是
+JSON 数组，也可以是包含 `documents` 数组的对象。每项至少包含 `source_key`、
 `version`、`title`、`publisher` 和 `content`；也可用 `content_path` 代替 `content`，引用相对清单文件
 的 UTF-8 文本或 Markdown 文件。运维命令如下：
 
@@ -170,6 +177,19 @@ uv run python -m slim_guard.tools.manage_nutrition_knowledge search "成年人�
 uv run python -m slim_guard.tools.manage_nutrition_knowledge retire SOURCE_ID --reviewer reviewer@example --reason "资料已被新版本替代"
 uv run python -m slim_guard.tools.manage_nutrition_knowledge show SOURCE_ID
 ```
+
+已有 `data/nutrition-knowledge/v1/knowledge-manifest.draft.json` 的 3 篇规范化正文需要一次性经过 COS 和
+v2 Worker 重建索引。服务器配置好 COS 并启动 Worker 后执行：
+
+```bash
+uv run python -m slim_guard.tools.migrate_nutrition_manifest_v2 \
+  data/nutrition-knowledge/v1/knowledge-manifest.draft.json \
+  --actor admin
+```
+
+命令只上传不可变原件并排队，不会代替人工批准或启用。旧 content approve/publish 记录会迁为新
+Content Review；Applicability Review 和 Rights Review 必须在管理台重新确认。随后在网页创建候选
+Release、运行不少于 100 条的冻结评测集、人工验收并启用。
 
 完成资料审核后，才在 Shadow 模式打开 `NUTRITION_AGENT_ENABLED=true` 和
 `NUTRITION_RAG_ENABLED=true`。RAG 打开时不能关闭 `NUTRITION_REQUIRE_RAG_CITATIONS`；每条知识性

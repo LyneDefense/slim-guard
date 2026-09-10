@@ -910,3 +910,255 @@ export interface MemoryRecord {
     updated_at?: string;
   };
 }
+
+export type NutritionReviewDecision = "approve" | "reject" | "revoke";
+export type NutritionReviewType = "content" | "applicability" | "rights";
+
+export interface NutritionRuntime {
+  active_release_id: string | null;
+  active_release_version: string | null;
+  runtime_revision: number;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface NutritionDashboard {
+  sources: Record<string, number>;
+  jobs: Record<string, number>;
+  ready_embeddings: number;
+  pending_embeddings: number;
+  runtime: NutritionRuntime;
+  capabilities: {
+    cos_configured: boolean;
+    worker_enabled: boolean;
+    rag_engine: string;
+    embedding_model: string;
+    rerank_model: string;
+  };
+}
+
+export interface NutritionSourceReviewState {
+  content: NutritionReviewDecision | null;
+  applicability: NutritionReviewDecision | null;
+  rights: NutritionReviewDecision | null;
+}
+
+export interface NutritionSourceSummary {
+  id: string;
+  source_key: string;
+  version: string;
+  title: string;
+  publisher: string;
+  published_at: string | null;
+  source_url: string | null;
+  language: string;
+  content_sha256: string;
+  char_count: number;
+  status: string;
+  asset_id: string | null;
+  tags: string[];
+  applicability: string[];
+  review: NutritionSourceReviewState;
+  review_approved: boolean;
+  retrieval_chunk_count: number;
+  ready_embedding_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NutritionSourceDetail {
+  source: Omit<
+    NutritionSourceSummary,
+    | "asset_id"
+    | "tags"
+    | "applicability"
+    | "review"
+    | "review_approved"
+    | "retrieval_chunk_count"
+    | "ready_embedding_count"
+  > & { parser_profile_key: string; supersedes_source_id: string | null };
+  asset: {
+    id: string;
+    storage_key: string;
+    bucket: string;
+    region: string;
+    original_filename: string;
+    media_type: string;
+    byte_size: number;
+    sha256: string;
+    source_method: string;
+    source_url: string | null;
+    created_at: string;
+  } | null;
+  labels: Array<{ kind: string; value: string }>;
+  review: NutritionSourceReviewState;
+  review_approved: boolean;
+  section_count: number;
+  chunk_count: number;
+  reviews: Array<{
+    id: string;
+    review_type: NutritionReviewType;
+    decision: NutritionReviewDecision;
+    reason: string | null;
+    actor: string;
+    subject_sha256: string;
+    created_at: string;
+  }>;
+}
+
+export interface NutritionSourceSection {
+  id: string;
+  ordinal: number;
+  heading_path: string[];
+  page_from: number | null;
+  page_to: number | null;
+  content: string;
+  content_sha256: string;
+}
+
+export interface NutritionSourceChunk {
+  id: string;
+  section_id: string;
+  parent_chunk_id: string | null;
+  kind: string;
+  ordinal: number;
+  page_from: number | null;
+  page_to: number | null;
+  content: string;
+  content_sha256: string;
+  lexical_terms: string;
+  token_count: number;
+  char_count: number;
+}
+
+export interface NutritionJob {
+  id: string;
+  job_type: string;
+  subject_type: string;
+  subject_id: string | null;
+  status: string;
+  stage: string;
+  completed_items: number;
+  total_items: number;
+  attempt_count: number;
+  max_attempts: number;
+  input: Record<string, unknown>;
+  output: Record<string, unknown> | null;
+  error_code: string | null;
+  safe_error_message: string | null;
+  created_by: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface NutritionJobEvent {
+  id: string;
+  job_id: string;
+  sequence: number;
+  stage: string;
+  level: string;
+  message: string;
+  completed_items: number;
+  total_items: number;
+  created_at: string;
+}
+
+export interface NutritionRelease {
+  id: string;
+  version: string;
+  status: string;
+  manifest_sha256: string;
+  source_ids: string[];
+  embedding_profile_id: string;
+  lexical_profile_id: string;
+  retrieval_profile_id: string;
+  chunker_profile_key: string;
+  evaluation_run_id: string | null;
+  created_by: string;
+  created_at: string;
+  approved_at: string | null;
+  activated_at: string | null;
+  retired_at: string | null;
+}
+
+export interface NutritionEvaluationCase {
+  id: string;
+  case_key: string;
+  query_plan_input: {
+    query: string;
+    metadata_filter?: Record<string, unknown>;
+  };
+  expected_source_keys: string[];
+  expected_chunk_concepts: string[];
+  forbidden_source_keys: string[];
+  expected_outcome: "evidence" | "insufficient";
+}
+
+export interface NutritionEvaluationDataset {
+  id: string;
+  version: string;
+  manifest_sha256: string;
+  status: string;
+  cases: NutritionEvaluationCase[];
+  created_by: string;
+  created_at: string;
+}
+
+export interface NutritionEvaluationRun {
+  id: string;
+  release_id: string;
+  retrieval_profile_id: string;
+  dataset_id: string;
+  status: string;
+  metrics: Record<string, unknown> | null;
+  result_sha256: string | null;
+  created_by: string;
+  created_at: string;
+  completed_at: string | null;
+  results?: Array<{
+    id: string;
+    case_id: string;
+    retrieval_run_id: string | null;
+    passed: boolean;
+    rank: number | null;
+    details: Record<string, unknown>;
+  }>;
+}
+
+export interface NutritionRetrievalCandidate {
+  id: string;
+  chunk_id: string;
+  parent_chunk_id: string | null;
+  source_id: string;
+  source_key: string;
+  source_title: string;
+  child_content: string;
+  parent_context: string;
+  dense_rank: number | null;
+  dense_score: number | null;
+  lexical_rank: number | null;
+  lexical_score: number | null;
+  phrase_rank: number | null;
+  phrase_score: number | null;
+  rrf_rank: number;
+  rrf_score: number;
+  rerank_rank: number | null;
+  rerank_score: number | null;
+  selection_status: string;
+  rejection_reason: string | null;
+}
+
+export interface NutritionRetrievalRun {
+  id: string;
+  release_id: string;
+  retrieval_profile_id: string;
+  query_plan: Record<string, unknown>;
+  query_hash: string;
+  safe_query_summary: string;
+  status: string;
+  provider_usage: Record<string, unknown>;
+  total_latency_ms: number;
+  created_at: string;
+  candidates: NutritionRetrievalCandidate[];
+}

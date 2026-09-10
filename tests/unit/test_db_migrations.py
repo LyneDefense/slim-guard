@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import insert, inspect, text
+from sqlalchemy import delete, insert, inspect, select, text
 
 from slim_guard.db.migrations import MIGRATIONS
-from slim_guard.db.models import SchemaMigrationRecord
+from slim_guard.db.models import (
+    NutritionKnowledgeReviewEventRecord,
+    NutritionKnowledgeSourceRecord,
+    SchemaMigrationRecord,
+)
 from slim_guard.db.session import Database
+from slim_guard.nutrition_knowledge import (
+    KnowledgeDocument,
+    NutritionKnowledgeRepository,
+    NutritionKnowledgeService,
+)
 
 
 async def test_existing_database_receives_body_fat_table_additively(tmp_path) -> None:
@@ -45,6 +54,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260909_01_style_iteration_control_plane",
             "20260910_01_dish_knowledge",
             "20260911_01_nutrition_hybrid_rag",
+            "20260911_02_nutrition_release_governance",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -78,6 +88,56 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "nutrition_retrieval_runs",
             "nutrition_evaluation_datasets",
         }.issubset(table_names)
+    finally:
+        await database.close()
+
+
+async def test_legacy_published_nutrition_source_enters_release_governance(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'nutrition-governance.sqlite3'}")
+    try:
+        await database.create_schema()
+        legacy = NutritionKnowledgeService(NutritionKnowledgeRepository(database))
+        imported = await legacy.import_documents(
+            (
+                KnowledgeDocument(
+                    source_key="legacy-guide",
+                    version="2024",
+                    title="历史营养指南",
+                    publisher="测试机构",
+                    content="成年人应保持食物多样，合理搭配。",
+                ),
+            ),
+            imported_by="legacy-importer",
+        )
+        source_id = imported.documents[0].source.id
+        await legacy.approve_source(source_id, reviewer="legacy-reviewer")
+        await legacy.publish_source(source_id, reviewer="legacy-publisher")
+        async with database.engine.begin() as connection:
+            await connection.execute(
+                delete(SchemaMigrationRecord).where(
+                    SchemaMigrationRecord.version == "20260911_02_nutrition_release_governance"
+                )
+            )
+
+        assert await database.migrate() == ("20260911_02_nutrition_release_governance",)
+        async with database.engine.connect() as connection:
+            source_status = await connection.scalar(
+                select(NutritionKnowledgeSourceRecord.status).where(
+                    NutritionKnowledgeSourceRecord.id == source_id
+                )
+            )
+            review = (
+                await connection.execute(
+                    select(
+                        NutritionKnowledgeReviewEventRecord.review_type,
+                        NutritionKnowledgeReviewEventRecord.decision,
+                        NutritionKnowledgeReviewEventRecord.actor,
+                    ).where(NutritionKnowledgeReviewEventRecord.subject_id == source_id)
+                )
+            ).one()
+
+        assert source_status == "draft"
+        assert review == ("content", "approve", "legacy-publisher")
     finally:
         await database.close()
 
@@ -137,6 +197,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260909_01_style_iteration_control_plane",
             "20260910_01_dish_knowledge",
             "20260911_01_nutrition_hybrid_rag",
+            "20260911_02_nutrition_release_governance",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

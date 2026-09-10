@@ -584,6 +584,20 @@ class NutritionRagRepository:
                 raise NutritionRagNotFound("Nutrition source does not exist")
             if source.content_sha256 != document.content_sha256:
                 raise NutritionRagConflict("Parsed content does not match imported source")
+            if source.supersedes_source_id is None:
+                previous_source_id = await session.scalar(
+                    select(NutritionKnowledgeSourceRecord.id)
+                    .where(
+                        NutritionKnowledgeSourceRecord.source_key == source.source_key,
+                        NutritionKnowledgeSourceRecord.id != source.id,
+                    )
+                    .order_by(
+                        NutritionKnowledgeSourceRecord.created_at.desc(),
+                        NutritionKnowledgeSourceRecord.id.desc(),
+                    )
+                    .limit(1)
+                )
+                source.supersedes_source_id = previous_source_id
             source.asset_id = asset_id
             source.parser_profile_key = "nutrition-document-parser-v1"
             await session.execute(
@@ -823,20 +837,29 @@ class NutritionRagRepository:
             )
             if source is None:
                 raise NutritionRagNotFound("Nutrition source does not exist")
-            pending = await session.scalar(
-                select(func.count(NutritionChunkEmbeddingRecord.chunk_id))
-                .join(
-                    NutritionRagChunkRecord,
-                    NutritionRagChunkRecord.id == NutritionChunkEmbeddingRecord.chunk_id,
+            counts = (
+                await session.execute(
+                    select(
+                        func.count(NutritionRagChunkRecord.id),
+                        func.count(NutritionChunkEmbeddingRecord.chunk_id),
+                    )
+                    .select_from(NutritionRagChunkRecord)
+                    .outerjoin(
+                        NutritionChunkEmbeddingRecord,
+                        and_(
+                            NutritionChunkEmbeddingRecord.chunk_id == NutritionRagChunkRecord.id,
+                            NutritionChunkEmbeddingRecord.embedding_profile_id
+                            == DEFAULT_EMBEDDING_PROFILE_ID,
+                            NutritionChunkEmbeddingRecord.status == "ready",
+                        ),
+                    )
+                    .where(
+                        NutritionRagChunkRecord.source_id == source_id,
+                        NutritionRagChunkRecord.chunk_kind == "retrieval_child",
+                    )
                 )
-                .where(
-                    NutritionRagChunkRecord.source_id == source_id,
-                    NutritionChunkEmbeddingRecord.embedding_profile_id
-                    == DEFAULT_EMBEDDING_PROFILE_ID,
-                    NutritionChunkEmbeddingRecord.status != "ready",
-                )
-            )
-            if pending:
+            ).one()
+            if counts[0] == 0 or counts[0] != counts[1]:
                 raise NutritionRagGovernanceError("Source indexing has not completed")
             if source.status not in {"draft", "rejected", "approved"}:
                 raise NutritionRagGovernanceError(
@@ -1018,6 +1041,7 @@ class NutritionRagRepository:
                 "published_at": source.published_at,
                 "source_url": source.source_url,
                 "language": source.language,
+                "supersedes_source_id": source.supersedes_source_id,
                 "content_sha256": source.content_sha256,
                 "char_count": source.char_count,
                 "status": source.status,
@@ -1399,6 +1423,60 @@ class NutritionRagRepository:
                 )
             )
             return tuple([await self._dataset(session, row) for row in rows])
+
+    async def create_evaluation_dataset_from_lab_run(
+        self,
+        *,
+        run_id: str,
+        base_dataset_id: str | None,
+        version: str,
+        case: Mapping[str, Any],
+        created_by: str,
+    ) -> NutritionEvaluationDataset:
+        """Clone an immutable dataset and append one admin-lab regression case."""
+
+        async with self.database.session() as session:
+            run = await session.get(NutritionRetrievalRunRecord, run_id)
+            if run is None:
+                raise NutritionRagNotFound("Retrieval lab run does not exist")
+            if not (run.invocation_id or "").startswith("admin-lab-"):
+                raise NutritionRagGovernanceError(
+                    "Only an explicit admin retrieval-lab run can become an evaluation case"
+                )
+            base = None
+            if base_dataset_id is not None:
+                base_row = await session.get(NutritionEvaluationDatasetRecord, base_dataset_id)
+                if base_row is None:
+                    raise NutritionRagNotFound("Base evaluation dataset does not exist")
+                base = await self._dataset(session, base_row)
+            plan = _load_json(run.query_plan_json)
+        cases: list[dict[str, Any]] = []
+        if base is not None:
+            cases.extend(
+                {
+                    "case_key": item.case_key,
+                    "query_plan_input": item.query_plan_input,
+                    "expected_source_keys": list(item.expected_source_keys),
+                    "expected_chunk_concepts": list(item.expected_chunk_concepts),
+                    "forbidden_source_keys": list(item.forbidden_source_keys),
+                    "expected_outcome": item.expected_outcome,
+                }
+                for item in base.cases
+            )
+        cases.append(
+            dict(case)
+            | {
+                "query_plan_input": {
+                    "query": plan.get("query", run.safe_query_summary),
+                    "metadata_filter": plan.get("filters", {}),
+                }
+            }
+        )
+        return await self.create_evaluation_dataset(
+            version=version,
+            cases=tuple(cases),
+            created_by=created_by,
+        )
 
     async def create_evaluation_run(
         self,
