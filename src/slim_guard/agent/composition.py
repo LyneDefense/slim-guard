@@ -10,12 +10,17 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
-from slim_guard.agents.nutrition import (
-    DEFAULT_NUTRITION_PROMPT_VERSION,
-    NUTRITION_AGENT_ALLOWED_TOOLS,
-    NUTRITION_AGENT_PROMPT,
+from slim_guard.agents.diet_guidance import DIET_GUIDANCE_PROMPT, DIET_GUIDANCE_PROMPT_VERSION
+from slim_guard.agents.dish_recognition import (
+    DISH_RECOGNITION_PROMPT,
+    DISH_RECOGNITION_PROMPT_VERSION,
 )
+from slim_guard.agents.nutrition import NUTRITION_AGENT_ALLOWED_TOOLS
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
+from slim_guard.agents.nutrition_retrieval import (
+    NUTRITION_RETRIEVAL_PROMPT,
+    NUTRITION_RETRIEVAL_PROMPT_VERSION,
+)
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
     RESPONSE_REVIEWER_PROMPT_VERSION,
@@ -399,12 +404,40 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             max_tool_calls=0,
             max_total_tokens=definition.vision_max_output_tokens * 2,
         ),
+        "dish_recognition": AgentGraphNodeManifest.build(
+            role="dish_recognition",
+            model=definition.vision_model,
+            prompt_version=DISH_RECOGNITION_PROMPT_VERSION,
+            prompt=DISH_RECOGNITION_PROMPT,
+            output_schema="DishRecognitionResult",
+            privacy_scopes=("current_meal_image", "current_user_image_text"),
+            max_model_calls=1,
+            max_tool_calls=0,
+            max_total_tokens=definition.vision_max_output_tokens,
+        ),
+        "nutrition_retrieval": AgentGraphNodeManifest.build(
+            role="nutrition_retrieval",
+            model=definition.text_model,
+            prompt_version=NUTRITION_RETRIEVAL_PROMPT_VERSION,
+            prompt=NUTRITION_RETRIEVAL_PROMPT,
+            output_schema="DishEvidenceBundle",
+            allowed_tool_names=(
+                "search_dish_entities",
+                "get_dish_evidence",
+                "search_nutrition_knowledge",
+                "get_nutrition_source",
+            ),
+            privacy_scopes=("confirmed_dishes", "goal_and_constraint_tags"),
+            max_model_calls=1,
+            max_tool_calls=24,
+            max_total_tokens=definition.vision_max_output_tokens,
+        ),
         "nutrition_expert": AgentGraphNodeManifest.build(
             role="nutrition_expert",
             model=definition.text_model,
-            prompt_version=DEFAULT_NUTRITION_PROMPT_VERSION,
-            prompt=NUTRITION_AGENT_PROMPT,
-            output_schema="ProfessionalAssessment",
+            prompt_version=DIET_GUIDANCE_PROMPT_VERSION,
+            prompt=DIET_GUIDANCE_PROMPT,
+            output_schema="DietGuidanceAssessment",
             allowed_tool_names=NUTRITION_AGENT_ALLOWED_TOOLS,
             privacy_scopes=("evidence_packet", "nutrition_observations"),
             max_model_calls=2,

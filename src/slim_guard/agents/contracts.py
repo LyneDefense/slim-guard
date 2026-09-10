@@ -34,6 +34,8 @@ class ContractModel(BaseModel):
 
 class AgentRole(StrEnum):
     ORCHESTRATOR = "orchestrator"
+    DISH_RECOGNITION = "dish_recognition"
+    NUTRITION_RETRIEVAL = "nutrition_retrieval"
     NUTRITION_EXPERT = "nutrition_expert"
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
@@ -43,6 +45,9 @@ class ArtifactProducerRole(StrEnum):
     MEMORY_INGESTION = "memory_ingestion"
     MEMORY_RECALL = "memory_recall"
     ORCHESTRATOR = "orchestrator"
+    DISH_RECOGNITION = "dish_recognition"
+    USER_DISH_CONFIRMATION = "user_dish_confirmation"
+    NUTRITION_RETRIEVAL = "nutrition_retrieval"
     BUSINESS_TOOL = "business_tool"
     EVIDENCE_BUILDER = "evidence_builder"
     NUTRITION_EXPERT = "nutrition_expert"
@@ -149,6 +154,10 @@ class ReviewerIssueType(StrEnum):
     CHANGED_MEANING = "changed_meaning"
     UNSUPPORTED_PROFESSIONAL_CLAIM = "unsupported_professional_claim"
     MISSING_USER_EVIDENCE = "missing_user_evidence"
+    DISH_IDENTITY_STRENGTHENED = "dish_identity_strengthened"
+    UNSUPPORTED_DISH_GUIDANCE = "unsupported_dish_guidance"
+    UNSUPPORTED_AVOIDANCE = "unsupported_avoidance"
+    FORBIDDEN_NUTRITION_ESTIMATE = "forbidden_nutrition_estimate"
 
 
 class RepairTarget(StrEnum):
@@ -646,11 +655,15 @@ _STYLE_ISSUES = {
     ReviewerIssueType.CHANGED_UNCERTAINTY,
     ReviewerIssueType.ABUSIVE_TONE,
     ReviewerIssueType.OMITTED_REQUIRED_CONTENT,
+    ReviewerIssueType.DISH_IDENTITY_STRENGTHENED,
 }
 _NUTRITION_ISSUES = {
     ReviewerIssueType.UNSUPPORTED_CLAIM,
     ReviewerIssueType.UNSUPPORTED_PROFESSIONAL_CLAIM,
     ReviewerIssueType.MEDICAL_OVERREACH,
+    ReviewerIssueType.UNSUPPORTED_DISH_GUIDANCE,
+    ReviewerIssueType.UNSUPPORTED_AVOIDANCE,
+    ReviewerIssueType.FORBIDDEN_NUTRITION_ESTIMATE,
 }
 
 

@@ -24,6 +24,11 @@ class GraphNode(StrEnum):
     CONTEXT_READY = "context_ready"
     ORCHESTRATOR_RUNNING = "orchestrator_running"
     ORCHESTRATOR = "orchestrator_running"
+    DISH_RECOGNITION_RUNNING = "dish_recognition_running"
+    DISH_CONFIRMATION_PENDING = "dish_confirmation_pending"
+    DISH_CONFIRMATION_RESOLVED = "dish_confirmation_resolved"
+    NUTRITION_RETRIEVAL_RUNNING = "nutrition_retrieval_running"
+    NUTRITION_EVIDENCE_READY = "nutrition_evidence_ready"
     BUSINESS_TOOL_RUNNING = "business_tool_running"
     BUSINESS_TOOL = "business_tool_running"
     RESPONSE_RENDERING = "response_rendering"
@@ -57,6 +62,11 @@ class TransitionReason(StrEnum):
     MEMORY_INGESTED = "memory_ingested"
     MEMORY_RECALLED = "memory_recalled"
     CONTEXT_READY = "context_ready"
+    DISH_RECOGNITION = "dish_recognition"
+    DISH_CONFIRMATION_REQUIRED = "dish_confirmation_required"
+    DISH_CONFIRMATION_ACCEPTED = "dish_confirmation_accepted"
+    NUTRITION_RETRIEVAL = "nutrition_retrieval"
+    NUTRITION_EVIDENCE_BUILT = "nutrition_evidence_built"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     NEEDS_USER_INPUT = "needs_user_input"
@@ -105,6 +115,30 @@ _TRANSITION_REASONS: dict[tuple[GraphNode, GraphNode], frozenset[TransitionReaso
     ),
     (GraphNode.CONTEXT_READY, GraphNode.ORCHESTRATOR_RUNNING): frozenset(
         {TransitionReason.CONTEXT_READY}
+    ),
+    (GraphNode.ORCHESTRATOR_RUNNING, GraphNode.DISH_RECOGNITION_RUNNING): frozenset(
+        {TransitionReason.DISH_RECOGNITION}
+    ),
+    (GraphNode.DISH_RECOGNITION_RUNNING, GraphNode.DISH_CONFIRMATION_PENDING): frozenset(
+        {TransitionReason.DISH_CONFIRMATION_REQUIRED}
+    ),
+    (GraphNode.DISH_CONFIRMATION_PENDING, GraphNode.DISH_CONFIRMATION_RESOLVED): frozenset(
+        {TransitionReason.DISH_CONFIRMATION_ACCEPTED}
+    ),
+    (GraphNode.DISH_RECOGNITION_RUNNING, GraphNode.NUTRITION_RETRIEVAL_RUNNING): frozenset(
+        {TransitionReason.NUTRITION_RETRIEVAL}
+    ),
+    (GraphNode.DISH_CONFIRMATION_RESOLVED, GraphNode.NUTRITION_RETRIEVAL_RUNNING): frozenset(
+        {TransitionReason.NUTRITION_RETRIEVAL}
+    ),
+    (GraphNode.ORCHESTRATOR_RUNNING, GraphNode.NUTRITION_RETRIEVAL_RUNNING): frozenset(
+        {TransitionReason.NUTRITION_RETRIEVAL}
+    ),
+    (GraphNode.NUTRITION_RETRIEVAL_RUNNING, GraphNode.NUTRITION_EVIDENCE_READY): frozenset(
+        {TransitionReason.NUTRITION_EVIDENCE_BUILT}
+    ),
+    (GraphNode.NUTRITION_EVIDENCE_READY, GraphNode.EXPERT_RUNNING): frozenset(
+        {TransitionReason.EVIDENCE_BUILT}
     ),
     (GraphNode.ORCHESTRATOR_RUNNING, GraphNode.BUSINESS_TOOL_RUNNING): frozenset(
         {TransitionReason.TOOL_CALL}

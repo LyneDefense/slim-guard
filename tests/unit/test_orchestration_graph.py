@@ -71,6 +71,28 @@ def test_style_can_finish_without_reviewer_or_fall_back_deterministically() -> N
         GraphNode.OUTPUT_GUARDED,
         TransitionReason.RENDERED,
     )
+
+
+def test_dish_guidance_graph_cannot_skip_retrieval() -> None:
+    assert is_transition_allowed(
+        GraphNode.ORCHESTRATOR_RUNNING,
+        GraphNode.DISH_RECOGNITION_RUNNING,
+        TransitionReason.DISH_RECOGNITION,
+    )
+    assert is_transition_allowed(
+        GraphNode.DISH_RECOGNITION_RUNNING,
+        GraphNode.NUTRITION_RETRIEVAL_RUNNING,
+        TransitionReason.NUTRITION_RETRIEVAL,
+    )
+    assert is_transition_allowed(
+        GraphNode.NUTRITION_EVIDENCE_READY,
+        GraphNode.EXPERT_RUNNING,
+        TransitionReason.EVIDENCE_BUILT,
+    )
+    assert not is_transition_allowed(
+        GraphNode.DISH_RECOGNITION_RUNNING,
+        GraphNode.EXPERT_RUNNING,
+    )
     assert is_transition_allowed(
         GraphNode.STYLE_RUNNING,
         GraphNode.NEUTRAL_FALLBACK,

@@ -20,6 +20,8 @@ def node(role: str) -> AgentGraphNodeManifest:
 def manifest() -> AgentGraphManifest:
     roles = (
         "orchestrator",
+        "dish_recognition",
+        "nutrition_retrieval",
         "nutrition_expert",
         "response_style",
         "response_reviewer",
@@ -63,6 +65,8 @@ def test_graph_manifest_requires_all_controlled_roles() -> None:
 def test_graph_manifest_rejects_role_key_mismatch() -> None:
     roles = (
         "orchestrator",
+        "dish_recognition",
+        "nutrition_retrieval",
         "nutrition_expert",
         "response_style",
         "response_reviewer",
