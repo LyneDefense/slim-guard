@@ -8,8 +8,9 @@ from datetime import date
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import parse_qsl, urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from starlette.datastructures import UploadFile
 
 from slim_guard.api.admin_routes import AdminPrincipal, _audit, _authenticate
 from slim_guard.config import Settings

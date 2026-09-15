@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from slim_guard.config import Settings
@@ -51,7 +53,10 @@ class ApiRerankGateway:
         return None
 
 
-async def test_admin_can_import_review_build_and_inspect_hybrid_rag(tmp_path: Path) -> None:
+@pytest.mark.parametrize("import_method", ["pasted_text", "multipart"])
+async def test_admin_can_import_review_build_and_inspect_hybrid_rag(
+    tmp_path: Path, import_method: str
+) -> None:
     app = create_app(
         Settings(
             app_env="test",
@@ -84,24 +89,32 @@ async def test_admin_can_import_review_build_and_inspect_hybrid_rag(tmp_path: Pa
             )
             assert no_csrf.status_code == 403
 
-            created = await client.post(
-                "/api/admin/nutrition-knowledge/sources/imports",
-                headers={"X-SlimGuard-CSRF": "1"},
-                json={
-                    "method": "pasted_text",
-                    "content": (
-                        "# 减重餐食\n\n减重期间可以吃家常菜，建议搭配蔬菜、全谷物和蛋白质，"
-                        "并根据菜品特点控制烹饪用油和盐。"
-                    ),
-                    "filename": "meal.md",
-                    "source_key": "meal-guidance",
-                    "version": "v1",
-                    "title": "减重餐食搭配",
-                    "publisher": "测试机构",
-                    "tags": ["减重", "餐食搭配"],
-                    "applicability": ["adult", "china"],
-                },
+            content = (
+                "# 减重餐食\n\n减重期间可以吃家常菜，建议搭配蔬菜、全谷物和蛋白质，"
+                "并根据菜品特点控制烹饪用油和盐。"
             )
+            metadata = {
+                "source_key": "meal-guidance",
+                "version": "v1",
+                "title": "减重餐食搭配",
+                "publisher": "测试机构",
+                "tags": ["减重", "餐食搭配"],
+                "applicability": ["adult", "china"],
+            }
+            if import_method == "multipart":
+                created = await client.post(
+                    "/api/admin/nutrition-knowledge/sources/imports",
+                    headers={"X-SlimGuard-CSRF": "1"},
+                    data={"metadata": json.dumps(metadata, ensure_ascii=False)},
+                    files={"file": ("meal.md", content.encode(), "text/markdown")},
+                )
+            else:
+                created = await client.post(
+                    "/api/admin/nutrition-knowledge/sources/imports",
+                    headers={"X-SlimGuard-CSRF": "1"},
+                    json=metadata
+                    | {"method": "pasted_text", "content": content, "filename": "meal.md"},
+                )
             assert created.status_code == 202, created.text
             job_id = created.json()["job"]["id"]
             queued = await client.get(f"/api/admin/nutrition-knowledge/jobs/{job_id}")
