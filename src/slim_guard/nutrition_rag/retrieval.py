@@ -761,6 +761,9 @@ class HybridNutritionRagService:
                     total_latency_ms=max(0, int((time.monotonic() - started) * 1000)),
                 )
             )
+            # Without an ORM relationship, candidates may otherwise flush first.
+            # Keep this flush inside the transaction so failures roll back both.
+            await session.flush()
             session.add_all(
                 [
                     NutritionRetrievalCandidateRecord(

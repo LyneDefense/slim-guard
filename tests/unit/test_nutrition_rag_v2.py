@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 
 from slim_guard.agents.nutrition import KnowledgeCandidateBinder
+from slim_guard.db.models import NutritionRetrievalRunRecord
 from slim_guard.db.session import Database
 from slim_guard.nutrition_knowledge import (
     KnowledgeDocument,
+    KnowledgeMetadataFilter,
     NutritionKnowledgeRepository,
     NutritionKnowledgeService,
 )
@@ -34,7 +39,7 @@ from slim_guard.nutrition_rag.repository import (
     NutritionRagGovernanceError,
     NutritionRagRepository,
 )
-from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService
+from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService, _FusedHit
 from slim_guard.nutrition_rag.storage import (
     InMemoryNutritionObjectStore,
     NutritionObjectIntegrityError,
@@ -398,6 +403,12 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
             rerank_gateway=reranker,
         )
 
+        # SQLite otherwise skips the foreign-key checks enforced in production.
+        async with database.engine.connect() as connection:
+            await connection.execute(text("PRAGMA foreign_keys=ON"))
+            assert await connection.scalar(text("PRAGMA foreign_keys")) == 1
+            await connection.commit()
+
         raw_result = await service.search(
             query="番茄炒蛋 减重 少油 搭配",
             max_results=3,
@@ -466,6 +477,29 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
         assert reranker.calls == rerank_calls
         source = await service.get_source(source_id=source_id)
         assert source["eligibility"]["active"] is False
+
+        # Flushing the parent must not commit it independently of the candidates.
+        profile = await repository.get_release_profile(release.id)
+        assert profile is not None
+        async with database.session() as session:
+            run_count = await session.scalar(select(func.count(NutritionRetrievalRunRecord.id)))
+        with pytest.raises(IntegrityError):
+            await service._record_run(
+                release=release,
+                profile=profile[1],
+                query="事务回滚回归",
+                filters=KnowledgeMetadataFilter(),
+                status="succeeded",
+                started=time.monotonic(),
+                usage={},
+                hits=(_FusedHit(chunk_id="nonexistent-chunk"),),
+                invocation_id="rollback-regression",
+            )
+        async with database.session() as session:
+            assert (
+                await session.scalar(select(func.count(NutritionRetrievalRunRecord.id)))
+                == run_count
+            )
     finally:
         await database.close()
 

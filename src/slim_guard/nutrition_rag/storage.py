@@ -135,7 +135,8 @@ class TencentCosNutritionObjectStore:
                         Bucket=self._bucket,
                         Key=key,
                         Body=content,
-                        ContentLength=len(content),
+                        # The SDK forwards this value directly as an HTTP header.
+                        ContentLength=str(len(content)),
                         ContentType=media_type,
                         Metadata={
                             "x-cos-meta-sha256": sha256,
