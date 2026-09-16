@@ -270,7 +270,15 @@ class Workflow:
         )
 
 
-def setup(*, steps, workflow: Workflow, failed_write: bool = False, limits=None):
+def setup(
+    *,
+    steps,
+    workflow: Workflow,
+    failed_write: bool = False,
+    limits=None,
+    workflow_max_model_calls: int = 12,
+    workflow_max_total_tokens: int = 64_000,
+):
     tools = Tools(failed=failed_write)
     data = ContextData(tools)
     recorder = Recorder()
@@ -288,6 +296,8 @@ def setup(*, steps, workflow: Workflow, failed_write: bool = False, limits=None)
         workflow_mode="on",
         workflow_adopts_for=lambda _: True,
         workflow_timeout_seconds=0.01,
+        workflow_max_model_calls=workflow_max_model_calls,
+        workflow_max_total_tokens=workflow_max_total_tokens,
         clock=lambda: NOW,
     )
     return runner, tools, data, recorder, model
@@ -398,7 +408,7 @@ async def test_refreshed_snapshot_does_not_resurrect_removed_memory_keys(monkeyp
 
 
 @pytest.mark.parametrize("budget", ["model_calls", "tokens"])
-async def test_exhausted_turn_budget_does_not_start_additional_candidate_model_calls(budget):
+async def test_legacy_usage_does_not_consume_independent_multi_agent_budget(budget):
     workflow = Workflow()
     runner, _, _, _, _ = setup(
         steps=[text_response("收到。", tokens=10)],
@@ -407,10 +417,14 @@ async def test_exhausted_turn_budget_does_not_start_additional_candidate_model_c
             max_model_calls=1 if budget == "model_calls" else 6,
             max_total_tokens=10 if budget == "tokens" else 1000,
         ),
+        workflow_max_model_calls=7,
+        workflow_max_total_tokens=48_000,
     )
     result = await runner.run(request=turn_request())
-    assert result.final_text == "收到。"
-    assert workflow.requests == []
+    assert result.final_text == "收到！"
+    assert len(workflow.requests) == 1
+    assert workflow.requests[0].max_model_calls == 7
+    assert workflow.requests[0].max_total_tokens == 48_000
 
 
 async def test_stale_passing_verdict_cannot_approve_a_different_final_artifact():

@@ -19,7 +19,10 @@ from slim_guard.orchestration.artifacts import (
     ArtifactIntegrityError,
     ArtifactReferenceError,
 )
-from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.orchestration.repository import (
+    InvocationBudgetExceeded,
+    OrchestrationRepository,
+)
 
 
 async def prepare_repository(
@@ -150,6 +153,47 @@ async def test_repository_persists_invocation_and_immutable_artifact_lineage(
         assert (await repository.list_turn_invocations("turn-1")) == (completed,)
         with pytest.raises(ArtifactAlreadyExists):
             await repository.append_artifact(output)
+    finally:
+        await database.close()
+
+
+async def test_repository_preserves_observable_token_budget_failure(
+    tmp_path,
+) -> None:
+    database, repository = await prepare_repository(tmp_path)
+    try:
+        started = await repository.start_invocation(invocation())
+        completed = await repository.complete_invocation(
+            AgentResult(
+                invocation_id=started.invocation_id,
+                status="failed",
+                output_schema="TurnDirective",
+                output_schema_version="1",
+                model_call_count=1,
+                tool_call_count=0,
+                token_usage=2500,
+                failure_code="token_budget_exhausted",
+            )
+        )
+
+        assert completed.status == "failed"
+        assert completed.total_token_count == 2500
+        assert completed.failure_code == "token_budget_exhausted"
+
+        second = await repository.start_invocation(invocation(turn_id="turn-2"))
+        with pytest.raises(InvocationBudgetExceeded, match="tokens budget"):
+            await repository.complete_invocation(
+                AgentResult(
+                    invocation_id=second.invocation_id,
+                    status="failed",
+                    output_schema="TurnDirective",
+                    output_schema_version="1",
+                    model_call_count=1,
+                    tool_call_count=0,
+                    token_usage=2500,
+                    failure_code="model_gateway_error",
+                )
+            )
     finally:
         await database.close()
 

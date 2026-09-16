@@ -148,6 +148,11 @@ def create_app(
         multi_agent_canary_users=app_settings.multi_agent_canary_users,
         multi_agent_graph_version=app_settings.multi_agent_graph_version,
         multi_agent_shadow_timeout_seconds=(app_settings.multi_agent_shadow_timeout_seconds),
+        multi_agent_max_model_calls=app_settings.multi_agent_max_model_calls,
+        multi_agent_max_total_tokens=app_settings.multi_agent_max_total_tokens,
+        multi_agent_invocation_max_total_tokens=(
+            app_settings.multi_agent_invocation_max_total_tokens
+        ),
         default_style_profile=app_settings.default_style_profile,
         style_canary_profile=app_settings.style_canary_profile,
         style_canary_users=app_settings.style_canary_users,

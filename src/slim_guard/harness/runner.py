@@ -89,6 +89,8 @@ class HarnessTurnRunner:
         workflow_mode: Literal["off", "shadow", "canary", "on"] = "off",
         workflow_adopts_for: Callable[[str], bool] | None = None,
         workflow_timeout_seconds: float = 20,
+        workflow_max_model_calls: int = 12,
+        workflow_max_total_tokens: int = 64_000,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._initializer = initializer
@@ -103,6 +105,8 @@ class HarnessTurnRunner:
         self._workflow_mode = workflow_mode
         self._workflow_adopts_for = workflow_adopts_for or (lambda _user_id: False)
         self._workflow_timeout_seconds = workflow_timeout_seconds
+        self._workflow_max_model_calls = workflow_max_model_calls
+        self._workflow_max_total_tokens = workflow_max_total_tokens
         self._limits = limits
         self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
@@ -238,30 +242,10 @@ class HarnessTurnRunner:
                 return baseline
             try:
                 async with asyncio.timeout(timeout):
-                    if self._workflow_mode == "shadow":
-                        # Shadow runs after the baseline loop so that it can inspect this
-                        # turn's real image-tool receipt. It retains its own configured
-                        # budget because its output is never eligible for delivery.
-                        remaining_calls = None
-                        remaining_tokens = None
-                    else:
-                        remaining_calls = max(0, self._limits.max_model_calls - len(responses))
-                        remaining_tokens = max(
-                            0,
-                            self._limits.max_total_tokens
-                            - sum(response.usage.total_tokens for response in responses),
-                        )
-                    if remaining_calls == 0 or remaining_tokens == 0:
-                        await self._recorder.record_workflow_event(
-                            turn_id=initialized.turn.id,
-                            event_type=ItemType.RESPONSE_DEGRADED,
-                            payload={
-                                "artifact_id": None,
-                                "reason_code": "turn_workflow_budget_exhausted",
-                                "fallback_type": "legacy_response",
-                            },
-                        )
-                        return baseline
+                    # The already-generated Harness response is a fallback artifact. Its
+                    # calls and tokens must not consume the independently bounded graph.
+                    workflow_calls = self._workflow_max_model_calls
+                    workflow_tokens = self._workflow_max_total_tokens
                     refreshed_context = dict(
                         await self._context_data.load(
                             user_id=initialized.context.user_id,
@@ -318,8 +302,8 @@ class HarnessTurnRunner:
                             authoritative_context=refreshed_context,
                             legacy_response=baseline,
                             mode=self._workflow_mode,
-                            max_model_calls=remaining_calls,
-                            max_total_tokens=remaining_tokens,
+                            max_model_calls=workflow_calls,
+                            max_total_tokens=workflow_tokens,
                             deadline_at=initialized.turn.deadline_at,
                         )
                     )

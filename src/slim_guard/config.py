@@ -36,6 +36,13 @@ class Settings(DatabaseSettings):
     multi_agent_canary_user_ids: str = ""
     multi_agent_graph_version: str = "typed-supervisor-v1"
     multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    multi_agent_max_model_calls: int = Field(default=12, ge=1, le=32)
+    multi_agent_max_total_tokens: int = Field(default=64_000, ge=1024, le=10_000_000)
+    multi_agent_invocation_max_total_tokens: int = Field(
+        default=32_000,
+        ge=1024,
+        le=10_000_000,
+    )
     default_style_profile: str = Field(default="slimguard_default_v1", min_length=1, max_length=128)
     style_canary_profile: str = Field(default="", max_length=128)
     style_canary_user_ids: str = ""
@@ -172,6 +179,11 @@ class Settings(DatabaseSettings):
             raise ValueError("DEFAULT_STYLE_PROFILE must be a nonblank exact version")
         if self.style_canary_profile != self.style_canary_profile.strip():
             raise ValueError("STYLE_CANARY_PROFILE must be an exact version")
+        if self.multi_agent_invocation_max_total_tokens > self.multi_agent_max_total_tokens:
+            raise ValueError(
+                "MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS cannot exceed "
+                "MULTI_AGENT_MAX_TOTAL_TOKENS"
+            )
         if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
             raise ValueError("MEAL_GUIDANCE_ENABLED requires NUTRITION_AGENT_ENABLED")
         if self.tencent_cos_prefix.startswith("/") or self.tencent_cos_prefix.endswith("/"):

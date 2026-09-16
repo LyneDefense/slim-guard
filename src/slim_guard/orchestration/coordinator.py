@@ -114,6 +114,7 @@ from slim_guard.orchestration.graph import (
     LoopBudgetExceeded,
     TransitionReason,
 )
+from slim_guard.orchestration.repository import InvocationBudgetExceeded
 from slim_guard.tools.contracts import ToolExecutionMode
 
 logger = logging.getLogger(__name__)
@@ -285,6 +286,7 @@ class AgentWorkflowCoordinator:
         agent_version: str = SHADOW_ORCHESTRATOR_PROMPT_VERSION,
         timeout: timedelta = timedelta(seconds=20),
         max_output_tokens: int = 1024,
+        max_invocation_tokens: int = 32_000,
         persistence: WorkflowPersistence | None = None,
         style_agent: ResponseStyleAgent | None = None,
         style_compiler: StyleContextCompiler | None = None,
@@ -319,12 +321,15 @@ class AgentWorkflowCoordinator:
             raise ValueError("Shadow workflow timeout must be positive")
         if dish_confirmation_ttl <= timedelta(0):
             raise ValueError("Dish confirmation TTL must be positive")
+        if max_invocation_tokens < 1:
+            raise ValueError("Invocation token budget must be positive")
         self._recorder = recorder
         self._model_name = model_name
         self._graph_version = graph_version
         self._agent_version = agent_version
         self._timeout = timeout
         self._max_output_tokens = max_output_tokens
+        self._max_invocation_tokens = max_invocation_tokens
         self._persistence = persistence
         self._clock = clock or (lambda: datetime.now(UTC))
         self._runner = StructuredAgentRunner(model=model, clock=self._clock)
@@ -372,8 +377,12 @@ class AgentWorkflowCoordinator:
 
         active: dict[str, AgentInvocation] = {}
         token = _ACTIVE_INVOCATIONS.set(active)
+        interruption_code = "workflow_interrupted"
         try:
             return await self._run_with_budget(request)
+        except BaseException as error:
+            interruption_code = self._interruption_code(error)
+            raise
         finally:
             try:
                 # Cancellation/provider/storage faults must not leave an invocation
@@ -396,7 +405,7 @@ class AgentWorkflowCoordinator:
                                 model_call_count=0,
                                 tool_call_count=0,
                                 token_usage=0,
-                                failure_code="workflow_interrupted",
+                                failure_code=interruption_code,
                             ),
                             turn_id=request.turn_id,
                             completed_at=self._aware_now(),
@@ -410,6 +419,16 @@ class AgentWorkflowCoordinator:
                 )
             finally:
                 _ACTIVE_INVOCATIONS.reset(token)
+
+    @staticmethod
+    def _interruption_code(error: BaseException) -> str:
+        if isinstance(error, InvocationBudgetExceeded):
+            return "invocation_budget_persistence_rejected"
+        if isinstance(error, asyncio.CancelledError):
+            return "workflow_cancelled"
+        if isinstance(error, TimeoutError):
+            return "workflow_deadline_exceeded"
+        return "workflow_interrupted"
 
     async def _run_with_budget(self, request: ShadowWorkflowRequest) -> ShadowWorkflowResult:
 
@@ -468,7 +487,7 @@ class AgentWorkflowCoordinator:
                 deadline_at=deadline,
                 max_model_calls=2,
                 max_tool_calls=0,
-                max_total_tokens=max(self._max_output_tokens * 2, 1),
+                max_total_tokens=self._max_invocation_tokens,
                 payload={
                     "context_message_count": len(request.context),
                     "mode": request.mode,
@@ -664,7 +683,7 @@ class AgentWorkflowCoordinator:
                     deadline_at=deadline,
                     max_model_calls=2,
                     max_tool_calls=0,
-                    max_total_tokens=max(self._max_output_tokens * 2, 1),
+                    max_total_tokens=self._max_invocation_tokens,
                     payload={
                         "evidence_count": len(evidence_packet.items),
                         "calculation_count": len(observations),
@@ -954,7 +973,7 @@ class AgentWorkflowCoordinator:
                 deadline_at=deadline,
                 max_model_calls=2,
                 max_tool_calls=0,
-                max_total_tokens=max(self._max_output_tokens * 2, 1),
+                max_total_tokens=self._max_invocation_tokens,
                 payload={
                     "style_profile_version": style_profile.version,
                     "content_block_count": len(response_plan.content_blocks),
@@ -1128,6 +1147,12 @@ class AgentWorkflowCoordinator:
                 failure_code=failure_code,
             )
         except Exception as error:
+            # A persistence budget rejection is infrastructure evidence, not a
+            # model-quality failure. Let the outer cleanup preserve its exact
+            # cause on the still-running invocation instead of rewriting it as
+            # the generic workflow_interrupted code.
+            if isinstance(error, InvocationBudgetExceeded):
+                raise
             artifacts = ledger.list_turn(request.turn_id)
             logger.warning(
                 "shadow_workflow_failed",
@@ -1185,7 +1210,7 @@ class AgentWorkflowCoordinator:
                 deadline_at=deadline,
                 max_model_calls=1,
                 max_tool_calls=0,
-                max_total_tokens=max(self._max_output_tokens, 1),
+                max_total_tokens=self._max_invocation_tokens,
                 payload={
                     "asset_id": recognition.asset_id,
                     "reused_existing_vision_result": True,
@@ -1379,7 +1404,7 @@ class AgentWorkflowCoordinator:
             deadline_at=deadline,
             max_model_calls=1,
             max_tool_calls=40,
-            max_total_tokens=max(self._max_output_tokens, 1),
+            max_total_tokens=self._max_invocation_tokens,
             payload={"dish_count": len(confirmed.dishes), "read_only": True},
         )
         invocations.append(retrieval_invocation)
@@ -1520,7 +1545,7 @@ class AgentWorkflowCoordinator:
             deadline_at=deadline,
             max_model_calls=1,
             max_tool_calls=0,
-            max_total_tokens=max(self._max_output_tokens, 1),
+            max_total_tokens=self._max_invocation_tokens,
             payload={"dish_count": len(retrieval_result.evidence.dishes), "deterministic": True},
         )
         invocations.append(guidance_invocation)
@@ -2243,7 +2268,7 @@ class AgentWorkflowCoordinator:
                 deadline_at=deadline,
                 max_model_calls=2,
                 max_tool_calls=0,
-                max_total_tokens=max(self._max_output_tokens * 2, 1),
+                max_total_tokens=self._max_invocation_tokens,
                 payload={
                     "reviewed_artifact_id": candidate_artifact.artifact_id,
                     "repair_attempts_used": counters.upstream_repairs,
@@ -2711,7 +2736,7 @@ class AgentWorkflowCoordinator:
             deadline_at=deadline,
             max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=max(self._max_output_tokens * 2, 1),
+            max_total_tokens=self._max_invocation_tokens,
         )
 
     @staticmethod

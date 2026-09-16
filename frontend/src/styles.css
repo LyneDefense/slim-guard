@@ -123,6 +123,18 @@ button:disabled { cursor: default; }
 .workflow-metric-table th, .workflow-metric-table td { padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .workflow-metric-table thead { background: #f2f6f3; color: var(--muted); }
 .workflow-metric-table tr:last-child td, .workflow-metric-table tr:last-child th { border-bottom: 0; }
+.workflow-health { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border: 1px solid #c9dacf; border-radius: 16px; background: #f3f8f4; }
+.workflow-health-bad { border-color: #e5b8b2; background: #fff4f2; }
+.workflow-health > div > strong { display: block; margin: 5px 0; font-size: 17px; }
+.workflow-health p { max-width: 720px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.workflow-health dl { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 8px; margin: 0; }
+.workflow-health dl > div { padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.75); }
+.workflow-health dt { color: var(--muted); font-size: 9px; }
+.workflow-health dd { margin: 4px 0 0; font-size: 19px; font-weight: 800; }
+.workflow-technical-details, .trace-technical-details { margin-top: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.72); }
+.workflow-technical-details > summary, .trace-technical-details > summary { padding: 14px 17px; cursor: pointer; color: #315847; font-size: 13px; font-weight: 800; list-style-position: inside; }
+.workflow-technical-details[open] > summary, .trace-technical-details[open] > summary { border-bottom: 1px solid var(--line); }
+.workflow-technical-body { padding: 17px; }
 .trace-row { display: grid; grid-template-columns: auto minmax(180px,1fr) auto auto; align-items: center; gap: 15px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: white; }
 .trace-row:hover { border-color: #aac4b5; }
 .trace-icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; font-weight: 900; }
@@ -140,6 +152,28 @@ button:disabled { cursor: default; }
 .status-neutral { background: #e9eeeb; color: #59655f; }
 .trace-heading { display: flex; justify-content: space-between; align-items: end; padding: 8px 0 22px; border-bottom: 1px solid var(--line); }
 .trace-heading h2 { margin: 4px 0 6px; font-size: 28px; }
+.operator-summary { margin: 22px 0; padding: 22px; border: 1px solid #cbd9d1; border-left: 5px solid #789b88; border-radius: 18px; background: white; box-shadow: 0 9px 24px rgba(24,55,42,.05); }
+.operator-summary-good { border-left-color: #2b8061; background: #f6fbf7; }
+.operator-summary-warn { border-left-color: #c38b31; background: #fffaf0; }
+.operator-summary-bad { border-color: #ebc2bc; border-left-color: #b94c45; background: #fff7f5; }
+.operator-summary-copy h3 { margin: 5px 0 7px; font-size: 22px; }
+.operator-summary-copy p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.operator-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; margin-top: 18px; }
+.operator-summary-card { min-width: 0; padding: 12px; border: 1px solid #e0e6e2; border-radius: 11px; background: rgba(255,255,255,.82); }
+.operator-summary-card > span, .operator-summary-card > strong, .operator-summary-card > small { display: block; }
+.operator-summary-card > span { color: var(--muted); font-size: 9px; }
+.operator-summary-card > strong { margin: 5px 0; font-size: 15px; }
+.operator-summary-card > small { color: #7b8781; font-size: 9px; line-height: 1.45; }
+.summary-card-good > strong { color: #176744; }
+.summary-card-warn > strong { color: #946020; }
+.summary-card-bad > strong { color: #a23d3d; }
+.trace-technical-details { margin: 28px 0; }
+.trace-technical-details > summary { display: flex; align-items: center; justify-content: space-between; list-style: none; }
+.trace-technical-details > summary::-webkit-details-marker { display: none; }
+.trace-technical-details > summary::before { content: "＋"; margin-right: 9px; font-size: 16px; }
+.trace-technical-details[open] > summary::before { content: "−"; }
+.trace-technical-details > summary small { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 400; }
+.trace-technical-body { padding: 0 18px 22px; }
 .execution-overview { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(420px, 1.25fr); gap: 28px; align-items: center; margin: 24px 0 34px; padding: 23px; border: 1px solid #c9dacf; border-radius: 19px; background: linear-gradient(135deg, #edf6f0, #f7f8ec); }
 .architecture-badge { display: inline-flex; padding: 5px 8px; border-radius: 7px; color: #1a6248; background: #d9ecdf; font-size: 9px; font-weight: 900; letter-spacing: .12em; }
 .overview-copy h3 { margin: 10px 0 7px; font-size: 19px; }
@@ -934,6 +968,8 @@ button:disabled { cursor: default; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .trace-row { grid-template-columns: auto 1fr auto; }
   .trace-statuses { grid-column: 2 / 4; }
+  .workflow-health { align-items: stretch; flex-direction: column; }
+  .operator-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trace-heading { align-items: start; flex-direction: column; gap: 12px; }
   .execution-overview { grid-template-columns: 1fr; }
   .agent-manifest { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
@@ -974,6 +1010,10 @@ button:disabled { cursor: default; }
   .timeline-card header { flex-direction: column; }
   .timeline-meta { flex-wrap: wrap; }
   .overview-metrics { grid-template-columns: repeat(2, 1fr); }
+  .workflow-health dl { grid-template-columns: 1fr; }
+  .operator-summary-grid { grid-template-columns: 1fr; }
+  .trace-technical-details > summary { align-items: flex-start; flex-wrap: wrap; }
+  .trace-technical-details > summary small { width: 100%; margin: 5px 0 0 25px; }
   .trace-boundary { margin-left: 0; flex-direction: column; }
   .workflow-heading { align-items: start; flex-direction: column; gap: 10px; }
   .workflow-summary-badges { justify-content: flex-start; }

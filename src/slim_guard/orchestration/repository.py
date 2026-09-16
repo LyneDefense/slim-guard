@@ -10,7 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from slim_guard.agents.contracts import AgentArtifact, AgentInvocation, AgentResult
+from slim_guard.agents.contracts import (
+    AgentArtifact,
+    AgentInvocation,
+    AgentResult,
+    InvocationStatus,
+)
 from slim_guard.db.models import (
     AgentArtifactParentRecord,
     AgentArtifactRecord,
@@ -50,6 +55,11 @@ class InvocationStateConflict(InvocationStoreError):
 
 class InvocationBudgetExceeded(InvocationStoreError):
     pass
+
+
+_OBSERVABLE_TOKEN_OVERRUN_FAILURES = frozenset(
+    {"token_budget_exhausted", "turn_token_budget_exhausted"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,7 +460,11 @@ class OrchestrationRepository:
             exceeded.append("model calls")
         if result.tool_call_count > invocation.max_tool_calls:
             exceeded.append("tool calls")
-        if result.token_usage > invocation.max_total_tokens:
+        observable_token_overrun = (
+            result.status is InvocationStatus.FAILED
+            and result.failure_code in _OBSERVABLE_TOKEN_OVERRUN_FAILURES
+        )
+        if result.token_usage > invocation.max_total_tokens and not observable_token_overrun:
             exceeded.append("tokens")
         if exceeded:
             raise InvocationBudgetExceeded(

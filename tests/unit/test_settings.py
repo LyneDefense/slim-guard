@@ -39,6 +39,9 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.multi_agent_mode == "off"
     assert settings.multi_agent_canary_users == frozenset()
     assert settings.multi_agent_graph_version == "typed-supervisor-v1"
+    assert settings.multi_agent_max_model_calls == 12
+    assert settings.multi_agent_max_total_tokens == 64_000
+    assert settings.multi_agent_invocation_max_total_tokens == 32_000
     assert settings.default_style_profile == "slimguard_default_v1"
     assert settings.style_render_all_normal_replies is True
     assert settings.nutrition_agent_enabled is False
@@ -185,6 +188,24 @@ def test_multi_agent_canary_users_are_normalized() -> None:
         Settings(multi_agent_mode="unknown")
 
 
+def test_multi_agent_invocation_budget_cannot_exceed_workflow_budget() -> None:
+    with pytest.raises(ValidationError, match="INVOCATION_MAX_TOTAL_TOKENS"):
+        Settings(
+            multi_agent_max_total_tokens=32_000,
+            multi_agent_invocation_max_total_tokens=32_001,
+        )
+
+    with pytest.raises(ValidationError, match="invocation token budget"):
+        AgentRuntimeDefinition(
+            model_provider="test",
+            text_model="test",
+            vision_model="test",
+            code_revision="test",
+            multi_agent_max_total_tokens=32_000,
+            multi_agent_invocation_max_total_tokens=32_001,
+        )
+
+
 def test_unimplemented_shadow_runtime_mode_fails_fast() -> None:
     settings = Settings(agent_runtime_mode="shadow")
 
@@ -328,6 +349,7 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     ]
     graph_nodes = dict(app.state.agent_graph_manifest.nodes)
     assert graph_nodes["nutrition_expert"].prompt_version == "diet-guidance-zh-v1"
+    assert {node.max_total_tokens for node in graph_nodes.values()} == {32_000}
     assert dict(app.state.agent_graph_manifest.nutrition_tool_versions) == {
         "calculate_bmi": "1",
         "calculate_weight_trend": "1",

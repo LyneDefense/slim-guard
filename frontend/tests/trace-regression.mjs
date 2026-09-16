@@ -17,7 +17,7 @@ const server = await createServer({
 });
 after(() => server.close());
 
-const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, apiModule, dishModule] =
+const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, apiModule, dishModule, operatorModule] =
   await Promise.all([
     server.ssrLoadModule("/src/components/trace/WorkflowMetrics.tsx"),
     server.ssrLoadModule("/src/components/trace/TraceFilters.tsx"),
@@ -26,6 +26,7 @@ const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, a
     server.ssrLoadModule("/src/components/trace/model.ts"),
     server.ssrLoadModule("/src/api.ts"),
     server.ssrLoadModule("/src/components/trace/DishGuidanceTracePanel.tsx"),
+    server.ssrLoadModule("/src/components/trace/TraceOperatorSummary.tsx"),
   ]);
 
 function metricsHtml(metrics) {
@@ -81,6 +82,19 @@ function assertCard(html, label, value) {
   assert.ok(html.includes(`<strong>${value}</strong><span>${label}</span>`), `${label}: ${value}`);
 }
 
+function operatorHtml(workflowValue, traceChanges = {}) {
+  return renderToStaticMarkup(createElement(operatorModule.TraceOperatorSummary, {
+    data: {
+      trace: {
+        delivery_status: "accepted",
+        failure_code: null,
+        ...traceChanges,
+      },
+    },
+    workflow: workflowValue,
+  }));
+}
+
 test("missing metrics render unknown values without fabricated zero percentages", () => {
   const html = metricsHtml({});
   for (const label of ["p50 延迟", "p95 延迟", "Token 总量", "知识 Claim 引用覆盖率", "无效引用率"]) {
@@ -113,6 +127,41 @@ test("recorded metrics retain durations, tokens, percentages and sample counts",
   assertCard(html, "无效引用率", "10.0%");
   assert.match(html, /表达风格 Agent<\/th><td>1<\/td><td>4<\/td><td>25\.0%/);
   assert.ok(html.includes("延迟样本：4 条；Token 工作流样本：4 条"));
+  assert.ok(html.includes("Multi-Agent 存在节点失败"));
+  assert.ok(html.includes("回复生成成功"));
+});
+
+test("operator summary distinguishes delivered fallback from a working multi-agent reply", () => {
+  const failed = operatorHtml(workflow({
+    hasMultiAgentTrace: true,
+    status: "failed",
+    invocations: [{
+      invocation_id: "TEST-orchestrator",
+      agent_role: "orchestrator",
+      status: "failed",
+      failure_code: "token_budget_exhausted",
+    }],
+    timeline: [],
+  }));
+  assert.ok(failed.includes("消息已送达，但新流程未生效"));
+  assert.ok(failed.includes("单个 Agent 的 Token 预算不足"));
+  assert.ok(failed.includes("实际使用旧 Harness 兜底"));
+  assert.ok(failed.includes("未执行到"));
+
+  const succeeded = operatorHtml(workflow({
+    hasMultiAgentTrace: true,
+    status: "succeeded",
+    invocations: [
+      { invocation_id: "TEST-rag", agent_role: "nutrition_retrieval", status: "succeeded", failure_code: null },
+      { invocation_id: "TEST-style", agent_role: "response_style", status: "succeeded", failure_code: null },
+      { invocation_id: "TEST-review", agent_role: "response_reviewer", status: "succeeded", failure_code: null },
+    ],
+    timeline: [{ operation: "response_adopted", details: { final: true } }],
+  }));
+  assert.ok(succeeded.includes("新流程已完成并用于本次回复"));
+  assert.ok(succeeded.includes("营养 RAG"));
+  assert.ok(succeeded.includes("医生风格"));
+  assert.ok(succeeded.includes("回复审查"));
 });
 
 test("zero denominators suppress rates and latency even when the API supplies zero", () => {

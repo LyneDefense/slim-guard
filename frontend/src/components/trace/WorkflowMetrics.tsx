@@ -28,6 +28,17 @@ export function WorkflowMetricsData({ metrics }: { metrics: TraceWorkflowReviewM
   const citations = metrics.citations;
   const nodes = Object.entries(metrics.node_failure_rates ?? {});
   const outcomes = Object.entries(metrics.outcomes_by_mode ?? {});
+  const hasNodeMetrics = nodes.some(([, node]) => valid(node.total) && node.total > 0);
+  const hasOutcomeMetrics = outcomes.some(([, row]) => valid(row.total));
+  const nodeFailures = nodes.reduce((total, [, node]) => total + (valid(node.failed) ? node.failed : 0), 0);
+  const multiAgentTraces = outcomes.reduce(
+    (total, [mode, row]) => total + (mode === "off" || !valid(row.total) ? 0 : row.total),
+    0,
+  );
+  const fallbackReplies = outcomes.reduce(
+    (total, [, row]) => total + (valid(row.degraded) ? row.degraded : 0),
+    0,
+  );
   const cards = [
     ["p50 延迟", duration(metrics.latency_ms?.sample_count === 0 ? null : metrics.latency_ms?.p50)],
     ["p95 延迟", duration(metrics.latency_ms?.sample_count === 0 ? null : metrics.latency_ms?.p95)],
@@ -39,31 +50,48 @@ export function WorkflowMetricsData({ metrics }: { metrics: TraceWorkflowReviewM
   ];
   return (
     <>
-      <div className="workflow-metric-grid">
-        {cards.map(([label, value]) => <article className="metric" key={label}><strong>{value}</strong><span>{label}</span></article>)}
+      <div className={`workflow-health ${nodeFailures > 0 ? "workflow-health-bad" : hasNodeMetrics ? "workflow-health-good" : "workflow-health-neutral"}`}>
+        <div>
+          <span className="eyebrow">运行结论</span>
+          <strong>{nodeFailures > 0 ? "Multi-Agent 存在节点失败" : hasNodeMetrics ? "暂未发现 Multi-Agent 节点失败" : "暂无可判断节点状态的数据"}</strong>
+          <p>“回复生成成功”只表示系统产出了回复，不代表 Multi-Agent、RAG 或医生风格真正执行成功。</p>
+        </div>
+        <dl>
+          <div><dt>Multi-Agent Trace</dt><dd>{count(hasOutcomeMetrics ? multiAgentTraces : null)}</dd></div>
+          <div><dt>节点失败</dt><dd>{count(hasNodeMetrics ? nodeFailures : null)}</dd></div>
+          <div><dt>记录为降级</dt><dd>{count(hasOutcomeMetrics ? fallbackReplies : null)}</dd></div>
+        </dl>
       </div>
-      <p className="workflow-metric-note">延迟样本：{count(metrics.latency_ms?.sample_count)} 条；Token 工作流样本：{count(metrics.tokens?.workflow_count)} 条。未记录表示该时间窗口没有可用数据。</p>
-      <p className="workflow-metric-note">知识 Claim：{count(citations?.covered_claim_count)} 条已覆盖 / {count(citations?.knowledge_claim_count)} 条；引用：{count(citations?.invalid_citation_count)} 条无效 / {count(citations?.citation_count)} 条。</p>
-      <p className="workflow-metric-note">引用统计针对图内最新专业结果，不表示已采用或送达；Token 为有图工作流中已记录的原 Harness 与图节点用量。</p>
-      <h3>节点失败率</h3>
-      {nodes.length > 0 ? (
-        <div className="workflow-metric-table"><table>
-          <thead><tr><th>Agent</th><th>失败 Invocation</th><th>全部 Invocation</th><th>失败率</th></tr></thead>
-          <tbody>{nodes.map(([role, node]) => <tr key={role}><th scope="row">{agentRoleLabel(role)}</th><td>{count(node.failed)}</td><td>{count(node.total)}</td><td>{rate(node.total === 0 ? null : node.rate)}</td></tr>)}</tbody>
-        </table></div>
-      ) : <p className="workflow-metric-note">该时间窗口没有可用的节点失败率记录。</p>}
-      <h3>Legacy / Multi-Agent 执行结果对比</h3>
-      <p className="workflow-metric-note">以下是回复生成状态，不代表人工质量评分或渠道送达；候选质量仍需同输入配对评审。</p>
-      {outcomes.length > 0 ? (
-        <div className="workflow-metric-table"><table>
-          <thead><tr><th>模式</th><th>样本</th><th>生成成功</th><th>降级</th><th>失败</th></tr></thead>
-          <tbody>{outcomes.map(([mode, row]) => <tr key={mode}>
-            <th scope="row">{mode === "off" ? "Legacy / Off" : mode}</th>
-            <td>{count(row.total)}</td><td>{count(row.succeeded)}</td>
-            <td>{count(row.degraded)}</td><td>{count(row.failed)}</td>
-          </tr>)}</tbody>
-        </table></div>
-      ) : <p className="workflow-metric-note">该时间窗口没有可用的模式对比记录。</p>}
+      <details className="workflow-technical-details">
+        <summary>查看延迟、Token、引用和节点明细</summary>
+        <div className="workflow-technical-body">
+          <div className="workflow-metric-grid">
+            {cards.map(([label, value]) => <article className="metric" key={label}><strong>{value}</strong><span>{label}</span></article>)}
+          </div>
+          <p className="workflow-metric-note">延迟样本：{count(metrics.latency_ms?.sample_count)} 条；Token 工作流样本：{count(metrics.tokens?.workflow_count)} 条。未记录表示该时间窗口没有可用数据。</p>
+          <p className="workflow-metric-note">知识 Claim：{count(citations?.covered_claim_count)} 条已覆盖 / {count(citations?.knowledge_claim_count)} 条；引用：{count(citations?.invalid_citation_count)} 条无效 / {count(citations?.citation_count)} 条。</p>
+          <p className="workflow-metric-note">引用统计针对图内最新专业结果，不表示已采用或送达；Token 为有图工作流中已记录的原 Harness 与图节点用量。</p>
+          <h3>节点失败率</h3>
+          {nodes.length > 0 ? (
+            <div className="workflow-metric-table"><table>
+              <thead><tr><th>Agent</th><th>失败 Invocation</th><th>全部 Invocation</th><th>失败率</th></tr></thead>
+              <tbody>{nodes.map(([role, node]) => <tr key={role}><th scope="row">{agentRoleLabel(role)}</th><td>{count(node.failed)}</td><td>{count(node.total)}</td><td>{rate(node.total === 0 ? null : node.rate)}</td></tr>)}</tbody>
+            </table></div>
+          ) : <p className="workflow-metric-note">该时间窗口没有可用的节点失败率记录。</p>}
+          <h3>Legacy / Multi-Agent 执行结果对比</h3>
+          <p className="workflow-metric-note">以下是回复生成状态，不代表人工质量评分或渠道送达；候选质量仍需同输入配对评审。</p>
+          {outcomes.length > 0 ? (
+            <div className="workflow-metric-table"><table>
+              <thead><tr><th>模式</th><th>样本</th><th>生成成功</th><th>降级</th><th>失败</th></tr></thead>
+              <tbody>{outcomes.map(([mode, row]) => <tr key={mode}>
+                <th scope="row">{mode === "off" ? "Legacy / Off" : mode}</th>
+                <td>{count(row.total)}</td><td>{count(row.succeeded)}</td>
+                <td>{count(row.degraded)}</td><td>{count(row.failed)}</td>
+              </tr>)}</tbody>
+            </table></div>
+          ) : <p className="workflow-metric-note">该时间窗口没有可用的模式对比记录。</p>}
+        </div>
+      </details>
     </>
   );
 }

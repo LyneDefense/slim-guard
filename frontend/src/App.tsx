@@ -25,6 +25,7 @@ import { EvidencePanel } from "./components/trace/EvidencePanel";
 import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
 import { ShadowComparison } from "./components/trace/ShadowComparison";
 import { StyleTracePanel } from "./components/trace/StyleTracePanel";
+import { TraceOperatorSummary } from "./components/trace/TraceOperatorSummary";
 import { TraceFilters, traceFiltersFromParams } from "./components/trace/TraceFilters";
 import { WorkflowGraph } from "./components/trace/WorkflowGraph";
 import { WorkflowMetrics } from "./components/trace/WorkflowMetrics";
@@ -392,21 +393,27 @@ function TracePage() {
         <div><p className="eyebrow">TRACE · {data.trace.id}</p><h2>{TRIGGER_LABELS[data.trace.trigger_type] ?? data.trace.trigger_type}</h2><p>{formatDate(data.trace.created_at)} · 总耗时 {formatDuration(data.trace.duration_ms)}</p></div>
         <div className="trace-statuses"><label>生成 <StatusBadge value={data.trace.generation_status} /></label><label>投递 <StatusBadge value={data.trace.delivery_status} /></label></div>
       </div>
+      <TraceOperatorSummary data={data} workflow={workflow} />
       {data.trace.failure_code && <div className="alert"><strong>{data.trace.failure_code}</strong><span>{data.trace.error_detail}</span></div>}
       {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
-      <ExecutionOverview data={data} />
-      {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
-      <DishGuidanceTracePanel workflow={workflow} userId={user.id} traceId={traceId} />
-      <EvidencePanel workflow={workflow} />
-      <StyleTracePanel workflow={workflow} />
-      <ReviewerTracePanel workflow={workflow} />
-      {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
-      <ContextSources data={data} />
-      {workflow.hasMultiAgentTrace
-        ? <MultiAgentTimeline workflow={workflow} />
-        : <LegacyTimeline timeline={data.timeline} />}
-      {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
-      {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
+      <details className="trace-technical-details">
+        <summary><span>查看完整流程与工程排障信息</span><small>Agent 节点、RAG 证据、风格、审查、Token 与原始事件</small></summary>
+        <div className="trace-technical-body">
+          <ExecutionOverview data={data} />
+          {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
+          <DishGuidanceTracePanel workflow={workflow} userId={user.id} traceId={traceId} />
+          <EvidencePanel workflow={workflow} />
+          <StyleTracePanel workflow={workflow} />
+          <ReviewerTracePanel workflow={workflow} />
+          {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
+          <ContextSources data={data} />
+          {workflow.hasMultiAgentTrace
+            ? <MultiAgentTimeline workflow={workflow} />
+            : <LegacyTimeline timeline={data.timeline} />}
+          {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
+          {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
+        </div>
+      </details>
       <p className="privacy-footnote">敏感健康数据 · 已脱敏事件 {data.privacy.redacted_item_count} 条 · 本次查看已写入审计记录</p>
     </section>
   );

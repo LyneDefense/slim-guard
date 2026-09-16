@@ -142,6 +142,13 @@ class AgentRuntimeDefinition(BaseModel):
         max_length=128,
     )
     multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    multi_agent_max_model_calls: int = Field(default=12, ge=1, le=32)
+    multi_agent_max_total_tokens: int = Field(default=64_000, ge=1024, le=10_000_000)
+    multi_agent_invocation_max_total_tokens: int = Field(
+        default=32_000,
+        ge=1024,
+        le=10_000_000,
+    )
     default_style_profile: str = Field(
         default="slimguard_default_v1",
         min_length=1,
@@ -161,6 +168,10 @@ class AgentRuntimeDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_nutrition_rag(self) -> AgentRuntimeDefinition:
+        if self.multi_agent_invocation_max_total_tokens > self.multi_agent_max_total_tokens:
+            raise ValueError(
+                "Multi-agent invocation token budget cannot exceed the workflow budget"
+            )
         if self.nutrition_rag_enabled and not self.nutrition_agent_enabled:
             raise ValueError("Nutrition RAG requires the Nutrition Agent")
         if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
@@ -345,6 +356,7 @@ def build_agent_runtime(
                 graph_version=definition.multi_agent_graph_version,
                 timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
                 max_output_tokens=definition.vision_max_output_tokens,
+                max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
                 persistence=OrchestrationRepository(database),
                 style_profiles=StyleProfileRepository(database),
                 default_style_profile=definition.default_style_profile,
@@ -388,6 +400,8 @@ def build_agent_runtime(
             )
         ),
         workflow_timeout_seconds=definition.multi_agent_shadow_timeout_seconds,
+        workflow_max_model_calls=definition.multi_agent_max_model_calls,
+        workflow_max_total_tokens=definition.multi_agent_max_total_tokens,
         clock=clock,
     )
     return AgentRuntime(
@@ -443,7 +457,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             privacy_scopes=("current_user_message", "trusted_context"),
             max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens * 2,
+            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
         "dish_recognition": AgentGraphNodeManifest.build(
             role="dish_recognition",
@@ -454,7 +468,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             privacy_scopes=("current_meal_image", "current_user_image_text"),
             max_model_calls=1,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens,
+            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
         "nutrition_retrieval": AgentGraphNodeManifest.build(
             role="nutrition_retrieval",
@@ -471,7 +485,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             privacy_scopes=("confirmed_dishes", "goal_and_constraint_tags"),
             max_model_calls=1,
             max_tool_calls=24,
-            max_total_tokens=definition.vision_max_output_tokens,
+            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
         "nutrition_expert": AgentGraphNodeManifest.build(
             role="nutrition_expert",
@@ -483,7 +497,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             privacy_scopes=("evidence_packet", "nutrition_observations"),
             max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens * 2,
+            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
         "response_style": AgentGraphNodeManifest.build(
             role="response_style",
@@ -494,7 +508,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             privacy_scopes=("response_plan", "style_profile", "style_examples"),
             max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens * 2,
+            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
         "response_reviewer": AgentGraphNodeManifest.build(
             role="response_reviewer",
@@ -505,7 +519,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             privacy_scopes=("response_plan", "styled_response", "professional_assessment"),
             max_model_calls=2,
             max_tool_calls=0,
-            max_total_tokens=definition.vision_max_output_tokens * 2,
+            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
     }
     return AgentGraphManifest.build(
