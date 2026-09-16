@@ -1,9 +1,9 @@
 # SlimGuard 营养知识 RAG 实现说明
 
-- 状态：已实现，生产环境待候选语料版本验收后启用
+- 状态：已实现并部署；生产候选 `test_v3` 已通过离线门槛，待人工批准和显式启用
 - 文档版本：v1.0
 - 最后更新：2026-09-16
-适用代码：`main` 分支 `7f02c46` 及之后版本
+- 适用代码：`main` 分支 `571d6cc` 及之后版本
 
 ## 1. 文档目的
 
@@ -417,7 +417,32 @@ Agent 提供 Citation。判定模型、Request ID、输入/输出 Token、结果
 同时记录 MRR、Case Pass Rate、每条 Case 的排名、采用数量和失败详情。只要任一硬门槛未通过，Release
 自动进入 `rejected`，不能人工绕过直接启用。
 
-### 9.4 重复评测保护
+### 9.4 生产验证记录
+
+同一份冻结数据集先后验证了无支持性关卡、支持性 Prompt v1 和校准后的 Prompt v2。三次 Release
+均绑定相同的 3 份 Source 和 `nutrition_eval_v1`，因此可以直接比较检索语义变化。
+
+| Release | Retrieval Profile | 通过 | Case Pass Rate | Recall@5 / @10 | Insufficient Precision | Leakage | 结论 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `test_v1` | `nutrition-hybrid-rag-v1` | 92/120 | 0.766667 | 1.000000 / 1.000000 | 0.222222 | 0 | 自动门槛未通过，已拒绝 |
+| `test_v2` | `nutrition-hybrid-rag-answerability-v2` | 117/120 | 0.975000 | 0.988095 / 0.988095 | 1.000000 | 0 | 自动门槛通过，但人工发现两条直接证据被过度拒绝，已拒绝 |
+| `test_v3` | `nutrition-hybrid-rag-answerability-v3` | 120/120 | 1.000000 | 1.000000 / 1.000000 | 1.000000 | 0 | 自动门槛通过，当前为 `review_ready` |
+
+`test_v3` 的 Citation Integrity 为 1.000000，MRR 为 0.982143，结果哈希为
+`28193db8430599b9759b30de2be75220d3a10d9abc6abed9d92ab163f35926de`。生产 Evaluation Run ID 为
+`2f8dc04b-0db4-4b57-bba4-ea9755ee5fa9`。
+
+针对 v2 暴露的问题，v3 额外抽查了以下决策链：
+
+- “菜单应提供哪些低糖饮料选择”：采用包含“低糖或无糖饮料”的餐厅指南证据；
+- “低盐低脂低糖菜品怎样标示”：采用包含“醒目标示”的餐厅指南证据；
+- “宫保鸡丁每 100 克精确千卡数”：相关饮食原则只保留为候选，最终返回 `insufficient`；
+- 不存在的 `clinical_diabetes` 标签组合：Metadata Filter 阶段直接返回 `insufficient`，不调用模型。
+
+120/120 只证明当前 3 份资料在该冻结验收集上的表现，不代表所有营养问题都能回答。Release 仍需管理员
+审核后批准，并通过独立的“全量启用”动作写入 Runtime；文档记录时 Active Release 仍为空。
+
+### 9.5 重复评测保护
 
 同一个 Release 同一时间最多只有一个 `queued/running` 评测：
 

@@ -82,6 +82,13 @@ class _LoadedChunk:
         return self.parent.content_text if self.parent is not None else self.chunk.content_text
 
 
+def _answerability_exclusion_reason(result: AnswerabilityResult) -> str:
+    """Describe why a candidate was excluded without mislabeling the group decision."""
+    if result.outcome == "supported":
+        return "answerability_not_selected"
+    return f"answerability_{result.reason_code}"
+
+
 class HybridNutritionRagService:
     """Filter-first Hybrid RAG over an explicitly active corpus release."""
 
@@ -255,9 +262,6 @@ class HybridNutritionRagService:
             if answerability is not None
             else None
         )
-        answerability_reason = (
-            answerability.reason_code if answerability is not None else "not_required"
-        )
         for hit in rerank_order:
             loaded_hit = by_chunk[hit.chunk_id]
             parent_identity = (
@@ -267,7 +271,8 @@ class HybridNutritionRagService:
                 hit.rejection_reason = "below_rerank_threshold"
                 continue
             if supported_chunk_ids is not None and hit.chunk_id not in supported_chunk_ids:
-                hit.rejection_reason = f"answerability_{answerability_reason}"
+                assert answerability is not None
+                hit.rejection_reason = _answerability_exclusion_reason(answerability)
                 continue
             if parent_identity in used_parents:
                 hit.rejection_reason = "duplicate_parent_context"

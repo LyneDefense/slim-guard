@@ -44,7 +44,11 @@ from slim_guard.nutrition_rag.repository import (
     NutritionRagGovernanceError,
     NutritionRagRepository,
 )
-from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService, _FusedHit
+from slim_guard.nutrition_rag.retrieval import (
+    HybridNutritionRagService,
+    _answerability_exclusion_reason,
+    _FusedHit,
+)
 from slim_guard.nutrition_rag.storage import (
     InMemoryNutritionObjectStore,
     NutritionObjectIntegrityError,
@@ -115,6 +119,33 @@ class FakeAnswerabilityGateway:
             input_tokens=len(documents),
             output_tokens=1,
         )
+
+
+def test_answerability_exclusion_reason_distinguishes_unselected_from_unsupported() -> None:
+    supported = AnswerabilityResult(
+        outcome="supported",
+        supported_document_indices=(0,),
+        reason_code="directly_supported",
+        model="fake-answerability",
+        request_id="supported-request",
+        input_tokens=2,
+        output_tokens=1,
+    )
+    insufficient = AnswerabilityResult(
+        outcome="insufficient",
+        supported_document_indices=(),
+        reason_code="missing_requested_fact",
+        model="fake-answerability",
+        request_id="insufficient-request",
+        input_tokens=2,
+        output_tokens=1,
+    )
+
+    assert _answerability_exclusion_reason(supported) == "answerability_not_selected"
+    assert (
+        _answerability_exclusion_reason(insufficient)
+        == "answerability_missing_requested_fact"
+    )
 
 
 async def test_ingestion_review_release_and_activation_are_separate(tmp_path: Path) -> None:

@@ -137,6 +137,9 @@ Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。v2 �
 才会被新 Turn 检索。资料退休后立即退出新检索，历史 Artifact 中已经冻结的 Citation 仍可审计。线上
 Nutrition 工具全部只读，也不会自动把网页写入知识库。
 
+当前生产实现、数据流、Profile、评测门槛和运维流程详见
+[`NUTRITION_RAG_IMPLEMENTATION.md`](NUTRITION_RAG_IMPLEMENTATION.md)。
+
 生产版 RAG v2 使用 PostgreSQL 16 + pgvector 保存切片向量，以中文词法检索、向量检索和短语匹配
 召回候选，再通过 RRF 合并并用智谱 `rerank` 重排。新版检索 Profile 还会在采纳候选前调用结构化的
 “直接证据支持性”关卡：主题相关但没有包含问题所需事实的资料只保留为候选，不会交给 Agent 作为
