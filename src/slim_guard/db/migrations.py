@@ -32,6 +32,9 @@ from slim_guard.nutrition_rag.profiles import (
     DEFAULT_LEXICAL_PROFILE_KEY,
     DEFAULT_RETRIEVAL_PROFILE_ID,
     DEFAULT_RETRIEVAL_PROFILE_KEY,
+    LEGACY_QUERY_PLAN_VERSION,
+    LEGACY_RETRIEVAL_PROFILE_ID,
+    LEGACY_RETRIEVAL_PROFILE_KEY,
     NUTRITION_LEXICON_SHA256,
     QUERY_PLAN_VERSION,
 )
@@ -519,14 +522,14 @@ async def _create_nutrition_rag_control_plane(connection: AsyncConnection) -> No
         )
     retrieval_exists = await connection.scalar(
         select(NutritionRetrievalProfileRecord.id).where(
-            NutritionRetrievalProfileRecord.id == DEFAULT_RETRIEVAL_PROFILE_ID
+            NutritionRetrievalProfileRecord.id == LEGACY_RETRIEVAL_PROFILE_ID
         )
     )
     if retrieval_exists is None:
         await connection.execute(
             insert(NutritionRetrievalProfileRecord).values(
-                id=DEFAULT_RETRIEVAL_PROFILE_ID,
-                profile_key=DEFAULT_RETRIEVAL_PROFILE_KEY,
+                id=LEGACY_RETRIEVAL_PROFILE_ID,
+                profile_key=LEGACY_RETRIEVAL_PROFILE_KEY,
                 embedding_profile_id=DEFAULT_EMBEDDING_PROFILE_ID,
                 lexical_profile_id=DEFAULT_LEXICAL_PROFILE_ID,
                 dense_top_k=40,
@@ -537,7 +540,7 @@ async def _create_nutrition_rag_control_plane(connection: AsyncConnection) -> No
                 final_top_k=4,
                 min_rerank_score=0.35,
                 max_context_chars=6000,
-                query_plan_version=QUERY_PLAN_VERSION,
+                query_plan_version=LEGACY_QUERY_PLAN_VERSION,
                 status="ready",
             )
         )
@@ -688,6 +691,43 @@ async def _migrate_legacy_nutrition_publication_state(
         )
 
 
+async def _add_nutrition_answerability_profile(connection: AsyncConnection) -> None:
+    """Add the direct-support retrieval profile and serialize open release evaluations."""
+
+    await _create_nutrition_rag_control_plane(connection)
+    profile_exists = await connection.scalar(
+        select(NutritionRetrievalProfileRecord.id).where(
+            NutritionRetrievalProfileRecord.id == DEFAULT_RETRIEVAL_PROFILE_ID
+        )
+    )
+    if profile_exists is None:
+        await connection.execute(
+            insert(NutritionRetrievalProfileRecord).values(
+                id=DEFAULT_RETRIEVAL_PROFILE_ID,
+                profile_key=DEFAULT_RETRIEVAL_PROFILE_KEY,
+                embedding_profile_id=DEFAULT_EMBEDDING_PROFILE_ID,
+                lexical_profile_id=DEFAULT_LEXICAL_PROFILE_ID,
+                dense_top_k=40,
+                lexical_top_k=40,
+                phrase_top_k=20,
+                rrf_k=60,
+                rerank_top_n=24,
+                final_top_k=4,
+                min_rerank_score=0.35,
+                max_context_chars=6000,
+                query_plan_version=QUERY_PLAN_VERSION,
+                status="ready",
+            )
+        )
+    await connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_nutrition_eval_open_release "
+            "ON nutrition_evaluation_runs (release_id) "
+            "WHERE status IN ('queued','running')"
+        )
+    )
+
+
 MIGRATIONS = (
     SchemaMigration("20260831_01_interaction_tracing", _create_application_tables),
     SchemaMigration("20260902_01_body_fat_records", _create_application_tables),
@@ -722,6 +762,10 @@ MIGRATIONS = (
         _migrate_legacy_nutrition_publication_state,
     ),
     SchemaMigration("20260912_01_mobile_coach_profiles", _create_application_tables),
+    SchemaMigration(
+        "20260916_01_nutrition_answerability_profile",
+        _add_nutrition_answerability_profile,
+    ),
 )
 
 

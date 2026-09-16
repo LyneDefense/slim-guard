@@ -53,6 +53,7 @@ from slim_guard.mobile.auth import (
 from slim_guard.mobile.platform import MobilePlatformService
 from slim_guard.mobile.service import MobileApplicationService
 from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
+from slim_guard.nutrition_rag.answerability import ModelAnswerabilityGateway
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
 from slim_guard.nutrition_rag.gateways import (
     ZhipuEmbeddingGateway,
@@ -209,6 +210,23 @@ def create_app(
         repository = MessageRepository(database)
         traces = InteractionTraceRepository(database)
         nutrition_control = NutritionRagRepository(database)
+        active_model_for_services = model_gateway
+        if (
+            active_model_for_services is None
+            and app_settings.zhipu_is_configured
+            and app_settings.nutrition_rag_engine == "v2"
+            and (
+                app_settings.nutrition_rag_enabled
+                or app_settings.nutrition_knowledge_worker_enabled
+            )
+        ):
+            owned_model_gateway = ZhipuModelGateway(
+                api_key=app_settings.zhipu_api_key,
+                base_url=app_settings.zhipu_base_url,
+                timeout_seconds=app_settings.zhipu_http_timeout_seconds,
+                thinking_enabled=False,
+            )
+            active_model_for_services = owned_model_gateway
         nutrition_object_store = (
             TencentCosNutritionObjectStore(
                 region=app_settings.tencent_cos_region,
@@ -246,6 +264,8 @@ def create_app(
             )
             and owned_nutrition_embedding is not None
         ):
+            if active_model_for_services is None:
+                raise RuntimeError("Nutrition answerability model is not configured")
             owned_nutrition_reranker = ZhipuRerankGateway(
                 api_key=app_settings.zhipu_api_key,
                 base_url=app_settings.zhipu_base_url,
@@ -256,6 +276,10 @@ def create_app(
                 repository=nutrition_control,
                 embedding_gateway=owned_nutrition_embedding,
                 rerank_gateway=owned_nutrition_reranker,
+                answerability_gateway=ModelAnswerabilityGateway(
+                    gateway=active_model_for_services,
+                    model=app_settings.zhipu_text_model,
+                ),
             )
         await repository.backfill_users_from_messages()
         backfilled_trace_count = await traces.backfill_existing()
@@ -287,7 +311,6 @@ def create_app(
 
         active_runtime: AgentRuntime | None = None
         active_reply_agent = reply_agent
-        active_model_for_services = model_gateway
         if active_reply_agent is None and app_settings.agent_runtime_mode == "harness":
             active_model = active_model_for_services
             if active_model is None and app_settings.zhipu_is_configured:

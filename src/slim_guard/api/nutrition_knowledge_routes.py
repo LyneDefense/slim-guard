@@ -419,7 +419,12 @@ async def retire_source(
         await _repository(request).retire_source(
             source_id, actor=principal.username, reason=payload.reason
         )
-    except (NutritionRagNotFound, NutritionRagGovernanceError, ValueError) as error:
+    except (
+        NutritionRagNotFound,
+        NutritionRagConflict,
+        NutritionRagGovernanceError,
+        ValueError,
+    ) as error:
         raise _handle_control_error(error) from error
     await _audit(
         request,

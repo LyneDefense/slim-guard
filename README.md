@@ -138,8 +138,10 @@ Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。v2 �
 Nutrition 工具全部只读，也不会自动把网页写入知识库。
 
 生产版 RAG v2 使用 PostgreSQL 16 + pgvector 保存切片向量，以中文词法检索、向量检索和短语匹配
-召回候选，再通过 RRF 合并并用智谱 `rerank` 重排。原始资料存放在腾讯云 COS 私有 Bucket，数据库只
-保存对象 Key、内容 Hash 和审核/Release 记录。启用后台导入 Worker 前需要配置：
+召回候选，再通过 RRF 合并并用智谱 `rerank` 重排。新版检索 Profile 还会在采纳候选前调用结构化的
+“直接证据支持性”关卡：主题相关但没有包含问题所需事实的资料只保留为候选，不会交给 Agent 作为
+作答证据；关卡异常时检索失败关闭。原始资料存放在腾讯云 COS 私有 Bucket，数据库只保存对象 Key、
+内容 Hash 和审核/Release 记录。启用后台导入 Worker 前需要配置：
 
 ```dotenv
 NUTRITION_RAG_ENGINE=v2

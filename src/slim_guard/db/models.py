@@ -2387,6 +2387,13 @@ class NutritionEvaluationRunRecord(Base):
             name="ck_nutrition_eval_run_status",
         ),
         Index("ix_nutrition_eval_run_created", "created_at"),
+        Index(
+            "uq_nutrition_eval_open_release",
+            "release_id",
+            unique=True,
+            sqlite_where=text("status IN ('queued','running')"),
+            postgresql_where=text("status IN ('queued','running')"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)

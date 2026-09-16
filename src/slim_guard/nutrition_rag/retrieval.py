@@ -25,12 +25,18 @@ from slim_guard.db.models import (
     new_uuid,
 )
 from slim_guard.nutrition_knowledge import KnowledgeMetadataFilter
+from slim_guard.nutrition_rag.answerability import (
+    AnswerabilityDocument,
+    AnswerabilityGateway,
+    AnswerabilityResult,
+)
 from slim_guard.nutrition_rag.gateways import (
     EmbeddingGateway,
     NutritionModelGatewayError,
     RerankGateway,
 )
 from slim_guard.nutrition_rag.processing import ChineseNutritionLexicalAnalyzer
+from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE
 from slim_guard.nutrition_rag.repository import (
     NutritionRagRepository,
     NutritionRelease,
@@ -85,12 +91,14 @@ class HybridNutritionRagService:
         repository: NutritionRagRepository,
         embedding_gateway: EmbeddingGateway,
         rerank_gateway: RerankGateway,
+        answerability_gateway: AnswerabilityGateway | None = None,
         analyzer: ChineseNutritionLexicalAnalyzer | None = None,
     ) -> None:
         self.repository = repository
         self.database = repository.database
         self.embedding_gateway = embedding_gateway
         self.rerank_gateway = rerank_gateway
+        self.answerability_gateway = answerability_gateway
         self.analyzer = analyzer or ChineseNutritionLexicalAnalyzer()
 
     async def search(
@@ -201,6 +209,12 @@ class HybridNutritionRagService:
                 by_chunk = {}
                 rerank_order = []
                 reranked = None
+            answerability = await self._assess_answerability(
+                query=query,
+                profile=profile,
+                rerank_order=rerank_order,
+                loaded=by_chunk,
+            )
         except (NutritionModelGatewayError, ValueError):
             run_id = await self._record_run(
                 release=release,
@@ -225,6 +239,17 @@ class HybridNutritionRagService:
         used_parents: set[str] = set()
         context_chars = 0
         selected_count = 0
+        supported_chunk_ids = (
+            {
+                rerank_order[index].chunk_id
+                for index in answerability.supported_document_indices
+            }
+            if answerability is not None
+            else None
+        )
+        answerability_reason = (
+            answerability.reason_code if answerability is not None else "not_required"
+        )
         for hit in rerank_order:
             loaded_hit = by_chunk[hit.chunk_id]
             parent_identity = (
@@ -232,6 +257,9 @@ class HybridNutritionRagService:
             )
             if hit.rerank_score is None or hit.rerank_score < profile.min_rerank_score:
                 hit.rejection_reason = "below_rerank_threshold"
+                continue
+            if supported_chunk_ids is not None and hit.chunk_id not in supported_chunk_ids:
+                hit.rejection_reason = f"answerability_{answerability_reason}"
                 continue
             if parent_identity in used_parents:
                 hit.rejection_reason = "duplicate_parent_context"
@@ -264,6 +292,16 @@ class HybridNutritionRagService:
                 "request_id": reranked.request_id,
                 "prompt_tokens": reranked.prompt_tokens,
                 "latency_ms": reranked.latency_ms,
+            }
+        if answerability is not None:
+            usage["answerability"] = {
+                "mode": profile.answerability_mode,
+                "outcome": answerability.outcome,
+                "reason_code": answerability.reason_code,
+                "model": answerability.model,
+                "request_id": answerability.request_id,
+                "input_tokens": answerability.input_tokens,
+                "output_tokens": answerability.output_tokens,
             }
         run_id = await self._record_run(
             release=release,
@@ -299,10 +337,83 @@ class HybridNutritionRagService:
             "citations": [],
             "query_summary": (
                 f"release={release.version};eligible_sources={len(source_ids)};"
-                f"hybrid_candidates={len(fused)};adopted={selected_count}"
+                f"hybrid_candidates={len(fused)};"
+                f"answerability={answerability.outcome if answerability else 'legacy'};"
+                f"adopted={selected_count}"
             ),
             "retrieval_run_id": run_id,
         }
+
+    async def _assess_answerability(
+        self,
+        *,
+        query: str,
+        profile: RetrievalProfile,
+        rerank_order: Sequence[_FusedHit],
+        loaded: Mapping[str, _LoadedChunk],
+    ) -> AnswerabilityResult | None:
+        if profile.answerability_mode is None:
+            return None
+        if profile.answerability_mode != ANSWERABILITY_MODE:
+            raise NutritionModelGatewayError("unsupported_answerability_mode")
+        if self.answerability_gateway is None:
+            raise NutritionModelGatewayError("answerability_gateway_unavailable")
+        candidates = tuple(
+            hit
+            for hit in rerank_order
+            if hit.rerank_score is not None
+            and hit.rerank_score >= profile.min_rerank_score
+            and hit.chunk_id in loaded
+        )[:8]
+        if not candidates:
+            return AnswerabilityResult(
+                outcome="insufficient",
+                supported_document_indices=(),
+                reason_code="unrelated",
+                model="not-called",
+                request_id=None,
+                input_tokens=0,
+                output_tokens=0,
+            )
+        result = await self.answerability_gateway.assess(
+            query=query,
+            documents=tuple(
+                AnswerabilityDocument(
+                    source_key=loaded[hit.chunk_id].source.source_key,
+                    title=loaded[hit.chunk_id].source.title,
+                    section=self._section_label(loaded[hit.chunk_id]),
+                    content=loaded[hit.chunk_id].context,
+                )
+                for hit in candidates
+            ),
+        )
+        if any(index >= len(candidates) for index in result.supported_document_indices):
+            raise NutritionModelGatewayError("answerability_unknown_document")
+
+        # Answerability indices refer to the compact list passed to the model,
+        # while selection uses the complete reranked list.
+        supported_ids = {
+            candidates[index].chunk_id for index in result.supported_document_indices
+        }
+        return AnswerabilityResult(
+            outcome=result.outcome,
+            supported_document_indices=tuple(
+                index
+                for index, hit in enumerate(rerank_order)
+                if hit.chunk_id in supported_ids
+            ),
+            reason_code=result.reason_code,
+            model=result.model,
+            request_id=result.request_id,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+        )
+
+    @staticmethod
+    def _section_label(item: _LoadedChunk) -> str | None:
+        heading = " / ".join(_string_list(item.section.heading_path_json))
+        page = f"第 {item.section.page_from} 页" if item.section.page_from is not None else None
+        return " · ".join(value for value in (heading, page) if value) or None
 
     async def get_source(
         self,

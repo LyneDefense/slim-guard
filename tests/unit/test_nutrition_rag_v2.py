@@ -18,6 +18,10 @@ from slim_guard.nutrition_knowledge import (
     NutritionKnowledgeRepository,
     NutritionKnowledgeService,
 )
+from slim_guard.nutrition_rag.answerability import (
+    AnswerabilityDocument,
+    AnswerabilityResult,
+)
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
 from slim_guard.nutrition_rag.gateways import (
     EmbeddingBatch,
@@ -85,6 +89,26 @@ class FakeRerankGateway:
 
     async def close(self) -> None:
         return None
+
+
+class FakeAnswerabilityGateway:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def assess(
+        self, *, query: str, documents: Sequence[AnswerabilityDocument]
+    ) -> AnswerabilityResult:
+        self.calls += 1
+        insufficient = "无结果" in query or "资料没有直接答案" in query
+        return AnswerabilityResult(
+            outcome="insufficient" if insufficient else "supported",
+            supported_document_indices=() if insufficient else tuple(range(len(documents))),
+            reason_code="missing_requested_fact" if insufficient else "directly_supported",
+            model="fake-answerability",
+            request_id="answerability-request-1",
+            input_tokens=len(documents),
+            output_tokens=1,
+        )
 
 
 async def test_ingestion_review_release_and_activation_are_separate(tmp_path: Path) -> None:
@@ -220,10 +244,19 @@ async def test_ingestion_review_release_and_activation_are_separate(tmp_path: Pa
             created_by="admin",
             idempotency_key="first-release-evaluation",
         )
+        duplicate_run_id, duplicate_job = await repository.create_evaluation_run(
+            release_id=release.id,
+            dataset_id=dataset.id,
+            created_by="admin",
+            idempotency_key="rapid-second-click-with-another-key",
+        )
+        assert duplicate_run_id == run_id
+        assert duplicate_job.id == evaluation_job.id
         retrieval = HybridNutritionRagService(
             repository=repository,
             embedding_gateway=FakeEmbeddingGateway(),
             rerank_gateway=FakeRerankGateway(),
+            answerability_gateway=FakeAnswerabilityGateway(),
         )
         evaluation_worker = NutritionKnowledgeWorker(
             ingestion=ingestion,
@@ -401,6 +434,7 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
             repository=repository,
             embedding_gateway=embeddings,
             rerank_gateway=reranker,
+            answerability_gateway=FakeAnswerabilityGateway(),
         )
 
         # SQLite otherwise skips the foreign-key checks enforced in production.
@@ -425,6 +459,19 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
         assert len(bound.citations) == 1
         assert "番茄炒蛋" in bound.candidates[0].content
         assert reranker.calls == 1
+
+        unsupported = await service.search(
+            query="资料没有直接答案，但主题仍然与减重相关",
+            max_results=3,
+            metadata_filter={"applicability": ["adult", "china"]},
+            release_id=release.id,
+        )
+        assert unsupported["candidates"]
+        assert all(
+            candidate["adoption_status"] == "candidate_only"
+            for candidate in unsupported["candidates"]
+        )
+        assert "answerability=insufficient" in unsupported["query_summary"]
 
         lab_result = await service.search(
             query="晚餐可以吃番茄炒蛋吗",

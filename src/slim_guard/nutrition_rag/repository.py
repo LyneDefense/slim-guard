@@ -40,10 +40,12 @@ from slim_guard.nutrition_rag.processing import (
     ParsedNutritionDocument,
 )
 from slim_guard.nutrition_rag.profiles import (
+    ANSWERABILITY_MODE,
     CHUNKER_PROFILE_KEY,
     DEFAULT_EMBEDDING_PROFILE_ID,
     DEFAULT_LEXICAL_PROFILE_ID,
     DEFAULT_RETRIEVAL_PROFILE_ID,
+    QUERY_PLAN_VERSION,
 )
 from slim_guard.nutrition_rag.storage import StoredNutritionObject
 
@@ -209,6 +211,7 @@ class RetrievalProfile:
     min_rerank_score: float
     max_context_chars: int
     query_plan_version: str
+    answerability_mode: str | None
 
 
 class NutritionRagRepository:
@@ -1491,41 +1494,116 @@ class NutritionRagRepository:
         existing_job = await self.get_job_by_idempotency_key(f"evaluate:{idempotency_key}")
         if existing_job is not None and existing_job.subject_id is not None:
             return existing_job.subject_id, existing_job
-        async with self.database.session() as session, session.begin():
-            release = await session.get(
-                NutritionCorpusReleaseRecord, release_id, with_for_update=True
-            )
-            dataset = await session.get(NutritionEvaluationDatasetRecord, dataset_id)
-            if release is None or dataset is None:
-                raise NutritionRagNotFound("Release or evaluation dataset does not exist")
-            if release.status not in {"indexing_check", "evaluating", "review_ready"}:
-                raise NutritionRagGovernanceError(
-                    "Release cannot be evaluated in its current state"
+        try:
+            async with self.database.session() as session, session.begin():
+                release = await session.get(
+                    NutritionCorpusReleaseRecord, release_id, with_for_update=True
                 )
-            if dataset.status != "ready":
-                raise NutritionRagGovernanceError("Evaluation dataset is not ready")
-            run = NutritionEvaluationRunRecord(
-                id=new_uuid(),
-                release_id=release_id,
-                retrieval_profile_id=release.retrieval_profile_id,
-                dataset_id=dataset_id,
-                status="queued",
-                created_by=created_by,
+                dataset = await session.get(NutritionEvaluationDatasetRecord, dataset_id)
+                if release is None or dataset is None:
+                    raise NutritionRagNotFound("Release or evaluation dataset does not exist")
+                open_run = await session.scalar(
+                    select(NutritionEvaluationRunRecord)
+                    .where(
+                        NutritionEvaluationRunRecord.release_id == release_id,
+                        NutritionEvaluationRunRecord.status.in_(("queued", "running")),
+                    )
+                    .order_by(NutritionEvaluationRunRecord.created_at.desc())
+                )
+                if open_run is not None:
+                    if open_run.dataset_id != dataset_id:
+                        raise NutritionRagConflict(
+                            "This release already has an evaluation using another dataset"
+                        )
+                    open_job = await session.scalar(
+                        select(NutritionKnowledgeJobRecord)
+                        .where(
+                            NutritionKnowledgeJobRecord.job_type == "evaluate",
+                            NutritionKnowledgeJobRecord.subject_type == "evaluation_run",
+                            NutritionKnowledgeJobRecord.subject_id == open_run.id,
+                        )
+                        .order_by(NutritionKnowledgeJobRecord.created_at.desc())
+                    )
+                    if open_job is None:
+                        raise NutritionRagConflict(
+                            "The open evaluation is missing its background job"
+                        )
+                    return open_run.id, self._job(open_job)
+                if release.status not in {"indexing_check", "evaluating", "review_ready"}:
+                    raise NutritionRagGovernanceError(
+                        "Release cannot be evaluated in its current state"
+                    )
+                if dataset.status != "ready":
+                    raise NutritionRagGovernanceError("Evaluation dataset is not ready")
+                run = NutritionEvaluationRunRecord(
+                    id=new_uuid(),
+                    release_id=release_id,
+                    retrieval_profile_id=release.retrieval_profile_id,
+                    dataset_id=dataset_id,
+                    status="queued",
+                    created_by=created_by,
+                )
+                job_row = NutritionKnowledgeJobRecord(
+                    id=new_uuid(),
+                    job_type="evaluate",
+                    subject_type="evaluation_run",
+                    subject_id=run.id,
+                    status="queued",
+                    stage="queued",
+                    completed_items=0,
+                    total_items=0,
+                    attempt_count=0,
+                    max_attempts=2,
+                    available_at=utc_now(),
+                    idempotency_key=f"evaluate:{idempotency_key}",
+                    input_json=_canonical_json(
+                        {"evaluation_run_id": run.id}, maximum=64_000
+                    ),
+                    created_by=created_by,
+                )
+                release.status = "evaluating"
+                session.add_all((run, job_row))
+                await session.flush()
+                await self._append_job_event(
+                    session,
+                    row=job_row,
+                    stage="queued",
+                    level="info",
+                    message="任务已进入队列",
+                )
+                return run.id, self._job(job_row)
+        except IntegrityError as error:
+            existing = await self._open_evaluation(release_id=release_id)
+            if existing is not None and existing[0].dataset_id == dataset_id:
+                return existing[0].id, self._job(existing[1])
+            raise NutritionRagConflict(
+                "This release already has an open evaluation"
+            ) from error
+
+    async def _open_evaluation(
+        self, *, release_id: str
+    ) -> tuple[NutritionEvaluationRunRecord, NutritionKnowledgeJobRecord] | None:
+        async with self.database.session() as session:
+            run = await session.scalar(
+                select(NutritionEvaluationRunRecord)
+                .where(
+                    NutritionEvaluationRunRecord.release_id == release_id,
+                    NutritionEvaluationRunRecord.status.in_(("queued", "running")),
+                )
+                .order_by(NutritionEvaluationRunRecord.created_at.desc())
             )
-            release.status = "evaluating"
-            session.add(run)
-            await session.flush()
-            run_id = run.id
-        job = await self.enqueue_job(
-            job_type="evaluate",
-            subject_type="evaluation_run",
-            subject_id=run_id,
-            input={"evaluation_run_id": run_id},
-            idempotency_key=f"evaluate:{idempotency_key}",
-            created_by=created_by,
-            max_attempts=2,
-        )
-        return run_id, job
+            if run is None:
+                return None
+            job = await session.scalar(
+                select(NutritionKnowledgeJobRecord)
+                .where(
+                    NutritionKnowledgeJobRecord.job_type == "evaluate",
+                    NutritionKnowledgeJobRecord.subject_type == "evaluation_run",
+                    NutritionKnowledgeJobRecord.subject_id == run.id,
+                )
+                .order_by(NutritionKnowledgeJobRecord.created_at.desc())
+            )
+            return (run, job) if job is not None else None
 
     async def list_evaluation_runs(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]:
         if not 1 <= limit <= 200:
@@ -1745,6 +1823,11 @@ class NutritionRagRepository:
                 min_rerank_score=profile_row.min_rerank_score,
                 max_context_chars=profile_row.max_context_chars,
                 query_plan_version=profile_row.query_plan_version,
+                answerability_mode=(
+                    ANSWERABILITY_MODE
+                    if profile_row.query_plan_version == QUERY_PLAN_VERSION
+                    else None
+                ),
             ),
         )
 

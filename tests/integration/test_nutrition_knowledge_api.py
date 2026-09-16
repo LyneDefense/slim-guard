@@ -10,6 +10,10 @@ from httpx import ASGITransport, AsyncClient
 from slim_guard.config import Settings
 from slim_guard.main import create_app
 from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
+from slim_guard.nutrition_rag.answerability import (
+    AnswerabilityDocument,
+    AnswerabilityResult,
+)
 from slim_guard.nutrition_rag.gateways import (
     EmbeddingBatch,
     RerankItem,
@@ -53,6 +57,22 @@ class ApiRerankGateway:
         return None
 
 
+class ApiAnswerabilityGateway:
+    async def assess(
+        self, *, query: str, documents: Sequence[AnswerabilityDocument]
+    ) -> AnswerabilityResult:
+        del query
+        return AnswerabilityResult(
+            outcome="supported",
+            supported_document_indices=tuple(range(len(documents))),
+            reason_code="directly_supported",
+            model="test-answerability",
+            request_id="answerability-api-test",
+            input_tokens=len(documents),
+            output_tokens=1,
+        )
+
+
 @pytest.mark.parametrize("import_method", ["pasted_text", "multipart"])
 async def test_admin_can_import_review_build_and_inspect_hybrid_rag(
     tmp_path: Path, import_method: str
@@ -76,6 +96,7 @@ async def test_admin_can_import_review_build_and_inspect_hybrid_rag(
             repository=app.state.nutrition_rag,
             embedding_gateway=embedding,
             rerank_gateway=ApiRerankGateway(),
+            answerability_gateway=ApiAnswerabilityGateway(),
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as client:
             login = await client.post(

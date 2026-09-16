@@ -8,6 +8,7 @@ from slim_guard.db.migrations import MIGRATIONS
 from slim_guard.db.models import (
     NutritionKnowledgeReviewEventRecord,
     NutritionKnowledgeSourceRecord,
+    NutritionRetrievalProfileRecord,
     SchemaMigrationRecord,
 )
 from slim_guard.db.session import Database
@@ -15,6 +16,12 @@ from slim_guard.nutrition_knowledge import (
     KnowledgeDocument,
     NutritionKnowledgeRepository,
     NutritionKnowledgeService,
+)
+from slim_guard.nutrition_rag.profiles import (
+    DEFAULT_RETRIEVAL_PROFILE_ID,
+    LEGACY_QUERY_PLAN_VERSION,
+    LEGACY_RETRIEVAL_PROFILE_ID,
+    QUERY_PLAN_VERSION,
 )
 
 
@@ -37,6 +44,25 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             table_names = await connection.run_sync(
                 lambda sync_connection: set(inspect(sync_connection).get_table_names())
             )
+            evaluation_indexes = await connection.run_sync(
+                lambda sync_connection: {
+                    index["name"]
+                    for index in inspect(sync_connection).get_indexes(
+                        "nutrition_evaluation_runs"
+                    )
+                }
+            )
+            retrieval_profiles = {
+                profile_id: query_plan_version
+                for profile_id, query_plan_version in (
+                    await connection.execute(
+                        select(
+                            NutritionRetrievalProfileRecord.id,
+                            NutritionRetrievalProfileRecord.query_plan_version,
+                        )
+                    )
+                ).tuples()
+            }
 
         assert completed == (
             "20260902_01_body_fat_records",
@@ -56,6 +82,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260911_01_nutrition_hybrid_rag",
             "20260911_02_nutrition_release_governance",
             "20260912_01_mobile_coach_profiles",
+            "20260916_01_nutrition_answerability_profile",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -90,6 +117,11 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "nutrition_evaluation_datasets",
             "mobile_coach_profiles",
         }.issubset(table_names)
+        assert retrieval_profiles == {
+            LEGACY_RETRIEVAL_PROFILE_ID: LEGACY_QUERY_PLAN_VERSION,
+            DEFAULT_RETRIEVAL_PROFILE_ID: QUERY_PLAN_VERSION,
+        }
+        assert "uq_nutrition_eval_open_release" in evaluation_indexes
     finally:
         await database.close()
 
@@ -201,6 +233,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260911_01_nutrition_hybrid_rag",
             "20260911_02_nutrition_release_governance",
             "20260912_01_mobile_coach_profiles",
+            "20260916_01_nutrition_answerability_profile",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
