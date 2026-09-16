@@ -23,6 +23,7 @@ from slim_guard.nutrition_rag.ingestion import (
     NutritionKnowledgeIngestionService,
     NutritionKnowledgeWorker,
 )
+from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE
 from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService
 from slim_guard.nutrition_rag.storage import InMemoryNutritionObjectStore
 
@@ -59,9 +60,13 @@ class ApiRerankGateway:
 
 class ApiAnswerabilityGateway:
     async def assess(
-        self, *, query: str, documents: Sequence[AnswerabilityDocument]
+        self,
+        *,
+        query: str,
+        documents: Sequence[AnswerabilityDocument],
+        mode: str = ANSWERABILITY_MODE,
     ) -> AnswerabilityResult:
-        del query
+        del query, mode
         return AnswerabilityResult(
             outcome="supported",
             supported_document_indices=tuple(range(len(documents))),

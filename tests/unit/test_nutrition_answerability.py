@@ -15,10 +15,12 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.nutrition_rag.answerability import (
     ANSWERABILITY_PROMPT_VERSION,
+    ANSWERABILITY_PROMPT_VERSION_V1,
     AnswerabilityDocument,
     ModelAnswerabilityGateway,
 )
 from slim_guard.nutrition_rag.gateways import NutritionModelGatewayError
+from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE_V1
 
 
 def _response(payload: dict[str, object]) -> ModelResponse:
@@ -73,9 +75,35 @@ async def test_answerability_gateway_returns_only_directly_supported_documents()
     assert request.tool_choice is ToolChoice.NONE
     assert request.metadata["prompt_version"] == ANSWERABILITY_PROMPT_VERSION
     assert "主题相关不等于能够回答" in (request.messages[0].content or "")
+    assert "控制性措辞已经由系统过滤" in (request.messages[0].content or "")
     submitted = json.loads(request.messages[1].content or "{}")
     assert submitted["question"] == "减重期间如何搭配食物？"
     assert submitted["documents"][0]["source_key"] == "adult-weight-guide"
+
+
+async def test_answerability_gateway_preserves_the_v1_prompt_for_old_releases() -> None:
+    scripted = ScriptedModelGateway(
+        (
+            _response(
+                {
+                    "outcome": "insufficient",
+                    "supported_document_indices": [],
+                    "reason_code": "missing_requested_fact",
+                }
+            ),
+        )
+    )
+    gateway = ModelAnswerabilityGateway(gateway=scripted, model="test-model")
+
+    await gateway.assess(
+        query="某品牌每份有多少千卡？",
+        documents=_documents(),
+        mode=ANSWERABILITY_MODE_V1,
+    )
+
+    request = scripted.requests[0]
+    assert request.metadata["prompt_version"] == ANSWERABILITY_PROMPT_VERSION_V1
+    assert "控制性措辞已经由系统过滤" not in (request.messages[0].content or "")
 
 
 @pytest.mark.parametrize(

@@ -41,6 +41,8 @@ from slim_guard.nutrition_rag.processing import (
 )
 from slim_guard.nutrition_rag.profiles import (
     ANSWERABILITY_MODE,
+    ANSWERABILITY_MODE_V1,
+    ANSWERABILITY_V1_QUERY_PLAN_VERSION,
     CHUNKER_PROFILE_KEY,
     DEFAULT_EMBEDDING_PROFILE_ID,
     DEFAULT_LEXICAL_PROFILE_ID,
@@ -1826,7 +1828,12 @@ class NutritionRagRepository:
                 answerability_mode=(
                     ANSWERABILITY_MODE
                     if profile_row.query_plan_version == QUERY_PLAN_VERSION
-                    else None
+                    else (
+                        ANSWERABILITY_MODE_V1
+                        if profile_row.query_plan_version
+                        == ANSWERABILITY_V1_QUERY_PLAN_VERSION
+                        else None
+                    )
                 ),
             ),
         )

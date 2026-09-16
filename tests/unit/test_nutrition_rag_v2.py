@@ -39,6 +39,7 @@ from slim_guard.nutrition_rag.processing import (
     NutritionDocumentParser,
     ParentChildNutritionChunker,
 )
+from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE
 from slim_guard.nutrition_rag.repository import (
     NutritionRagGovernanceError,
     NutritionRagRepository,
@@ -96,8 +97,13 @@ class FakeAnswerabilityGateway:
         self.calls = 0
 
     async def assess(
-        self, *, query: str, documents: Sequence[AnswerabilityDocument]
+        self,
+        *,
+        query: str,
+        documents: Sequence[AnswerabilityDocument],
+        mode: str = ANSWERABILITY_MODE,
     ) -> AnswerabilityResult:
+        del mode
         self.calls += 1
         insufficient = "无结果" in query or "资料没有直接答案" in query
         return AnswerabilityResult(

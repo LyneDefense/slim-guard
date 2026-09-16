@@ -26,6 +26,9 @@ from slim_guard.db.models import (
     new_uuid,
 )
 from slim_guard.nutrition_rag.profiles import (
+    ANSWERABILITY_V1_QUERY_PLAN_VERSION,
+    ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID,
+    ANSWERABILITY_V1_RETRIEVAL_PROFILE_KEY,
     DEFAULT_EMBEDDING_PROFILE_ID,
     DEFAULT_EMBEDDING_PROFILE_KEY,
     DEFAULT_LEXICAL_PROFILE_ID,
@@ -697,6 +700,43 @@ async def _add_nutrition_answerability_profile(connection: AsyncConnection) -> N
     await _create_nutrition_rag_control_plane(connection)
     profile_exists = await connection.scalar(
         select(NutritionRetrievalProfileRecord.id).where(
+            NutritionRetrievalProfileRecord.id == ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID
+        )
+    )
+    if profile_exists is None:
+        await connection.execute(
+            insert(NutritionRetrievalProfileRecord).values(
+                id=ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID,
+                profile_key=ANSWERABILITY_V1_RETRIEVAL_PROFILE_KEY,
+                embedding_profile_id=DEFAULT_EMBEDDING_PROFILE_ID,
+                lexical_profile_id=DEFAULT_LEXICAL_PROFILE_ID,
+                dense_top_k=40,
+                lexical_top_k=40,
+                phrase_top_k=20,
+                rrf_k=60,
+                rerank_top_n=24,
+                final_top_k=4,
+                min_rerank_score=0.35,
+                max_context_chars=6000,
+                query_plan_version=ANSWERABILITY_V1_QUERY_PLAN_VERSION,
+                status="ready",
+            )
+        )
+    await connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_nutrition_eval_open_release "
+            "ON nutrition_evaluation_runs (release_id) "
+            "WHERE status IN ('queued','running')"
+        )
+    )
+
+
+async def _add_nutrition_answerability_v2_profile(connection: AsyncConnection) -> None:
+    """Add the calibrated direct-support profile without mutating the v1 profile."""
+
+    await _add_nutrition_answerability_profile(connection)
+    profile_exists = await connection.scalar(
+        select(NutritionRetrievalProfileRecord.id).where(
             NutritionRetrievalProfileRecord.id == DEFAULT_RETRIEVAL_PROFILE_ID
         )
     )
@@ -719,13 +759,6 @@ async def _add_nutrition_answerability_profile(connection: AsyncConnection) -> N
                 status="ready",
             )
         )
-    await connection.execute(
-        text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_nutrition_eval_open_release "
-            "ON nutrition_evaluation_runs (release_id) "
-            "WHERE status IN ('queued','running')"
-        )
-    )
 
 
 MIGRATIONS = (
@@ -765,6 +798,10 @@ MIGRATIONS = (
     SchemaMigration(
         "20260916_01_nutrition_answerability_profile",
         _add_nutrition_answerability_profile,
+    ),
+    SchemaMigration(
+        "20260916_02_nutrition_answerability_v2_profile",
+        _add_nutrition_answerability_v2_profile,
     ),
 )
 

@@ -36,7 +36,7 @@ from slim_guard.nutrition_rag.gateways import (
     RerankGateway,
 )
 from slim_guard.nutrition_rag.processing import ChineseNutritionLexicalAnalyzer
-from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE
+from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE, ANSWERABILITY_MODE_V1
 from slim_guard.nutrition_rag.repository import (
     NutritionRagRepository,
     NutritionRelease,
@@ -157,11 +157,13 @@ class HybridNutritionRagService:
 
         started = time.monotonic()
         normalized_query, query_terms = self.analyzer.analyze(query)
+        failure_stage = "query_embedding"
         try:
             embedded = await self.embedding_gateway.embed((query,))
             vector = embedded.vectors[0]
             if len(vector) != profile.dimensions:
                 raise NutritionModelGatewayError("query_embedding_dimensions")
+            failure_stage = "candidate_retrieval"
             dense = await self._dense_channel(
                 vector=vector,
                 profile=profile,
@@ -188,6 +190,7 @@ class HybridNutritionRagService:
                 loaded[item.chunk_id] for item in rerankable if item.chunk_id in loaded
             ]
             if ordered_loaded:
+                failure_stage = "rerank"
                 reranked = await self.rerank_gateway.rerank(
                     query=query,
                     documents=tuple(self._rerank_document(item) for item in ordered_loaded),
@@ -209,13 +212,14 @@ class HybridNutritionRagService:
                 by_chunk = {}
                 rerank_order = []
                 reranked = None
+            failure_stage = "answerability"
             answerability = await self._assess_answerability(
                 query=query,
                 profile=profile,
                 rerank_order=rerank_order,
                 loaded=by_chunk,
             )
-        except (NutritionModelGatewayError, ValueError):
+        except (NutritionModelGatewayError, ValueError) as error:
             run_id = await self._record_run(
                 release=release,
                 profile=profile,
@@ -223,7 +227,11 @@ class HybridNutritionRagService:
                 filters=filters,
                 status="failed",
                 started=started,
-                usage={"failure": "model_or_retrieval_error"},
+                usage={
+                    "failure": "model_or_retrieval_error",
+                    "failure_stage": failure_stage,
+                    "error_code": str(error)[:128] or type(error).__name__,
+                },
                 hits=(),
                 invocation_id=retrieved_in_invocation_id,
             )
@@ -354,7 +362,7 @@ class HybridNutritionRagService:
     ) -> AnswerabilityResult | None:
         if profile.answerability_mode is None:
             return None
-        if profile.answerability_mode != ANSWERABILITY_MODE:
+        if profile.answerability_mode not in {ANSWERABILITY_MODE_V1, ANSWERABILITY_MODE}:
             raise NutritionModelGatewayError("unsupported_answerability_mode")
         if self.answerability_gateway is None:
             raise NutritionModelGatewayError("answerability_gateway_unavailable")
@@ -386,6 +394,7 @@ class HybridNutritionRagService:
                 )
                 for hit in candidates
             ),
+            mode=profile.answerability_mode,
         )
         if any(index >= len(candidates) for index in result.supported_document_indices):
             raise NutritionModelGatewayError("answerability_unknown_document")

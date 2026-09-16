@@ -18,6 +18,8 @@ from slim_guard.nutrition_knowledge import (
     NutritionKnowledgeService,
 )
 from slim_guard.nutrition_rag.profiles import (
+    ANSWERABILITY_V1_QUERY_PLAN_VERSION,
+    ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID,
     DEFAULT_RETRIEVAL_PROFILE_ID,
     LEGACY_QUERY_PLAN_VERSION,
     LEGACY_RETRIEVAL_PROFILE_ID,
@@ -83,6 +85,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260911_02_nutrition_release_governance",
             "20260912_01_mobile_coach_profiles",
             "20260916_01_nutrition_answerability_profile",
+            "20260916_02_nutrition_answerability_v2_profile",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -119,6 +122,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
         }.issubset(table_names)
         assert retrieval_profiles == {
             LEGACY_RETRIEVAL_PROFILE_ID: LEGACY_QUERY_PLAN_VERSION,
+            ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID: ANSWERABILITY_V1_QUERY_PLAN_VERSION,
             DEFAULT_RETRIEVAL_PROFILE_ID: QUERY_PLAN_VERSION,
         }
         assert "uq_nutrition_eval_open_release" in evaluation_indexes
@@ -234,6 +238,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260911_02_nutrition_release_governance",
             "20260912_01_mobile_coach_profiles",
             "20260916_01_nutrition_answerability_profile",
+            "20260916_02_nutrition_answerability_v2_profile",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
