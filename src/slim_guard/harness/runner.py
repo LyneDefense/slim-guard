@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -39,7 +40,15 @@ from slim_guard.orchestration.coordinator import (
     ShadowWorkflowRequest,
     ShadowWorkflowResult,
 )
-from slim_guard.runtime.contracts import InvocationStatus
+from slim_guard.runtime.contracts import (
+    AgentArtifact,
+    AgentInvocation,
+    AgentResult,
+    AgentRole,
+    ArtifactProducerRole,
+    InvocationStatus,
+)
+from slim_guard.runtime.invocation import InvocationStore
 from slim_guard.tools.policy import ToolAuthorization
 
 
@@ -92,6 +101,8 @@ class TurnHarness:
         workflow_timeout_seconds: float = 20,
         workflow_max_model_calls: int = 12,
         workflow_max_total_tokens: int = 64_000,
+        invocation_store: InvocationStore | None = None,
+        graph_version: str = "core-primary-v1",
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._initializer = initializer
@@ -108,6 +119,8 @@ class TurnHarness:
         self._workflow_timeout_seconds = workflow_timeout_seconds
         self._workflow_max_model_calls = workflow_max_model_calls
         self._workflow_max_total_tokens = workflow_max_total_tokens
+        self._invocation_store = invocation_store
+        self._graph_version = graph_version
         self._limits = limits
         self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
@@ -407,15 +420,46 @@ class TurnHarness:
             and self._shadow_enabled_for(initialized.context.user_id)
             and not safety_assessment.blocks_tools
         )
+        core_invocation = AgentInvocation(
+            invocation_id=f"inv-{uuid4()}",
+            trace_id=current_trace_id() or initialized.turn.id,
+            thread_id=initialized.thread.id,
+            turn_id=initialized.turn.id,
+            graph_version=self._graph_version,
+            agent_role=AgentRole.CORE,
+            agent_version=initialized.turn.agent_version_id,
+            caller="turn_harness",
+            input_schema="CompiledContext",
+            allowed_tools=tuple(compiled.allowed_tool_names),
+            privacy_scopes=("current_user_input", "working_memory", "profile"),
+            deadline_at=(
+                initialized.turn.deadline_at or current_time + timedelta(seconds=120)
+            ),
+            max_model_calls=self._limits.max_model_calls,
+            max_tool_calls=self._limits.max_tool_calls,
+            max_total_tokens=self._limits.max_total_tokens,
+            payload={
+                "input_item_ids": list(compiled.input_item_ids),
+                "context_evidence_ids": list(compiled.evidence_item_ids),
+            },
+        )
+        await self._start_core_invocation(core_invocation, current_time)
         loop_result = await self._core_agent.run(
             request=compiled.request,
-            context=initialized.context,
+            context=replace(
+                initialized.context,
+                agent_invocation_id=core_invocation.invocation_id,
+            ),
             authorization=authorization,
             source_item_id=initialized.source_item_id,
             now=current_time,
             trusted_evidence_item_ids=compiled.evidence_item_ids,
             safety_assessment=safety_assessment,
             final_response_hook=finalize_with_usage if adopt or evaluate_shadow else None,
+            before_finish_hook=lambda result: self._complete_core_invocation(
+                core_invocation,
+                result,
+            ),
         )
         if shadow_result is not None:
             shadow_result = replace(
@@ -441,6 +485,77 @@ class TurnHarness:
             and str(item.payload["text"]).strip()
         ]
         return "\n".join(texts) or f"定期任务：{initialized.turn.trigger.value}"
+
+    async def _start_core_invocation(
+        self,
+        invocation: AgentInvocation,
+        started_at: datetime,
+    ) -> None:
+        if self._invocation_store is not None:
+            await self._invocation_store.start_invocation(
+                invocation,
+                reason_summary="理解本轮任务并调用获准的业务或专业能力",
+                started_at=started_at,
+            )
+
+    async def _complete_core_invocation(
+        self,
+        invocation: AgentInvocation,
+        result: HarnessLoopResult,
+    ) -> None:
+        artifact: AgentArtifact | None = None
+        if result.final_text is not None:
+            artifact = AgentArtifact.create(
+                artifact_id=f"artifact-{uuid4()}",
+                turn_id=invocation.turn_id,
+                producer_role=ArtifactProducerRole.CORE,
+                artifact_type="core_response",
+                schema_version="1",
+                payload={"text": result.final_text},
+                created_at=self._clock(),
+            )
+            if self._invocation_store is not None:
+                await self._invocation_store.append_artifact(
+                    artifact,
+                    invocation_id=invocation.invocation_id,
+                )
+        status = (
+            InvocationStatus.SUCCEEDED
+            if result.termination is HarnessTermination.FINAL_RESPONSE
+            else InvocationStatus.FAILED
+            if result.termination
+            in {
+                HarnessTermination.FATAL_ERROR,
+                HarnessTermination.DEADLINE_EXCEEDED,
+                HarnessTermination.MAX_MODEL_CALLS,
+                HarnessTermination.MAX_TOOL_CALLS,
+                HarnessTermination.MAX_TOTAL_TOKENS,
+            }
+            else InvocationStatus.DEGRADED
+        )
+        failure_code = (
+            result.failure.code
+            if result.failure is not None
+            else result.termination.value
+            if status is InvocationStatus.FAILED
+            else None
+        )
+        invocation_result = AgentResult(
+            invocation_id=invocation.invocation_id,
+            status=status,
+            output_schema="CoreResponse",
+            output_schema_version="1",
+            artifact_id=artifact.artifact_id if artifact is not None else None,
+            model_call_count=len(result.model_responses),
+            tool_call_count=len(result.tool_outcomes),
+            token_usage=sum(item.usage.total_tokens for item in result.model_responses),
+            failure_code=failure_code,
+        )
+        if self._invocation_store is not None:
+            await self._invocation_store.complete_invocation(
+                invocation_result,
+                completed_at=self._clock(),
+            )
 
     @staticmethod
     def _utc_now() -> datetime:

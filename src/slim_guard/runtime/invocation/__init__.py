@@ -11,6 +11,7 @@ from slim_guard.runtime.invocation.runner import (
     InvocationRunResult,
     invocation_call_budget,
 )
+from slim_guard.runtime.invocation.store import InvocationStore
 
 __all__ = [
     "InvocationAuthorizationError",
@@ -18,6 +19,7 @@ __all__ = [
     "InvocationGrant",
     "InvocationRunResult",
     "InvocationRunner",
+    "InvocationStore",
     "invocation_call_budget",
     "validate_invocation_grant",
 ]

@@ -13,6 +13,7 @@ from datetime import datetime
 from slim_guard.agent_models.gateway import ModelGateway, ModelRequest
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.loop import (
+    BeforeFinishHook,
     FinalResponseHook,
     HarnessLoop,
     HarnessLoopResult,
@@ -62,6 +63,7 @@ class CoreAgent:
         trusted_evidence_item_ids: tuple[str, ...] = (),
         safety_assessment: SafetyAssessment | None = None,
         final_response_hook: FinalResponseHook | None = None,
+        before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
         """Execute one bounded Core Agent invocation."""
 
@@ -74,4 +76,5 @@ class CoreAgent:
             trusted_evidence_item_ids=trusted_evidence_item_ids,
             safety_assessment=safety_assessment,
             final_response_hook=final_response_hook,
+            before_finish_hook=before_finish_hook,
         )

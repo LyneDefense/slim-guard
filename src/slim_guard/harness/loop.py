@@ -53,6 +53,7 @@ class HarnessTurnContext:
     agent_version_id: str
     execution_mode: ToolExecutionMode
     deadline_at: datetime | None = None
+    agent_invocation_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.deadline_at is not None and self.deadline_at.utcoffset() is None:
@@ -71,6 +72,7 @@ class HarnessTurnContext:
             tool_call_id=tool_call_id,
             user_id=self.user_id,
             agent_version_id=self.agent_version_id,
+            agent_invocation_id=self.agent_invocation_id,
             execution_mode=self.execution_mode,
             source_item_id=source_item_id,
             trusted_evidence_item_ids=trusted_evidence_item_ids,
@@ -104,6 +106,9 @@ class HarnessLoopResult:
         )
 
 
+BeforeFinishHook = Callable[[HarnessLoopResult], Awaitable[None]]
+
+
 class HarnessLoop:
     """Runs one bounded model-tool-observation loop for an existing Turn."""
 
@@ -135,6 +140,7 @@ class HarnessLoop:
         trusted_evidence_item_ids: tuple[str, ...] = (),
         safety_assessment: SafetyAssessment | None = None,
         final_response_hook: FinalResponseHook | None = None,
+        before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
         messages = list(request.messages)
         model_responses: list[ModelResponse] = []
@@ -155,6 +161,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
             if len(model_responses) >= self._limits.max_model_calls:
                 return await self._finish(
@@ -163,6 +170,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
             request_update: dict[str, object] = {"messages": tuple(messages)}
             if force_text_response:
@@ -178,6 +186,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
             try:
                 model_started_at = self._clock()
@@ -191,6 +200,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
             model_responses.append(response)
             messages.append(response.message)
@@ -209,6 +219,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
             if self._deadline_exceeded(context):
                 return await self._finish(
@@ -217,6 +228,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
 
             calls = response.message.tool_calls
@@ -270,6 +282,7 @@ class HarnessLoop:
                     tool_outcomes=tool_outcomes,
                     workflow_model_call_count=workflow_calls,
                     workflow_total_token_count=workflow_tokens,
+                    before_finish_hook=before_finish_hook,
                 )
 
             if len(tool_outcomes) + len(calls) > self._limits.max_tool_calls:
@@ -279,6 +292,7 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
+                    before_finish_hook=before_finish_hook,
                 )
 
             for call in calls:
@@ -289,6 +303,7 @@ class HarnessLoop:
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
+                        before_finish_hook=before_finish_hook,
                     )
                 trace = await self._recorder.start_tool_call(
                     turn_id=context.turn_id,
@@ -357,6 +372,7 @@ class HarnessLoop:
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
+                        before_finish_hook=before_finish_hook,
                     )
                 if self._deadline_exceeded(context):
                     return await self._finish(
@@ -365,6 +381,7 @@ class HarnessLoop:
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
+                        before_finish_hook=before_finish_hook,
                     )
 
     @staticmethod
@@ -387,17 +404,9 @@ class HarnessLoop:
         failure: HarnessFailure | None = None,
         workflow_model_call_count: int = 0,
         workflow_total_token_count: int = 0,
+        before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
-        await self._recorder.finish_run(
-            turn_id=context.turn_id,
-            termination=termination,
-            final_text=final_text,
-            model_call_count=len(model_responses) + workflow_model_call_count,
-            tool_call_count=len(tool_outcomes),
-            total_token_count=self._total_tokens(model_responses) + workflow_total_token_count,
-            failure=failure,
-        )
-        return HarnessLoopResult(
+        result = HarnessLoopResult(
             termination=termination,
             final_text=final_text,
             messages=tuple(messages),
@@ -407,6 +416,18 @@ class HarnessLoop:
             workflow_model_call_count=workflow_model_call_count,
             workflow_total_token_count=workflow_total_token_count,
         )
+        if before_finish_hook is not None:
+            await before_finish_hook(result)
+        await self._recorder.finish_run(
+            turn_id=context.turn_id,
+            termination=termination,
+            final_text=final_text,
+            model_call_count=len(model_responses) + workflow_model_call_count,
+            tool_call_count=len(tool_outcomes),
+            total_token_count=self._total_tokens(model_responses) + workflow_total_token_count,
+            failure=failure,
+        )
+        return result
 
     def _deadline_exceeded(self, context: HarnessTurnContext) -> bool:
         if context.deadline_at is None:

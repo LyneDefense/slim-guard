@@ -317,6 +317,7 @@ def build_agent_runtime(
         if nutrition_knowledge is not None
         else NutritionKnowledgeService(NutritionKnowledgeRepository(database))
     )
+    invocation_store = OrchestrationRepository(database)
     runner = TurnHarness(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
@@ -357,7 +358,7 @@ def build_agent_runtime(
                 timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
                 max_output_tokens=definition.vision_max_output_tokens,
                 max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
-                persistence=OrchestrationRepository(database),
+                persistence=invocation_store,
                 style_profiles=StyleProfileRepository(database),
                 default_style_profile=definition.default_style_profile,
                 active_style_version=StyleRuntimeVersionResolver(
@@ -402,6 +403,8 @@ def build_agent_runtime(
         workflow_timeout_seconds=definition.multi_agent_shadow_timeout_seconds,
         workflow_max_model_calls=definition.multi_agent_max_model_calls,
         workflow_max_total_tokens=definition.multi_agent_max_total_tokens,
+        invocation_store=invocation_store,
+        graph_version=definition.multi_agent_graph_version,
         clock=clock,
     )
     return AgentRuntime(

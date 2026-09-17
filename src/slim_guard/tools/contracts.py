@@ -50,6 +50,7 @@ class ToolContext(BaseModel):
     tool_call_id: str = Field(min_length=1, max_length=256)
     user_id: str = Field(min_length=1, max_length=128)
     agent_version_id: str = Field(min_length=1, max_length=128)
+    agent_invocation_id: str | None = Field(default=None, min_length=1, max_length=128)
     execution_mode: ToolExecutionMode
     source_item_id: str | None = Field(default=None, min_length=1, max_length=128)
     execution_idempotency_key: str | None = Field(
