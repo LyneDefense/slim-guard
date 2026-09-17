@@ -480,6 +480,7 @@ docker compose run --rm app python -m slim_guard.db.migrate
 
 ## 设计文档
 
+- [Core Agent、Harness 与记忆体系重构设计](./CORE_AGENT_HARNESS_REFACTOR_DESIGN.md)
 - [PostgreSQL 部署说明](./POSTGRESQL_DEPLOYMENT.md)
 - [Phase 1 实现设计](./PHASE1_PYTHON_CHANNEL_SPIKE.md)
 - [完整技术设计](./TECHNICAL_DESIGN.md)
