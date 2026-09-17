@@ -57,10 +57,9 @@ test("feedback form explains version boundary and requires privacy confirmations
   );
   for (const expected of [
     "提交后不会立即改变线上 agent",
-    "用户说了什么",
-    "Agent 当时的回复",
-    "你希望它怎么回复",
-    "12 条之外的新场景",
+    "用户输入",
+    "医生回答",
+    "期望医生回答",
     "deidentified_confirmed: true",
     "expression_only_confirmed: true",
     "不会把测试内容写入用户 Memory 或营养知识库",

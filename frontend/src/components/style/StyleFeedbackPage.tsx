@@ -35,7 +35,7 @@ export function StyleFeedbackPage() {
   });
   const [profileVersion, setProfileVersion] = useState("");
   const [communicationAct, setCommunicationAct] = useState("");
-  const [scenario, setScenario] = useState("");
+  const [scenario] = useState("表达风格纠正素材");
   const [userMessage, setUserMessage] = useState("");
   const [agentResponse, setAgentResponse] = useState("");
   const [desiredResponse, setDesiredResponse] = useState("");
@@ -62,7 +62,6 @@ export function StyleFeedbackPage() {
   const mutation = useMutation({
     mutationFn: (input: StyleCorrectionFeedbackInput) => api.appendStyleFeedback(input),
     onSuccess: async () => {
-      setScenario("");
       setUserMessage("");
       setAgentResponse("");
       setDesiredResponse("");
@@ -143,45 +142,8 @@ export function StyleFeedbackPage() {
           </div>
           <span>审核人来自当前登录账号</span>
         </div>
-        <div className="style-feedback-fields two-columns">
-          <label>测试的 Profile 版本
-            <input
-              value={profileVersion}
-              maxLength={128}
-              list="style-feedback-profile-options"
-              onChange={(event) => setProfileVersion(event.target.value)}
-              placeholder="例如 doctor_strict_v2"
-              required
-            />
-            <datalist id="style-feedback-profile-options">
-              {context.data?.profile_versions.map((version) => (
-                <option value={version} key={version} />
-              ))}
-            </datalist>
-          </label>
-          <label>沟通行为（不确定可留空）
-            <select
-              value={communicationAct}
-              onChange={(event) => setCommunicationAct(event.target.value)}
-            >
-              <option value="">待归类 / 12 条之外的新场景</option>
-              {Object.entries(ACT_LABELS).map(([value, label]) => (
-                <option value={value} key={value}>{label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
         <div className="style-feedback-fields">
-          <label>当时的场景与已知上下文
-            <textarea
-              value={scenario}
-              maxLength={2000}
-              onChange={(event) => setScenario(event.target.value)}
-              placeholder="例如：用户连续记录了 3 天，询问能否判断长期趋势。只写判断这句话所需的上下文。"
-              required
-            />
-          </label>
-          <label>用户说了什么
+          <label>用户输入
             <textarea
               value={userMessage}
               maxLength={4000}
@@ -192,7 +154,7 @@ export function StyleFeedbackPage() {
           </label>
         </div>
         <div className="style-feedback-comparison">
-          <label>Agent 当时的回复
+          <label>医生回答
             <textarea
               value={agentResponse}
               maxLength={4000}
@@ -201,7 +163,7 @@ export function StyleFeedbackPage() {
               required
             />
           </label>
-          <label>你希望它怎么回复
+          <label>期望医生回答
             <textarea
               value={desiredResponse}
               maxLength={4000}
