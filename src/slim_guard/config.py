@@ -76,7 +76,10 @@ class Settings(DatabaseSettings):
     tencent_cos_domain: str = Field(default="", max_length=512)
     nutrition_embedding_provider: Literal["zhipu"] = "zhipu"
     nutrition_embedding_model: str = Field(default="embedding-3", min_length=1, max_length=128)
-    nutrition_embedding_dimensions: Literal[1024] = 1024
+    # Environment variables arrive as strings.  Use a bounded integer instead
+    # of Literal[1024], which rejects the otherwise valid string "1024" before
+    # Pydantic settings can coerce it.
+    nutrition_embedding_dimensions: int = Field(default=1024, ge=1024, le=1024)
     nutrition_rerank_provider: Literal["zhipu"] = "zhipu"
     nutrition_rerank_model: str = Field(default="rerank", min_length=1, max_length=128)
     response_reviewer_enabled: bool = False

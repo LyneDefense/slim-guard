@@ -65,6 +65,15 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.mobile_is_configured is False
 
 
+def test_embedding_dimensions_accepts_env_style_string() -> None:
+    settings = Settings(
+        _env_file=None,
+        NUTRITION_EMBEDDING_DIMENSIONS="1024",
+    )
+
+    assert settings.nutrition_embedding_dimensions == 1024
+
+
 def test_mobile_api_requires_a_real_secret_and_production_sms_provider() -> None:
     with pytest.raises(ValidationError, match="MOBILE_AUTH_SECRET"):
         Settings(mobile_api_enabled=True, mobile_auth_secret="short")
