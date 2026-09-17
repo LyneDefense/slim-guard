@@ -13,11 +13,14 @@ from slim_guard.db.models import (
     AgentItemRecord,
     AgentItemRedactionRecord,
     AgentTurnRecord,
+    LongTermMemoryEventRecord,
+    LongTermMemoryIndexOutboxRecord,
     MemoryHandoffRecord,
     OutboundMessage,
     PendingActionRecord,
     ProactiveMessageRecord,
     ToolExecutionRecord,
+    UserLongTermMemoryRecord,
     UserMemoryFactRecord,
 )
 from slim_guard.db.session import Database
@@ -53,6 +56,7 @@ class MemoryLifecycleResult:
     transcript: TranscriptScrubResult
     revoked_value_count: int
     expired_fact_count: int
+    expired_long_term_memory_count: int
     expired_handoff_count: int
 
 
@@ -182,7 +186,7 @@ class MemoryLifecycleRepository:
     async def purge_revoked_values(self, *, before: datetime) -> int:
         cutoff = self._aware(before)
         async with self._database.session() as session, session.begin():
-            result = await session.execute(
+            fact_result = await session.execute(
                 update(UserMemoryFactRecord)
                 .where(
                     UserMemoryFactRecord.status == "revoked",
@@ -191,9 +195,21 @@ class MemoryLifecycleRepository:
                 )
                 .values(value_json=None)
             )
-            return cast(CursorResult[Any], result).rowcount
+            long_term_result = await session.execute(
+                update(UserLongTermMemoryRecord)
+                .where(
+                    UserLongTermMemoryRecord.status.in_(("revoked", "superseded", "expired")),
+                    UserLongTermMemoryRecord.ended_at <= cutoff,
+                    UserLongTermMemoryRecord.content_text.is_not(None),
+                )
+                .values(content_text=None)
+            )
+            return (
+                cast(CursorResult[Any], fact_result).rowcount
+                + cast(CursorResult[Any], long_term_result).rowcount
+            )
 
-    async def expire_due(self, *, at: datetime) -> tuple[int, int]:
+    async def expire_due(self, *, at: datetime) -> tuple[int, int, int]:
         now = self._aware(at)
         async with self._database.session() as session, session.begin():
             fact_result = await session.execute(
@@ -213,8 +229,45 @@ class MemoryLifecycleRepository:
                 )
                 .values(status="expired", resolved_at=now)
             )
+            long_term_rows = tuple(
+                await session.scalars(
+                    select(UserLongTermMemoryRecord).where(
+                        UserLongTermMemoryRecord.status == "active",
+                        UserLongTermMemoryRecord.expires_at.is_not(None),
+                        UserLongTermMemoryRecord.expires_at <= now,
+                    )
+                )
+            )
+            for row in long_term_rows:
+                row.status = "expired"
+                row.ended_at = now
+                session.add(
+                    LongTermMemoryEventRecord(
+                        memory_id=row.id,
+                        user_id=row.user_id,
+                        event_type="expired",
+                        turn_id=None,
+                        item_id=None,
+                        policy_version="conversational-long-term-memory-v1",
+                        detail_json="{}",
+                        created_at=now,
+                    )
+                )
+                session.add(
+                    LongTermMemoryIndexOutboxRecord(
+                        operation_key=f"delete:{row.id}:expired",
+                        user_id=row.user_id,
+                        memory_id=row.id,
+                        operation="delete",
+                        status="pending",
+                        available_at=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
             return (
                 cast(CursorResult[Any], fact_result).rowcount,
+                len(long_term_rows),
                 cast(CursorResult[Any], handoff_result).rowcount,
             )
 

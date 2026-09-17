@@ -241,15 +241,20 @@ class LongTermMemoryRepository:
         memory_id: str,
         source_turn_id: str,
         source_item_id: str,
+        evidence_excerpt: str,
         operation_id: str,
     ) -> tuple[LongTermMemoryRef, bool]:
         async with self._database.session() as session, session.begin():
-            await self._validate_source(
+            source_text = await self._validate_source(
                 session,
                 user_id=user_id,
                 source_turn_id=source_turn_id,
                 source_item_id=source_item_id,
             )
+            if evidence_excerpt not in source_text:
+                raise MemoryEvidenceMismatch(
+                    "Long-term memory revocation must quote the current user request"
+                )
             row = await session.scalar(
                 select(UserLongTermMemoryRecord).where(
                     UserLongTermMemoryRecord.id == memory_id,

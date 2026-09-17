@@ -16,7 +16,12 @@ from slim_guard.harness.loop import HarnessTurnContext
 from slim_guard.harness.state_repository import ItemRef, ThreadRef, TurnRef
 from slim_guard.harness.trace import NullHarnessRunRecorder
 from slim_guard.memory.engine import SemanticMemory
-from slim_guard.memory.recall import ModelFirstMemoryRecaller
+from slim_guard.memory.long_term import (
+    LongTermMemoryDurability,
+    LongTermMemoryRef,
+    LongTermMemorySensitivity,
+)
+from slim_guard.memory.recall import LongTermMemoryRecaller
 from slim_guard.tools.contracts import ToolExecutionMode
 
 NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
@@ -38,7 +43,7 @@ class RecallGateway:
                         name="select_relevant_memories",
                         arguments={
                             "selected_memory_ids": list(self.selected),
-                            "reason_summary": "用户正在询问身高，只需要身高资料。",
+                            "reason_summary": "当前问题与家庭聚餐习惯直接相关。",
                         },
                     ),
                 ),
@@ -65,16 +70,24 @@ class ScopedEngine:
     def __init__(self) -> None:
         self.searches: list[tuple[str, str, int]] = []
 
-    async def search(
-        self, *, user_id: str, query: str, limit: int
-    ) -> tuple[SemanticMemory, ...]:
+    async def search(self, *, user_id: str, query: str, limit: int) -> tuple[SemanticMemory, ...]:
         self.searches.append((user_id, query, limit))
         return (
+            SemanticMemory(
+                id="remote-family",
+                text="用户周日通常和家人聚餐。",
+                metadata={
+                    "slim_guard_memory_id": "family",
+                    "memory_type": "conversational_long_term",
+                },
+                score=0.93,
+            ),
+            # Old structured projections in the same Mem0 deployment are ignored.
             SemanticMemory(
                 id="remote-height",
                 text="身高 179cm",
                 metadata={"slim_guard_memory_id": "height"},
-                score=0.93,
+                score=0.99,
             ),
         )
 
@@ -91,7 +104,29 @@ class ScopedEngine:
         return None
 
 
-def initialized(text: str = "帮我保存身高") -> InitializedTurn:
+class MemoryStore:
+    def __init__(self, memories: tuple[LongTermMemoryRef, ...]) -> None:
+        self.memories = memories
+        self.calls: list[tuple[str, tuple[str, ...] | None, int]] = []
+
+    async def active(
+        self,
+        user_id: str,
+        *,
+        memory_ids=None,
+        limit: int = 100,
+    ) -> tuple[LongTermMemoryRef, ...]:
+        ids = tuple(memory_ids) if memory_ids is not None else None
+        self.calls.append((user_id, ids, limit))
+        selected = (
+            tuple(memory for memory in self.memories if memory.id in set(ids))
+            if ids is not None
+            else self.memories
+        )
+        return selected[:limit]
+
+
+def initialized(text: str = "周日聚餐怎么安排？") -> InitializedTurn:
     thread = ThreadRef(id="thread-1", user_id="user-a", status=ThreadStatus.ACTIVE)
     turn = TurnRef(
         id="turn-1",
@@ -125,64 +160,88 @@ def initialized(text: str = "帮我保存身高") -> InitializedTurn:
     )
 
 
-def candidate(memory_id: str, key: str, value: object) -> dict[str, object]:
-    return {
-        "memory_id": memory_id,
-        "kind": "profile",
-        "key": key,
-        "value": value,
-        "sensitivity": "health",
-        "stale": False,
-    }
+def memory(memory_id: str, text: str) -> LongTermMemoryRef:
+    return LongTermMemoryRef(
+        id=memory_id,
+        user_id="user-a",
+        content_text=text,
+        category="other",
+        durability=LongTermMemoryDurability.LONG_TERM,
+        status="active",
+        sensitivity=LongTermMemorySensitivity.NORMAL,
+        supersedes_id=None,
+        source_turn_id="source-turn",
+        source_item_id="source-item",
+        valid_from=NOW,
+        expires_at=None,
+        review_after=None,
+        created_at=NOW,
+        ended_at=None,
+    )
 
 
-async def test_model_selects_only_relevant_memory_and_engine_is_user_scoped() -> None:
-    model = RecallGateway(("height", "invented-id"))
+async def test_semantic_ids_are_reloaded_from_authority_before_model_selection() -> None:
+    model = RecallGateway(("family", "invented-id"))
     engine = ScopedEngine()
-    recaller = ModelFirstMemoryRecaller(
+    store = MemoryStore(
+        (
+            memory("family", "用户周日通常和家人聚餐。"),
+            memory("evening", "用户觉得晚上比白天更难控制饮食。"),
+        )
+    )
+    recaller = LongTermMemoryRecaller(
         model=model,
         model_name="glm-test",
         recorder=NullHarnessRunRecorder(),
+        memories=store,  # type: ignore[arg-type]
         engine=engine,
     )
-    context = {
-        "profile_memory": [
-            candidate("height", "profile.height", {"millimeters": 1790}),
-            candidate("food", "food.preference", {"item": "香菜"}),
-        ],
-        "working_memory": {"recent_dialogue": []},
-    }
 
     result = await recaller.recall(
         initialized=initialized(),
         current_time=NOW,
-        context=context,
+        context={"profile": {"nickname": "小胡"}},
     )
 
-    assert [row["memory_id"] for row in result.context["profile_memory"]] == ["height"]
+    assert result.context["profile"] == {"nickname": "小胡"}
+    assert result.context["long_term_memory"] == [
+        {
+            "memory_id": "family",
+            "content_text": "用户周日通常和家人聚餐。",
+            "category": "other",
+            "sensitivity": "normal",
+            "source_turn_id": "source-turn",
+            "expires_at": None,
+        }
+    ]
     assert result.selected_count == 1
-    assert result.engine_candidate_count == 1
-    assert engine.searches == [("user-a", "帮我保存身高", 12)]
+    assert result.engine_candidate_count == 2
+    assert engine.searches == [("user-a", "周日聚餐怎么安排？", 12)]
+    assert store.calls == [("user-a", ("family",), 12)]
     assert model.requests[0].purpose.value == "memory_recall"
 
 
-async def test_recall_model_failure_conservatively_keeps_bounded_database_facts() -> None:
-    recaller = ModelFirstMemoryRecaller(
+async def test_recall_model_failure_does_not_inject_unfiltered_private_context() -> None:
+    store = MemoryStore(
+        (
+            memory("family", "用户周日通常和家人聚餐。"),
+            memory("evening", "用户觉得晚上比白天更难控制饮食。"),
+        )
+    )
+    recaller = LongTermMemoryRecaller(
         model=FailingGateway(),
         model_name="glm-test",
         recorder=NullHarnessRunRecorder(),
+        memories=store,  # type: ignore[arg-type]
     )
-    memories = [
-        candidate("height", "profile.height", {"millimeters": 1790}),
-        candidate("goal", "goal.target_weight", {"grams": 74000}),
-    ]
 
     result = await recaller.recall(
         initialized=initialized(),
         current_time=NOW,
-        context={"profile_memory": memories},
+        context={"profile": {"nickname": "小胡"}},
     )
 
     assert result.degraded is True
-    assert result.context["profile_memory"] == memories
-    assert result.selected_count == 2
+    assert result.selected_count == 0
+    assert "long_term_memory" not in result.context
+    assert result.context["profile"] == {"nickname": "小胡"}

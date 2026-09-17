@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -24,22 +24,23 @@ from slim_guard.harness.events import ItemType, TurnTrigger
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine, MemoryEngineError, SemanticMemory
+from slim_guard.memory.long_term import LongTermMemoryRef, LongTermMemoryRepository
 
 logger = logging.getLogger(__name__)
 
-MEMORY_RECALL_POLICY_VERSION = "model-ranked-hybrid-recall-v1"
+MEMORY_RECALL_POLICY_VERSION = "canonical-long-term-semantic-recall-v2"
 _SELECT_TOOL_NAME = "select_relevant_memories"
 _RECALL_INSTRUCTIONS = """
-你是 SlimGuard 的记忆召回器，不负责回复用户。
-请根据当前请求的真实语义，从候选长期记忆中选择完成本轮任务确实需要的少量事实。
+你是 SlimGuard 的长期对话记忆召回器，不负责回复用户。
+根据当前请求的真实语义，从 PostgreSQL 权威候选中选择完成本轮任务确实需要的少量文本记忆。
 
 要求：
-- 理解语义和指代，不用关键词匹配。
-- 数据库候选是权威事实；语义检索分数只是召回提示，不能覆盖数据库值。
-- 不选择仅仅“可能有用”的资料；但健康安全、目标比较或用户询问已保存资料时不要漏选。
-- 当前请求要求保存、查询或修改某项资料时，选择能够支持该操作的已有事实。
-- 不得跨用户，不得创造候选列表之外的 ID。
-- 调用 select_relevant_memories 返回选择结果和一句可审计的简短理由；不要输出思维过程。
+- 理解语义和指代，不用关键词硬匹配；
+- semantic_score 只是 Mem0 的召回提示，不能覆盖权威正文和状态；
+- 不选择仅仅“可能有用”的记忆，避免把无关私人信息带入当前任务；
+- 保留正文中的不确定性，不把用户自述升级成诊断；
+- 不得跨用户、不得创造候选列表之外的 ID；
+- 返回选择结果和一句可审计的简短理由，不要输出思维过程。
 """.strip()
 
 
@@ -71,13 +72,16 @@ class MemoryRecaller(Protocol):
     ) -> MemoryRecallResult: ...
 
 
-class ModelFirstMemoryRecaller:
+class LongTermMemoryRecaller:
+    """Retrieves text memories by semantic ID, then re-reads PostgreSQL authority."""
+
     def __init__(
         self,
         *,
         model: ModelGateway,
         model_name: str,
         recorder: HarnessRunRecorder,
+        memories: LongTermMemoryRepository,
         engine: MemoryEngine | None = None,
         search_limit: int = 12,
         max_selected: int = 8,
@@ -88,6 +92,7 @@ class ModelFirstMemoryRecaller:
         self._model = model
         self._model_name = model_name
         self._recorder = recorder
+        self._memories = memories
         self._engine = engine
         self._search_limit = search_limit
         self._max_selected = max_selected
@@ -101,17 +106,11 @@ class ModelFirstMemoryRecaller:
         context: Mapping[str, Any],
     ) -> MemoryRecallResult:
         prepared = dict(context)
-        raw_memories = prepared.get("profile_memory")
-        candidates = [row for row in raw_memories if isinstance(row, dict)] if isinstance(
-            raw_memories, list
-        ) else []
-        if not candidates:
-            prepared.pop("profile_memory", None)
-            return MemoryRecallResult(prepared, 0, 0, 0, "not_needed", False, "没有候选记忆")
-
+        prepared.pop("long_term_memory", None)
         query = self._query(initialized)
         semantic: tuple[SemanticMemory, ...] = ()
         engine_status = "disabled"
+        engine_failed = False
         if self._engine is not None:
             try:
                 semantic = await self._engine.search(
@@ -122,12 +121,48 @@ class ModelFirstMemoryRecaller:
                 engine_status = "succeeded"
             except MemoryEngineError as exc:
                 engine_status = "failed"
+                engine_failed = True
                 logger.warning(
                     "memory_recall_engine_failed",
-                    extra={"turn_id": initialized.turn.id, "error_type": type(exc).__name__},
+                    extra={
+                        "turn_id": initialized.turn.id,
+                        "error_type": type(exc).__name__,
+                    },
                 )
 
-        score_by_id = self._score_by_canonical_id(semantic)
+        semantic_ids, score_by_id = self._semantic_ids_and_scores(semantic)
+        if self._engine is not None and not engine_failed:
+            candidates = await self._memories.active(
+                initialized.context.user_id,
+                memory_ids=semantic_ids,
+                limit=self._search_limit,
+            )
+            candidates = self._semantic_order(candidates, semantic_ids)
+        else:
+            # Mem0 is an optional index. PostgreSQL remains available for a bounded
+            # model-ranked fallback when the index is disabled or temporarily fails.
+            candidates = await self._memories.active(
+                initialized.context.user_id,
+                limit=self._search_limit,
+            )
+
+        if not candidates:
+            result = MemoryRecallResult(
+                context=prepared,
+                candidate_count=0,
+                selected_count=0,
+                engine_candidate_count=len(semantic),
+                engine_status=engine_status,
+                degraded=engine_failed,
+                reason_summary=(
+                    "语义索引不可用，数据库中也没有可召回的长期记忆"
+                    if engine_failed
+                    else "没有与当前任务匹配的长期记忆候选"
+                ),
+            )
+            await self._record(initialized, result)
+            return result
+
         request = self._request(
             user_id=initialized.context.user_id,
             trigger=initialized.turn.trigger,
@@ -146,54 +181,56 @@ class ModelFirstMemoryRecaller:
                 completed_at=current_time,
             )
             selection = self._selection(response.message.content, response.message.tool_calls)
-            available_ids = {
-                str(candidate.get("memory_id"))
-                for candidate in candidates
-                if isinstance(candidate.get("memory_id"), str)
-            }
+            available = {memory.id: memory for memory in candidates}
             selected_ids = tuple(
-                memory_id
-                for memory_id in selection.selected_memory_ids
-                if memory_id in available_ids
+                memory_id for memory_id in selection.selected_memory_ids if memory_id in available
             )[: self._max_selected]
-            selected_set = set(selected_ids)
-            selected = [
-                candidate
-                for candidate in candidates
-                if candidate.get("memory_id") in selected_set
-            ]
+            selected = tuple(available[memory_id] for memory_id in selected_ids)
             if selected:
-                prepared["profile_memory"] = selected
-            else:
-                prepared.pop("profile_memory", None)
+                prepared["long_term_memory"] = [self._context_memory(memory) for memory in selected]
             result = MemoryRecallResult(
                 context=prepared,
                 candidate_count=len(candidates),
                 selected_count=len(selected),
                 engine_candidate_count=len(semantic),
                 engine_status=engine_status,
-                degraded=False,
+                degraded=engine_failed,
                 reason_summary=selection.reason_summary,
             )
         except (ModelGatewayError, ValidationError, ValueError, TypeError) as exc:
             logger.warning(
                 "memory_recall_model_failed",
-                extra={"turn_id": initialized.turn.id, "error_type": type(exc).__name__},
+                extra={
+                    "turn_id": initialized.turn.id,
+                    "error_type": type(exc).__name__,
+                },
             )
+            # Fail closed for conversational memories: unrelated private context is
+            # less safe than answering without personalization.
             result = MemoryRecallResult(
                 context=prepared,
                 candidate_count=len(candidates),
-                selected_count=len(candidates),
+                selected_count=0,
                 engine_candidate_count=len(semantic),
                 engine_status=engine_status,
                 degraded=True,
-                reason_summary="召回模型不可用，保守带入有界的数据库权威事实",
+                reason_summary="召回筛选不可用，本轮不注入长期对话记忆",
             )
+        await self._record(initialized, result)
+        return result
+
+    async def _record(
+        self,
+        initialized: InitializedTurn,
+        result: MemoryRecallResult,
+    ) -> None:
         await self._recorder.record_memory_recall(
             turn_id=initialized.turn.id,
             payload={
                 "policy_version": MEMORY_RECALL_POLICY_VERSION,
-                "provider": self._engine.provider_name if self._engine is not None else "disabled",
+                "provider": (
+                    self._engine.provider_name if self._engine is not None else "disabled"
+                ),
                 "engine_status": result.engine_status,
                 "candidate_count": result.candidate_count,
                 "engine_candidate_count": result.engine_candidate_count,
@@ -202,7 +239,6 @@ class ModelFirstMemoryRecaller:
                 "reason_summary": result.reason_summary,
             },
         )
-        return result
 
     def _request(
         self,
@@ -210,30 +246,25 @@ class ModelFirstMemoryRecaller:
         user_id: str,
         trigger: TurnTrigger,
         query: str,
-        candidates: list[dict[str, Any]],
-        score_by_id: dict[str, float],
+        candidates: Sequence[LongTermMemoryRef],
+        score_by_id: Mapping[str, float],
     ) -> ModelRequest:
-        compact = []
-        for candidate in candidates:
-            memory_id = candidate.get("memory_id")
-            compact.append(
-                {
-                    "memory_id": memory_id,
-                    "kind": candidate.get("kind"),
-                    "key": candidate.get("key"),
-                    "value": candidate.get("value"),
-                    "sensitivity": candidate.get("sensitivity"),
-                    "stale": candidate.get("stale"),
-                    **(
-                        {"semantic_score": score_by_id[memory_id]}
-                        if isinstance(memory_id, str) and memory_id in score_by_id
-                        else {}
-                    ),
-                }
-            )
+        compact = [
+            {
+                "memory_id": memory.id,
+                "content_text": memory.content_text,
+                "category": memory.category,
+                "sensitivity": memory.sensitivity.value,
+                "expires_at": (
+                    memory.expires_at.isoformat() if memory.expires_at is not None else None
+                ),
+                **({"semantic_score": score_by_id[memory.id]} if memory.id in score_by_id else {}),
+            }
+            for memory in candidates
+        ]
         tool = ToolDefinition(
             name=_SELECT_TOOL_NAME,
-            description="选择本轮真正相关的权威长期记忆。",
+            description="选择本轮真正相关的权威长期文本记忆。",
             parameters_json_schema={
                 "type": "object",
                 "properties": {
@@ -274,7 +305,7 @@ class ModelFirstMemoryRecaller:
             temperature=0,
             metadata={
                 "memory_policy_version": MEMORY_RECALL_POLICY_VERSION,
-                "user_id": hashlib.sha256(user_id.encode("utf-8")).hexdigest(),
+                "user_id": hashlib.sha256(user_id.encode()).hexdigest(),
             },
         )
 
@@ -302,11 +333,52 @@ class ModelFirstMemoryRecaller:
         return query or f"执行 {initialized.turn.trigger.value} 定时任务"
 
     @staticmethod
-    def _score_by_canonical_id(memories: tuple[SemanticMemory, ...]) -> dict[str, float]:
+    def _semantic_ids_and_scores(
+        memories: tuple[SemanticMemory, ...],
+    ) -> tuple[tuple[str, ...], dict[str, float]]:
+        ids: list[str] = []
         scores: dict[str, float] = {}
         for memory in memories:
-            canonical_id = memory.metadata.get("slim_guard_memory_id")
-            if not isinstance(canonical_id, str) or memory.score is None:
+            if memory.metadata.get("memory_type") != "conversational_long_term":
                 continue
-            scores[canonical_id] = max(scores.get(canonical_id, 0.0), memory.score)
-        return scores
+            canonical_id = memory.metadata.get("slim_guard_memory_id")
+            if not isinstance(canonical_id, str) or not canonical_id:
+                continue
+            if canonical_id not in ids:
+                ids.append(canonical_id)
+            if memory.score is not None:
+                scores[canonical_id] = max(scores.get(canonical_id, 0.0), memory.score)
+        return tuple(ids), scores
+
+    @staticmethod
+    def _semantic_order(
+        memories: tuple[LongTermMemoryRef, ...],
+        ordered_ids: tuple[str, ...],
+    ) -> tuple[LongTermMemoryRef, ...]:
+        by_id = {memory.id: memory for memory in memories}
+        return tuple(by_id[memory_id] for memory_id in ordered_ids if memory_id in by_id)
+
+    @staticmethod
+    def _context_memory(memory: LongTermMemoryRef) -> dict[str, Any]:
+        return {
+            "memory_id": memory.id,
+            "content_text": memory.content_text,
+            "category": memory.category,
+            "sensitivity": memory.sensitivity.value,
+            "source_turn_id": memory.source_turn_id,
+            "expires_at": (
+                memory.expires_at.isoformat() if memory.expires_at is not None else None
+            ),
+        }
+
+
+# Temporary import compatibility while Phase 8 removes the old name.
+ModelFirstMemoryRecaller = LongTermMemoryRecaller
+
+__all__ = [
+    "MEMORY_RECALL_POLICY_VERSION",
+    "LongTermMemoryRecaller",
+    "MemoryRecallResult",
+    "MemoryRecaller",
+    "ModelFirstMemoryRecaller",
+]

@@ -313,15 +313,9 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         )
 
         trend = await WeightRepository(database).recent_trend("user-1")
-        items = await HarnessStateRepository(database).list_items(
-            result.turn_id
-        )
-        stored_turn = await HarnessStateRepository(database).get_turn(
-            result.turn_id
-        )
-        stored_manifest = await AgentVersionRepository(database).get(
-            runtime.manifest.version_id
-        )
+        items = await HarnessStateRepository(database).list_items(result.turn_id)
+        stored_turn = await HarnessStateRepository(database).get_turn(result.turn_id)
+        stored_manifest = await AgentVersionRepository(database).get(runtime.manifest.version_id)
 
         assert result.termination is HarnessTermination.FINAL_RESPONSE
         assert result.final_text == "已记录今天空腹体重 77.6kg。这是第一条记录，先建立基线。"
@@ -350,17 +344,15 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "text": "今天早上空腹 77.6kg",
         }
         assert [
-            item.payload["tool_name"]
-            for item in items
-            if item.item_type is ItemType.TOOL_CALL
+            item.payload["tool_name"] for item in items if item.item_type is ItemType.TOOL_CALL
         ] == [RECORD_WEIGHT_TOOL_NAME, GET_RECENT_WEIGHT_TREND_TOOL_NAME]
         assert model.requests[0].messages[0].content == SLIM_GUARD_HARNESS_PROMPT
         assert [tool.name for tool in model.requests[0].tools] == [
             RECORD_WEIGHT_TOOL_NAME,
-                GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-                "record_body_fat",
-                "get_recent_body_fat_trend",
-                "inspect_image",
+            GET_RECENT_WEIGHT_TREND_TOOL_NAME,
+            "record_body_fat",
+            "get_recent_body_fat_trend",
+            "inspect_image",
             "record_meal",
             "get_recent_meals",
             "record_exercise",
@@ -369,12 +361,12 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "get_checkin_schedule",
             "update_record_status",
             "set_coaching_profile",
-                "set_body_profile",
-                "set_exercise_profile",
+            "set_body_profile",
+            "set_exercise_profile",
             "upsert_food_preference",
             "upsert_exercise_preference",
-                "set_weight_goal",
-                "set_body_fat_goal",
+            "set_weight_goal",
+            "set_body_fat_goal",
             "set_behavior_goal",
             "record_user_constraint",
             "list_user_memories",
@@ -382,6 +374,9 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "set_conversation_handoff",
             "resolve_conversation_handoff",
             "clear_user_memories",
+            "remember_long_term_memory",
+            "list_long_term_memories",
+            "forget_long_term_memory",
             "resolve_pending_user_action",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
@@ -736,9 +731,7 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == (
-            "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
-        )
+        assert result.final_text == ("已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。")
         assert all(item.item_type is not ItemType.OUTPUT_GUARD for item in items)
     finally:
         await model.close()
@@ -957,9 +950,7 @@ async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
         meals = await MealRepository(database).recent("user-1")
 
         assert first.final_text == "图片里有几样食物不确定，请告诉我具体是什么。"
-        assert second.final_text == (
-            "明白是午餐；请确认方形块、红色条状物和黑色食物。"
-        )
+        assert second.final_text == ("明白是午餐；请确认方形块、红色条状物和黑色食物。")
         assert before_confirmation == ()
         assert third.final_text == "午餐已经记录。"
         assert len(meals) == 1
@@ -1089,9 +1080,7 @@ async def test_runtime_requires_and_applies_bulk_memory_clear_confirmation(
 
         assert requested.termination is HarnessTermination.WAITING_USER_CONFIRMATION
         assert len(before_confirmation) == 1
-        assert confirmed.final_text == (
-            "个性化记忆已经清空；体重、饮食和运动记录未删除。"
-        )
+        assert confirmed.final_text == ("个性化记忆已经清空；体重、饮食和运动记录未删除。")
         assert await MemoryRepository(database).active("user-1") == ()
         model.assert_exhausted()
     finally:
@@ -1131,9 +1120,7 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
             ItemType.AGENT_MESSAGE,
         ]
         assert model.requests[0].tools == ()
-        assert '"trigger":"weight_reminder"' in (
-            model.requests[0].messages[1].content or ""
-        )
+        assert '"trigger":"weight_reminder"' in (model.requests[0].messages[1].content or "")
     finally:
         await model.close()
         await database.close()
@@ -1169,9 +1156,7 @@ async def test_runtime_blocks_tools_and_replaces_emergency_model_output(
         assert "尽快联系当地急救服务或前往急诊" in (result.final_text or "")
         assert model.requests[0].tools == ()
         assert any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
-        guard_item = next(
-            item for item in items if item.item_type is ItemType.OUTPUT_GUARD
-        )
+        guard_item = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
         assert guard_item.payload["code"] == "medical_emergency_escalation"
     finally:
         await model.close()

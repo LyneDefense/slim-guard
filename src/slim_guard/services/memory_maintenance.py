@@ -77,7 +77,9 @@ class MemoryMaintenanceService:
         revoked_count = await self._lifecycle.purge_revoked_values(
             before=reference_time - self._revoked_value_retention,
         )
-        expired_facts, expired_handoffs = await self._lifecycle.expire_due(at=reference_time)
+        expired_facts, expired_long_term, expired_handoffs = await self._lifecycle.expire_due(
+            at=reference_time
+        )
         result = MemoryLifecycleResult(
             transcript=TranscriptScrubResult(
                 item_count=item_count,
@@ -88,6 +90,7 @@ class MemoryMaintenanceService:
             ),
             revoked_value_count=revoked_count,
             expired_fact_count=expired_facts,
+            expired_long_term_memory_count=expired_long_term,
             expired_handoff_count=expired_handoffs,
         )
         if any(
@@ -99,6 +102,7 @@ class MemoryMaintenanceService:
                 proactive_count,
                 revoked_count,
                 expired_facts,
+                expired_long_term,
                 expired_handoffs,
             )
         ):
@@ -112,6 +116,7 @@ class MemoryMaintenanceService:
                     "proactive_message_count": proactive_count,
                     "revoked_value_count": revoked_count,
                     "expired_fact_count": expired_facts,
+                    "expired_long_term_memory_count": expired_long_term,
                     "expired_handoff_count": expired_handoffs,
                 },
             )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -132,9 +132,19 @@ class Settings(DatabaseSettings):
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
     memory_recent_image_count: int = Field(default=3, ge=1, le=10)
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
-    memory_ingestion_enabled: bool = True
-    memory_ingestion_history_count: int = Field(default=20, ge=1, le=100)
-    memory_ingestion_history_max_chars: int = Field(default=6000, ge=100, le=20_000)
+    memory_extraction_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "MEMORY_EXTRACTION_ENABLED",
+            "MEMORY_INGESTION_ENABLED",
+            "memory_extraction_enabled",
+            "memory_ingestion_enabled",
+        ),
+    )
+    memory_extraction_interval_seconds: int = Field(default=2, ge=1, le=3600)
+    memory_extraction_batch_size: int = Field(default=10, ge=1, le=100)
+    memory_extraction_lease_seconds: int = Field(default=120, ge=30, le=3600)
+    memory_extraction_max_attempts: int = Field(default=5, ge=1, le=100)
     memory_recall_enabled: bool = True
     memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
     memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
@@ -181,8 +191,7 @@ class Settings(DatabaseSettings):
             raise ValueError("STYLE_CANARY_PROFILE must be an exact version")
         if self.multi_agent_invocation_max_total_tokens > self.multi_agent_max_total_tokens:
             raise ValueError(
-                "MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS cannot exceed "
-                "MULTI_AGENT_MAX_TOTAL_TOKENS"
+                "MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS cannot exceed MULTI_AGENT_MAX_TOTAL_TOKENS"
             )
         if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
             raise ValueError("MEAL_GUIDANCE_ENABLED requires NUTRITION_AGENT_ENABLED")

@@ -8,9 +8,11 @@ from sqlalchemy import select
 
 from slim_guard.db.models import (
     AgentItemRedactionRecord,
+    LongTermMemoryIndexOutboxRecord,
     MemoryHandoffRecord,
     SlimGuardUser,
     ToolExecutionRecord,
+    UserLongTermMemoryRecord,
     UserMemoryFactRecord,
 )
 from slim_guard.db.session import Database
@@ -32,6 +34,11 @@ from slim_guard.memory.contracts import (
 )
 from slim_guard.memory.handoff import HandoffRepository, HandoffUpsertCommand
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
+from slim_guard.memory.long_term import (
+    LongTermMemoryCandidate,
+    LongTermMemoryDurability,
+    LongTermMemoryRepository,
+)
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
 from slim_guard.services.memory_maintenance import MemoryMaintenanceService
@@ -82,7 +89,10 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
                 item_type=ItemType.USER_MESSAGE,
                 status=ItemStatus.COMPLETED,
                 payload={
-                    "text": "以后叫我阿杰，今天77.6kg，下次继续",
+                    "text": (
+                        "以后叫我阿杰，今天77.6kg，下次继续。"
+                        "晚上比白天更难控制饮食，下周出差主要吃外卖。"
+                    ),
                     "source_message_id": "private-message-id",
                     "channel_id": "default",
                 },
@@ -166,6 +176,39 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
             source_tool_call_id="call-revoke",
         )
     )
+    long_term_memories = LongTermMemoryRepository(database, clock=lambda: recorded_at)
+    long_term_written = await long_term_memories.apply(
+        user_id="user-1",
+        source_turn_id=started.turn.id,
+        source_item_id=source_item.id,
+        operation_prefix="long-term-write",
+        candidates=(
+            LongTermMemoryCandidate(
+                content_text="用户觉得晚上比白天更难控制饮食。",
+                category="challenge",
+                evidence_ref=source_item.id,
+                evidence_excerpt="晚上比白天更难控制饮食",
+            ),
+            LongTermMemoryCandidate(
+                content_text="用户下周出差，期间主要吃外卖。",
+                category="travel",
+                durability=LongTermMemoryDurability.TEMPORARY,
+                expires_at=recorded_at + timedelta(days=14),
+                evidence_ref=source_item.id,
+                evidence_excerpt="下周出差主要吃外卖",
+            ),
+        ),
+    )
+    assert long_term_written[0].memory is not None
+    assert long_term_written[1].memory is not None
+    await long_term_memories.revoke(
+        user_id="user-1",
+        memory_id=long_term_written[0].memory.id,
+        source_turn_id=started.turn.id,
+        source_item_id=source_item.id,
+        evidence_excerpt="晚上比白天更难控制饮食",
+        operation_id="long-term-revoke",
+    )
     weights = WeightRepository(database)
     await weights.record(
         WeightMeasurementCommand(
@@ -245,12 +288,12 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
 
         assert result.transcript.item_count == 7
         assert result.transcript.tool_execution_count == 1
-        assert result.revoked_value_count == 1
+        assert result.revoked_value_count == 2
+        assert result.expired_long_term_memory_count == 1
         assert result.expired_handoff_count == 1
         assert all(item.payload.get("redacted") is True for item in items)
         assert all(
-            "阿杰" not in str(item.payload) and "77.6" not in str(item.payload)
-            for item in items
+            "阿杰" not in str(item.payload) and "77.6" not in str(item.payload) for item in items
         )
         assert "source_message_id_sha256" in items[0].payload
         assert await ConversationWindowRepository(database).recent("user-1") == ()
@@ -267,12 +310,27 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
 
         async with database.session() as session:
             fact = await session.get(UserMemoryFactRecord, written.facts[0].id)
+            revoked_long_term = await session.get(
+                UserLongTermMemoryRecord,
+                long_term_written[0].memory.id,
+            )
+            expired_long_term = await session.get(
+                UserLongTermMemoryRecord,
+                long_term_written[1].memory.id,
+            )
             handoff_row = await session.get(MemoryHandoffRecord, handoff.id)
             redactions = tuple(await session.scalars(select(AgentItemRedactionRecord)))
             execution = await session.get(ToolExecutionRecord, "tool-operation")
+            long_term_outbox = tuple(await session.scalars(select(LongTermMemoryIndexOutboxRecord)))
         assert fact is not None
         assert fact.value_json is None
         assert fact.value_hash == written.facts[0].value_hash
+        assert revoked_long_term is not None
+        assert revoked_long_term.content_text is None
+        assert expired_long_term is not None
+        assert expired_long_term.status == "expired"
+        assert len(long_term_outbox) == 1
+        assert long_term_outbox[0].operation == "delete"
         assert handoff_row is not None and handoff_row.status == "expired"
         assert len(redactions) == 7
         assert execution is not None

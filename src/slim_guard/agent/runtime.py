@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -17,8 +18,11 @@ from slim_guard.harness.initialization import (
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.termination import HarnessTermination
+from slim_guard.memory.extraction import MemoryExtractionScheduler
 from slim_guard.runtime.turn import TurnGrants, TurnHarness
 from slim_guard.tools.contracts import ToolExecutionMode
+
+logger = logging.getLogger(__name__)
 
 
 class AgentRuntimeRequest(BaseModel):
@@ -110,6 +114,7 @@ class AgentRuntime:
         runner: TurnHarness,
         assets: ImageAssetRepository,
         image_retention: timedelta,
+        memory_extraction_scheduler: MemoryExtractionScheduler | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if image_retention <= timedelta(0):
@@ -119,6 +124,7 @@ class AgentRuntime:
         self._runner = runner
         self._assets = assets
         self._image_retention = image_retention
+        self._memory_extraction_scheduler = memory_extraction_scheduler
         self._clock = clock or self._utc_now
 
     async def run_user_message(
@@ -172,6 +178,22 @@ class AgentRuntime:
                 isolated_write_environment=request.isolated_write_environment,
             ),
         )
+        if (
+            self._memory_extraction_scheduler is not None
+            and run.loop.termination is HarnessTermination.FINAL_RESPONSE
+            and run.initialized.source_item_id is not None
+        ):
+            try:
+                await self._memory_extraction_scheduler.enqueue(
+                    user_id=request.user_id,
+                    turn_id=run.initialized.turn.id,
+                    source_item_id=run.initialized.source_item_id,
+                )
+            except (ValueError, TypeError):
+                logger.exception(
+                    "memory_extraction_enqueue_failed",
+                    extra={"turn_id": run.initialized.turn.id},
+                )
         return AgentRuntimeResult(
             thread_id=run.initialized.thread.id,
             turn_id=run.initialized.turn.id,

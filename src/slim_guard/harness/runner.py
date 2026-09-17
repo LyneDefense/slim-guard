@@ -32,7 +32,6 @@ from slim_guard.harness.safety import (
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
-from slim_guard.memory.ingestion import MemoryIngestionResult, MemoryIngestor
 from slim_guard.memory.recall import MemoryRecaller, MemoryRecallResult
 from slim_guard.observability.tracing import current_trace_id
 from slim_guard.orchestration.coordinator import (
@@ -73,7 +72,6 @@ class TurnRunResult:
     initialized: InitializedTurn
     compiled: CompiledContext | None
     loop: HarnessLoopResult
-    memory_ingestion: MemoryIngestionResult | None = None
     memory_recall: MemoryRecallResult | None = None
     shadow_workflow: ShadowWorkflowResult | None = None
     response_finalization: ResponseFinalizationResult | None = None
@@ -96,7 +94,6 @@ class TurnHarness:
         recorder: HarnessRunRecorder,
         limits: HarnessLimits,
         context_data: ContextDataProvider | None = None,
-        memory_ingestor: MemoryIngestor | None = None,
         memory_recaller: MemoryRecaller | None = None,
         input_safety: InputSafetyPolicy | None = None,
         output_guard: OutputGuard | None = None,
@@ -116,7 +113,6 @@ class TurnHarness:
         self._compiler = compiler
         self._recorder = recorder
         self._context_data = context_data or EmptyContextDataProvider()
-        self._memory_ingestor = memory_ingestor
         self._memory_recaller = memory_recaller
         self._input_safety = input_safety or DefaultInputSafetyPolicy()
         self._response_finalizer = response_finalizer
@@ -153,15 +149,8 @@ class TurnHarness:
         initialized = await self._initializer.initialize(request)
         active_grants = grants or TurnGrants()
         safety_assessment = self._input_safety.assess(initialized.input_items)
-        ingestion_result: MemoryIngestionResult | None = None
         recall_result: MemoryRecallResult | None = None
         try:
-            if self._memory_ingestor is not None and not safety_assessment.blocks_tools:
-                ingestion_result = await self._memory_ingestor.ingest(
-                    initialized=initialized,
-                    current_time=current_time,
-                    isolated_write_environment=active_grants.isolated_write_environment,
-                )
             authoritative_context = dict(
                 await self._context_data.load(
                     user_id=initialized.context.user_id,
@@ -177,10 +166,6 @@ class TurnHarness:
                     context=authoritative_context,
                 )
                 authoritative_context = recall_result.context
-            if ingestion_result is not None:
-                memory_receipt = ingestion_result.context_receipt()
-                if memory_receipt is not None:
-                    authoritative_context["current_turn_memory_receipt"] = memory_receipt
             if safety_assessment.code != "none":
                 authoritative_context["health_safety"] = safety_assessment.to_context()
             allowed_tool_names = (
@@ -219,7 +204,6 @@ class TurnHarness:
                     tool_outcomes=(),
                     failure=failure,
                 ),
-                memory_ingestion=ingestion_result,
                 memory_recall=recall_result,
             )
 
@@ -433,14 +417,10 @@ class TurnHarness:
                     payload={
                         "artifact_id": finalization_result.final_output_artifact_id,
                         "mode": "core_primary",
-                        "style_profile_version": (
-                            finalization_result.style_profile_version
-                        ),
+                        "style_profile_version": (finalization_result.style_profile_version),
                         "reviewer_ran": finalization_result.reviewer_ran,
                         "style_repaired": finalization_result.style_repaired,
-                        "used_neutral_fallback": (
-                            finalization_result.used_neutral_fallback
-                        ),
+                        "used_neutral_fallback": (finalization_result.used_neutral_fallback),
                         "failure_code": finalization_result.failure_code,
                         "final": True,
                     },
@@ -449,12 +429,8 @@ class TurnHarness:
                     text=finalization_result.text,
                     model_call_count=finalization_result.model_call_count,
                     total_token_count=finalization_result.total_token_count,
-                    core_output_artifact_id=(
-                        finalization_result.core_output_artifact_id
-                    ),
-                    final_output_artifact_id=(
-                        finalization_result.final_output_artifact_id
-                    ),
+                    core_output_artifact_id=(finalization_result.core_output_artifact_id),
+                    final_output_artifact_id=(finalization_result.final_output_artifact_id),
                 )
             text = await finalize_response(baseline, messages, outcomes, responses)
             return FinalResponseCandidate(
@@ -486,9 +462,7 @@ class TurnHarness:
             input_schema="CompiledContext",
             allowed_tools=tuple(compiled.allowed_tool_names),
             privacy_scopes=("current_user_input", "working_memory", "profile"),
-            deadline_at=(
-                initialized.turn.deadline_at or current_time + timedelta(seconds=120)
-            ),
+            deadline_at=(initialized.turn.deadline_at or current_time + timedelta(seconds=120)),
             max_model_calls=self._limits.max_model_calls,
             max_tool_calls=self._limits.max_tool_calls,
             max_total_tokens=self._limits.max_total_tokens,
@@ -528,7 +502,6 @@ class TurnHarness:
             initialized=initialized,
             compiled=compiled,
             loop=loop_result,
-            memory_ingestion=ingestion_result,
             memory_recall=recall_result,
             shadow_workflow=shadow_result,
             response_finalization=finalization_result,

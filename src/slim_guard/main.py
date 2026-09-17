@@ -43,8 +43,16 @@ from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.memory.engine import Mem0HttpMemoryEngine, MemoryEngine
-from slim_guard.memory.index_sync import MemoryIndexSyncRepository, MemoryIndexSyncService
+from slim_guard.memory.extraction import (
+    MemoryExtractionJobRepository,
+    MemoryExtractionService,
+)
+from slim_guard.memory.index_sync import (
+    LongTermMemoryIndexSyncRepository,
+    LongTermMemoryIndexSyncService,
+)
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
+from slim_guard.memory.long_term import LongTermMemoryRepository
 from slim_guard.mobile.auth import (
     MobileAuthService,
     NullMobileOtpSender,
@@ -140,8 +148,6 @@ def create_app(
         memory_recent_dialogue_max_chars=(app_settings.memory_recent_dialogue_max_chars),
         memory_recent_image_count=app_settings.memory_recent_image_count,
         memory_handoff_ttl_days=app_settings.memory_handoff_ttl_days,
-        memory_ingestion_history_count=app_settings.memory_ingestion_history_count,
-        memory_ingestion_history_max_chars=(app_settings.memory_ingestion_history_max_chars),
         memory_recall_search_limit=app_settings.memory_recall_search_limit,
         memory_recall_max_selected=app_settings.memory_recall_max_selected,
         multi_agent_mode=app_settings.multi_agent_mode,
@@ -339,8 +345,8 @@ def create_app(
                 active_runtime = build_agent_runtime(
                     database=database,
                     model=active_model,
-                    memory_ingestion_model=(
-                        active_model if app_settings.memory_ingestion_enabled else None
+                    memory_extraction_model=(
+                        active_model if app_settings.memory_extraction_enabled else None
                     ),
                     memory_recall_model=(
                         active_model if app_settings.memory_recall_enabled else None
@@ -424,6 +430,8 @@ def create_app(
         outbox_task: asyncio.Task[None] | None = None
         memory_index_stop: asyncio.Event | None = None
         memory_index_task: asyncio.Task[None] | None = None
+        memory_extraction_stop: asyncio.Event | None = None
+        memory_extraction_task: asyncio.Task[None] | None = None
         style_iteration_stop: asyncio.Event | None = None
         style_iteration_task: asyncio.Task[None] | None = None
         nutrition_knowledge_stop: asyncio.Event | None = None
@@ -528,15 +536,39 @@ def create_app(
             memory_maintenance.run_forever(memory_maintenance_stop),
             name="slim-guard-memory-maintenance",
         )
+        if (
+            app_settings.memory_extraction_enabled
+            and active_runtime is not None
+            and active_model_for_services is not None
+        ):
+            memory_extraction = MemoryExtractionService(
+                jobs=MemoryExtractionJobRepository(database),
+                memories=LongTermMemoryRepository(
+                    database,
+                    index_sync_enabled=active_memory_engine is not None,
+                ),
+                model=active_model_for_services,
+                model_name=app_settings.zhipu_text_model,
+                interval_seconds=app_settings.memory_extraction_interval_seconds,
+                batch_size=app_settings.memory_extraction_batch_size,
+                lease_seconds=app_settings.memory_extraction_lease_seconds,
+                max_attempts=app_settings.memory_extraction_max_attempts,
+                max_output_tokens=app_settings.zhipu_max_output_tokens,
+            )
+            memory_extraction_stop = asyncio.Event()
+            memory_extraction_task = asyncio.create_task(
+                memory_extraction.run_forever(memory_extraction_stop),
+                name="slim-guard-memory-extraction",
+            )
         if active_memory_engine is not None:
-            memory_index_repository = MemoryIndexSyncRepository(database)
+            memory_index_repository = LongTermMemoryIndexSyncRepository(database)
             backfilled_memory_count = await memory_index_repository.enqueue_active_backfill()
             if backfilled_memory_count:
                 logger.info(
                     "memory_index_backfill_queued",
                     extra={"memory_count": backfilled_memory_count},
                 )
-            memory_index_sync = MemoryIndexSyncService(
+            memory_index_sync = LongTermMemoryIndexSyncService(
                 repository=memory_index_repository,
                 engine=active_memory_engine,
                 interval_seconds=app_settings.memory_index_sync_interval_seconds,
@@ -633,6 +665,8 @@ def create_app(
                 outbox_stop.set()
             if memory_index_stop is not None:
                 memory_index_stop.set()
+            if memory_extraction_stop is not None:
+                memory_extraction_stop.set()
             if style_iteration_stop is not None:
                 style_iteration_stop.set()
             if nutrition_knowledge_stop is not None:
@@ -649,6 +683,8 @@ def create_app(
                 await outbox_task
             if memory_index_task is not None:
                 await memory_index_task
+            if memory_extraction_task is not None:
+                await memory_extraction_task
             if style_iteration_task is not None:
                 await style_iteration_task
             if nutrition_knowledge_task is not None:

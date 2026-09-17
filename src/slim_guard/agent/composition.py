@@ -61,9 +61,10 @@ from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.tool_calls import ToolCallCoordinator
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine
+from slim_guard.memory.extraction import MemoryExtractionJobRepository
 from slim_guard.memory.handoff import HandoffRepository
-from slim_guard.memory.ingestion import ModelFirstMemoryIngestor
-from slim_guard.memory.recall import ModelFirstMemoryRecaller
+from slim_guard.memory.long_term import LongTermMemoryRepository
+from slim_guard.memory.recall import LongTermMemoryRecaller
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
@@ -87,6 +88,10 @@ from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
 from slim_guard.tools.gateway import ToolGateway
 from slim_guard.tools.image import image_tool_definitions, image_tool_executors
+from slim_guard.tools.long_term_memory import (
+    long_term_memory_tool_definitions,
+    long_term_memory_tool_executors,
+)
 from slim_guard.tools.meal import meal_tool_definitions, meal_tool_executors
 from slim_guard.tools.memory import memory_tool_definitions, memory_tool_executors
 from slim_guard.tools.pending import (
@@ -143,8 +148,6 @@ class AgentRuntimeDefinition(BaseModel):
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
     memory_recent_image_count: int = Field(default=3, ge=1, le=10)
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
-    memory_ingestion_history_count: int = Field(default=20, ge=1, le=100)
-    memory_ingestion_history_max_chars: int = Field(default=6000, ge=100, le=20_000)
     memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
     memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
     multi_agent_mode: Literal["off", "shadow", "canary", "on"] = "off"
@@ -202,7 +205,7 @@ def build_agent_runtime(
     *,
     database: Database,
     model: ModelGateway,
-    memory_ingestion_model: ModelGateway | None = None,
+    memory_extraction_model: ModelGateway | None = None,
     memory_recall_model: ModelGateway | None = None,
     memory_engine: MemoryEngine | None = None,
     vision: VisionModelGateway | None = None,
@@ -222,6 +225,7 @@ def build_agent_runtime(
         *routine_tool_definitions(),
         *record_status_tool_definitions(),
         *memory_tool_definitions(),
+        *long_term_memory_tool_definitions(),
         *pending_action_tool_definitions(),
         *(nutrition_agent_tool_definitions() if definition.nutrition_agent_enabled else ()),
     )
@@ -250,9 +254,15 @@ def build_agent_runtime(
             health_review_days=definition.memory_health_review_days,
         ),
         clock=clock,
-        index_sync_enabled=memory_engine is not None,
+        # Structured profile/goal facts are authoritative context, not Mem0 text memory.
+        index_sync_enabled=False,
     )
     conversation = ConversationWindowRepository(database)
+    long_term_memories = LongTermMemoryRepository(
+        database,
+        clock=clock,
+        index_sync_enabled=memory_engine is not None,
+    )
     handoffs = HandoffRepository(
         database,
         ttl=timedelta(days=definition.memory_handoff_ttl_days),
@@ -321,6 +331,7 @@ def build_agent_runtime(
         **routine_tool_executors(routines),
         **record_status_tool_executors(UserRecordStatusService(database)),
         **memory_tool_executors(memories, handoffs),
+        **long_term_memory_tool_executors(long_term_memories),
         **pending_action_tool_executors(pending_handlers),
         **(
             nutrition_agent_tool_executors(nutrition_tool_handler)
@@ -349,26 +360,17 @@ def build_agent_runtime(
         )
     )
     recorder = PersistentHarnessRunRecorder(state)
-    memory_ingestor = (
-        ModelFirstMemoryIngestor(
-            model=memory_ingestion_model,
-            model_name=definition.text_model,
-            conversation=conversation,
-            memories=memories,
-            tool_calls=tool_calls,
-            recorder=recorder,
-            history_limit=definition.memory_ingestion_history_count,
-            history_char_limit=definition.memory_ingestion_history_max_chars,
-            max_output_tokens=definition.vision_max_output_tokens,
-        )
-        if memory_ingestion_model is not None
+    memory_extraction_jobs = (
+        MemoryExtractionJobRepository(database, clock=clock)
+        if memory_extraction_model is not None
         else None
     )
     memory_recaller = (
-        ModelFirstMemoryRecaller(
+        LongTermMemoryRecaller(
             model=memory_recall_model,
             model_name=definition.text_model,
             recorder=recorder,
+            memories=long_term_memories,
             engine=memory_engine,
             search_limit=definition.memory_recall_search_limit,
             max_selected=definition.memory_recall_max_selected,
@@ -402,8 +404,7 @@ def build_agent_runtime(
             max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
             clock=clock,
         )
-        if definition.multi_agent_mode == "on"
-        and definition.style_render_all_normal_replies
+        if definition.multi_agent_mode == "on" and definition.style_render_all_normal_replies
         else None
     )
     runner = TurnHarness(
@@ -418,7 +419,6 @@ def build_agent_runtime(
         recorder=recorder,
         limits=definition.limits,
         context_data=context_data,
-        memory_ingestor=memory_ingestor,
         memory_recaller=memory_recaller,
         output_guard=SlimGuardOutputGuard(),
         response_finalizer=response_finalizer,
@@ -482,6 +482,7 @@ def build_agent_runtime(
         runner=runner,
         assets=assets,
         image_retention=timedelta(seconds=definition.image_retention_seconds),
+        memory_extraction_scheduler=memory_extraction_jobs,
         clock=clock,
     )
 
@@ -497,6 +498,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
             *routine_tool_definitions(),
             *record_status_tool_definitions(),
             *memory_tool_definitions(),
+            *long_term_memory_tool_definitions(),
             *pending_action_tool_definitions(),
             *(nutrition_agent_tool_definitions() if definition.nutrition_agent_enabled else ()),
         )

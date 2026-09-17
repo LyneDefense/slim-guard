@@ -25,6 +25,11 @@ from slim_guard.memory.errors import (
     MemoryNotFound,
     MemorySourceMismatch,
 )
+from slim_guard.memory.extraction import (
+    MEMORY_EXTRACTION_POLICY_VERSION,
+    MemoryExtractionJobRepository,
+    MemoryExtractionService,
+)
 from slim_guard.memory.handoff import (
     HandoffRef,
     HandoffRepository,
@@ -37,6 +42,15 @@ from slim_guard.memory.lifecycle import (
     MemoryLifecycleResult,
     TranscriptScrubResult,
 )
+from slim_guard.memory.long_term import (
+    LONG_TERM_MEMORY_POLICY_VERSION,
+    LongTermMemoryCandidate,
+    LongTermMemoryDurability,
+    LongTermMemoryOperation,
+    LongTermMemoryRef,
+    LongTermMemoryRepository,
+    LongTermMemorySensitivity,
+)
 from slim_guard.memory.registry import MemorySchemaRegistry
 from slim_guard.memory.repository import MEMORY_POLICY_VERSION, MemoryRepository
 from slim_guard.memory.working import (
@@ -47,6 +61,8 @@ from slim_guard.memory.working import (
 
 __all__ = [
     "MEMORY_POLICY_VERSION",
+    "MEMORY_EXTRACTION_POLICY_VERSION",
+    "LONG_TERM_MEMORY_POLICY_VERSION",
     "TRANSCRIPT_REDACTION_POLICY_VERSION",
     "ConversationWindowRepository",
     "DialogueMessage",
@@ -67,6 +83,8 @@ __all__ = [
     "MemoryFactRef",
     "MemoryKey",
     "MemoryKind",
+    "MemoryExtractionJobRepository",
+    "MemoryExtractionService",
     "MemoryLifecycleRepository",
     "MemoryLifecycleResult",
     "MemoryNotFound",
@@ -80,6 +98,12 @@ __all__ = [
     "MemoryWriteCommand",
     "MemoryWriteChange",
     "MemoryWriteResult",
+    "LongTermMemoryCandidate",
+    "LongTermMemoryDurability",
+    "LongTermMemoryOperation",
+    "LongTermMemoryRef",
+    "LongTermMemoryRepository",
+    "LongTermMemorySensitivity",
     "PreferenceStance",
     "ResponseStyle",
     "TranscriptScrubResult",

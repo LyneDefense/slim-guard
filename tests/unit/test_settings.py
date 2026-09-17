@@ -57,9 +57,9 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.memory_recent_dialogue_max_chars == 1500
     assert settings.memory_recent_image_count == 3
     assert settings.memory_handoff_ttl_days == 14
-    assert settings.memory_ingestion_enabled is True
-    assert settings.memory_ingestion_history_count == 20
-    assert settings.memory_ingestion_history_max_chars == 6000
+    assert settings.memory_extraction_enabled is True
+    assert settings.memory_extraction_interval_seconds == 2
+    assert settings.memory_extraction_batch_size == 10
     assert settings.memory_recall_enabled is True
     assert settings.memory_recall_search_limit == 12
     assert settings.memory_recall_max_selected == 8
@@ -335,6 +335,9 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "set_conversation_handoff": "v8",
         "resolve_conversation_handoff": "v8",
         "clear_user_memories": "v8",
+        "remember_long_term_memory": "v1",
+        "list_long_term_memories": "v1",
+        "forget_long_term_memory": "v1",
         "resolve_pending_user_action": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
