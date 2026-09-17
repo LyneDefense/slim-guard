@@ -420,6 +420,8 @@ class TurnHarness:
                         "style_profile_version": (finalization_result.style_profile_version),
                         "reviewer_ran": finalization_result.reviewer_ran,
                         "style_repaired": finalization_result.style_repaired,
+                        "nutrition_repaired": finalization_result.nutrition_repaired,
+                        "core_repaired": finalization_result.core_repaired,
                         "used_neutral_fallback": (finalization_result.used_neutral_fallback),
                         "failure_code": finalization_result.failure_code,
                         "final": True,

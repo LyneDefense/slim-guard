@@ -117,7 +117,7 @@ class ReviewerVerdictValidator:
                     ReviewerIssueType.FORBIDDEN_NUTRITION_ESTIMATE,
                 }
             )
-        if target is RepairTarget.ORCHESTRATOR:
+        if target in {RepairTarget.CORE, RepairTarget.ORCHESTRATOR}:
             return issue_types == {ReviewerIssueType.MISSING_USER_EVIDENCE}
         return False
 

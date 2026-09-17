@@ -10,6 +10,7 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
+from slim_guard.agents.core import CoreResponseRepairAgent
 from slim_guard.agents.diet_guidance import DIET_GUIDANCE_PROMPT, DIET_GUIDANCE_PROMPT_VERSION
 from slim_guard.agents.dish_recognition import (
     DISH_RECOGNITION_PROMPT,
@@ -390,6 +391,11 @@ def build_agent_runtime(
                 model=definition.text_model,
             ),
             reviewer_enabled=definition.response_reviewer_enabled,
+            core_repair_agent=CoreResponseRepairAgent(
+                runner=structured_runner,
+                model=definition.text_model,
+            ),
+            nutrition_specialist=nutrition_specialist,
             profile_resolver=StyleProfileResolver(
                 profiles=StyleProfileRepository(database),
                 active_version=StyleRuntimeVersionResolver(

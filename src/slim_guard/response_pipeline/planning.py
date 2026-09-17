@@ -37,6 +37,23 @@ class ResponsePlanBuilder:
         tool_outcomes: tuple[ToolCallOutcome, ...],
     ) -> PlannedResponse:
         assessment, assessment_artifact_id = self._nutrition_assessment(tool_outcomes)
+        return self.build_with_assessment(
+            neutral_draft=neutral_draft,
+            assessment=assessment,
+            assessment_artifact_id=assessment_artifact_id,
+            tool_outcomes=tool_outcomes,
+        )
+
+    def build_with_assessment(
+        self,
+        *,
+        neutral_draft: str,
+        assessment: ProfessionalAssessment | None,
+        assessment_artifact_id: str | None,
+        tool_outcomes: tuple[ToolCallOutcome, ...],
+    ) -> PlannedResponse:
+        """Build from an explicitly selected, immutable professional assessment."""
+
         citations = (
             tuple(citation.citation_id for citation in assessment.citations)
             if assessment is not None

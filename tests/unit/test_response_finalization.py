@@ -327,3 +327,228 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
         assert [item.payload["verdict"] for item in verdicts] == ["repair", "pass"]
     finally:
         await database.close()
+
+
+async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
+    tmp_path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    assessment = {
+        "assessment_type": "general",
+        "overall": "当前资料不足以给出具体搭配结论。",
+        "uncertainty_note": "需要知道实际食物和份量。",
+    }
+    first_style = {
+        "text": "晚餐这样搭配就行。",
+        "used_block_ids": ["core-neutral-draft"],
+        "used_claim_ids": [],
+        "used_action_ids": [],
+        "preserved_risk_flags": [],
+        "preserved_citation_refs": [],
+        "style_profile_version": "slimguard_default_v1",
+    }
+    repaired_style = {
+        **first_style,
+        "text": "把今晚准备吃的食物和大概份量告诉我，我再帮你判断。",
+    }
+    model = ScriptedModelGateway(
+        (
+            nutrition_tool_call(),
+            response(json.dumps(assessment, ensure_ascii=False)),
+            response("晚餐这样搭配就行。"),
+            response(json.dumps(first_style, ensure_ascii=False)),
+            response(
+                json.dumps(
+                    {
+                        "verdict": "repair",
+                        "repair_target": "core",
+                        "issue_type": "missing_user_evidence",
+                        "reason_summary": "缺少用户实际晚餐内容和份量。",
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            response(
+                json.dumps(
+                    {
+                        "neutral_draft": (
+                            "请告诉我今晚准备吃什么和大概份量，我再帮你判断。"
+                        )
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            response(json.dumps(repaired_style, ensure_ascii=False)),
+            response('{"verdict":"pass"}'),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="core-owner-repair-test",
+            multi_agent_mode="on",
+            nutrition_agent_enabled=True,
+            response_reviewer_enabled=True,
+        ),
+        clock=lambda: NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="减脂期间晚餐怎么搭配？",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+
+        invocations = await OrchestrationRepository(database).list_turn_invocations(
+            result.turn_id
+        )
+        cores = sorted(
+            (item for item in invocations if item.agent_role == AgentRole.CORE.value),
+            key=lambda item: item.attempt,
+        )
+        styles = sorted(
+            (
+                item
+                for item in invocations
+                if item.agent_role == AgentRole.RESPONSE_STYLE.value
+            ),
+            key=lambda item: item.attempt,
+        )
+        reviewers = sorted(
+            (
+                item
+                for item in invocations
+                if item.agent_role == AgentRole.RESPONSE_REVIEWER.value
+            ),
+            key=lambda item: item.attempt,
+        )
+
+        assert result.final_text == repaired_style["text"]
+        assert [item.attempt for item in cores] == [1, 2]
+        assert cores[1].parent_invocation_id == reviewers[0].invocation_id
+        assert styles[1].parent_invocation_id == cores[1].invocation_id
+        assert reviewers[1].parent_invocation_id == styles[1].invocation_id
+    finally:
+        await database.close()
+
+
+async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
+    tmp_path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    initial_assessment = {
+        "assessment_type": "general",
+        "overall": "这顿晚餐可以直接照旧吃。",
+    }
+    repaired_assessment = {
+        "assessment_type": "general",
+        "overall": "当前资料不足以给出具体搭配结论。",
+        "uncertainty_note": "需要知道实际食物和份量。",
+    }
+    first_style = {
+        "text": "照旧吃就可以。",
+        "used_block_ids": ["core-neutral-draft"],
+        "used_claim_ids": [],
+        "used_action_ids": [],
+        "preserved_risk_flags": [],
+        "preserved_citation_refs": [],
+        "style_profile_version": "slimguard_default_v1",
+    }
+    repaired_style = {
+        **first_style,
+        "text": "把晚餐的具体食物和大概份量告诉我，我再帮你看。",
+    }
+    model = ScriptedModelGateway(
+        (
+            nutrition_tool_call(),
+            response(json.dumps(initial_assessment, ensure_ascii=False)),
+            response("照旧吃就可以。"),
+            response(json.dumps(first_style, ensure_ascii=False)),
+            response(
+                json.dumps(
+                    {
+                        "verdict": "repair",
+                        "repair_target": "nutrition_expert",
+                        "issue_type": "unsupported_professional_claim",
+                        "reason_summary": "专业结论缺少当前证据支持。",
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            response(json.dumps(repaired_assessment, ensure_ascii=False)),
+            response(
+                json.dumps(
+                    {
+                        "neutral_draft": (
+                            "请告诉我晚餐的具体食物和大概份量，我再帮你看。"
+                        )
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            response(json.dumps(repaired_style, ensure_ascii=False)),
+            response('{"verdict":"pass"}'),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="nutrition-owner-repair-test",
+            multi_agent_mode="on",
+            nutrition_agent_enabled=True,
+            response_reviewer_enabled=True,
+        ),
+        clock=lambda: NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="减脂期间晚餐怎么搭配？",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+
+        invocations = await OrchestrationRepository(database).list_turn_invocations(
+            result.turn_id
+        )
+        nutrition = sorted(
+            (
+                item
+                for item in invocations
+                if item.agent_role == AgentRole.NUTRITION_EXPERT.value
+            ),
+            key=lambda item: item.attempt,
+        )
+        cores = sorted(
+            (item for item in invocations if item.agent_role == AgentRole.CORE.value),
+            key=lambda item: item.attempt,
+        )
+        reviewers = sorted(
+            (
+                item
+                for item in invocations
+                if item.agent_role == AgentRole.RESPONSE_REVIEWER.value
+            ),
+            key=lambda item: item.attempt,
+        )
+
+        assert result.final_text == repaired_style["text"]
+        assert [item.attempt for item in nutrition] == [1, 2]
+        assert nutrition[1].parent_invocation_id == reviewers[0].invocation_id
+        assert cores[1].parent_invocation_id == nutrition[1].invocation_id
+        assert reviewers[1].attempt == 2
+    finally:
+        await database.close()

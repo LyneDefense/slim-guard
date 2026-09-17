@@ -2435,6 +2435,7 @@ class AgentWorkflowCoordinator:
             target_node = {
                 RepairTarget.RESPONSE_STYLE: GraphNode.STYLE_RUNNING,
                 RepairTarget.NUTRITION_EXPERT: GraphNode.EXPERT_RUNNING,
+                RepairTarget.CORE: GraphNode.ORCHESTRATOR_RUNNING,
                 RepairTarget.ORCHESTRATOR: GraphNode.ORCHESTRATOR_RUNNING,
             }[target]
             if target is RepairTarget.NUTRITION_EXPERT and (

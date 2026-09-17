@@ -132,6 +132,8 @@ class ReviewerIssueType(StrEnum):
 
 
 class RepairTarget(StrEnum):
+    CORE = "core"
+    # Kept while historical shadow-workflow traces remain readable.
     ORCHESTRATOR = "orchestrator"
     NUTRITION_EXPERT = "nutrition_expert"
     RESPONSE_STYLE = "response_style"
@@ -515,10 +517,13 @@ class ReviewerVerdict(ContractModel):
                 _NUTRITION_ISSUES
             ):
                 raise ValueError("The issue type cannot be repaired by nutrition_expert")
-            if self.repair_target is RepairTarget.ORCHESTRATOR and issue_types != {
+            if self.repair_target in {
+                RepairTarget.CORE,
+                RepairTarget.ORCHESTRATOR,
+            } and issue_types != {
                 ReviewerIssueType.MISSING_USER_EVIDENCE
             }:
-                raise ValueError("Only missing_user_evidence can return to orchestrator")
+                raise ValueError("Only missing_user_evidence can return to core")
         elif self.repair_target is not None:
             raise ValueError("A reject verdict cannot contain repair_target")
         return self

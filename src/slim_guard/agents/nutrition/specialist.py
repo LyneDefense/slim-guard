@@ -23,6 +23,11 @@ from slim_guard.agents.nutrition.knowledge import (
     CitationValidationPolicy,
     KnowledgeCandidateBinder,
 )
+from slim_guard.agents.nutrition.repair import (
+    NutritionRepairRequest,
+    NutritionRepairResult,
+    NutritionRepairService,
+)
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry, NutritionToolResult
 from slim_guard.orchestration.evidence import EvidenceBuilder, EvidenceItem, EvidencePacket
 from slim_guard.runtime.contracts import (
@@ -103,6 +108,18 @@ class NutritionSpecialist:
         self._context_compiler = context_compiler or NutritionContextCompiler()
         self._binder = KnowledgeCandidateBinder()
         self._citation_policy = citation_policy or CitationValidationPolicy()
+        self._repair_service = (
+            NutritionRepairService(
+                agent=self._agent,
+                store=invocation_store,
+                graph_version=graph_version,
+                max_total_tokens=max_total_tokens,
+                context_compiler=self._context_compiler,
+                clock=self._clock,
+            )
+            if invocation_store is not None
+            else None
+        )
 
     async def consult(
         self,
@@ -235,6 +252,11 @@ class NutritionSpecialist:
             tool_call_count=len(receipts),
             failure_code=result.failure_code,
         )
+
+    async def repair(self, request: NutritionRepairRequest) -> NutritionRepairResult:
+        if self._repair_service is None:
+            raise RuntimeError("Nutrition repair requires a durable invocation store")
+        return await self._repair_service.repair(request)
 
     async def _persist_inputs(
         self,
@@ -395,5 +417,7 @@ class NutritionSpecialist:
 __all__ = [
     "NutritionConsultationRequest",
     "NutritionConsultationResult",
+    "NutritionRepairRequest",
+    "NutritionRepairResult",
     "NutritionSpecialist",
 ]

@@ -52,7 +52,7 @@ RESPONSE_REVIEWER_PROMPT = (
     "introduced by the style transformation; route to nutrition_expert when it already "
     "exists in the professional assessment or ResponsePlan. Route unsupported_claim, "
     "unsupported_professional_claim, or medical_overreach to nutrition_expert; route only "
-    "missing_user_evidence to orchestrator. Use reject with no repair target when a safe "
+    "missing_user_evidence to core. Use reject with no repair target when a safe "
     "repair direction cannot be established. Keep reason_summary short and suitable for "
     "an administrator; never include chain-of-thought."
 )

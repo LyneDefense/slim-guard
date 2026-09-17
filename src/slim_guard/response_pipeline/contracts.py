@@ -36,6 +36,8 @@ class ResponseFinalizationResult:
     total_token_count: int = 0
     reviewer_ran: bool = False
     style_repaired: bool = False
+    nutrition_repaired: bool = False
+    core_repaired: bool = False
     used_neutral_fallback: bool = False
     failure_code: str | None = None
 

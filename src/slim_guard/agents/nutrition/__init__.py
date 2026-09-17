@@ -38,6 +38,10 @@ from slim_guard.agents.nutrition.knowledge import (
     NutritionKnowledgeRepositoryAdapter,
     bind_candidates,
 )
+from slim_guard.agents.nutrition.repair import (
+    NutritionRepairRequest,
+    NutritionRepairResult,
+)
 from slim_guard.agents.nutrition.specialist import (
     NutritionConsultationRequest,
     NutritionConsultationResult,
@@ -76,6 +80,8 @@ __all__ = [
     "NutritionAgentResult",
     "NutritionConsultationRequest",
     "NutritionConsultationResult",
+    "NutritionRepairRequest",
+    "NutritionRepairResult",
     "NutritionCitationValidator",
     "NutritionKnowledgeRepositoryAdapter",
     "NutritionSpecialist",

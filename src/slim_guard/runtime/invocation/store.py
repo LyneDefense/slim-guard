@@ -26,6 +26,8 @@ class InvocationStore(Protocol):
         invocation_id: str | None = None,
     ) -> AgentArtifact: ...
 
+    async def get_artifact(self, artifact_id: str) -> AgentArtifact | None: ...
+
     async def complete_invocation(
         self,
         result: AgentResult,
