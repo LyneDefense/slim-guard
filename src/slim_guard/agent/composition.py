@@ -15,7 +15,13 @@ from slim_guard.agents.dish_recognition import (
     DISH_RECOGNITION_PROMPT,
     DISH_RECOGNITION_PROMPT_VERSION,
 )
-from slim_guard.agents.nutrition import NUTRITION_AGENT_ALLOWED_TOOLS
+from slim_guard.agents.nutrition import (
+    NUTRITION_AGENT_ALLOWED_TOOLS,
+    NutritionAgentToolHandler,
+    NutritionSpecialist,
+    nutrition_agent_tool_definitions,
+    nutrition_agent_tool_executors,
+)
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
 from slim_guard.agents.nutrition_retrieval import (
     NUTRITION_RETRIEVAL_PROMPT,
@@ -210,6 +216,7 @@ def build_agent_runtime(
         *record_status_tool_definitions(),
         *memory_tool_definitions(),
         *pending_action_tool_definitions(),
+        *(nutrition_agent_tool_definitions() if definition.nutrition_agent_enabled else ()),
     )
     registry = ToolRegistry(tool_definitions)
     expected_manifest = build_agent_manifest(definition)
@@ -244,6 +251,50 @@ def build_agent_runtime(
         ttl=timedelta(days=definition.memory_handoff_ttl_days),
         clock=clock,
     )
+    active_nutrition_knowledge = (
+        nutrition_knowledge
+        if nutrition_knowledge is not None
+        else NutritionKnowledgeService(NutritionKnowledgeRepository(database))
+    )
+    invocation_store = OrchestrationRepository(database)
+    context_data = AuthoritativeContextDataProvider(
+        database=database,
+        weights=weights,
+        body_fat=body_fat,
+        meals=meals,
+        exercise=exercise,
+        routines=routines,
+        checkins=checkins,
+        memories=memories,
+        conversation=conversation,
+        handoffs=handoffs,
+        pending_actions=pending_actions,
+        memory_limit=definition.memory_preload_max_facts,
+        dialogue_turn_limit=definition.memory_recent_turn_count,
+        dialogue_char_limit=definition.memory_recent_dialogue_max_chars,
+        recent_image_limit=definition.memory_recent_image_count,
+    )
+    nutrition_tools = NutritionToolRegistry(
+        knowledge_repository=(
+            active_nutrition_knowledge if definition.nutrition_rag_enabled else None
+        )
+    )
+    nutrition_specialist = NutritionSpecialist(
+        model=model,
+        model_name=definition.text_model,
+        graph_version=definition.multi_agent_graph_version,
+        nutrition_tools=nutrition_tools,
+        invocation_store=invocation_store,
+        max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
+        clock=clock,
+    )
+    nutrition_tool_handler = NutritionAgentToolHandler(
+        specialist=nutrition_specialist,
+        state=state,
+        context_data=context_data,
+        timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
+        clock=clock,
+    )
     executors = {
         **weight_tool_executors(
             weights,
@@ -263,6 +314,11 @@ def build_agent_runtime(
         **record_status_tool_executors(UserRecordStatusService(database)),
         **memory_tool_executors(memories, handoffs),
         **pending_action_tool_executors(pending_handlers),
+        **(
+            nutrition_agent_tool_executors(nutrition_tool_handler)
+            if definition.nutrition_agent_enabled
+            else {}
+        ),
     }
     gateway = ToolGateway(
         registry=registry,
@@ -312,12 +368,6 @@ def build_agent_runtime(
         if memory_recall_model is not None
         else None
     )
-    active_nutrition_knowledge = (
-        nutrition_knowledge
-        if nutrition_knowledge is not None
-        else NutritionKnowledgeService(NutritionKnowledgeRepository(database))
-    )
-    invocation_store = OrchestrationRepository(database)
     runner = TurnHarness(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
@@ -329,23 +379,7 @@ def build_agent_runtime(
         tool_calls=tool_calls,
         recorder=recorder,
         limits=definition.limits,
-        context_data=AuthoritativeContextDataProvider(
-            database=database,
-            weights=weights,
-            body_fat=body_fat,
-            meals=meals,
-            exercise=exercise,
-            routines=routines,
-            checkins=checkins,
-            memories=memories,
-            conversation=conversation,
-            handoffs=handoffs,
-            pending_actions=pending_actions,
-            memory_limit=definition.memory_preload_max_facts,
-            dialogue_turn_limit=definition.memory_recent_turn_count,
-            dialogue_char_limit=definition.memory_recent_dialogue_max_chars,
-            recent_image_limit=definition.memory_recent_image_count,
-        ),
+        context_data=context_data,
         memory_ingestor=memory_ingestor,
         memory_recaller=memory_recaller,
         output_guard=SlimGuardOutputGuard(),
@@ -381,11 +415,7 @@ def build_agent_runtime(
                 ),
                 pending_dish_confirmations=pending_actions,
                 reviewer_enabled=definition.response_reviewer_enabled,
-                nutrition_tools=NutritionToolRegistry(
-                    knowledge_repository=(
-                        active_nutrition_knowledge if definition.nutrition_rag_enabled else None
-                    )
-                ),
+                nutrition_tools=nutrition_tools,
                 clock=clock,
             )
             if definition.multi_agent_mode != "off"
@@ -429,6 +459,7 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
             *record_status_tool_definitions(),
             *memory_tool_definitions(),
             *pending_action_tool_definitions(),
+            *(nutrition_agent_tool_definitions() if definition.nutrition_agent_enabled else ()),
         )
     )
     return AgentManifest.build(

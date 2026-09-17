@@ -38,15 +38,29 @@ from slim_guard.agents.nutrition.knowledge import (
     NutritionKnowledgeRepositoryAdapter,
     bind_candidates,
 )
+from slim_guard.agents.nutrition.specialist import (
+    NutritionConsultationRequest,
+    NutritionConsultationResult,
+    NutritionSpecialist,
+)
+from slim_guard.agents.nutrition.tool import (
+    CONSULT_NUTRITION_TOOL_NAME,
+    ConsultNutritionArguments,
+    NutritionAgentToolHandler,
+    nutrition_agent_tool_definitions,
+    nutrition_agent_tool_executors,
+)
 
 __all__ = [
     "CONSERVATIVE_ASSESSMENT_TEXT",
+    "CONSULT_NUTRITION_TOOL_NAME",
     "CalculationInput",
     "CalculationObservation",
     "CandidateRejectionReason",
     "CitationValidationPolicy",
     "CitationValidationReport",
     "ConservativeNutritionFallback",
+    "ConsultNutritionArguments",
     "EvidenceAuthority",
     "EvidencePacketInput",
     "EvidencePacketLike",
@@ -58,9 +72,13 @@ __all__ = [
     "KnowledgeInput",
     "KnowledgeRetrieval",
     "NutritionAgent",
+    "NutritionAgentToolHandler",
     "NutritionAgentResult",
+    "NutritionConsultationRequest",
+    "NutritionConsultationResult",
     "NutritionCitationValidator",
     "NutritionKnowledgeRepositoryAdapter",
+    "NutritionSpecialist",
     "NUTRITION_AGENT_ALLOWED_TOOLS",
     "NUTRITION_AGENT_PROMPT",
     "NutritionAssessmentValidator",
@@ -72,4 +90,6 @@ __all__ = [
     "NutritionValidationReport",
     "RejectedKnowledgeCandidate",
     "bind_candidates",
+    "nutrition_agent_tool_definitions",
+    "nutrition_agent_tool_executors",
 ]
