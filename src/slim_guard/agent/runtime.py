@@ -16,11 +16,8 @@ from slim_guard.harness.initialization import (
 )
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
-from slim_guard.harness.runner import (
-    HarnessTurnGrants,
-    HarnessTurnRunner,
-)
 from slim_guard.harness.termination import HarnessTermination
+from slim_guard.runtime.turn import TurnGrants, TurnHarness
 from slim_guard.tools.contracts import ToolExecutionMode
 
 
@@ -110,7 +107,7 @@ class AgentRuntime:
         *,
         manifest: AgentManifest,
         versions: AgentVersionRepository,
-        runner: HarnessTurnRunner,
+        runner: TurnHarness,
         assets: ImageAssetRepository,
         image_retention: timedelta,
         clock: Callable[[], datetime] | None = None,
@@ -171,7 +168,7 @@ class AgentRuntime:
                 deadline_at=request.deadline_at,
                 inputs=tuple(inputs),
             ),
-            grants=HarnessTurnGrants(
+            grants=TurnGrants(
                 isolated_write_environment=request.isolated_write_environment,
             ),
         )
@@ -198,7 +195,7 @@ class AgentRuntime:
                 deadline_at=request.deadline_at,
                 inputs=(),
             ),
-            grants=HarnessTurnGrants(allowed_tool_names=()),
+            grants=TurnGrants(allowed_tool_names=()),
         )
         return AgentRuntimeResult(
             thread_id=run.initialized.thread.id,

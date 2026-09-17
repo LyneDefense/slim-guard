@@ -32,6 +32,9 @@ from slim_guard.harness.runner import (
     HarnessTurnGrants,
     HarnessTurnRunner,
     HarnessTurnRunResult,
+    TurnGrants,
+    TurnHarness,
+    TurnRunResult,
 )
 from slim_guard.harness.tool_calls import ToolCallCoordinator, ToolCallOutcome
 
@@ -48,6 +51,9 @@ __all__ = [
     "HarnessTurnGrants",
     "HarnessTurnRunner",
     "HarnessTurnRunResult",
+    "TurnGrants",
+    "TurnHarness",
+    "TurnRunResult",
     "InitializedTurn",
     "PendingActionCreation",
     "PendingActionRef",

@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from slim_guard.agent_models.gateway import ModelGateway, ModelMessage, ModelResponse
+from slim_guard.agents.core import CoreAgent
 from slim_guard.harness.context import CompiledContext, ContextCompiler
 from slim_guard.harness.context_data import ContextDataProvider, EmptyContextDataProvider
 from slim_guard.harness.errors import ContextCompilationError
@@ -20,7 +21,7 @@ from slim_guard.harness.initialization import (
     TurnInitializer,
 )
 from slim_guard.harness.limits import HarnessLimits
-from slim_guard.harness.loop import FinalResponseCandidate, HarnessLoop, HarnessLoopResult
+from slim_guard.harness.loop import FinalResponseCandidate, HarnessLoopResult
 from slim_guard.harness.safety import (
     DefaultInputSafetyPolicy,
     InputSafetyPolicy,
@@ -42,7 +43,7 @@ from slim_guard.runtime.contracts import InvocationStatus
 from slim_guard.tools.policy import ToolAuthorization
 
 
-class HarnessTurnGrants(BaseModel):
+class TurnGrants(BaseModel):
     """Trusted per-run grants; the model never supplies this object."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -54,7 +55,7 @@ class HarnessTurnGrants(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
-class HarnessTurnRunResult:
+class TurnRunResult:
     initialized: InitializedTurn
     compiled: CompiledContext | None
     loop: HarnessLoopResult
@@ -67,7 +68,7 @@ class HarnessTurnRunResult:
         return self.loop.final_text
 
 
-class HarnessTurnRunner:
+class TurnHarness:
     """Application-level entry point for one new durable Agent Turn."""
 
     def __init__(
@@ -110,7 +111,7 @@ class HarnessTurnRunner:
         self._limits = limits
         self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
-        self._loop = HarnessLoop(
+        self._core_agent = CoreAgent(
             model=model,
             tool_calls=tool_calls,
             recorder=recorder,
@@ -123,13 +124,13 @@ class HarnessTurnRunner:
         self,
         *,
         request: TurnInitializationRequest,
-        grants: HarnessTurnGrants | None = None,
-    ) -> HarnessTurnRunResult:
+        grants: TurnGrants | None = None,
+    ) -> TurnRunResult:
         current_time = self._clock()
         if current_time.utcoffset() is None:
             raise ValueError("Harness Turn Runner clock must be timezone-aware")
         initialized = await self._initializer.initialize(request)
-        active_grants = grants or HarnessTurnGrants()
+        active_grants = grants or TurnGrants()
         safety_assessment = self._input_safety.assess(initialized.input_items)
         ingestion_result: MemoryIngestionResult | None = None
         recall_result: MemoryRecallResult | None = None
@@ -186,7 +187,7 @@ class HarnessTurnRunner:
                 total_token_count=0,
                 failure=failure,
             )
-            return HarnessTurnRunResult(
+            return TurnRunResult(
                 initialized=initialized,
                 compiled=None,
                 loop=HarnessLoopResult(
@@ -406,7 +407,7 @@ class HarnessTurnRunner:
             and self._shadow_enabled_for(initialized.context.user_id)
             and not safety_assessment.blocks_tools
         )
-        loop_result = await self._loop.run(
+        loop_result = await self._core_agent.run(
             request=compiled.request,
             context=initialized.context,
             authorization=authorization,
@@ -421,7 +422,7 @@ class HarnessTurnRunner:
                 shadow_result,
                 legacy_response=(shadow_result.legacy_response or loop_result.final_text),
             )
-        return HarnessTurnRunResult(
+        return TurnRunResult(
             initialized=initialized,
             compiled=compiled,
             loop=loop_result,
@@ -444,3 +445,10 @@ class HarnessTurnRunner:
     @staticmethod
     def _utc_now() -> datetime:
         return datetime.now(UTC)
+
+
+# Compatibility aliases for callers that still import the pre-refactor names.
+# Production composition uses the canonical runtime.turn API; remove these in Phase 8.
+HarnessTurnGrants = TurnGrants
+HarnessTurnRunResult = TurnRunResult
+HarnessTurnRunner = TurnHarness

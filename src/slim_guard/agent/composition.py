@@ -45,7 +45,6 @@ from slim_guard.harness.manifest import AgentGraphManifest, AgentGraphNodeManife
 from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.pending_resume import PendingActionResumeCoordinator
 from slim_guard.harness.repository import AgentVersionRepository
-from slim_guard.harness.runner import HarnessTurnRunner
 from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.tool_calls import ToolCallCoordinator
@@ -67,6 +66,7 @@ from slim_guard.orchestration.coordinator import (
     AgentWorkflowCoordinator,
 )
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.runtime.turn import TurnHarness
 from slim_guard.style_iteration_lifecycle import StyleRuntimeVersionResolver
 from slim_guard.style_profiles import StyleProfileRepository
 from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
@@ -317,7 +317,7 @@ def build_agent_runtime(
         if nutrition_knowledge is not None
         else NutritionKnowledgeService(NutritionKnowledgeRepository(database))
     )
-    runner = HarnessTurnRunner(
+    runner = TurnHarness(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
             manifest=active_manifest,
