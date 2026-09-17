@@ -5,7 +5,57 @@ from datetime import UTC, datetime
 
 from slim_guard.admin.repository import AdminQueryRepository
 from slim_guard.agents.contracts import payload_sha256
-from slim_guard.db.models import AgentArtifactRecord
+from slim_guard.db.models import AgentArtifactRecord, AgentItemRecord, AgentItemRedactionRecord
+
+
+def test_turn_input_view_shows_current_input_without_bypassing_redaction() -> None:
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    visible = AgentItemRecord(
+        id="visible-message",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        sequence=1,
+        item_type="user_message",
+        status="completed",
+        payload_json=json.dumps({"text": "这顿饭能吃吗？", "occurred_at": "2026-09-17T12:00:00Z"}),
+        created_at=now,
+    )
+    redacted = AgentItemRecord(
+        id="redacted-message",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        sequence=2,
+        item_type="user_message",
+        status="completed",
+        payload_json=json.dumps({"text": "不应展示的原文"}),
+        created_at=now,
+    )
+    image = AgentItemRecord(
+        id="image-1",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        sequence=3,
+        item_type="image_attachment",
+        status="completed",
+        payload_json=json.dumps({"asset_id": "asset-1", "mime_type": "image/jpeg"}),
+        created_at=now,
+    )
+    redaction = AgentItemRedactionRecord(
+        item_id=redacted.id,
+        original_payload_sha256="0" * 64,
+        policy_version="retention-v1",
+        redacted_at=now,
+    )
+
+    result = AdminQueryRepository._turn_input_view(
+        [(visible, None), (redacted, redaction), (image, None)]
+    )
+
+    assert result["messages"][0]["text"] == "这顿饭能吃吗？"
+    assert result["messages"][1]["text"] is None
+    assert result["messages"][1]["redacted"] is True
+    assert result["images"][0]["asset_id"] == "asset-1"
+    assert "不应展示的原文" not in json.dumps(result, ensure_ascii=False, default=str)
 
 
 def test_style_summary_explains_a_policy_bypass() -> None:
@@ -116,3 +166,82 @@ def test_response_plan_artifact_hides_block_text_from_admin_payload() -> None:
         }
     ]
     assert "用户敏感健康原文" not in json.dumps(view["payload"], ensure_ascii=False)
+
+
+def test_style_comparison_exposes_only_deliberate_drafts_and_render_attempts() -> None:
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+
+    def artifact(
+        artifact_id: str,
+        *,
+        producer: str,
+        artifact_type: str,
+        payload: dict[str, object],
+    ) -> AgentArtifactRecord:
+        return AgentArtifactRecord(
+            id=artifact_id,
+            turn_id="turn-1",
+            invocation_id=None,
+            producer_role=producer,
+            artifact_type=artifact_type,
+            schema_version="1",
+            parent_artifact_ids_json="[]",
+            payload_sha256=payload_sha256(payload),
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=now,
+        )
+
+    rows = (
+        artifact(
+            "resolution-1",
+            producer="style_resolver",
+            artifact_type="style_resolution",
+            payload={"profile_version": "doctor_strict_v3"},
+        ),
+        artifact(
+            "neutral-1",
+            producer="core",
+            artifact_type="neutral_response",
+            payload={"text": "中性内容稿", "hidden_reasoning": "绝不能展示"},
+        ),
+        artifact(
+            "styled-1",
+            producer="response_style",
+            artifact_type="styled_response",
+            payload={
+                "text": "第一次表达",
+                "attempt": 1,
+                "style_profile_version": "doctor_strict_v3",
+            },
+        ),
+        artifact(
+            "styled-2",
+            producer="response_style",
+            artifact_type="styled_response",
+            payload={
+                "text": "修订后表达",
+                "attempt": 2,
+                "style_profile_version": "doctor_strict_v3",
+            },
+        ),
+    )
+    timeline = [
+        {
+            "event_type": "agent_item",
+            "operation": "response_adopted",
+            "details": {"artifact_id": "styled-2", "final": True},
+        }
+    ]
+
+    comparison = AdminQueryRepository._style_comparison_view(
+        artifact_rows=rows,
+        timeline=timeline,
+        output={"content": "修订后表达"},
+    )
+
+    assert comparison is not None
+    assert comparison["profile_version"] == "doctor_strict_v3"
+    assert comparison["neutral_text"] == "中性内容稿"
+    assert [item["attempt"] for item in comparison["renders"]] == [1, 2]
+    assert comparison["final_artifact_id"] == "styled-2"
+    assert "绝不能展示" not in json.dumps(comparison, ensure_ascii=False, default=str)

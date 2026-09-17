@@ -696,6 +696,12 @@ class AdminQueryRepository:
                 timeline=timeline,
                 output=output,
             )
+            turn_input = self._turn_input_view(item_rows)
+            style_comparison = self._style_comparison_view(
+                artifact_rows=artifact_rows,
+                timeline=timeline,
+                output=output,
+            )
             trace_facets = self._trace_workflow_facets(
                 trace=trace,
                 invocations=workflow["invocations"],
@@ -721,6 +727,8 @@ class AdminQueryRepository:
                 ),
                 "agent": self._agent_version_view(agent_version),
                 "timeline": timeline,
+                "input": turn_input,
+                "style_comparison": style_comparison,
                 "execution_summary": execution_summary(timeline),
                 "context_sources": context_sources(timeline),
                 "tool_executions": [self._tool_view(tool) for tool in tool_rows],
@@ -740,6 +748,124 @@ class AdminQueryRepository:
                     ),
                 },
             }
+
+    @classmethod
+    def _turn_input_view(
+        cls,
+        item_rows: list[tuple[AgentItemRecord, AgentItemRedactionRecord | None]],
+    ) -> dict[str, Any]:
+        messages: list[dict[str, Any]] = []
+        images: list[dict[str, Any]] = []
+        for item, redaction in item_rows:
+            payload = cls._json_load(item.payload_json)
+            payload = payload if isinstance(payload, dict) else {}
+            if item.item_type == "user_message":
+                text = payload.get("text")
+                messages.append(
+                    {
+                        "item_id": item.id,
+                        "text": (
+                            text
+                            if redaction is None and isinstance(text, str)
+                            else None
+                        ),
+                        "redacted": redaction is not None,
+                        "occurred_at": payload.get("occurred_at") or item.created_at,
+                    }
+                )
+            elif item.item_type == "image_attachment":
+                images.append(
+                    {
+                        "item_id": item.id,
+                        "asset_id": payload.get("asset_id"),
+                        "mime_type": payload.get("mime_type"),
+                        "occurred_at": payload.get("occurred_at") or item.created_at,
+                    }
+                )
+        return {"messages": messages, "images": images}
+
+    @classmethod
+    def _style_comparison_view(
+        cls,
+        *,
+        artifact_rows: tuple[AgentArtifactRecord, ...],
+        timeline: list[dict[str, Any]],
+        output: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Expose deliberate response drafts, never model reasoning or prompt messages."""
+
+        neutral_text: str | None = None
+        profile_version: str | None = None
+        renders: list[dict[str, Any]] = []
+        for row in artifact_rows:
+            payload = cls._json_load(row.payload_json)
+            if not isinstance(payload, dict):
+                continue
+            try:
+                if payload_sha256(payload) != row.payload_sha256:
+                    continue
+            except ValueError:
+                continue
+            normalized = cls._normalized_artifact_type(row.artifact_type)
+            if normalized == "styleresolution":
+                profile_version = cls._first_string(
+                    payload.get("profile_version"),
+                    payload.get("style_profile_version"),
+                    profile_version,
+                )
+                continue
+            if normalized == "neutralresponse" and row.producer_role == "core":
+                text = payload.get("text")
+                if isinstance(text, str):
+                    neutral_text = text
+                continue
+            if normalized not in {"styledresponse", "neutralresponse"}:
+                continue
+            if row.producer_role != "response_style":
+                continue
+            text = payload.get("text")
+            if not isinstance(text, str):
+                continue
+            version = cls._first_string(
+                payload.get("style_profile_version"),
+                profile_version,
+            )
+            profile_version = profile_version or version
+            attempt = payload.get("attempt")
+            renders.append(
+                {
+                    "artifact_id": row.id,
+                    "attempt": (
+                        attempt
+                        if isinstance(attempt, int) and not isinstance(attempt, bool)
+                        else len(renders) + 1
+                    ),
+                    "text": text,
+                    "profile_version": version,
+                    "used_fallback": bool(payload.get("used_fallback")),
+                    "failure_code": cls._first_string(payload.get("failure_code")),
+                    "created_at": row.created_at,
+                }
+            )
+        adopted_events = [
+            event
+            for event in cls._workflow_events(timeline, "response_adopted")
+            if isinstance(event.get("details"), dict)
+            and event["details"].get("final") is True
+        ]
+        adopted = adopted_events[-1].get("details") if adopted_events else None
+        adopted = adopted if isinstance(adopted, dict) else {}
+        final_artifact_id = cls._first_string(adopted.get("artifact_id"))
+        final_text = output.get("content") if isinstance(output, dict) else None
+        if not any((neutral_text, renders, profile_version, final_artifact_id)):
+            return None
+        return {
+            "profile_version": profile_version,
+            "neutral_text": neutral_text,
+            "renders": renders,
+            "final_artifact_id": final_artifact_id,
+            "final_text": final_text if isinstance(final_text, str) else None,
+        }
 
     async def list_memories(self, *, user_id: str) -> list[dict[str, Any]] | None:
         async with self._database.session() as session:

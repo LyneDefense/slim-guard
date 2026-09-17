@@ -46,20 +46,20 @@ export function TraceOperatorSummary({
       : "影子候选不会发送给用户，用于上线前观察新流程表现。";
     tone = multiAgentFailed ? "warn" : "neutral";
   } else if (finalAdopted && delivered && !multiAgentFailed) {
-    title = "新流程已完成并用于本次回复";
-    explanation = "Multi-Agent 候选通过审查后被采用，且渠道已确认送达。";
+    title = "本轮处理已完成并送达";
+    explanation = "Core 主路径已完成必要的专业调用、风格处理和审查，最终文案已交给发送渠道。";
     tone = "good";
   } else if (usedFallback) {
-    title = "消息已送达，但新流程未生效";
+    title = "消息已送达，但主路径发生降级";
     explanation = failureSentence(failureOwner, failureCode, true);
     tone = "bad";
   } else if (multiAgentFailed) {
-    title = "新流程执行失败";
+    title = "本轮主路径执行失败";
     explanation = failureSentence(failureOwner, failureCode, false);
     tone = "bad";
   } else if (finalAdopted) {
-    title = "新流程已采用，等待确认送达";
-    explanation = "候选已通过审查并成为最终回复，但渠道状态尚未确认送达。";
+    title = "最终回复已放行，等待确认送达";
+    explanation = "最终 Artifact 已被采用，但渠道状态尚未确认送达。";
     tone = "warn";
   }
 
@@ -67,7 +67,7 @@ export function TraceOperatorSummary({
     {
       label: "最终回复",
       value: delivered ? "已送达" : deliveryLabel(data.trace.delivery_status),
-      detail: usedFallback ? "实际使用旧 Harness 兜底" : finalAdopted ? "采用新流程候选" : "未记录新候选采用",
+      detail: usedFallback ? "实际发送安全降级文案" : finalAdopted ? "采用最终 Artifact" : "未记录最终采用",
       tone: delivered ? "good" : "warn",
     },
     workflowCard(workflow, multiAgentFailed, finalAdopted),
@@ -102,7 +102,7 @@ function ragCard(
   upstreamFailed: boolean,
 ): SummaryCard {
   const retrieval = workflow.invocations.filter(
-    (invocation) => invocation.agent_role === "nutrition_retrieval",
+    (invocation) => ["nutrition_retrieval", "nutrition_expert"].includes(invocation.agent_role),
   );
   if (retrieval.length > 0) {
     return invocationStageCard(retrieval, "营养 RAG");
@@ -129,23 +129,23 @@ function workflowCard(
   finalAdopted: boolean,
 ): SummaryCard {
   if (["off", "legacy"].includes(workflow.mode) && !workflow.hasMultiAgentTrace) {
-    return { label: "Multi-Agent", value: "未运行", detail: "本轮使用旧流程", tone: "neutral" };
+    return { label: "Agent 主路径", value: "未运行", detail: "本轮使用历史流程", tone: "neutral" };
   }
   if (workflow.mode === "shadow") {
     return {
-      label: "Multi-Agent",
+      label: "Agent 主路径",
       value: failed ? "影子失败" : "仅影子运行",
       detail: "候选不会发送给用户",
       tone: failed ? "bad" : "neutral",
     };
   }
   if (failed) {
-    return { label: "Multi-Agent", value: "未生效", detail: "已回退到旧回复", tone: "bad" };
+    return { label: "Agent 主路径", value: "已降级", detail: "查看明确的失败节点", tone: "bad" };
   }
   if (finalAdopted) {
-    return { label: "Multi-Agent", value: "已生效", detail: "候选已成为最终回复", tone: "good" };
+    return { label: "Agent 主路径", value: "已完成", detail: "最终 Artifact 已采用", tone: "good" };
   }
-  return { label: "Multi-Agent", value: "未确认", detail: "未记录最终采用事件", tone: "warn" };
+  return { label: "Agent 主路径", value: "未确认", detail: "未记录最终采用事件", tone: "warn" };
 }
 
 function stageCard(
@@ -179,7 +179,7 @@ function invocationStageCard(
 
 function failureSentence(owner: string | null, code: string | null, fallback: boolean): string {
   const ownerText = owner ? `${owner}失败：` : "失败原因：";
-  const fallbackText = fallback ? "系统已使用旧 Harness 回复兜底。" : "本次没有确认送达。";
+  const fallbackText = fallback ? "系统已使用安全降级回复。" : "本次没有确认送达。";
   return `${ownerText}${friendlyFailure(code)}。${fallbackText}`;
 }
 

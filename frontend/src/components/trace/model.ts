@@ -20,6 +20,7 @@ const MULTI_AGENT_OPERATIONS = new Set([
 ]);
 
 const AGENT_ROLES = new Set<AgentRole>([
+  "core",
   "orchestrator",
   "dish_recognition",
   "nutrition_retrieval",
@@ -64,6 +65,7 @@ export interface WorkflowTraceView {
 }
 
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
+  core: "主教练 Agent",
   orchestrator: "对话编排 Agent",
   dish_recognition: "菜品识别 Agent",
   nutrition_retrieval: "营养证据检索 Agent",

@@ -17,7 +17,7 @@ const server = await createServer({
 });
 after(() => server.close());
 
-const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, apiModule, dishModule, operatorModule] =
+const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, apiModule, dishModule, operatorModule, overviewModule] =
   await Promise.all([
     server.ssrLoadModule("/src/components/trace/WorkflowMetrics.tsx"),
     server.ssrLoadModule("/src/components/trace/TraceFilters.tsx"),
@@ -27,6 +27,7 @@ const [metricsModule, filtersModule, reviewerModule, graphModule, modelModule, a
     server.ssrLoadModule("/src/api.ts"),
     server.ssrLoadModule("/src/components/trace/DishGuidanceTracePanel.tsx"),
     server.ssrLoadModule("/src/components/trace/TraceOperatorSummary.tsx"),
+    server.ssrLoadModule("/src/components/trace/TurnTraceOverview.tsx"),
   ]);
 
 function metricsHtml(metrics) {
@@ -143,9 +144,9 @@ test("operator summary distinguishes delivered fallback from a working multi-age
     }],
     timeline: [],
   }));
-  assert.ok(failed.includes("消息已送达，但新流程未生效"));
+  assert.ok(failed.includes("消息已送达，但主路径发生降级"));
   assert.ok(failed.includes("单个 Agent 的 Token 预算不足"));
-  assert.ok(failed.includes("实际使用旧 Harness 兜底"));
+  assert.ok(failed.includes("实际发送安全降级文案"));
   assert.ok(failed.includes("未执行到"));
 
   const succeeded = operatorHtml(workflow({
@@ -158,10 +159,58 @@ test("operator summary distinguishes delivered fallback from a working multi-age
     ],
     timeline: [{ operation: "response_adopted", details: { final: true } }],
   }));
-  assert.ok(succeeded.includes("新流程已完成并用于本次回复"));
+  assert.ok(succeeded.includes("本轮处理已完成并送达"));
   assert.ok(succeeded.includes("营养 RAG"));
   assert.ok(succeeded.includes("医生风格"));
   assert.ok(succeeded.includes("回复审查"));
+});
+
+test("turn overview starts with user input, ends with delivered output, and compares one profile", () => {
+  const html = renderToStaticMarkup(createElement(overviewModule.TurnTraceOverview, {
+    data: {
+      trace: { generation_status: "succeeded", delivery_status: "accepted" },
+      turn: { id: "TEST-turn", status: "completed" },
+      agent: {
+        tool_count: 4,
+        system_prompt_version: "core-v1",
+        context_policy_version: "context-v1",
+        memory_policy_version: "memory-v1",
+      },
+      input: { messages: [{ text: "这顿饭能吃吗？", redacted: false }], images: [{ asset_id: "TEST-image" }] },
+      output: { content: "可以，先确认一下那道菜。", platform_msgid: "TEST-message" },
+      style_comparison: {
+        profile_version: "doctor_strict_v3",
+        neutral_text: "可以吃，但需要确认菜品。",
+        renders: [
+          { artifact_id: "TEST-style-1", attempt: 1, text: "都可以吃。", profile_version: "doctor_strict_v3", used_fallback: false },
+          { artifact_id: "TEST-style-2", attempt: 2, text: "可以，先确认一下那道菜。", profile_version: "doctor_strict_v3", used_fallback: false },
+        ],
+        final_artifact_id: "TEST-style-2",
+        final_text: "可以，先确认一下那道菜。",
+      },
+      timeline: [],
+      tool_executions: [{ tool_name: "inspect_image", tool_call_id: "TEST-tool", status: "succeeded" }],
+      context_sources: [{ kind: "working", title: "Working", retention: "window", description: "", items: [] }],
+      execution_summary: { context_snapshot_count: 1 },
+    },
+    workflow: workflow({
+      graph_version: "core-primary-v1",
+      summary: { model_call_count: 4, total_token_count: 1200 },
+      invocations: [
+        { invocation_id: "TEST-core", agent_role: "core", attempt: 1, status: "succeeded" },
+        { invocation_id: "TEST-style", agent_role: "response_style", attempt: 1, status: "succeeded" },
+        { invocation_id: "TEST-review", agent_role: "response_reviewer", attempt: 1, status: "succeeded" },
+      ],
+    }),
+  }));
+  assert.ok(html.includes("用户这一轮说了什么"));
+  assert.ok(html.includes("这顿饭能吃吗？"));
+  assert.ok(html.includes("用户实际收到的回复"));
+  assert.ok(html.includes("主教练 Agent"));
+  assert.ok(html.includes("医生风格具体改了什么"));
+  assert.ok(html.includes("唯一线上 Profile · doctor_strict_v3"));
+  assert.ok(html.includes("第 2 次渲染"));
+  assert.ok(html.includes("Harness 在这一轮负责了什么"));
 });
 
 test("zero denominators suppress rates and latency even when the API supplies zero", () => {

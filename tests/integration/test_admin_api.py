@@ -269,6 +269,28 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             "memory_recall_count": 0,
         }
         assert detail.json()["output"]["content"] == "已记录。"
+        assert detail.json()["input"] == {"messages": [], "images": []}
+        style_comparison = detail.json()["style_comparison"]
+        assert style_comparison == {
+            "profile_version": "slimguard_default_v1",
+            "neutral_text": None,
+            "renders": style_comparison["renders"],
+            "final_artifact_id": None,
+            "final_text": "已记录。",
+        }
+        assert len(style_comparison["renders"]) == 1
+        render = style_comparison["renders"][0]
+        assert {
+            key: value for key, value in render.items() if key != "created_at"
+        } == {
+            "artifact_id": "artifact-1",
+            "attempt": 1,
+            "text": "Shadow 候选回复",
+            "profile_version": "slimguard_default_v1",
+            "used_fallback": False,
+            "failure_code": None,
+        }
+        assert render["created_at"].startswith("2026-08-31T10:00:00")
         assert detail.json()["workflow"]["summary"] == {
             "mode": "shadow",
             "graph_version": "shadow-v1",

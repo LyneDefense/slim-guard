@@ -210,6 +210,51 @@ button:disabled { cursor: default; }
 .output-card .eyebrow { color: #b4d6c4 !important; }
 .output-card p { font-size: 17px; line-height: 1.7; white-space: pre-wrap; }
 .output-card small { color: #a9c3b6; }
+.turn-endpoints { display: grid; grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr); align-items: stretch; gap: 10px; margin: 22px 0; }
+.turn-endpoint-arrow, .style-compare-arrow { display: grid; place-items: center; color: #799087; font-size: 24px; }
+.trace-text-card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 17px; background: white; }
+.trace-text-card h3 { margin: 6px 0 12px; font-size: 15px; }
+.trace-text-card p { margin: 0; font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.trace-text-card > small { display: block; margin-top: 14px; color: var(--muted); font-size: 10px; }
+.trace-text-final { border-color: #bfd8ca; background: #f3f9f5; }
+.turn-route-card, .style-before-after, .harness-controls { margin: 22px 0; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: white; }
+.turn-route-card > header, .style-before-after > header, .harness-controls > header { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.turn-route-card h2, .style-before-after h2, .harness-controls h2 { margin: 5px 0 0; font-size: 20px; }
+.turn-route-card > header small, .harness-controls > header small { color: var(--muted); font-size: 10px; }
+.turn-route { display: flex; align-items: stretch; gap: 20px; overflow-x: auto; margin-top: 18px; padding: 2px 2px 12px; }
+.turn-route-node { position: relative; flex: 0 0 180px; min-height: 112px; padding: 14px; border: 1px solid #dce4df; border-top: 3px solid #81978c; border-radius: 13px; background: #fafcfa; }
+.turn-route-node:not(:last-child)::after { position: absolute; content: "→"; right: -17px; top: 43px; color: #8da097; }
+.turn-route-node > span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: white; background: #82978d; font-size: 10px; }
+.turn-route-node strong, .turn-route-node small { display: block; }
+.turn-route-node strong { margin: 10px 0 5px; font-size: 13px; }
+.turn-route-node small { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.turn-route-node.route-good { border-top-color: #25805d; }
+.turn-route-node.route-good > span { background: #25805d; }
+.turn-route-node.route-bad { border-top-color: var(--red); background: #fff8f7; }
+.turn-route-node.route-bad > span { background: var(--red); }
+.turn-tool-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding-top: 13px; border-top: 1px solid #edf0ee; }
+.turn-tool-strip > span { margin-right: 3px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.turn-tool-strip code, .harness-versions code { padding: 5px 8px; border-radius: 7px; color: #3f5d4f; background: #eef3f0; font-size: 9px; }
+.style-before-after { border-color: #d8d0eb; background: #fbf9ff; }
+.style-version-badge { padding: 7px 10px; border-radius: 9px; color: #604b88; background: #ece7f7; font-size: 10px; font-weight: 800; }
+.style-compare-grid { display: grid; grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr); align-items: stretch; gap: 10px; margin-top: 18px; }
+.style-before-after .trace-text-card { border-color: #e0daee; }
+.style-attempts { display: grid; gap: 8px; margin-top: 14px; }
+.style-attempts article { padding: 13px 15px; border-left: 3px solid #8068a8; border-radius: 8px; background: white; }
+.style-attempts strong, .style-attempts small { display: block; }
+.style-attempts strong { font-size: 11px; }
+.style-attempts p { margin: 7px 0; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.style-attempts small { color: var(--muted); font-size: 9px; }
+.harness-controls { border-color: #cadbd1; background: #f6faf7; }
+.harness-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 18px; }
+.harness-control-grid article { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 13px; border: 1px solid #dbe5df; border-radius: 12px; background: white; }
+.control-dot { width: 9px; height: 9px; margin-top: 3px; border-radius: 50%; background: #c2974f; box-shadow: 0 0 0 4px rgba(194,151,79,.11); }
+.control-good { background: #2b8061; box-shadow: 0 0 0 4px rgba(43,128,97,.11); }
+.control-bad { background: var(--red); box-shadow: 0 0 0 4px rgba(185,70,70,.1); }
+.harness-control-grid strong { display: block; font-size: 11px; }
+.harness-control-grid p { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.harness-control-grid article > small { color: var(--muted); font-size: 8px; white-space: nowrap; }
+.harness-versions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
 .workflow-section { margin: 32px 0; }
 .workflow-heading { align-items: center; }
 .workflow-summary-badges { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
@@ -970,6 +1015,9 @@ button:disabled { cursor: default; }
   .trace-statuses { grid-column: 2 / 4; }
   .workflow-health { align-items: stretch; flex-direction: column; }
   .operator-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .turn-endpoints, .style-compare-grid { grid-template-columns: 1fr; }
+  .turn-endpoint-arrow, .style-compare-arrow { transform: rotate(90deg); }
+  .harness-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trace-heading { align-items: start; flex-direction: column; gap: 12px; }
   .execution-overview { grid-template-columns: 1fr; }
   .agent-manifest { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
@@ -1012,6 +1060,8 @@ button:disabled { cursor: default; }
   .overview-metrics { grid-template-columns: repeat(2, 1fr); }
   .workflow-health dl { grid-template-columns: 1fr; }
   .operator-summary-grid { grid-template-columns: 1fr; }
+  .turn-route-card > header, .style-before-after > header, .harness-controls > header { align-items: flex-start; flex-direction: column; }
+  .harness-control-grid { grid-template-columns: 1fr; }
   .trace-technical-details > summary { align-items: flex-start; flex-wrap: wrap; }
   .trace-technical-details > summary small { width: 100%; margin: 5px 0 0 25px; }
   .trace-boundary { margin-left: 0; flex-direction: column; }

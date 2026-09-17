@@ -80,7 +80,7 @@ export function AgentInvocationCard({
         </div>
         <footer>
           <span>Invocation · <code>{invocation.invocation_id}</code></span>
-          <span>上游 Invocation · <code>{invocation.parent_invocation_id ?? "Coordinator"}</code></span>
+          <span>上游 Invocation · <code>{invocation.parent_invocation_id ?? "Turn Harness"}</code></span>
           <span>输出 Artifact · <code>{invocation.output_artifact_id ?? "—"}</code></span>
         </footer>
       </div>
@@ -95,7 +95,7 @@ function startReason(invocation: AgentInvocationView): string {
     const reason = (start.details as Record<string, unknown>).reason_summary;
     if (typeof reason === "string" && reason) return reason;
   }
-  return "Coordinator 根据工作流状态和已验证 Artifact 调用了这个节点。";
+  return "Turn Harness 或上游 Agent 根据已验证 Artifact 调用了这个节点。";
 }
 
 function StatusPill({ value }: { value: string }) {

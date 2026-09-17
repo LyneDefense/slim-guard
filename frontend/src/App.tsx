@@ -26,6 +26,7 @@ import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
 import { ShadowComparison } from "./components/trace/ShadowComparison";
 import { StyleTracePanel } from "./components/trace/StyleTracePanel";
 import { TraceOperatorSummary } from "./components/trace/TraceOperatorSummary";
+import { TurnTraceOverview } from "./components/trace/TurnTraceOverview";
 import { TraceFilters, traceFiltersFromParams } from "./components/trace/TraceFilters";
 import { WorkflowGraph } from "./components/trace/WorkflowGraph";
 import { WorkflowMetrics } from "./components/trace/WorkflowMetrics";
@@ -395,7 +396,8 @@ function TracePage() {
       </div>
       <TraceOperatorSummary data={data} workflow={workflow} />
       {data.trace.failure_code && <div className="alert"><strong>{data.trace.failure_code}</strong><span>{data.trace.error_detail}</span></div>}
-      {data.output && <article className="output-card"><div><span className="eyebrow">FINAL OUTPUT · {data.output.kind}</span><StatusBadge value={data.output.status} /></div><p>{data.output.content}</p><small>平台消息 ID · {data.output.platform_msgid}</small></article>}
+      <TurnTraceOverview data={data} workflow={workflow} />
+      <ContextSources data={data} />
       <details className="trace-technical-details">
         <summary><span>查看完整流程与工程排障信息</span><small>Agent 节点、RAG 证据、风格、审查、Token 与原始事件</small></summary>
         <div className="trace-technical-body">
@@ -406,7 +408,6 @@ function TracePage() {
           <StyleTracePanel workflow={workflow} />
           <ReviewerTracePanel workflow={workflow} />
           {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
-          <ContextSources data={data} />
           {workflow.hasMultiAgentTrace
             ? <MultiAgentTimeline workflow={workflow} />
             : <LegacyTimeline timeline={data.timeline} />}

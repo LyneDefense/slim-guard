@@ -6,6 +6,8 @@ import {
 } from "./model";
 
 const NODE_LABELS: Record<string, string> = {
+  core: "主教练处理任务",
+  core_running: "主教练处理任务",
   initialized: "工作流初始化",
   input_guarded: "输入保护",
   memory_ingested: "记忆摄取",
@@ -47,7 +49,7 @@ export function WorkflowGraph({ workflow }: { workflow: WorkflowTraceView }) {
         <div>
           <h2>本轮实际工作流</h2>
           <p>{workflow.transitions.length > 0
-            ? "只展示真实执行过的节点；箭头来自 Coordinator 保存的实际转换。"
+            ? "只展示真实执行过的节点；箭头来自 Turn Harness 保存的实际转换。"
             : "按 Invocation 顺序展示已执行节点；旧 Trace 未记录工作流转换。"}</p>
         </div>
         <div className="workflow-summary-badges">
@@ -83,7 +85,7 @@ export function WorkflowGraph({ workflow }: { workflow: WorkflowTraceView }) {
                     <div><dt>工具</dt><dd>{step.invocation.tool_call_count}</dd></div>
                   </dl>
                 ) : (
-                  <p>协调器已实际经过此状态。</p>
+                    <p>Turn Harness 已实际经过此控制状态。</p>
                 )}
               </article>
             </div>
@@ -130,6 +132,8 @@ function buildSteps(workflow: WorkflowTraceView): GraphStep[] {
 
 function roleForNode(node: string): AgentRole | null {
   const roles: Partial<Record<string, AgentRole>> = {
+    core: "core",
+    core_running: "core",
     orchestrator: "orchestrator",
     orchestrator_running: "orchestrator",
     dish_recognition_running: "dish_recognition",
@@ -147,6 +151,7 @@ function roleForNode(node: string): AgentRole | null {
 
 function nodeForRole(role: AgentRole): string {
   return {
+    core: "core_running",
     orchestrator: "orchestrator_running",
     dish_recognition: "dish_recognition_running",
     nutrition_retrieval: "nutrition_retrieval_running",

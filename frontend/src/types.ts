@@ -91,6 +91,7 @@ export interface TraceListFilters {
 }
 
 export type AgentRole =
+  | "core"
   | "orchestrator"
   | "dish_recognition"
   | "nutrition_retrieval"
@@ -847,6 +848,35 @@ export interface TraceDetail {
     tool_count: number;
   } | null;
   timeline: TimelineEvent[];
+  input: {
+    messages: Array<{
+      item_id: string;
+      text: string | null;
+      redacted: boolean;
+      occurred_at: string;
+    }>;
+    images: Array<{
+      item_id: string;
+      asset_id: string | null;
+      mime_type: string | null;
+      occurred_at: string;
+    }>;
+  };
+  style_comparison: {
+    profile_version: string | null;
+    neutral_text: string | null;
+    renders: Array<{
+      artifact_id: string;
+      attempt: number;
+      text: string;
+      profile_version: string | null;
+      used_fallback: boolean;
+      failure_code: string | null;
+      created_at: string;
+    }>;
+    final_artifact_id: string | null;
+    final_text: string | null;
+  } | null;
   workflow?: TraceWorkflow | null;
   invocations?: TraceAgentInvocation[];
   artifacts?: TraceAgentArtifact[];
