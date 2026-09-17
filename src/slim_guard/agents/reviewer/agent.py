@@ -26,7 +26,7 @@ from slim_guard.agents.reviewer.validation import ReviewerVerdictValidator
 from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.orchestration.graph import InvocationAuthorizationError, InvocationGrant
 
-RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v2"
+RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v3"
 RESPONSE_REVIEWER_PROMPT = (
     "You are SlimGuard's response fidelity reviewer. Judge only whether the styled "
     "response is faithful to the supplied ResponsePlan, directive, assessment, evidence "
@@ -43,10 +43,12 @@ RESPONSE_REVIEWER_PROMPT = (
     "Do not write a replacement response or reveal "
     "hidden reasoning. Return only ReviewerVerdict JSON. Use pass with no issue or "
     "reason when faithful. Route style_drift, changed_meaning, changed_uncertainty, "
-    "abusive_tone, omitted_required_content, dish_identity_strengthened, "
-    "unsupported_dish_guidance, unsupported_avoidance, or forbidden_nutrition_estimate "
-    "to response_style; route unsupported_claim, unsupported_professional_claim, or "
-    "medical_overreach to nutrition_expert; route only "
+    "abusive_tone, omitted_required_content, or dish_identity_strengthened to "
+    "response_style. For unsupported_dish_guidance, unsupported_avoidance, and "
+    "forbidden_nutrition_estimate, route to response_style only when the problem was "
+    "introduced by the style transformation; route to nutrition_expert when it already "
+    "exists in the professional assessment or ResponsePlan. Route unsupported_claim, "
+    "unsupported_professional_claim, or medical_overreach to nutrition_expert; route only "
     "missing_user_evidence to orchestrator. Use reject with no repair target when a safe "
     "repair direction cannot be established. Keep reason_summary short and suitable for "
     "an administrator; never include chain-of-thought."

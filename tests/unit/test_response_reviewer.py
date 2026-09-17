@@ -175,6 +175,29 @@ async def test_semantic_issues_reach_only_their_repair_target(issue: str, target
     assert result.model_call_count == 1
 
 
+@pytest.mark.parametrize("target", ["response_style", "nutrition_expert"])
+async def test_dish_guidance_issue_can_return_to_the_responsible_owner(target: str) -> None:
+    gateway = ScriptedModelGateway(
+        [
+            response(
+                json.dumps(
+                    {
+                        "verdict": "repair",
+                        "issue_type": "unsupported_dish_guidance",
+                        "repair_target": target,
+                        "reason_summary": "无依据的菜品建议应由引入问题的节点修正。",
+                    }
+                )
+            )
+        ]
+    )
+
+    result = await agent(gateway).run(invocation=invocation(), context=context())
+
+    assert result.status is InvocationStatus.SUCCEEDED
+    assert result.verdict.repair_target == target
+
+
 async def test_invalid_schema_gets_one_repair_with_original_context() -> None:
     gateway = ScriptedModelGateway([response("not json"), response('{"verdict":"pass"}')])
     result = await agent(gateway).run(invocation=invocation(), context=context())
