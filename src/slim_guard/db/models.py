@@ -580,9 +580,7 @@ class MobileCoachProfileRecord(Base):
         CheckConstraint("schema_version = 1", name="ck_mobile_coach_profile_schema"),
         CheckConstraint("revision >= 1", name="ck_mobile_coach_profile_revision"),
         CheckConstraint(
-            "age_band IN ("
-            "'0_9','10_17','18_29','30_39','40_49','50_59','60_69','70_79','80_plus'"
-            ")",
+            "age_band IN ('0_9','10_17','18_29','30_39','40_49','50_59','60_69','70_79','80_plus')",
             name="ck_mobile_coach_profile_age_band",
         ),
         CheckConstraint(
@@ -858,6 +856,180 @@ class MemoryIndexOutboxRecord(Base):
     operation: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserLongTermMemoryRecord(Base):
+    """Authoritative conversational memory; Mem0 only indexes these rows."""
+
+    __tablename__ = "user_long_term_memories"
+    __table_args__ = (
+        UniqueConstraint("user_id", "operation_id", name="uq_long_term_memory_operation"),
+        UniqueConstraint("supersedes_id", name="uq_long_term_memory_supersedes"),
+        CheckConstraint(
+            "status IN ('active','superseded','revoked','expired')",
+            name="ck_long_term_memory_status",
+        ),
+        CheckConstraint(
+            "durability IN ('long_term','temporary')",
+            name="ck_long_term_memory_durability",
+        ),
+        CheckConstraint(
+            "sensitivity IN ('normal','health','restricted')",
+            name="ck_long_term_memory_sensitivity",
+        ),
+        CheckConstraint(
+            "durability != 'temporary' OR expires_at IS NOT NULL",
+            name="ck_long_term_memory_temporary_expiry",
+        ),
+        Index("ix_long_term_memory_user_status", "user_id", "status"),
+        Index("ix_long_term_memory_user_category", "user_id", "category"),
+        Index(
+            "uq_long_term_memory_active_content",
+            "user_id",
+            "content_hash",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="other")
+    durability: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    sensitivity: Mapped[str] = mapped_column(String(32), nullable=False, default="normal")
+    operation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        ForeignKey("user_long_term_memories.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    evidence_excerpt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    valid_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LongTermMemoryEventRecord(Base):
+    __tablename__ = "long_term_memory_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created','superseded','revoked','expired')",
+            name="ck_long_term_memory_event_type",
+        ),
+        Index("ix_long_term_memory_event_memory_created", "memory_id", "created_at"),
+        Index("ix_long_term_memory_event_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    memory_id: Mapped[str] = mapped_column(
+        ForeignKey("user_long_term_memories.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
+    )
+    policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    detail_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class LongTermMemoryIndexOutboxRecord(Base):
+    __tablename__ = "long_term_memory_index_outbox"
+    __table_args__ = (
+        UniqueConstraint("operation_key", name="uq_long_term_index_operation"),
+        CheckConstraint(
+            "operation IN ('upsert','delete','delete_user')",
+            name="ck_long_term_index_operation",
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing','completed','failed')",
+            name="ck_long_term_index_status",
+        ),
+        Index("ix_long_term_index_due", "status", "available_at"),
+        Index("ix_long_term_index_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    operation_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    memory_id: Mapped[str | None] = mapped_column(
+        ForeignKey("user_long_term_memories.id", ondelete="CASCADE"), nullable=True
+    )
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MemoryExtractionJobRecord(Base):
+    __tablename__ = "memory_extraction_jobs"
+    __table_args__ = (
+        UniqueConstraint("turn_id", name="uq_memory_extraction_turn"),
+        CheckConstraint(
+            "status IN ('queued','running','completed','failed')",
+            name="ck_memory_extraction_status",
+        ),
+        Index("ix_memory_extraction_due", "status", "available_at"),
+        Index("ix_memory_extraction_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    source_item_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_items.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    extracted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

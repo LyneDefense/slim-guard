@@ -11,7 +11,13 @@ from typing import Any, cast
 from sqlalchemy import or_, select, update
 from sqlalchemy.engine import CursorResult
 
-from slim_guard.db.models import MemoryIndexOutboxRecord, UserMemoryFactRecord, utc_now
+from slim_guard.db.models import (
+    LongTermMemoryIndexOutboxRecord,
+    MemoryIndexOutboxRecord,
+    UserLongTermMemoryRecord,
+    UserMemoryFactRecord,
+    utc_now,
+)
 from slim_guard.db.session import Database
 from slim_guard.memory.engine import MemoryEngine, MemoryEngineError
 
@@ -58,21 +64,21 @@ class MemoryIndexSyncRepository:
         async with self._database.session() as session, session.begin():
             facts = tuple(
                 await session.scalars(
-                    select(UserMemoryFactRecord).where(
-                        UserMemoryFactRecord.status == "active"
-                    )
+                    select(UserMemoryFactRecord).where(UserMemoryFactRecord.status == "active")
                 )
             )
-            operation_keys = {
-                f"upsert:{fact.id}:{fact.value_hash}" for fact in facts
-            }
-            existing = set(
-                await session.scalars(
-                    select(MemoryIndexOutboxRecord.operation_key).where(
-                        MemoryIndexOutboxRecord.operation_key.in_(operation_keys)
+            operation_keys = {f"upsert:{fact.id}:{fact.value_hash}" for fact in facts}
+            existing = (
+                set(
+                    await session.scalars(
+                        select(MemoryIndexOutboxRecord.operation_key).where(
+                            MemoryIndexOutboxRecord.operation_key.in_(operation_keys)
+                        )
                     )
                 )
-            ) if operation_keys else set()
+                if operation_keys
+                else set()
+            )
             queued = 0
             for fact in facts:
                 operation_key = f"upsert:{fact.id}:{fact.value_hash}"
@@ -293,3 +299,289 @@ class MemoryIndexSyncService:
                 "sensitivity": row.sensitivity,
             },
         )
+
+
+class LongTermMemoryIndexSyncRepository:
+    """Outbox access for the conversational-memory semantic projection."""
+
+    def __init__(
+        self,
+        database: Database,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._database = database
+        self._clock = clock or utc_now
+
+    async def enqueue_active_backfill(self) -> int:
+        now = self._now()
+        async with self._database.session() as session, session.begin():
+            memories = tuple(
+                await session.scalars(
+                    select(UserLongTermMemoryRecord).where(
+                        UserLongTermMemoryRecord.status == "active",
+                        or_(
+                            UserLongTermMemoryRecord.expires_at.is_(None),
+                            UserLongTermMemoryRecord.expires_at > now,
+                        ),
+                    )
+                )
+            )
+            operation_keys = {f"upsert:{memory.id}:{memory.content_hash}" for memory in memories}
+            existing = (
+                set(
+                    await session.scalars(
+                        select(LongTermMemoryIndexOutboxRecord.operation_key).where(
+                            LongTermMemoryIndexOutboxRecord.operation_key.in_(operation_keys)
+                        )
+                    )
+                )
+                if operation_keys
+                else set()
+            )
+            queued = 0
+            for memory in memories:
+                operation_key = f"upsert:{memory.id}:{memory.content_hash}"
+                if operation_key in existing:
+                    continue
+                session.add(
+                    LongTermMemoryIndexOutboxRecord(
+                        operation_key=operation_key,
+                        user_id=memory.user_id,
+                        memory_id=memory.id,
+                        operation="upsert",
+                        status="pending",
+                        available_at=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                queued += 1
+            return queued
+
+    async def claim(
+        self,
+        *,
+        limit: int,
+        lease: timedelta,
+    ) -> tuple[MemoryIndexOperation, ...]:
+        now = self._now()
+        claimed: list[MemoryIndexOperation] = []
+        async with self._database.session() as session, session.begin():
+            rows = tuple(
+                await session.scalars(
+                    select(LongTermMemoryIndexOutboxRecord)
+                    .where(
+                        or_(
+                            (
+                                (LongTermMemoryIndexOutboxRecord.status == "pending")
+                                & (LongTermMemoryIndexOutboxRecord.available_at <= now)
+                            ),
+                            (
+                                (LongTermMemoryIndexOutboxRecord.status == "processing")
+                                & (LongTermMemoryIndexOutboxRecord.lease_until <= now)
+                            ),
+                        )
+                    )
+                    .order_by(
+                        LongTermMemoryIndexOutboxRecord.available_at,
+                        LongTermMemoryIndexOutboxRecord.created_at,
+                    )
+                    .limit(limit)
+                )
+            )
+            for row in rows:
+                result = await session.execute(
+                    update(LongTermMemoryIndexOutboxRecord)
+                    .where(
+                        LongTermMemoryIndexOutboxRecord.id == row.id,
+                        LongTermMemoryIndexOutboxRecord.status == row.status,
+                    )
+                    .values(
+                        status="processing",
+                        attempt_count=row.attempt_count + 1,
+                        lease_until=now + lease,
+                        updated_at=now,
+                        error_code=None,
+                        error_detail=None,
+                    )
+                )
+                if cast(CursorResult[Any], result).rowcount != 1:
+                    continue
+                claimed.append(
+                    MemoryIndexOperation(
+                        id=row.id,
+                        user_id=row.user_id,
+                        memory_id=row.memory_id,
+                        operation=row.operation,
+                        attempt_count=row.attempt_count + 1,
+                    )
+                )
+        return tuple(claimed)
+
+    async def memory(self, memory_id: str) -> UserLongTermMemoryRecord | None:
+        async with self._database.session() as session:
+            return await session.get(UserLongTermMemoryRecord, memory_id)
+
+    async def complete(self, operation_id: str) -> None:
+        now = self._now()
+        async with self._database.session() as session, session.begin():
+            await session.execute(
+                update(LongTermMemoryIndexOutboxRecord)
+                .where(
+                    LongTermMemoryIndexOutboxRecord.id == operation_id,
+                    LongTermMemoryIndexOutboxRecord.status == "processing",
+                )
+                .values(
+                    status="completed",
+                    lease_until=None,
+                    completed_at=now,
+                    updated_at=now,
+                )
+            )
+
+    async def fail(
+        self,
+        operation: MemoryIndexOperation,
+        *,
+        error: Exception,
+        max_attempts: int,
+    ) -> None:
+        now = self._now()
+        terminal = operation.attempt_count >= max_attempts
+        retry_seconds = min(300, 2 ** min(operation.attempt_count, 8))
+        async with self._database.session() as session, session.begin():
+            await session.execute(
+                update(LongTermMemoryIndexOutboxRecord)
+                .where(
+                    LongTermMemoryIndexOutboxRecord.id == operation.id,
+                    LongTermMemoryIndexOutboxRecord.status == "processing",
+                )
+                .values(
+                    status="failed" if terminal else "pending",
+                    available_at=now + timedelta(seconds=retry_seconds),
+                    lease_until=None,
+                    error_code=type(error).__name__,
+                    error_detail=str(error)[:1000],
+                    updated_at=now,
+                )
+            )
+
+    def _now(self) -> datetime:
+        value = self._clock()
+        if value.utcoffset() is None:
+            raise ValueError("Long-term memory index clock must be timezone-aware")
+        return value.astimezone(UTC)
+
+
+class LongTermMemoryIndexSyncService:
+    def __init__(
+        self,
+        *,
+        repository: LongTermMemoryIndexSyncRepository,
+        engine: MemoryEngine,
+        interval_seconds: int = 5,
+        batch_size: int = 20,
+        lease_seconds: int = 60,
+        max_attempts: int = 10,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        if interval_seconds < 1 or batch_size < 1 or lease_seconds < 1 or max_attempts < 1:
+            raise ValueError("Long-term memory index settings must be positive")
+        self._repository = repository
+        self._engine = engine
+        self._interval_seconds = interval_seconds
+        self._batch_size = batch_size
+        self._lease = timedelta(seconds=lease_seconds)
+        self._max_attempts = max_attempts
+        self._clock = clock or utc_now
+
+    async def process_once(self) -> int:
+        operations = await self._repository.claim(
+            limit=self._batch_size,
+            lease=self._lease,
+        )
+        for operation in operations:
+            try:
+                await self._execute(operation)
+            except (MemoryEngineError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "long_term_memory_index_sync_failed",
+                    extra={
+                        "operation": operation.operation,
+                        "attempt_count": operation.attempt_count,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                await self._repository.fail(
+                    operation,
+                    error=exc,
+                    max_attempts=self._max_attempts,
+                )
+            else:
+                await self._repository.complete(operation.id)
+        return len(operations)
+
+    async def run_forever(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            processed = await self.process_once()
+            if processed >= self._batch_size:
+                continue
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self._interval_seconds)
+            except TimeoutError:
+                continue
+
+    async def _execute(self, operation: MemoryIndexOperation) -> None:
+        if operation.operation == "delete_user":
+            await self._engine.delete_user(user_id=operation.user_id)
+            return
+        if operation.memory_id is None:
+            raise ValueError("Long-term memory index operation is missing memory_id")
+        row = await self._repository.memory(operation.memory_id)
+        now = self._now()
+        inactive = (
+            row is None
+            or row.status != "active"
+            or (row.expires_at is not None and self._as_utc(row.expires_at) <= now)
+        )
+        if operation.operation == "delete" or inactive:
+            await self._engine.delete_canonical(
+                user_id=operation.user_id,
+                memory_id=operation.memory_id,
+            )
+            return
+        assert row is not None
+        if row.content_text is None:
+            raise ValueError("Canonical long-term memory content is missing")
+        await self._engine.upsert_canonical(
+            user_id=operation.user_id,
+            memory_id=row.id,
+            value_hash=row.content_hash,
+            text=row.content_text,
+            metadata={
+                "memory_type": "conversational_long_term",
+                "category": row.category,
+                "durability": row.durability,
+                "sensitivity": row.sensitivity,
+            },
+        )
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        return value.replace(tzinfo=UTC) if value.utcoffset() is None else value.astimezone(UTC)
+
+    def _now(self) -> datetime:
+        value = self._clock()
+        if value.utcoffset() is None:
+            raise ValueError("Long-term memory index clock must be timezone-aware")
+        return value.astimezone(UTC)
+
+
+__all__ = [
+    "LongTermMemoryIndexSyncRepository",
+    "LongTermMemoryIndexSyncService",
+    "MemoryIndexOperation",
+    "MemoryIndexSyncRepository",
+    "MemoryIndexSyncService",
+]

@@ -803,6 +803,7 @@ MIGRATIONS = (
         "20260916_02_nutrition_answerability_v2_profile",
         _add_nutrition_answerability_v2_profile,
     ),
+    SchemaMigration("20260917_01_conversational_long_term_memory", _create_application_tables),
 )
 
 
