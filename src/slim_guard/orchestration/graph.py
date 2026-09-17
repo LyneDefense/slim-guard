@@ -10,10 +10,15 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slim_guard.agents.contracts import RepairTarget
-from slim_guard.runtime.contracts import AgentInvocation, AgentRole
+from slim_guard.runtime.contracts import AgentRole
+from slim_guard.runtime.invocation import (
+    InvocationAuthorizationError,
+    InvocationGrant,
+    validate_invocation_grant,
+)
 
 
 class GraphNode(StrEnum):
@@ -291,10 +296,6 @@ class InvalidGraphTransition(WorkflowGraphError):
 IllegalGraphTransition = InvalidGraphTransition
 
 
-class InvocationAuthorizationError(WorkflowGraphError):
-    category = WorkflowErrorCategory.INVOCATION_AUTHORIZATION
-
-
 class LoopBudgetExceeded(WorkflowGraphError):
     category = WorkflowErrorCategory.BUDGET_EXHAUSTED
 
@@ -335,49 +336,6 @@ class GraphTransition(BaseModel):
             error = InvalidGraphTransition(self.source, self.target, self.reason)
             raise ValueError(str(error))
         return self
-
-
-class InvocationGrant(BaseModel):
-    """Trusted maximum permissions configured for an agent node."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    agent_role: AgentRole
-    allowed_tools: frozenset[str] = Field(
-        default_factory=frozenset,
-        validation_alias=AliasChoices("allowed_tools", "allowed_tool_names"),
-        max_length=64,
-    )
-    privacy_scopes: frozenset[str] = Field(default_factory=frozenset, max_length=64)
-    max_model_calls: int = Field(default=6, ge=1, le=32, strict=True)
-    max_tool_calls: int = Field(default=8, ge=0, le=64, strict=True)
-    max_total_tokens: int = Field(default=64_000, ge=1, le=10_000_000, strict=True)
-
-
-def validate_invocation_grant(invocation: AgentInvocation, grant: InvocationGrant) -> None:
-    """Reject model/tool/scope escalation relative to trusted node configuration."""
-
-    if invocation.agent_role is not grant.agent_role:
-        raise InvocationAuthorizationError(
-            f"Invocation role {invocation.agent_role.value} does not match its grant"
-        )
-    unauthorized_tools = set(invocation.allowed_tools).difference(grant.allowed_tools)
-    if unauthorized_tools:
-        raise InvocationAuthorizationError(
-            "Invocation requested unauthorized tools: " + ", ".join(sorted(unauthorized_tools))
-        )
-    unauthorized_scopes = set(invocation.privacy_scopes).difference(grant.privacy_scopes)
-    if unauthorized_scopes:
-        raise InvocationAuthorizationError(
-            "Invocation requested unauthorized privacy scopes: "
-            + ", ".join(sorted(unauthorized_scopes))
-        )
-    if invocation.max_model_calls > grant.max_model_calls:
-        raise InvocationAuthorizationError("Invocation exceeds its model-call grant")
-    if invocation.max_tool_calls > grant.max_tool_calls:
-        raise InvocationAuthorizationError("Invocation exceeds its tool-call grant")
-    if invocation.max_total_tokens > grant.max_total_tokens:
-        raise InvocationAuthorizationError("Invocation exceeds its token grant")
 
 
 class GraphLoopBudget(BaseModel):
@@ -474,6 +432,8 @@ LoopCounters = GraphLoopCounters
 
 
 def classify_workflow_error(error: BaseException) -> WorkflowErrorCategory:
+    if isinstance(error, InvocationAuthorizationError):
+        return WorkflowErrorCategory.INVOCATION_AUTHORIZATION
     if isinstance(error, WorkflowGraphError):
         return error.category
     return WorkflowErrorCategory.INTERNAL

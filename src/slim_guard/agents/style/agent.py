@@ -21,11 +21,10 @@ from slim_guard.agents.contracts import (
     InvocationStatus,
     StyledResponse,
 )
-from slim_guard.agents.structured_runner import StructuredAgentRunner, StructuredRunResult
 from slim_guard.agents.style.contracts import StyleContext
 from slim_guard.agents.style.renderer import NeutralRenderer
 from slim_guard.agents.style.validation import StyleResponseValidator, StyleValidationReport
-from slim_guard.orchestration.graph import InvocationGrant
+from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner, InvocationRunResult
 
 RESPONSE_STYLE_PROMPT_VERSION = "response-style-v5"
 _STYLED_RESPONSE_SCHEMA = json.dumps(
@@ -83,7 +82,7 @@ class ResponseStyleAgent:
     def __init__(
         self,
         *,
-        runner: StructuredAgentRunner,
+        runner: InvocationRunner,
         model: str,
         validator: StyleResponseValidator | None = None,
         neutral_renderer: NeutralRenderer | None = None,
@@ -213,7 +212,7 @@ class ResponseStyleAgent:
         request: ModelRequest,
         grant: InvocationGrant | None,
         remaining_tokens: int,
-    ) -> StructuredRunResult[StyledResponse]:
+    ) -> InvocationRunResult[StyledResponse]:
         single_call_invocation = invocation.model_copy(
             update={"max_model_calls": 1, "max_total_tokens": remaining_tokens}
         )

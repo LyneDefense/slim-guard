@@ -23,8 +23,11 @@ from slim_guard.agents.reviewer.contracts import (
     ReviewerValidationReport,
 )
 from slim_guard.agents.reviewer.validation import ReviewerVerdictValidator
-from slim_guard.agents.structured_runner import StructuredAgentRunner
-from slim_guard.orchestration.graph import InvocationAuthorizationError, InvocationGrant
+from slim_guard.runtime.invocation import (
+    InvocationAuthorizationError,
+    InvocationGrant,
+    InvocationRunner,
+)
 
 RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v3"
 RESPONSE_REVIEWER_PROMPT = (
@@ -61,7 +64,7 @@ class ResponseReviewerAgent:
     def __init__(
         self,
         *,
-        runner: StructuredAgentRunner,
+        runner: InvocationRunner,
         model: str,
         validator: ReviewerVerdictValidator | None = None,
         prompt_version: str = RESPONSE_REVIEWER_PROMPT_VERSION,

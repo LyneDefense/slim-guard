@@ -24,10 +24,10 @@ from slim_guard.agents.contracts import (
     ResponseContentBlock,
     ResponsePlan,
 )
-from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.agents.style import ResponseStyleAgent, StyleContext
 from slim_guard.agents.style.agent import RESPONSE_STYLE_PROMPT_VERSION
 from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1
+from slim_guard.runtime.invocation import InvocationRunner
 from slim_guard.style_corpus import (
     OfflineStyleCorpus,
     StyleAssetBundle,
@@ -162,7 +162,7 @@ async def generate_style_comparisons(
         raise ValueError("Candidate and baseline profile versions must differ")
     if not actor.strip() or not model.strip():
         raise ValueError("Evaluation requires explicit actor and model identifiers")
-    renderer = ResponseStyleAgent(runner=StructuredAgentRunner(model=gateway), model=model)
+    renderer = ResponseStyleAgent(runner=InvocationRunner(model=gateway), model=model)
     bundle_hash = hashlib.sha256(bundle.model_dump_json().encode()).hexdigest()
     generated: list[dict[str, Any]] = []
     eval_cases: list[StyleEvalCase] = []

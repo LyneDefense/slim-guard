@@ -31,8 +31,7 @@ from slim_guard.agents.nutrition.contracts import (
     NutritionValidationReport,
 )
 from slim_guard.agents.nutrition.knowledge import NutritionCitationValidator
-from slim_guard.agents.structured_runner import StructuredAgentRunner, StructuredRunResult
-from slim_guard.orchestration.graph import InvocationGrant
+from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner, InvocationRunResult
 
 _CONFIDENCE_RANK = {
     Confidence.LOW: 0,
@@ -186,7 +185,7 @@ class NutritionAgent:
     def __init__(
         self,
         *,
-        runner: StructuredAgentRunner,
+        runner: InvocationRunner,
         model: str,
         validator: NutritionAssessmentValidator | None = None,
         fallback: ConservativeNutritionFallback | None = None,
@@ -319,7 +318,7 @@ class NutritionAgent:
         request: ModelRequest,
         grant: InvocationGrant | None,
         remaining_tokens: int,
-    ) -> StructuredRunResult[ProfessionalAssessment]:
+    ) -> InvocationRunResult[ProfessionalAssessment]:
         single_call_invocation = invocation.model_copy(
             update={"max_model_calls": 1, "max_total_tokens": remaining_tokens}
         )

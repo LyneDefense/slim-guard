@@ -72,11 +72,6 @@ from slim_guard.agents.reviewer import (
     ReviewerContextCompiler,
     ReviewerEvidenceSummary,
 )
-from slim_guard.agents.structured_runner import (
-    StructuredAgentRunner,
-    WorkflowCallBudget,
-    workflow_call_budget,
-)
 from slim_guard.agents.style import (
     RESPONSE_STYLE_PROMPT_VERSION,
     SLIMGUARD_DEFAULT_V1,
@@ -104,7 +99,6 @@ from slim_guard.orchestration.graph import (
     GraphLoopCounters,
     GraphNode,
     GraphTransition,
-    InvocationGrant,
     LoopBudgetExceeded,
     TransitionReason,
 )
@@ -116,6 +110,12 @@ from slim_guard.runtime.contracts import (
     AgentRole,
     ArtifactProducerRole,
     InvocationStatus,
+)
+from slim_guard.runtime.invocation import (
+    InvocationCallBudget,
+    InvocationGrant,
+    InvocationRunner,
+    invocation_call_budget,
 )
 from slim_guard.tools.contracts import ToolExecutionMode
 
@@ -334,7 +334,7 @@ class AgentWorkflowCoordinator:
         self._max_invocation_tokens = max_invocation_tokens
         self._persistence = persistence
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._runner = StructuredAgentRunner(model=model, clock=self._clock)
+        self._runner = InvocationRunner(model=model, clock=self._clock)
         self._style_agent = style_agent or ResponseStyleAgent(
             runner=self._runner,
             model=model_name,
@@ -436,8 +436,8 @@ class AgentWorkflowCoordinator:
 
         if request.max_model_calls is None or request.max_total_tokens is None:
             return await self._run_candidate(request)
-        with workflow_call_budget(
-            WorkflowCallBudget(
+        with invocation_call_budget(
+            InvocationCallBudget(
                 max_model_calls=request.max_model_calls,
                 max_total_tokens=request.max_total_tokens,
             )
