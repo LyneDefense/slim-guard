@@ -17,6 +17,7 @@ export function TurnTraceOverview({
   const adoptedRender = style?.renders.find(
     (render) => render.artifact_id === style.final_artifact_id,
   ) ?? null;
+  const rag = ragOverview(workflow);
 
   return (
     <>
@@ -70,6 +71,8 @@ export function TurnTraceOverview({
         )}
       </section>
 
+      {rag && <RagRuntimeOverview rag={rag} />}
+
       {style && style.neutral_text && adoptedRender && (
         <section className="style-before-after">
           <header>
@@ -108,6 +111,96 @@ export function TurnTraceOverview({
       <HarnessControls data={data} workflow={workflow} />
     </>
   );
+}
+
+interface RagOverview {
+  status: string;
+  releaseId: string | null;
+  releaseVersion: string | null;
+  retrievalProfileId: string | null;
+  candidateCount: number;
+  adoptedCount: number;
+  retrievalRunIds: string[];
+}
+
+function RagRuntimeOverview({ rag }: { rag: RagOverview }) {
+  return (
+    <section className="rag-runtime-overview">
+      <header>
+        <div><span className="eyebrow">RAG EVIDENCE</span><h2>本轮用了哪一版营养资料</h2></div>
+        <span className={`rag-runtime-status control-${statusTone(rag.status)}`}>
+          {statusLabel(rag.status)}
+        </span>
+      </header>
+      <div className="rag-runtime-grid">
+        <RagFact label="冻结 Release" value={rag.releaseVersion ?? "未记录版本"} detail={rag.releaseId} />
+        <RagFact label="检索 Profile" value={rag.retrievalProfileId ?? "旧记录未冻结"} />
+        <RagFact label="候选证据" value={`${rag.candidateCount} 条`} />
+        <RagFact label="最终采用" value={`${rag.adoptedCount} 条`} />
+      </div>
+      <p>检索问题由营养 Agent 根据本轮专业问题生成；正文不在摘要重复展示，可在下方工程详情核对 Citation 采用链路。</p>
+      {rag.retrievalRunIds.length > 0 && (
+        <div className="rag-runtime-runs">
+          <span>Retrieval Run</span>
+          {rag.retrievalRunIds.map((runId) => <code key={runId}>{runId}</code>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RagFact({ label, value, detail }: { label: string; value: string; detail?: string | null }) {
+  return <article><small>{label}</small><strong>{value}</strong>{detail && <code>{detail}</code>}</article>;
+}
+
+function ragOverview(workflow: WorkflowTraceView): RagOverview | null {
+  const artifact = [...workflow.artifacts].reverse().find((item) => {
+    const normalized = item.artifact_type.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+    return normalized === "nutritioninputs" || normalized === "nutritionobservations";
+  });
+  if (!artifact?.payload) return null;
+  const payload = recordValue(artifact.payload);
+  const knowledge = recordValue(payload.knowledge);
+  const snapshot = recordValue(payload.knowledge_snapshot);
+  const candidates = arrayValue(knowledge.candidates);
+  const citations = arrayValue(knowledge.citations);
+  const retrievalRunIds = [...new Set(
+    [...candidates, ...citations]
+      .map((item) => stringOrNull(recordValue(item).retrieval_run_id))
+      .filter((item): item is string => item !== null),
+  )];
+  return {
+    status: stringOrNull(knowledge.corpus_status) ?? "unknown",
+    releaseId: stringOrNull(snapshot.corpus_release_id)
+      ?? firstRecordString(candidates, "corpus_release_id"),
+    releaseVersion: stringOrNull(snapshot.corpus_release_version),
+    retrievalProfileId: stringOrNull(snapshot.retrieval_profile_id),
+    candidateCount: candidates.length,
+    adoptedCount: citations.length,
+    retrievalRunIds,
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function firstRecordString(values: unknown[], key: string): string | null {
+  for (const value of values) {
+    const found = stringOrNull(recordValue(value)[key]);
+    if (found) return found;
+  }
+  return null;
 }
 
 function HarnessControls({ data, workflow }: { data: TraceDetail; workflow: WorkflowTraceView }) {
@@ -220,8 +313,8 @@ function eventStatus(data: TraceDetail, operations: string[]): string | null {
 }
 
 function statusTone(value: string): "good" | "warn" | "bad" {
-  if (["succeeded", "completed", "accepted", "delivered", "sent", "not_modified"].includes(value)) return "good";
-  if (["failed", "degraded", "rejected", "unknown"].includes(value)) return "bad";
+  if (["succeeded", "completed", "accepted", "available", "delivered", "sent", "not_modified"].includes(value)) return "good";
+  if (["error", "failed", "degraded", "rejected", "unavailable", "unknown"].includes(value)) return "bad";
   return "warn";
 }
 
@@ -231,6 +324,7 @@ function statusLabel(value: string): string {
     sent: "已发送", failed: "失败", degraded: "降级", running: "运行中",
     not_recorded: "未单独记录", not_modified: "无需拦截", unknown: "未知",
     pending: "等待中", pending_review: "待审核",
+    available: "资料可用", empty: "没有可用资料", unavailable: "资料不可用", error: "检索失败",
   };
   return labels[value] ?? value;
 }

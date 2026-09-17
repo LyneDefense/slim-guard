@@ -9,6 +9,10 @@ from typing import Protocol
 
 from pydantic import Field, field_validator
 
+from slim_guard.agents.nutrition.constants import (
+    CONSULT_NUTRITION_TOOL_NAME,
+    CONSULT_NUTRITION_TOOL_VERSION,
+)
 from slim_guard.agents.nutrition.specialist import (
     NutritionConsultationRequest,
     NutritionConsultationResult,
@@ -21,8 +25,6 @@ from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLev
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
-CONSULT_NUTRITION_TOOL_NAME = "consult_nutrition_specialist"
-CONSULT_NUTRITION_TOOL_VERSION = "v1"
 logger = logging.getLogger(__name__)
 
 
@@ -89,12 +91,15 @@ class NutritionAgentToolHandler:
                 input_items=tuple(items),
             )
         )
-        user_request = "\n".join(
-            str(item.payload.get("text", "")).strip()
-            for item in items
-            if item.item_type is ItemType.USER_MESSAGE
-            and str(item.payload.get("text", "")).strip()
-        ) or arguments.professional_question
+        user_request = (
+            "\n".join(
+                str(item.payload.get("text", "")).strip()
+                for item in items
+                if item.item_type is ItemType.USER_MESSAGE
+                and str(item.payload.get("text", "")).strip()
+            )
+            or arguments.professional_question
+        )
         deadline = min(
             turn.deadline_at or now + self._timeout,
             now + self._timeout,
@@ -134,9 +139,7 @@ class NutritionAgentToolHandler:
                 message="The nutrition specialist could not complete this consultation.",
                 retryable=True,
             )
-        citations = [
-            citation.model_dump(mode="json") for citation in result.assessment.citations
-        ]
+        citations = [citation.model_dump(mode="json") for citation in result.assessment.citations]
         return ToolResult.success(
             output={
                 "specialist_status": result.status.value,

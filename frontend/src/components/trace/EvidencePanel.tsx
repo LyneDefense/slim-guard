@@ -49,7 +49,11 @@ export function EvidencePanel({ workflow }: { workflow: WorkflowTraceView }) {
   if (nutritionInvocations.length === 0) return null;
 
   const evidenceArtifact = latestArtifact(workflow.artifacts, "evidencepacket");
-  const observationsArtifact = latestArtifact(workflow.artifacts, "nutritionobservations");
+  const observationsArtifact = latestArtifact(
+    workflow.artifacts,
+    "nutritioninputs",
+    "nutritionobservations",
+  );
   const assessmentArtifact = latestArtifact(workflow.artifacts, "professionalassessment");
   const evidenceItems = collectEvidence(evidenceArtifact, observationsArtifact);
   const groups = groupEvidence(evidenceItems);
@@ -517,10 +521,11 @@ function sanitizeEvidenceValue(value: unknown, depth = 0): unknown {
 
 function latestArtifact(
   artifacts: TraceAgentArtifact[],
-  normalizedType: string,
+  ...normalizedTypes: string[]
 ): TraceAgentArtifact | null {
+  const accepted = new Set(normalizedTypes);
   return [...artifacts].reverse().find((artifact) =>
-    artifact.artifact_type.toLowerCase().replaceAll(/[^a-z0-9]/g, "") === normalizedType,
+    accepted.has(artifact.artifact_type.toLowerCase().replaceAll(/[^a-z0-9]/g, "")),
   ) ?? null;
 }
 

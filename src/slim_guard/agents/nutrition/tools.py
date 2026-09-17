@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from slim_guard.agent_models.gateway import ToolDefinition
+from slim_guard.nutrition_rag.contracts import NutritionRuntimeSnapshot
 
 
 class NutritionToolResultStatus(StrEnum):
@@ -188,7 +189,14 @@ class EmptyKnowledgeSourceResult(BaseModel):
 
 
 class NutritionKnowledgeRepository(Protocol):
-    async def search(self, *, query: str, max_results: int) -> Mapping[str, Any]: ...
+    async def search(
+        self,
+        *,
+        query: str,
+        max_results: int,
+        retrieved_in_invocation_id: str | None = None,
+        release_id: str | None = None,
+    ) -> Mapping[str, Any]: ...
 
     async def get_source(
         self,
@@ -201,8 +209,15 @@ class NutritionKnowledgeRepository(Protocol):
 class EmptyNutritionKnowledgeRepository:
     """Safe default: explicitly empty, with no synthetic titles or articles."""
 
-    async def search(self, *, query: str, max_results: int) -> Mapping[str, Any]:
-        del query, max_results
+    async def search(
+        self,
+        *,
+        query: str,
+        max_results: int,
+        retrieved_in_invocation_id: str | None = None,
+        release_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        del query, max_results, retrieved_in_invocation_id, release_id
         return EmptyKnowledgeSearchResult().model_dump(mode="json")
 
     async def get_source(
@@ -429,7 +444,27 @@ class NutritionToolRegistry:
         selected = self._ordered if names is None else tuple(self.resolve(name) for name in names)
         return tuple(tool.model_definition() for tool in selected)
 
-    async def execute(self, name: str, arguments: Mapping[str, Any]) -> NutritionToolResult:
+    async def freeze_knowledge(self) -> NutritionRuntimeSnapshot | None:
+        """Resolve the active release once before any retrieval in an Invocation."""
+
+        resolver = getattr(self._knowledge, "get_runtime_snapshot", None)
+        if resolver is None or not callable(resolver):
+            return None
+        raw = await resolver()
+        if raw is None:
+            return None
+        if isinstance(raw, NutritionRuntimeSnapshot):
+            return raw
+        return NutritionRuntimeSnapshot.model_validate(raw)
+
+    async def execute(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        retrieved_in_invocation_id: str | None = None,
+        frozen_release_id: str | None = None,
+    ) -> NutritionToolResult:
         try:
             definition = self.resolve(name)
         except KeyError:
@@ -464,12 +499,15 @@ class NutritionToolRegistry:
                 )
             )
         if isinstance(parsed, KnowledgeSearchArguments):
-            output = dict(
-                await self._knowledge.search(
-                    query=parsed.query,
-                    max_results=parsed.max_results,
-                )
-            )
+            search_arguments: dict[str, Any] = {
+                "query": parsed.query,
+                "max_results": parsed.max_results,
+            }
+            if retrieved_in_invocation_id is not None:
+                search_arguments["retrieved_in_invocation_id"] = retrieved_in_invocation_id
+            if frozen_release_id is not None:
+                search_arguments["release_id"] = frozen_release_id
+            output = dict(await self._knowledge.search(**search_arguments))
             return self._knowledge_result(output)
         if isinstance(parsed, KnowledgeSourceArguments):
             output = dict(

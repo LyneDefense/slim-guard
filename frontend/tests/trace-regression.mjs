@@ -196,6 +196,26 @@ test("turn overview starts with user input, ends with delivered output, and comp
     workflow: workflow({
       graph_version: "core-primary-v1",
       summary: { model_call_count: 4, total_token_count: 1200 },
+      artifacts: [{
+        artifact_id: "TEST-nutrition-inputs",
+        artifact_type: "nutrition_inputs",
+        producer_role: "nutrition_tool",
+        payload: {
+          knowledge_snapshot: {
+            corpus_release_id: "TEST-release-id",
+            corpus_release_version: "nutrition_v3",
+            retrieval_profile_id: "TEST-retrieval-profile",
+          },
+          knowledge: {
+            corpus_status: "available",
+            candidates: [
+              { citation_id: "TEST-citation", retrieval_run_id: "TEST-run" },
+              { citation_id: "TEST-candidate-only", retrieval_run_id: "TEST-run" },
+            ],
+            citations: [{ citation_id: "TEST-citation", retrieval_run_id: "TEST-run" }],
+          },
+        },
+      }],
       invocations: [
         { invocation_id: "TEST-core", agent_role: "core", attempt: 1, status: "succeeded" },
         { invocation_id: "TEST-style", agent_role: "response_style", attempt: 1, status: "succeeded" },
@@ -210,6 +230,11 @@ test("turn overview starts with user input, ends with delivered output, and comp
   assert.ok(html.includes("医生风格具体改了什么"));
   assert.ok(html.includes("唯一线上 Profile · doctor_strict_v3"));
   assert.ok(html.includes("第 2 次渲染"));
+  assert.ok(html.includes("本轮用了哪一版营养资料"));
+  assert.ok(html.includes("nutrition_v3"));
+  assert.ok(html.includes("2 条"));
+  assert.ok(html.includes("1 条"));
+  assert.ok(html.includes("TEST-run"));
   assert.ok(html.includes("Harness 在这一轮负责了什么"));
 });
 

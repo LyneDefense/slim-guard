@@ -459,6 +459,7 @@ class AdminQueryRepository:
     @classmethod
     def _artifact_used_rag(cls, artifact: dict[str, Any]) -> bool:
         if cls._normalized_artifact_type(str(artifact.get("artifact_type", ""))) not in {
+            "nutritioninputs",
             "nutritionobservation",
             "nutritionobservations",
             "dishevidencebundle",
@@ -764,11 +765,7 @@ class AdminQueryRepository:
                 messages.append(
                     {
                         "item_id": item.id,
-                        "text": (
-                            text
-                            if redaction is None and isinstance(text, str)
-                            else None
-                        ),
+                        "text": (text if redaction is None and isinstance(text, str) else None),
                         "redacted": redaction is not None,
                         "occurred_at": payload.get("occurred_at") or item.created_at,
                     }
@@ -850,8 +847,7 @@ class AdminQueryRepository:
         adopted_events = [
             event
             for event in cls._workflow_events(timeline, "response_adopted")
-            if isinstance(event.get("details"), dict)
-            and event["details"].get("final") is True
+            if isinstance(event.get("details"), dict) and event["details"].get("final") is True
         ]
         adopted = adopted_events[-1].get("details") if adopted_events else None
         adopted = adopted if isinstance(adopted, dict) else {}
@@ -1808,6 +1804,7 @@ class AdminQueryRepository:
             "dishrecognition",
             "dishrecognitioncorrection",
             "evidencepacket",
+            "nutritioninputs",
             "nutritionobservations",
             "nutritionobservation",
             "professionalassessment",
@@ -1849,7 +1846,11 @@ class AdminQueryRepository:
             return cls._safe_dish_recognition_correction(payload)
         if normalized == "evidencepacket":
             return cls._safe_evidence_packet(payload)
-        if normalized in {"nutritionobservations", "nutritionobservation"}:
+        if normalized in {
+            "nutritioninputs",
+            "nutritionobservations",
+            "nutritionobservation",
+        }:
             return cls._safe_nutrition_observations(payload)
         if normalized in {"professionalassessment", "conservativeassessment"}:
             return cls._safe_professional_assessment(payload)
@@ -2263,6 +2264,24 @@ class AdminQueryRepository:
             if isinstance(raw_calculations, list)
             else [],
             "knowledge": cls._safe_knowledge(knowledge),
+            "knowledge_snapshot": cls._safe_knowledge_snapshot(payload.get("knowledge_snapshot")),
+        }
+
+    @staticmethod
+    def _safe_knowledge_snapshot(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        allowed = {
+            "corpus_release_id",
+            "corpus_release_version",
+            "corpus_manifest_sha256",
+            "retrieval_profile_id",
+            "embedding_profile_id",
+            "lexical_profile_id",
+            "chunker_profile_id",
+        }
+        return {
+            key: item for key, item in value.items() if key in allowed and isinstance(item, str)
         }
 
     @staticmethod
@@ -2362,6 +2381,9 @@ class AdminQueryRepository:
             "active": citation.get("active"),
             "content_sha256": citation.get("content_sha256"),
             "source_content_sha256": citation.get("source_content_sha256"),
+            "corpus_release_id": citation.get("corpus_release_id"),
+            "corpus_release_sha256": citation.get("corpus_release_sha256"),
+            "retrieval_run_id": citation.get("retrieval_run_id"),
             # Knowledge snippets can contain sensitive query-adjacent material and
             # are not required for the default administrative timeline.
             "excerpt": None,
@@ -2408,7 +2430,7 @@ class AdminQueryRepository:
         packet = cls._latest_artifact(artifacts, {"evidencepacket"})
         observations = cls._latest_artifact(
             artifacts,
-            {"nutritionobservations", "nutritionobservation"},
+            {"nutritioninputs", "nutritionobservations", "nutritionobservation"},
         )
         assessment = cls._latest_artifact(
             artifacts,
@@ -2509,6 +2531,7 @@ class AdminQueryRepository:
             "claims": [item for item in claims if isinstance(item, dict)],
             "actions": [item for item in actions if isinstance(item, dict)],
             "knowledge": knowledge,
+            "knowledge_snapshot": observation_payload.get("knowledge_snapshot"),
             "adopted_citations": [
                 cls._safe_citation(item) for item in citations if isinstance(item, dict)
             ],

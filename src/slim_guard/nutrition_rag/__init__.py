@@ -1,5 +1,6 @@
 """Production nutrition knowledge ingestion, retrieval, and release management."""
 
+from slim_guard.nutrition_rag.contracts import NutritionRuntimeSnapshot
 from slim_guard.nutrition_rag.gateways import (
     EmbeddingBatch,
     EmbeddingGateway,
@@ -28,6 +29,7 @@ __all__ = [
     "EmbeddingBatch",
     "EmbeddingGateway",
     "NUTRITION_LEXICON_SHA256",
+    "NutritionRuntimeSnapshot",
     "RerankGateway",
     "RerankResult",
     "ZhipuEmbeddingGateway",

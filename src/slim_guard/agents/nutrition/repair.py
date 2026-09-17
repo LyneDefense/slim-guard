@@ -118,6 +118,7 @@ class NutritionRepairService:
         frozen_knowledge = KnowledgeRetrieval.model_validate(
             inputs_artifact.payload.get("knowledge", {"corpus_status": "error"})
         )
+        knowledge_snapshot = inputs_artifact.payload.get("knowledge_snapshot")
         knowledge = self._binder.bind_candidates(
             invocation_id=invocation_id,
             candidates=frozen_knowledge.candidates,
@@ -154,6 +155,7 @@ class NutritionRepairService:
                 "repair_feedback": list(request.review_feedback),
                 "frozen_candidate_count": len(knowledge.candidates),
                 "frozen_citation_count": len(knowledge.citations),
+                "knowledge_snapshot": knowledge_snapshot,
             },
         )
         await self._store.start_invocation(

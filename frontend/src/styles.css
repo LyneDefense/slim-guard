@@ -217,9 +217,9 @@ button:disabled { cursor: default; }
 .trace-text-card p { margin: 0; font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .trace-text-card > small { display: block; margin-top: 14px; color: var(--muted); font-size: 10px; }
 .trace-text-final { border-color: #bfd8ca; background: #f3f9f5; }
-.turn-route-card, .style-before-after, .harness-controls { margin: 22px 0; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: white; }
-.turn-route-card > header, .style-before-after > header, .harness-controls > header { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
-.turn-route-card h2, .style-before-after h2, .harness-controls h2 { margin: 5px 0 0; font-size: 20px; }
+.turn-route-card, .rag-runtime-overview, .style-before-after, .harness-controls { margin: 22px 0; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: white; }
+.turn-route-card > header, .rag-runtime-overview > header, .style-before-after > header, .harness-controls > header { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.turn-route-card h2, .rag-runtime-overview h2, .style-before-after h2, .harness-controls h2 { margin: 5px 0 0; font-size: 20px; }
 .turn-route-card > header small, .harness-controls > header small { color: var(--muted); font-size: 10px; }
 .turn-route { display: flex; align-items: stretch; gap: 20px; overflow-x: auto; margin-top: 18px; padding: 2px 2px 12px; }
 .turn-route-node { position: relative; flex: 0 0 180px; min-height: 112px; padding: 14px; border: 1px solid #dce4df; border-top: 3px solid #81978c; border-radius: 13px; background: #fafcfa; }
@@ -235,6 +235,20 @@ button:disabled { cursor: default; }
 .turn-tool-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding-top: 13px; border-top: 1px solid #edf0ee; }
 .turn-tool-strip > span { margin-right: 3px; color: var(--muted); font-size: 10px; font-weight: 800; }
 .turn-tool-strip code, .harness-versions code { padding: 5px 8px; border-radius: 7px; color: #3f5d4f; background: #eef3f0; font-size: 9px; }
+.rag-runtime-overview { border-color: #c9dce3; background: #f7fbfc; }
+.rag-runtime-status { padding: 6px 10px; border-radius: 9px; color: #245f48; background: #e5f2eb; font-size: 10px; font-weight: 800; }
+.rag-runtime-status.control-bad { color: #943b3b; background: #fbe9e7; }
+.rag-runtime-status.control-warn { color: #846021; background: #fff4dc; }
+.rag-runtime-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-top: 18px; }
+.rag-runtime-grid article { min-width: 0; padding: 13px; border: 1px solid #d9e6e9; border-radius: 12px; background: white; }
+.rag-runtime-grid small, .rag-runtime-grid strong, .rag-runtime-grid code { display: block; }
+.rag-runtime-grid small { color: var(--muted); font-size: 9px; }
+.rag-runtime-grid strong { margin-top: 6px; overflow-wrap: anywhere; font-size: 13px; }
+.rag-runtime-grid code { margin-top: 5px; overflow-wrap: anywhere; color: #73847c; font-size: 8px; }
+.rag-runtime-overview > p { margin: 13px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.rag-runtime-runs { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+.rag-runtime-runs span { color: var(--muted); font-size: 9px; font-weight: 800; }
+.rag-runtime-runs code { padding: 4px 7px; border-radius: 6px; color: #315b68; background: #e7f1f4; font-size: 8px; }
 .style-before-after { border-color: #d8d0eb; background: #fbf9ff; }
 .style-version-badge { padding: 7px 10px; border-radius: 9px; color: #604b88; background: #ece7f7; font-size: 10px; font-weight: 800; }
 .style-compare-grid { display: grid; grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr); align-items: stretch; gap: 10px; margin-top: 18px; }
@@ -1060,7 +1074,8 @@ button:disabled { cursor: default; }
   .overview-metrics { grid-template-columns: repeat(2, 1fr); }
   .workflow-health dl { grid-template-columns: 1fr; }
   .operator-summary-grid { grid-template-columns: 1fr; }
-  .turn-route-card > header, .style-before-after > header, .harness-controls > header { align-items: flex-start; flex-direction: column; }
+  .turn-route-card > header, .rag-runtime-overview > header, .style-before-after > header, .harness-controls > header { align-items: flex-start; flex-direction: column; }
+  .rag-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .harness-control-grid { grid-template-columns: 1fr; }
   .trace-technical-details > summary { align-items: flex-start; flex-wrap: wrap; }
   .trace-technical-details > summary small { width: 100%; margin: 5px 0 0 25px; }

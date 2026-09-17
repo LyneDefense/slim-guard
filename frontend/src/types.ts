@@ -715,6 +715,9 @@ export interface TraceKnowledgeCitation {
   rerank_score?: number | null;
   match_reasons?: string[];
   adoption_status?: string | null;
+  corpus_release_id?: string | null;
+  corpus_release_sha256?: string | null;
+  retrieval_run_id?: string | null;
   excerpt?: string | null;
   snippet?: string | null;
   content?: string | null;
@@ -736,6 +739,17 @@ export interface TraceNutritionObservationsPayload {
   calculations?: TraceNutritionCalculation[];
   calculation_observations?: TraceNutritionCalculation[];
   knowledge?: TraceNutritionKnowledgeStatus | null;
+  knowledge_snapshot?: TraceNutritionRuntimeSnapshot | null;
+}
+
+export interface TraceNutritionRuntimeSnapshot {
+  corpus_release_id: string;
+  corpus_release_version: string;
+  corpus_manifest_sha256: string;
+  retrieval_profile_id: string;
+  embedding_profile_id: string;
+  lexical_profile_id: string;
+  chunker_profile_id: string;
 }
 
 export interface TraceProfessionalClaim {

@@ -1133,7 +1133,12 @@ class NutritionKnowledgeService:
         max_results: int,
         metadata_filter: KnowledgeMetadataFilter | Mapping[str, Any] | None = None,
         retrieved_in_invocation_id: str | None = None,
+        release_id: str | None = None,
     ) -> Mapping[str, Any]:
+        # The legacy single-corpus adapter has no release concept. Accepting the
+        # argument keeps it compatible with the governed RAG repository without
+        # pretending that it can switch releases.
+        del release_id
         query = " ".join(query.split())
         if not query or len(query) > 1_000:
             raise ValueError("query must contain 1 to 1000 characters")

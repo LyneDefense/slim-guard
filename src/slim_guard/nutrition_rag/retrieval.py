@@ -30,6 +30,7 @@ from slim_guard.nutrition_rag.answerability import (
     AnswerabilityGateway,
     AnswerabilityResult,
 )
+from slim_guard.nutrition_rag.contracts import NutritionRuntimeSnapshot
 from slim_guard.nutrition_rag.gateways import (
     EmbeddingGateway,
     NutritionModelGatewayError,
@@ -107,6 +108,21 @@ class HybridNutritionRagService:
         self.rerank_gateway = rerank_gateway
         self.answerability_gateway = answerability_gateway
         self.analyzer = analyzer or ChineseNutritionLexicalAnalyzer()
+
+    async def get_runtime_snapshot(self) -> NutritionRuntimeSnapshot | None:
+        active = await self.repository.get_active_profile()
+        if active is None:
+            return None
+        release, profile = active
+        return NutritionRuntimeSnapshot(
+            corpus_release_id=release.id,
+            corpus_release_version=release.version,
+            corpus_manifest_sha256=release.manifest_sha256,
+            retrieval_profile_id=profile.id,
+            embedding_profile_id=release.embedding_profile_id,
+            lexical_profile_id=release.lexical_profile_id,
+            chunker_profile_id=release.chunker_profile_key,
+        )
 
     async def search(
         self,
@@ -255,10 +271,7 @@ class HybridNutritionRagService:
         context_chars = 0
         selected_count = 0
         supported_chunk_ids = (
-            {
-                rerank_order[index].chunk_id
-                for index in answerability.supported_document_indices
-            }
+            {rerank_order[index].chunk_id for index in answerability.supported_document_indices}
             if answerability is not None
             else None
         )
@@ -406,15 +419,11 @@ class HybridNutritionRagService:
 
         # Answerability indices refer to the compact list passed to the model,
         # while selection uses the complete reranked list.
-        supported_ids = {
-            candidates[index].chunk_id for index in result.supported_document_indices
-        }
+        supported_ids = {candidates[index].chunk_id for index in result.supported_document_indices}
         return AnswerabilityResult(
             outcome=result.outcome,
             supported_document_indices=tuple(
-                index
-                for index, hit in enumerate(rerank_order)
-                if hit.chunk_id in supported_ids
+                index for index, hit in enumerate(rerank_order) if hit.chunk_id in supported_ids
             ),
             reason_code=result.reason_code,
             model=result.model,

@@ -12,7 +12,7 @@ from slim_guard.agents.contracts import (
     ResponseContentBlock,
     ResponsePlan,
 )
-from slim_guard.agents.nutrition import CONSULT_NUTRITION_TOOL_NAME
+from slim_guard.agents.nutrition.constants import CONSULT_NUTRITION_TOOL_NAME
 from slim_guard.harness.tool_calls import ToolCallOutcome
 
 
@@ -108,10 +108,7 @@ class ResponsePlanBuilder:
         neutral_draft: str,
         outcomes: tuple[ToolCallOutcome, ...],
     ) -> CommunicationAct:
-        if any(
-            outcome.execution.tool_name == CONSULT_NUTRITION_TOOL_NAME
-            for outcome in outcomes
-        ):
+        if any(outcome.execution.tool_name == CONSULT_NUTRITION_TOOL_NAME for outcome in outcomes):
             return CommunicationAct.EXPLAIN
         if any(
             outcome.execution.result.status.value == "succeeded"

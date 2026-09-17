@@ -26,7 +26,13 @@ from slim_guard.agents.nutrition import (
     NutritionValidationIssueCode,
     bind_candidates,
 )
+from slim_guard.agents.nutrition.specialist import (
+    NutritionConsultationRequest,
+    NutritionSpecialist,
+)
+from slim_guard.agents.nutrition.tools import NutritionToolRegistry
 from slim_guard.agents.structured_runner import StructuredAgentRunner
+from slim_guard.nutrition_rag import NutritionRuntimeSnapshot
 
 
 @dataclass(frozen=True)
@@ -416,6 +422,83 @@ async def test_nutrition_agent_returns_valid_assessment_without_tools() -> None:
     assert gateway.requests[0].metadata["corpus_status"] == "empty"
 
 
+async def test_nutrition_specialist_freezes_rag_release_for_its_invocation() -> None:
+    snapshot = NutritionRuntimeSnapshot(
+        corpus_release_id="release-3",
+        corpus_release_version="nutrition_v3",
+        corpus_manifest_sha256="a" * 64,
+        retrieval_profile_id="retrieval-profile-1",
+        embedding_profile_id="embedding-profile-1",
+        lexical_profile_id="lexical-profile-1",
+        chunker_profile_id="chunker-profile-1",
+    )
+
+    class GovernedKnowledgeRepository:
+        def __init__(self) -> None:
+            self.invocation_id: str | None = None
+            self.release_id: str | None = None
+
+        async def get_runtime_snapshot(self) -> NutritionRuntimeSnapshot:
+            return snapshot
+
+        async def search(
+            self,
+            *,
+            query: str,
+            max_results: int,
+            retrieved_in_invocation_id: str | None = None,
+            release_id: str | None = None,
+        ) -> dict[str, object]:
+            assert query == "减脂期间晚餐怎么搭配？"
+            assert max_results == 5
+            self.invocation_id = retrieved_in_invocation_id
+            self.release_id = release_id
+            return {
+                "corpus_status": "available",
+                "candidates": [],
+                "citations": [],
+                "query_summary": "adopted=0",
+            }
+
+        async def get_source(
+            self,
+            *,
+            source_id: str,
+            chunk_id: str | None = None,
+        ) -> dict[str, object]:
+            return {"source_id": source_id, "chunk_id": chunk_id}
+
+    repository = GovernedKnowledgeRepository()
+    assessment = ProfessionalAssessment(
+        assessment_type="general",
+        overall="先保证晚餐结构规律，再根据实际饥饿感调整。",
+    )
+    specialist = NutritionSpecialist(
+        model=ScriptedModelGateway((model_response(assessment),)),
+        model_name="fake-nutrition-model",
+        graph_version="core-primary-v1",
+        nutrition_tools=NutritionToolRegistry(repository),
+    )
+
+    result = await specialist.consult(
+        NutritionConsultationRequest(
+            trace_id="trace-1",
+            user_id="user-1",
+            thread_id="thread-1",
+            turn_id="turn-1",
+            parent_invocation_id="core-invocation-1",
+            user_request="晚餐不知道怎么吃",
+            professional_question="减脂期间晚餐怎么搭配？",
+            deadline_at=datetime.now(UTC) + timedelta(seconds=30),
+        )
+    )
+
+    assert repository.invocation_id == result.invocation.invocation_id
+    assert repository.release_id == "release-3"
+    assert result.invocation.payload["knowledge_snapshot"] == snapshot.model_dump(mode="json")
+    assert result.inputs_artifact.payload["knowledge_snapshot"] == snapshot.model_dump(mode="json")
+
+
 async def test_nutrition_agent_repairs_visual_confidence_once() -> None:
     invalid = ProfessionalAssessment(
         assessment_type="meal",
@@ -434,9 +517,7 @@ async def test_nutrition_agent_repairs_visual_confidence_once() -> None:
     )
     repaired = invalid.model_copy(
         update={
-            "findings": (
-                invalid.findings[0].model_copy(update={"confidence": Confidence.LOW}),
-            )
+            "findings": (invalid.findings[0].model_copy(update={"confidence": Confidence.LOW}),)
         }
     )
     gateway = ScriptedModelGateway(
@@ -454,15 +535,11 @@ async def test_nutrition_agent_repairs_visual_confidence_once() -> None:
     assert result.model_call_count == 2
     assert result.total_token_count == 70
     assert result.assessment.findings[0].confidence.value == "low"
-    assert "visual_confidence_upgraded" in (
-        gateway.requests[1].messages[-1].content or ""
-    )
+    assert "visual_confidence_upgraded" in (gateway.requests[1].messages[-1].content or "")
 
 
 async def test_nutrition_agent_repairs_invalid_schema_once() -> None:
-    malformed = ModelResponse(
-        message=ModelMessage(role=MessageRole.ASSISTANT, content="not-json")
-    )
+    malformed = ModelResponse(message=ModelMessage(role=MessageRole.ASSISTANT, content="not-json"))
     gateway = ScriptedModelGateway((malformed, model_response(valid_assessment())))
     agent = NutritionAgent(
         runner=StructuredAgentRunner(model=gateway),

@@ -13,6 +13,7 @@ from slim_guard.agents.nutrition.tools import (
     calculate_weight_trend,
     compare_checkin_adherence,
 )
+from slim_guard.nutrition_rag import NutritionRuntimeSnapshot
 from slim_guard.orchestration.evidence import (
     EvidenceAuthority,
     EvidenceBuilder,
@@ -171,6 +172,75 @@ async def test_nutrition_registry_is_read_only_and_empty_corpus_never_has_articl
     assert unknown.status == "failed"
     assert unknown.failure is not None
     assert unknown.failure.code == "unknown_nutrition_tool"
+
+
+@pytest.mark.asyncio
+async def test_nutrition_registry_freezes_release_and_binds_retrieval_to_invocation() -> None:
+    snapshot = NutritionRuntimeSnapshot(
+        corpus_release_id="release-3",
+        corpus_release_version="nutrition_v3",
+        corpus_manifest_sha256="a" * 64,
+        retrieval_profile_id="retrieval-profile-1",
+        embedding_profile_id="embedding-profile-1",
+        lexical_profile_id="lexical-profile-1",
+        chunker_profile_id="chunker-profile-1",
+    )
+
+    class GovernedKnowledgeRepository:
+        def __init__(self) -> None:
+            self.search_arguments: dict[str, object] | None = None
+
+        async def get_runtime_snapshot(self) -> NutritionRuntimeSnapshot:
+            return snapshot
+
+        async def search(
+            self,
+            *,
+            query: str,
+            max_results: int,
+            retrieved_in_invocation_id: str | None = None,
+            release_id: str | None = None,
+        ) -> dict[str, object]:
+            self.search_arguments = {
+                "query": query,
+                "max_results": max_results,
+                "retrieved_in_invocation_id": retrieved_in_invocation_id,
+                "release_id": release_id,
+            }
+            return {
+                "corpus_status": "available",
+                "candidates": [],
+                "citations": [],
+                "query_summary": "adopted=0",
+            }
+
+        async def get_source(
+            self,
+            *,
+            source_id: str,
+            chunk_id: str | None = None,
+        ) -> dict[str, object]:
+            return {"source_id": source_id, "chunk_id": chunk_id}
+
+    repository = GovernedKnowledgeRepository()
+    registry = NutritionToolRegistry(repository)
+
+    frozen = await registry.freeze_knowledge()
+    result = await registry.execute(
+        "search_nutrition_knowledge",
+        {"query": "减脂期间晚餐如何搭配", "max_results": 5},
+        retrieved_in_invocation_id="inv-nutrition-1",
+        frozen_release_id=frozen.corpus_release_id if frozen is not None else None,
+    )
+
+    assert frozen == snapshot
+    assert result.status == "succeeded"
+    assert repository.search_arguments == {
+        "query": "减脂期间晚餐如何搭配",
+        "max_results": 5,
+        "retrieved_in_invocation_id": "inv-nutrition-1",
+        "release_id": "release-3",
+    }
 
 
 def test_admin_professional_artifacts_hide_bodies_but_keep_provenance() -> None:

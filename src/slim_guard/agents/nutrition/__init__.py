@@ -9,6 +9,7 @@ from slim_guard.agents.nutrition.agent import (
     NutritionAgent,
     NutritionAssessmentValidator,
 )
+from slim_guard.agents.nutrition.constants import CONSULT_NUTRITION_TOOL_NAME
 from slim_guard.agents.nutrition.context import NutritionContextCompiler
 from slim_guard.agents.nutrition.contracts import (
     CalculationInput,
@@ -48,7 +49,6 @@ from slim_guard.agents.nutrition.specialist import (
     NutritionSpecialist,
 )
 from slim_guard.agents.nutrition.tool import (
-    CONSULT_NUTRITION_TOOL_NAME,
     ConsultNutritionArguments,
     NutritionAgentToolHandler,
     nutrition_agent_tool_definitions,

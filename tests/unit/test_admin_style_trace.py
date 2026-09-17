@@ -168,6 +168,74 @@ def test_response_plan_artifact_hides_block_text_from_admin_payload() -> None:
     assert "用户敏感健康原文" not in json.dumps(view["payload"], ensure_ascii=False)
 
 
+def test_nutrition_inputs_expose_frozen_rag_provenance_without_chunk_content() -> None:
+    payload = {
+        "observations": [],
+        "knowledge": {
+            "corpus_status": "available",
+            "candidates": [
+                {
+                    "candidate_id": "candidate-1",
+                    "citation_id": "citation-1",
+                    "source_id": "source-1",
+                    "chunk_id": "chunk-1",
+                    "title": "营养指南",
+                    "content": "不应出现在默认后台摘要里的检索正文",
+                    "corpus_release_id": "release-3",
+                    "retrieval_run_id": "run-1",
+                    "adoption_status": "selected",
+                }
+            ],
+            "citations": [],
+            "query_summary": "用户敏感检索问题",
+        },
+        "tool_receipts": [{"output": {"secret": "不应显示的工具原始输出"}}],
+        "knowledge_snapshot": {
+            "corpus_release_id": "release-3",
+            "corpus_release_version": "nutrition_v3",
+            "corpus_manifest_sha256": "a" * 64,
+            "retrieval_profile_id": "retrieval-profile-1",
+            "embedding_profile_id": "embedding-profile-1",
+            "lexical_profile_id": "lexical-profile-1",
+            "chunker_profile_id": "chunker-profile-1",
+            "unexpected_secret": "must-not-survive",
+        },
+    }
+    row = AgentArtifactRecord(
+        id="nutrition-inputs-1",
+        turn_id="turn-1",
+        invocation_id="nutrition-invocation-1",
+        producer_role="nutrition_tool",
+        artifact_type="nutrition_inputs",
+        schema_version="1",
+        parent_artifact_ids_json="[]",
+        payload_sha256=payload_sha256(payload),
+        payload_json=json.dumps(payload, ensure_ascii=False),
+        created_at=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+
+    view = AdminQueryRepository._artifact_view(row)
+
+    assert view["body_redacted"] is True
+    assert view["payload"]["knowledge_snapshot"] == {
+        "corpus_release_id": "release-3",
+        "corpus_release_version": "nutrition_v3",
+        "corpus_manifest_sha256": "a" * 64,
+        "retrieval_profile_id": "retrieval-profile-1",
+        "embedding_profile_id": "embedding-profile-1",
+        "lexical_profile_id": "lexical-profile-1",
+        "chunker_profile_id": "chunker-profile-1",
+    }
+    candidate = view["payload"]["knowledge"]["candidates"][0]
+    assert candidate["retrieval_run_id"] == "run-1"
+    assert candidate["corpus_release_id"] == "release-3"
+    serialized = json.dumps(view["payload"], ensure_ascii=False)
+    assert "检索正文" not in serialized
+    assert "用户敏感检索问题" not in serialized
+    assert "工具原始输出" not in serialized
+    assert "must-not-survive" not in serialized
+
+
 def test_style_comparison_exposes_only_deliberate_drafts_and_render_attempts() -> None:
     now = datetime(2026, 9, 17, tzinfo=UTC)
 

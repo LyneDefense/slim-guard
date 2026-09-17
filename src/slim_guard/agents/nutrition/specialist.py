@@ -29,6 +29,7 @@ from slim_guard.agents.nutrition.repair import (
     NutritionRepairService,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry, NutritionToolResult
+from slim_guard.nutrition_rag.contracts import NutritionRuntimeSnapshot
 from slim_guard.orchestration.evidence import EvidenceBuilder, EvidenceItem, EvidencePacket
 from slim_guard.runtime.contracts import (
     AgentArtifact,
@@ -126,6 +127,7 @@ class NutritionSpecialist:
         request: NutritionConsultationRequest,
     ) -> NutritionConsultationResult:
         invocation_id = f"inv-{uuid4()}"
+        knowledge_snapshot = await self._nutrition_tools.freeze_knowledge()
         packet = await self._evidence_builder.build(
             turn_id=request.turn_id,
             user_request=request.user_request,
@@ -136,6 +138,7 @@ class NutritionSpecialist:
         observations, knowledge, receipts = await self._nutrition_inputs(
             packet,
             invocation_id=invocation_id,
+            knowledge_snapshot=knowledge_snapshot,
         )
         evidence_artifact = self._artifact(
             turn_id=request.turn_id,
@@ -151,6 +154,11 @@ class NutritionSpecialist:
                 "observations": [item.model_dump(mode="json") for item in observations],
                 "knowledge": knowledge.model_dump(mode="json"),
                 "tool_receipts": receipts,
+                "knowledge_snapshot": (
+                    knowledge_snapshot.model_dump(mode="json")
+                    if knowledge_snapshot is not None
+                    else None
+                ),
             },
             parents=(evidence_artifact.artifact_id,),
         )
@@ -179,6 +187,11 @@ class NutritionSpecialist:
                 "evidence_count": len(packet.items),
                 "calculation_count": len(observations),
                 "corpus_status": knowledge.corpus_status.value,
+                "knowledge_snapshot": (
+                    knowledge_snapshot.model_dump(mode="json")
+                    if knowledge_snapshot is not None
+                    else None
+                ),
             },
         )
         await self._persist_inputs(evidence_artifact, inputs_artifact)
@@ -197,9 +210,7 @@ class NutritionSpecialist:
         # Nutrition Agent receives only the resulting evidence context and has no
         # executable tools of its own, which prevents a model from bypassing the
         # deterministic retrieval/calculation path.
-        model_invocation = invocation.model_copy(
-            update={"allowed_tools": (), "max_tool_calls": 0}
-        )
+        model_invocation = invocation.model_copy(update={"allowed_tools": (), "max_tool_calls": 0})
         result = await self._agent.run(
             invocation=model_invocation,
             context=context,
@@ -273,6 +284,7 @@ class NutritionSpecialist:
         packet: EvidencePacket,
         *,
         invocation_id: str,
+        knowledge_snapshot: NutritionRuntimeSnapshot | None,
     ) -> tuple[
         tuple[CalculationObservation, ...],
         KnowledgeRetrieval,
@@ -340,6 +352,10 @@ class NutritionSpecialist:
         knowledge_result = await self._nutrition_tools.execute(
             "search_nutrition_knowledge",
             {"query": packet.professional_question, "max_results": 5},
+            retrieved_in_invocation_id=invocation_id,
+            frozen_release_id=(
+                knowledge_snapshot.corpus_release_id if knowledge_snapshot is not None else None
+            ),
         )
         receipts.append(self._tool_receipt("search_nutrition_knowledge", knowledge_result))
         if knowledge_result.status.value != "succeeded":

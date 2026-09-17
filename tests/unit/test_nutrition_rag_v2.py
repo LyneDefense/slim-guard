@@ -142,10 +142,7 @@ def test_answerability_exclusion_reason_distinguishes_unselected_from_unsupporte
     )
 
     assert _answerability_exclusion_reason(supported) == "answerability_not_selected"
-    assert (
-        _answerability_exclusion_reason(insufficient)
-        == "answerability_missing_requested_fact"
-    )
+    assert _answerability_exclusion_reason(insufficient) == "answerability_missing_requested_fact"
 
 
 async def test_ingestion_review_release_and_activation_are_separate(tmp_path: Path) -> None:
@@ -329,6 +326,12 @@ async def test_ingestion_review_release_and_activation_are_separate(tmp_path: Pa
         assert active is not None
         assert active[0].id == release.id
         assert active[1].dimensions == 1024
+        snapshot = await retrieval.get_runtime_snapshot()
+        assert snapshot is not None
+        assert snapshot.corpus_release_id == release.id
+        assert snapshot.corpus_release_version == "nutrition-corpus-2026-09-10-v1"
+        assert snapshot.corpus_manifest_sha256 == release.manifest_sha256
+        assert snapshot.retrieval_profile_id == active[1].id
     finally:
         await database.close()
 
@@ -492,6 +495,10 @@ async def test_hybrid_retrieval_filters_before_search_and_returns_receipt(
             result=raw_result,
         )
         assert raw_result["retrieval_run_id"]
+        persisted_run = await repository.get_retrieval_run(str(raw_result["retrieval_run_id"]))
+        assert persisted_run is not None
+        assert persisted_run["invocation_id"] == "nutrition-invocation-1"
+        assert persisted_run["release_id"] == release.id
         assert bound.corpus_status.value == "available"
         assert len(bound.citations) == 1
         assert "番茄炒蛋" in bound.candidates[0].content
