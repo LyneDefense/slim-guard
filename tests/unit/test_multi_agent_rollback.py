@@ -32,7 +32,6 @@ from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.events import ItemType, TurnStatus
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
-from slim_guard.orchestration.coordinator import direct_shadow_directive
 from slim_guard.tools.contracts import ToolExecutionMode
 
 NOW = datetime(2026, 9, 8, 8, tzinfo=UTC)
@@ -67,17 +66,19 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
         [
             tool_response("test-write-once", "record_weight", {"value": 77.6, "unit": "kg"}),
             text_response(baseline),
-            text_response(direct_shadow_directive("确认本轮记录").model_dump_json()),
             text_response(
                 json.dumps(
                     {
                         "text": adopted_text,
-                        "used_block_ids": ["verified-harness-response"],
+                        "used_block_ids": ["core-neutral-draft"],
+                        "used_claim_ids": [],
+                        "used_action_ids": [],
+                        "preserved_risk_flags": [],
+                        "preserved_citation_refs": [],
                         "style_profile_version": "slimguard_default_v1",
                     }
                 )
             ),
-            text_response('{"verdict":"pass"}'),
         ]
     )
     off_model = ScriptedModelGateway(
@@ -124,9 +125,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
         assert [request.purpose for request in on_model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.HARNESS_TURN,
-            ModelPurpose.ORCHESTRATOR,
             ModelPurpose.RESPONSE_STYLE,
-            ModelPurpose.RESPONSE_REVIEWER,
         ]
         on_model.assert_exhausted()
 
@@ -189,7 +188,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
                     .select_from(AgentInvocationRecord)
                     .where(AgentInvocationRecord.turn_id == second.turn_id)
                 )
-                == 0
+                == 1
             )
     finally:
         await on_model.close()

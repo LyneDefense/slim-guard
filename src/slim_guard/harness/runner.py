@@ -40,6 +40,11 @@ from slim_guard.orchestration.coordinator import (
     ShadowWorkflowRequest,
     ShadowWorkflowResult,
 )
+from slim_guard.response_pipeline.contracts import (
+    ResponseFinalizationRequest,
+    ResponseFinalizationResult,
+    ResponseFinalizer,
+)
 from slim_guard.runtime.contracts import (
     AgentArtifact,
     AgentInvocation,
@@ -71,6 +76,7 @@ class TurnRunResult:
     memory_ingestion: MemoryIngestionResult | None = None
     memory_recall: MemoryRecallResult | None = None
     shadow_workflow: ShadowWorkflowResult | None = None
+    response_finalization: ResponseFinalizationResult | None = None
 
     @property
     def final_text(self) -> str | None:
@@ -94,6 +100,7 @@ class TurnHarness:
         memory_recaller: MemoryRecaller | None = None,
         input_safety: InputSafetyPolicy | None = None,
         output_guard: OutputGuard | None = None,
+        response_finalizer: ResponseFinalizer | None = None,
         shadow_workflow: AgentWorkflowCoordinator | None = None,
         shadow_enabled_for: Callable[[str], bool] | None = None,
         workflow_mode: Literal["off", "shadow", "canary", "on"] = "off",
@@ -112,6 +119,7 @@ class TurnHarness:
         self._memory_ingestor = memory_ingestor
         self._memory_recaller = memory_recaller
         self._input_safety = input_safety or DefaultInputSafetyPolicy()
+        self._response_finalizer = response_finalizer
         self._shadow_workflow = shadow_workflow
         self._shadow_enabled_for = shadow_enabled_for or (lambda _user_id: False)
         self._workflow_mode = workflow_mode
@@ -237,6 +245,7 @@ class TurnHarness:
             },
         )
         shadow_result: ShadowWorkflowResult | None = None
+        finalization_result: ResponseFinalizationResult | None = None
 
         async def finalize_response(
             baseline: str,
@@ -402,6 +411,51 @@ class TurnHarness:
             outcomes: tuple[ToolCallOutcome, ...],
             responses: tuple[ModelResponse, ...],
         ) -> FinalResponseCandidate:
+            nonlocal finalization_result
+            if self._response_finalizer is not None:
+                finalization_result = await self._response_finalizer.finalize(
+                    ResponseFinalizationRequest(
+                        trace_id=current_trace_id() or initialized.turn.id,
+                        user_id=initialized.context.user_id,
+                        thread_id=initialized.thread.id,
+                        turn_id=initialized.turn.id,
+                        core_invocation_id=core_invocation.invocation_id,
+                        neutral_draft=baseline,
+                        messages=messages,
+                        tool_outcomes=outcomes,
+                        model_responses=responses,
+                        deadline_at=core_invocation.deadline_at,
+                    )
+                )
+                await self._recorder.record_workflow_event(
+                    turn_id=initialized.turn.id,
+                    event_type=ItemType.RESPONSE_ADOPTED,
+                    payload={
+                        "artifact_id": finalization_result.final_output_artifact_id,
+                        "mode": "core_primary",
+                        "style_profile_version": (
+                            finalization_result.style_profile_version
+                        ),
+                        "reviewer_ran": finalization_result.reviewer_ran,
+                        "style_repaired": finalization_result.style_repaired,
+                        "used_neutral_fallback": (
+                            finalization_result.used_neutral_fallback
+                        ),
+                        "failure_code": finalization_result.failure_code,
+                        "final": True,
+                    },
+                )
+                return FinalResponseCandidate(
+                    text=finalization_result.text,
+                    model_call_count=finalization_result.model_call_count,
+                    total_token_count=finalization_result.total_token_count,
+                    core_output_artifact_id=(
+                        finalization_result.core_output_artifact_id
+                    ),
+                    final_output_artifact_id=(
+                        finalization_result.final_output_artifact_id
+                    ),
+                )
             text = await finalize_response(baseline, messages, outcomes, responses)
             return FinalResponseCandidate(
                 text=text,
@@ -455,7 +509,11 @@ class TurnHarness:
             now=current_time,
             trusted_evidence_item_ids=compiled.evidence_item_ids,
             safety_assessment=safety_assessment,
-            final_response_hook=finalize_with_usage if adopt or evaluate_shadow else None,
+            final_response_hook=(
+                finalize_with_usage
+                if self._response_finalizer is not None or adopt or evaluate_shadow
+                else None
+            ),
             before_finish_hook=lambda result: self._complete_core_invocation(
                 core_invocation,
                 result,
@@ -473,6 +531,7 @@ class TurnHarness:
             memory_ingestion=ingestion_result,
             memory_recall=recall_result,
             shadow_workflow=shadow_result,
+            response_finalization=finalization_result,
         )
 
     @staticmethod
@@ -504,7 +563,8 @@ class TurnHarness:
         result: HarnessLoopResult,
     ) -> None:
         artifact: AgentArtifact | None = None
-        if result.final_text is not None:
+        artifact_id = result.core_output_artifact_id
+        if result.final_text is not None and artifact_id is None:
             artifact = AgentArtifact.create(
                 artifact_id=f"artifact-{uuid4()}",
                 turn_id=invocation.turn_id,
@@ -519,6 +579,7 @@ class TurnHarness:
                     artifact,
                     invocation_id=invocation.invocation_id,
                 )
+            artifact_id = artifact.artifact_id
         status = (
             InvocationStatus.SUCCEEDED
             if result.termination is HarnessTermination.FINAL_RESPONSE
@@ -543,9 +604,11 @@ class TurnHarness:
         invocation_result = AgentResult(
             invocation_id=invocation.invocation_id,
             status=status,
-            output_schema="CoreResponse",
+            output_schema=(
+                "ResponsePlan" if result.core_output_artifact_id is not None else "CoreResponse"
+            ),
             output_schema_version="1",
-            artifact_id=artifact.artifact_id if artifact is not None else None,
+            artifact_id=artifact_id,
             model_call_count=len(result.model_responses),
             tool_call_count=len(result.tool_outcomes),
             token_usage=sum(item.usage.total_tokens for item in result.model_responses),

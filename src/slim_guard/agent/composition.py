@@ -31,8 +31,13 @@ from slim_guard.agents.nutrition_retrieval import (
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
     RESPONSE_REVIEWER_PROMPT_VERSION,
+    ResponseReviewerAgent,
 )
-from slim_guard.agents.style import RESPONSE_STYLE_PROMPT, RESPONSE_STYLE_PROMPT_VERSION
+from slim_guard.agents.style import (
+    RESPONSE_STYLE_PROMPT,
+    RESPONSE_STYLE_PROMPT_VERSION,
+    ResponseStyleAgent,
+)
 from slim_guard.db.session import Database
 from slim_guard.dish_knowledge import DishCatalogRepository
 from slim_guard.domain.assets.repository import ImageAssetRepository
@@ -72,6 +77,8 @@ from slim_guard.orchestration.coordinator import (
     AgentWorkflowCoordinator,
 )
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.response_pipeline import AgentResponseFinalizer, StyleProfileResolver
+from slim_guard.runtime.invocation import InvocationRunner
 from slim_guard.runtime.turn import TurnHarness
 from slim_guard.style_iteration_lifecycle import StyleRuntimeVersionResolver
 from slim_guard.style_profiles import StyleProfileRepository
@@ -368,6 +375,36 @@ def build_agent_runtime(
         if memory_recall_model is not None
         else None
     )
+    structured_runner = InvocationRunner(model=model, clock=clock)
+    response_finalizer = (
+        AgentResponseFinalizer(
+            style_agent=ResponseStyleAgent(
+                runner=structured_runner,
+                model=definition.text_model,
+            ),
+            reviewer_agent=ResponseReviewerAgent(
+                runner=structured_runner,
+                model=definition.text_model,
+            ),
+            reviewer_enabled=definition.response_reviewer_enabled,
+            profile_resolver=StyleProfileResolver(
+                profiles=StyleProfileRepository(database),
+                active_version=StyleRuntimeVersionResolver(
+                    database,
+                    fallback_version=definition.default_style_profile,
+                ),
+                default_version=definition.default_style_profile,
+            ),
+            persistence=invocation_store,
+            recorder=recorder,
+            graph_version=definition.multi_agent_graph_version,
+            max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
+            clock=clock,
+        )
+        if definition.multi_agent_mode == "on"
+        and definition.style_render_all_normal_replies
+        else None
+    )
     runner = TurnHarness(
         initializer=TurnInitializer(state),
         compiler=ContextCompiler(
@@ -383,6 +420,7 @@ def build_agent_runtime(
         memory_ingestor=memory_ingestor,
         memory_recaller=memory_recaller,
         output_guard=SlimGuardOutputGuard(),
+        response_finalizer=response_finalizer,
         shadow_workflow=(
             AgentWorkflowCoordinator(
                 model=model,
@@ -418,7 +456,7 @@ def build_agent_runtime(
                 nutrition_tools=nutrition_tools,
                 clock=clock,
             )
-            if definition.multi_agent_mode != "off"
+            if definition.multi_agent_mode in {"shadow", "canary"}
             else None
         ),
         shadow_enabled_for=lambda _user_id: definition.multi_agent_mode == "shadow",

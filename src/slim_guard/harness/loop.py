@@ -37,6 +37,8 @@ class FinalResponseCandidate:
     text: str
     model_call_count: int = 0
     total_token_count: int = 0
+    core_output_artifact_id: str | None = None
+    final_output_artifact_id: str | None = None
 
 
 FinalResponseHook = Callable[
@@ -89,6 +91,8 @@ class HarnessLoopResult:
     failure: HarnessFailure | None = None
     workflow_model_call_count: int = 0
     workflow_total_token_count: int = 0
+    core_output_artifact_id: str | None = None
+    final_output_artifact_id: str | None = None
 
     @property
     def model_call_count(self) -> int:
@@ -249,6 +253,8 @@ class HarnessLoop:
                 final_text = guarded.text
                 workflow_calls = 0
                 workflow_tokens = 0
+                core_output_artifact_id = None
+                final_output_artifact_id = None
                 if final_response_hook is not None and not guarded.modified:
                     try:
                         proposed = await final_response_hook(
@@ -259,6 +265,8 @@ class HarnessLoop:
                         )
                         workflow_calls = proposed.model_call_count
                         workflow_tokens = proposed.total_token_count
+                        core_output_artifact_id = proposed.core_output_artifact_id
+                        final_output_artifact_id = proposed.final_output_artifact_id
                         checked = self._output_guard.review(
                             text=proposed.text,
                             assessment=active_assessment,
@@ -272,6 +280,7 @@ class HarnessLoop:
                             extra={
                                 "failure_type": type(error).__name__,
                             },
+                            exc_info=error,
                         )
                 return await self._finish(
                     context=context,
@@ -282,6 +291,8 @@ class HarnessLoop:
                     tool_outcomes=tool_outcomes,
                     workflow_model_call_count=workflow_calls,
                     workflow_total_token_count=workflow_tokens,
+                    core_output_artifact_id=core_output_artifact_id,
+                    final_output_artifact_id=final_output_artifact_id,
                     before_finish_hook=before_finish_hook,
                 )
 
@@ -404,6 +415,8 @@ class HarnessLoop:
         failure: HarnessFailure | None = None,
         workflow_model_call_count: int = 0,
         workflow_total_token_count: int = 0,
+        core_output_artifact_id: str | None = None,
+        final_output_artifact_id: str | None = None,
         before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
         result = HarnessLoopResult(
@@ -415,6 +428,8 @@ class HarnessLoop:
             failure=failure,
             workflow_model_call_count=workflow_model_call_count,
             workflow_total_token_count=workflow_total_token_count,
+            core_output_artifact_id=core_output_artifact_id,
+            final_output_artifact_id=final_output_artifact_id,
         )
         if before_finish_hook is not None:
             await before_finish_hook(result)
