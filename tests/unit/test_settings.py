@@ -337,8 +337,9 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "clear_user_memories": "v8",
         "remember_long_term_memory": "v1",
         "list_long_term_memories": "v1",
-        "forget_long_term_memory": "v1",
-        "resolve_pending_user_action": "v1",
+            "forget_long_term_memory": "v1",
+            "clear_long_term_memories": "v1",
+            "resolve_pending_user_action": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
     assert app.state.agent_graph_manifest.graph_version == "typed-supervisor-v1"

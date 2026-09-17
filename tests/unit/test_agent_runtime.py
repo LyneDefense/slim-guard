@@ -377,6 +377,7 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "remember_long_term_memory",
             "list_long_term_memories",
             "forget_long_term_memory",
+            "clear_long_term_memories",
             "resolve_pending_user_action",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")

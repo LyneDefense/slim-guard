@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 TOOL_LABELS = {
+    "clear_long_term_memories": "清空对话长期记忆",
     "clear_user_memories": "清空用户记忆",
     "configure_checkin_schedule": "设置提醒日程",
     "forget_user_memory": "删除一条用户记忆",

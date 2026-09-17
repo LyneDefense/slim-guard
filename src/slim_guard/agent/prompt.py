@@ -147,8 +147,9 @@ SLIM_GUARD_HARNESS_PROMPT = """
   不保存领域事实或长期用户画像。
 - active_handoff 存在且用户要求继续时，以当前消息补充的要求为准承接。任务完成或用户明确取消后，
   调用 resolve_conversation_handoff，handoff_id 只能来自 working_memory；无法确定时先询问。
-- 用户明确要求清空全部个性化记忆时，调用 clear_user_memories，范围只包括 Profile、Goal 和
-  Constraint，不包括体重、饮食、运动、聊天审计或消息幂等记录；该操作必须经过用户二次确认。
+- 用户明确要求清空结构化档案记忆时，调用 clear_user_memories；用户明确要求清空对话长期记忆时，
+  调用 clear_long_term_memories。用户要求清空“全部个性化记忆”时，两类都要分别清空并如实汇总结果。
+  两种操作都必须经过二次确认，且都不包括体重、体脂、饮食、运动、聊天审计或消息幂等记录。
 - working_memory.pending_user_confirmations 只表示待确认操作。只有当前消息明确同意或拒绝其中
   唯一、确定的一项时，才调用 resolve_pending_user_action；decision 由当前语义决定，
   evidence_excerpt 必须逐字来自当前消息。含糊回复或多个候选必须先询问，不能用关键词硬匹配。

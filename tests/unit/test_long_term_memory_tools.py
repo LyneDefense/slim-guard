@@ -9,9 +9,10 @@ from slim_guard.harness.initialization import TurnInitializationRequest, TurnIni
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
-from slim_guard.memory.long_term import LongTermMemoryRepository
+from slim_guard.memory.long_term import LongTermMemoryCandidate, LongTermMemoryRepository
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResultStatus
 from slim_guard.tools.long_term_memory import (
+    ClearLongTermMemoriesArguments,
     ForgetLongTermMemoryArguments,
     ListLongTermMemoriesArguments,
     LongTermMemoryToolHandlers,
@@ -165,5 +166,105 @@ async def test_explicit_memory_write_rejects_nonverbatim_evidence(tmp_path) -> N
         assert result.status is ToolResultStatus.FAILED
         assert result.failure is not None
         assert result.failure.code == "long_term_memory_evidence_mismatch"
+    finally:
+        await database.close()
+
+
+async def test_clear_long_term_memories_revokes_only_current_users_text_memories(
+    tmp_path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'memory-clear.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add_all(
+            (
+                SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW),
+                SlimGuardUser(id="user-2", first_seen_at=NOW, last_seen_at=NOW),
+            )
+        )
+    manifest = AgentManifest.build(
+        model_provider="test",
+        text_model="test",
+        vision_model="test",
+        model_parameters={},
+        system_prompt_version="test",
+        system_prompt="test",
+        context_policy_version="test",
+        memory_policy_version="test",
+        compaction_policy_version="test",
+        safety_policy_version="test",
+        code_revision="test",
+    )
+    await AgentVersionRepository(database).register(manifest)
+    initializer = TurnInitializer(HarnessStateRepository(database))
+    initialized = await initializer.initialize(
+        TurnInitializationRequest(
+            user_id="user-1",
+            agent_version_id=manifest.version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+            execution_mode=ToolExecutionMode.EVALUATION,
+            inputs=(TurnInput.user_message(text="我希望减少周末夜宵；现在请清空我的对话长期记忆"),),
+        )
+    )
+    other = await initializer.initialize(
+        TurnInitializationRequest(
+            user_id="user-2",
+            agent_version_id=manifest.version_id,
+            trigger=TurnTrigger.USER_MESSAGE,
+            execution_mode=ToolExecutionMode.EVALUATION,
+            inputs=(TurnInput.user_message(text="请记住我每周六晨跑"),),
+        )
+    )
+    assert initialized.source_item_id is not None
+    assert other.source_item_id is not None
+    repository = LongTermMemoryRepository(database, clock=lambda: NOW)
+    await repository.apply(
+        user_id="user-1",
+        source_turn_id=initialized.turn.id,
+        source_item_id=initialized.source_item_id,
+        operation_prefix="seed-user-1",
+        candidates=(
+            LongTermMemoryCandidate(
+                content_text="用户希望减少周末夜宵。",
+                evidence_ref=initialized.source_item_id,
+                evidence_excerpt="我希望减少周末夜宵",
+            ),
+        ),
+    )
+    await repository.apply(
+        user_id="user-2",
+        source_turn_id=other.turn.id,
+        source_item_id=other.source_item_id,
+        operation_prefix="seed-user-2",
+        candidates=(
+            LongTermMemoryCandidate(
+                content_text="用户每周六晨跑。",
+                evidence_ref=other.source_item_id,
+                evidence_excerpt="请记住我每周六晨跑",
+            ),
+        ),
+    )
+    handlers = LongTermMemoryToolHandlers(repository)
+    try:
+        result = await handlers.clear_memories(
+            ToolContext(
+                thread_id=initialized.thread.id,
+                turn_id=initialized.turn.id,
+                tool_call_id="clear-call",
+                user_id="user-1",
+                agent_version_id=manifest.version_id,
+                execution_mode=ToolExecutionMode.EVALUATION,
+                source_item_id=initialized.source_item_id,
+                execution_idempotency_key="clear-operation",
+            ),
+            ClearLongTermMemoriesArguments(
+                scope="conversational_long_term",
+                evidence_excerpt="请清空我的对话长期记忆",
+            ),
+        )
+        assert result.status is ToolResultStatus.SUCCEEDED
+        assert result.output["revoked_count"] == 1
+        assert await repository.active("user-1") == ()
+        assert len(await repository.active("user-2")) == 1
     finally:
         await database.close()

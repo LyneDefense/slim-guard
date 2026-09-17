@@ -224,6 +224,7 @@ class SlimGuardOutputGuard:
                 "set_conversation_handoff",
                 "resolve_conversation_handoff",
                 "clear_user_memories",
+                "clear_long_term_memories",
                 "resolve_pending_user_action",
             }
         )

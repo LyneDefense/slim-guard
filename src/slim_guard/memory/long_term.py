@@ -128,6 +128,13 @@ class LongTermMemoryWriteResult(BaseModel):
     previous_memory_id: str | None = None
 
 
+class LongTermMemoryBulkRevokeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    revoked_count: int = Field(ge=0)
+    memory_ids: tuple[str, ...] = ()
+
+
 class LongTermMemoryRepository:
     """PostgreSQL authority for open-text conversational memories."""
 
@@ -281,6 +288,68 @@ class LongTermMemoryRepository:
             self._enqueue_index(session, row=row, operation="delete", now=now)
             await session.flush()
             return self._ref(row), True
+
+    async def revoke_all(
+        self,
+        *,
+        user_id: str,
+        source_turn_id: str,
+        source_item_id: str,
+        evidence_excerpt: str,
+        operation_id: str,
+    ) -> LongTermMemoryBulkRevokeResult:
+        """Revoke only conversational long-term memories owned by one user.
+
+        Structured profile facts and domain records live in other repositories and
+        therefore cannot be removed accidentally through this boundary.
+        """
+
+        async with self._database.session() as session, session.begin():
+            source_text = await self._validate_source(
+                session,
+                user_id=user_id,
+                source_turn_id=source_turn_id,
+                source_item_id=source_item_id,
+            )
+            if evidence_excerpt not in source_text:
+                raise MemoryEvidenceMismatch(
+                    "Long-term memory clear must quote the current user request"
+                )
+            rows = tuple(
+                await session.scalars(
+                    select(UserLongTermMemoryRecord)
+                    .where(
+                        UserLongTermMemoryRecord.user_id == user_id,
+                        UserLongTermMemoryRecord.status == "active",
+                    )
+                    .order_by(UserLongTermMemoryRecord.created_at, UserLongTermMemoryRecord.id)
+                )
+            )
+            now = self._now()
+            memory_ids: list[str] = []
+            for row in rows:
+                row.status = "revoked"
+                row.ended_at = now
+                memory_ids.append(row.id)
+                session.add(
+                    self._event(
+                        row,
+                        event_type="revoked",
+                        turn_id=source_turn_id,
+                        item_id=source_item_id,
+                        detail={
+                            "operation_id": operation_id,
+                            "scope": "conversational_long_term",
+                        },
+                        now=now,
+                    )
+                )
+                self._enqueue_index(session, row=row, operation="delete", now=now)
+            await session.flush()
+            return LongTermMemoryBulkRevokeResult(
+                revoked_count=len(memory_ids),
+                memory_ids=tuple(memory_ids),
+            )
 
     async def _apply_one(
         self,
@@ -515,6 +584,7 @@ class LongTermMemoryRepository:
 __all__ = [
     "LONG_TERM_MEMORY_POLICY_VERSION",
     "LongTermMemoryCandidate",
+    "LongTermMemoryBulkRevokeResult",
     "LongTermMemoryDurability",
     "LongTermMemoryOperation",
     "LongTermMemoryRef",
