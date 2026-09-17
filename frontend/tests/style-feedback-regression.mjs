@@ -85,12 +85,12 @@ test("feedback API keeps actor server-owned and sends CSRF on append", async () 
   assert.doesNotMatch(routeSource, /payload\.actor/);
 });
 
-test("admin navigation exposes the correction entry separately from A-B review", async () => {
+test("admin navigation exposes the unified expression style entry", async () => {
   const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(appSource, /to="\/style-feedback"/);
+  assert.match(appSource, /to="\/styles"/);
   assert.match(appSource, /path="style-feedback" element=\{<StyleFeedbackPage \/>\}/);
   assert.match(appSource, /path="style-iterations" element=\{<StyleIterationPage \/>\}/);
+  assert.match(appSource, /path="styles" element=\{<StyleProfilePage \/>\}/);
   assert.ok(appSource.includes("风格 A/B 人评"));
-  assert.ok(appSource.includes("风格纠正"));
-  assert.ok(appSource.includes("风格版本"));
+  assert.ok(appSource.includes("表达风格"));
 });
