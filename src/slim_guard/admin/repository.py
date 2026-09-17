@@ -23,6 +23,7 @@ from slim_guard.db.models import (
     MealRecord,
     MemoryHandoffRecord,
     MemoryIndexOutboxRecord,
+    MobileAgentRequestRecord,
     OutboundMessage,
     ProactiveMessageRecord,
     RoutineJobRecord,
@@ -660,6 +661,12 @@ class AdminQueryRepository:
                 if trace.routine_job_id is not None
                 else None
             )
+            mobile_request = await session.scalar(
+                select(MobileAgentRequestRecord)
+                .where(MobileAgentRequestRecord.trace_id == trace.id)
+                .order_by(MobileAgentRequestRecord.created_at.desc())
+                .limit(1)
+            )
             timeline: list[dict[str, Any]] = [self._span_view(span) for span in spans]
             timeline.extend(self._item_view(item, redaction) for item, redaction in item_rows)
             timeline.sort(key=lambda event: (self._aware(event["started_at"]), event["sequence"]))
@@ -686,6 +693,10 @@ class AdminQueryRepository:
                     "completed_at": proactive.completed_at,
                 }
                 if proactive is not None
+                else {
+                    **self._mobile_output_view(mobile_request),
+                }
+                if mobile_request is not None
                 else None
             )
             workflow = self._workflow_view(
@@ -3132,6 +3143,18 @@ class AdminQueryRepository:
             0,
             int((cls._aware(completed_at) - cls._aware(started_at)).total_seconds() * 1000),
         )
+
+    @classmethod
+    def _mobile_output_view(cls, request: MobileAgentRequestRecord) -> dict[str, Any]:
+        return {
+            "kind": "mobile",
+            "content": request.final_text,
+            "status": "accepted" if request.status == "succeeded" else request.status,
+            "platform_msgid": None,
+            "last_error": request.failure_code,
+            "attempt_started_at": request.created_at,
+            "completed_at": request.completed_at,
+        }
 
     @classmethod
     def _trace_summary(cls, trace: InteractionTraceRecord) -> dict[str, Any]:
