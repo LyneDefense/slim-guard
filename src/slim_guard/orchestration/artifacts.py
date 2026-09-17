@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Protocol
 
-from slim_guard.agents.contracts import (
+from slim_guard.runtime.contracts import (
     AgentArtifact,
     AgentInvocation,
     ArtifactProducerRole,

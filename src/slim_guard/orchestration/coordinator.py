@@ -25,15 +25,9 @@ from slim_guard.agent_models.gateway import (
     ToolChoice,
 )
 from slim_guard.agents.contracts import (
-    AgentArtifact,
-    AgentInvocation,
-    AgentResult,
-    AgentRole,
-    ArtifactProducerRole,
     CommunicationAct,
     ContentBlockKind,
     InteractionKind,
-    InvocationStatus,
     ProfessionalAssessment,
     RepairTarget,
     ResponseContentBlock,
@@ -115,6 +109,14 @@ from slim_guard.orchestration.graph import (
     TransitionReason,
 )
 from slim_guard.orchestration.repository import InvocationBudgetExceeded
+from slim_guard.runtime.contracts import (
+    AgentArtifact,
+    AgentInvocation,
+    AgentResult,
+    AgentRole,
+    ArtifactProducerRole,
+    InvocationStatus,
+)
 from slim_guard.tools.contracts import ToolExecutionMode
 
 logger = logging.getLogger(__name__)

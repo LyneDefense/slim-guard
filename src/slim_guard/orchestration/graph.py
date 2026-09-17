@@ -12,7 +12,8 @@ from typing import Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from slim_guard.agents.contracts import AgentInvocation, AgentRole, RepairTarget
+from slim_guard.agents.contracts import RepairTarget
+from slim_guard.runtime.contracts import AgentInvocation, AgentRole
 
 
 class GraphNode(StrEnum):

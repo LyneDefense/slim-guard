@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from slim_guard.admin.auth import ADMIN_SESSION_COOKIE, AdminSessionCodec
 from slim_guard.admin.repository import AdminQueryRepository
-from slim_guard.agents.contracts import AgentArtifact, ArtifactProducerRole
 from slim_guard.agents.dish_recognition import (
     DishRecognitionCorrection,
     DishRecognitionCorrectionItem,
@@ -22,6 +21,7 @@ from slim_guard.agents.dish_recognition import (
 from slim_guard.config import Settings
 from slim_guard.db.session import Database
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.runtime.contracts import AgentArtifact, ArtifactProducerRole
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 

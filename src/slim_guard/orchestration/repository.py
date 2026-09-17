@@ -10,12 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from slim_guard.agents.contracts import (
-    AgentArtifact,
-    AgentInvocation,
-    AgentResult,
-    InvocationStatus,
-)
 from slim_guard.db.models import (
     AgentArtifactParentRecord,
     AgentArtifactRecord,
@@ -30,6 +24,12 @@ from slim_guard.orchestration.artifacts import (
     ArtifactNotFound,
     ArtifactReferenceError,
     verify_artifact,
+)
+from slim_guard.runtime.contracts import (
+    AgentArtifact,
+    AgentInvocation,
+    AgentResult,
+    InvocationStatus,
 )
 
 

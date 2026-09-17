@@ -9,7 +9,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from slim_guard.agent_models.gateway import ModelGateway, ModelMessage, ModelResponse
-from slim_guard.agents.contracts import InvocationStatus
 from slim_guard.harness.context import CompiledContext, ContextCompiler
 from slim_guard.harness.context_data import ContextDataProvider, EmptyContextDataProvider
 from slim_guard.harness.errors import ContextCompilationError
@@ -39,6 +38,7 @@ from slim_guard.orchestration.coordinator import (
     ShadowWorkflowRequest,
     ShadowWorkflowResult,
 )
+from slim_guard.runtime.contracts import InvocationStatus
 from slim_guard.tools.policy import ToolAuthorization
 
 

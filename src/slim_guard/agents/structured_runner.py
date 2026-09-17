@@ -23,8 +23,8 @@ from slim_guard.agent_models.gateway import (
     ResponseFormat,
     ToolChoice,
 )
-from slim_guard.agents.contracts import AgentInvocation, InvocationStatus
 from slim_guard.orchestration.graph import InvocationGrant, validate_invocation_grant
+from slim_guard.runtime.contracts import AgentInvocation, InvocationStatus
 
 StructuredOutput = TypeVar("StructuredOutput", bound=BaseModel)
 

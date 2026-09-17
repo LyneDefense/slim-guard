@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 
 from slim_guard.admin.presentation import context_sources, execution_summary, present_event
-from slim_guard.agents.contracts import payload_sha256
 from slim_guard.db.models import (
     AdminAuditEventRecord,
     AgentArtifactRecord,
@@ -35,6 +34,7 @@ from slim_guard.db.models import (
     WeightRecord,
 )
 from slim_guard.db.session import Database
+from slim_guard.runtime.contracts import payload_sha256
 
 
 class AdminQueryRepository:
