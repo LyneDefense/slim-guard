@@ -75,6 +75,7 @@ class AuthoritativeContextDataProvider:
         dialogue_turn_limit: int = 3,
         dialogue_char_limit: int = 1500,
         recent_image_limit: int = 3,
+        preload_domain_history: bool = True,
     ) -> None:
         self._database = database
         self._weights = weights
@@ -94,6 +95,7 @@ class AuthoritativeContextDataProvider:
         self._dialogue_turn_limit = dialogue_turn_limit
         self._dialogue_char_limit = dialogue_char_limit
         self._recent_image_limit = recent_image_limit
+        self._preload_domain_history = preload_domain_history
 
     async def load(
         self,
@@ -105,34 +107,41 @@ class AuthoritativeContextDataProvider:
     ) -> Mapping[str, Any]:
         if current_time.utcoffset() is None:
             raise ValueError("Context data time must be timezone-aware")
-        profile, weight_trend, body_fat_trend, meals, exercise = await asyncio.gather(
-            self._profile(user_id),
-            self._weights.recent_trend(user_id, limit=self._weight_limit),
-            (
-                self._body_fat.recent_trend(user_id, limit=self._weight_limit)
-                if self._body_fat is not None
-                else self._empty_body_fat()
-            ),
-            self._meals.recent(user_id, limit=self._meal_limit),
-            self._exercise.recent(user_id, limit=self._exercise_limit),
-        )
-        context: dict[str, Any] = {
-            "recent_weights": [
+        profile = await self._profile(user_id)
+        context: dict[str, Any] = {}
+        preload_domain_history = self._preload_domain_history or trigger in {
+            TurnTrigger.WEIGHT_REMINDER,
+            TurnTrigger.MEAL_REMINDER,
+            TurnTrigger.DAILY_REVIEW,
+        }
+        if preload_domain_history:
+            weight_trend, body_fat_trend, meals, exercise = await asyncio.gather(
+                self._weights.recent_trend(user_id, limit=self._weight_limit),
+                (
+                    self._body_fat.recent_trend(user_id, limit=self._weight_limit)
+                    if self._body_fat is not None
+                    else self._empty_body_fat()
+                ),
+                self._meals.recent(user_id, limit=self._meal_limit),
+                self._exercise.recent(user_id, limit=self._exercise_limit),
+            )
+            context.update({
+                "recent_weights": [
                 {
                     "weight_kg": self._decimal_text(record.weight_kg),
                     "measured_at": record.measured_at.isoformat(),
                     "condition": record.condition.value,
                 }
-                for record in weight_trend.records
-            ],
-            "recent_body_fat": [
+                    for record in weight_trend.records
+                ],
+                "recent_body_fat": [
                 {
                     "body_fat_percent": self._decimal_text(record.percent),
                     "measured_at": record.measured_at.isoformat(),
                 }
-                for record in body_fat_trend.records
-            ],
-            "recent_meals": [
+                    for record in body_fat_trend.records
+                ],
+                "recent_meals": [
                 {
                     "meal_type": record.meal_type.value,
                     "foods": [
@@ -145,9 +154,9 @@ class AuthoritativeContextDataProvider:
                     "occurred_at": record.occurred_at.isoformat(),
                     **({"note": record.note} if record.note else {}),
                 }
-                for record in meals
-            ],
-            "recent_exercise": [
+                    for record in meals
+                ],
+                "recent_exercise": [
                 {
                     "activity_name": record.activity_name,
                     "occurred_at": record.occurred_at.isoformat(),
@@ -169,9 +178,9 @@ class AuthoritativeContextDataProvider:
                     ),
                     **({"note": record.note} if record.note else {}),
                 }
-                for record in exercise
-            ],
-        }
+                    for record in exercise
+                ],
+            })
         if profile is not None:
             context["profile"] = profile
         if self._memories is not None:

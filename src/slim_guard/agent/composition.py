@@ -280,6 +280,7 @@ def build_agent_runtime(
         dialogue_turn_limit=definition.memory_recent_turn_count,
         dialogue_char_limit=definition.memory_recent_dialogue_max_chars,
         recent_image_limit=definition.memory_recent_image_count,
+        preload_domain_history=False,
     )
     nutrition_tools = NutritionToolRegistry(
         knowledge_repository=(

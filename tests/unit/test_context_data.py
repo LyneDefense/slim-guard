@@ -194,5 +194,24 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
         assert context["profile_memory"][0]["key"] == "constraint.dietary"
         assert context["profile_memory"][0]["sensitivity"] == "health"
         assert context["profile_memory"][0]["stale"] is True
+
+        core_context = await AuthoritativeContextDataProvider(
+            database=database,
+            weights=weights,
+            meals=meals,
+            exercise=exercise,
+            memories=memories,
+            preload_domain_history=False,
+        ).load(
+            user_id="user-1",
+            current_time=NOW + timedelta(days=181),
+            trigger=TurnTrigger.USER_MESSAGE,
+        )
+        assert core_context["profile"] == context["profile"]
+        assert core_context["profile_memory"] == context["profile_memory"]
+        assert "recent_weights" not in core_context
+        assert "recent_body_fat" not in core_context
+        assert "recent_meals" not in core_context
+        assert "recent_exercise" not in core_context
     finally:
         await database.close()
