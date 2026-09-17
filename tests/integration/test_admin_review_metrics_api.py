@@ -398,7 +398,7 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
         "degradation_rate": 2,
     }
     assert payload["by_repair_target"] == {
-        "orchestrator": 0,
+        "core": 0,
         "nutrition_expert": 0,
         "response_style": 1,
         "unknown": 0,
@@ -423,6 +423,6 @@ async def test_workflow_review_metrics_expose_rates_and_denominators(
     }
     assert payload["outcomes_by_mode"] == {
         "off": {"total": 1, "succeeded": 1, "degraded": 0, "failed": 0},
-        "shadow": {"total": 2, "succeeded": 1, "degraded": 1, "failed": 0},
+        "core_primary": {"total": 2, "succeeded": 1, "degraded": 1, "failed": 0},
     }
     assert "must remain private" not in metrics.text

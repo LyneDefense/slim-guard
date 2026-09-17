@@ -79,6 +79,7 @@ OPERATION_LABELS = {
 }
 
 AGENT_ROLE_LABELS = {
+    "core": "主教练 Agent",
     "memory_ingestion": "长期记忆核对模块",
     "memory_recall": "记忆召回模块",
     "orchestrator": "对话编排 Agent",
@@ -120,6 +121,8 @@ WORKFLOW_NODE_LABELS = {
     "memory_ingested": "长期记忆核对",
     "memory_recall": "相关记忆召回",
     "context_ready": "上下文准备完成",
+    "core": "主教练处理任务",
+    "core_running": "主教练处理任务",
     "orchestrator": "对话编排",
     "orchestrator_running": "对话编排",
     "dish_recognition_running": "菜品识别",
@@ -780,20 +783,20 @@ def _transition_type_label(transition_type: str) -> str:
 
 def _response_mode_label(mode: str) -> str:
     return {
-        "legacy": "现有单 Agent 模式",
-        "shadow": "影子模式",
-        "canary": "灰度模式",
-        "multi_agent": "多 Agent 模式",
-        "on": "多 Agent 模式",
+        "core_primary": "Core 主路径",
+        "on": "Core 主路径",
+        "off": "风格与审查管线关闭",
+        "unavailable": "历史记录未标注",
     }.get(mode, _humanize_identifier(mode))
 
 
 def _fallback_type_label(fallback_type: str) -> str:
     return {
-        "legacy_response": "现有回复",
+        "core_response": "Core 中性回复",
         "neutral_renderer": "中性模板回复",
         "safe_response": "安全兜底回复",
         "no_response": "不发送回复",
+        "legacy_response": "历史旧回复链路",
     }.get(fallback_type, _humanize_identifier(fallback_type))
 
 

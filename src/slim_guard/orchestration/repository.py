@@ -97,7 +97,7 @@ class StoredInvocation:
 
 
 class OrchestrationRepository:
-    """Persists coordinator state and verifies every artifact reference and digest."""
+    """Persists Harness state and verifies every artifact reference and digest."""
 
     def __init__(self, database: Database) -> None:
         self.database = database

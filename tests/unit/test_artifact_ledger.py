@@ -23,8 +23,8 @@ def artifact(
     return AgentArtifact.create(
         artifact_id=artifact_id,
         turn_id=turn_id,
-        producer_role="orchestrator",  # type: ignore[arg-type]
-        artifact_type="TurnDirective",
+        producer_role="core",  # type: ignore[arg-type]
+        artifact_type="ResponsePlan",
         schema_version="1",
         parent_artifact_ids=parents,
         payload={"artifact_id": artifact_id},
@@ -37,7 +37,7 @@ def invocation(*artifact_ids: str, turn_id: str = "turn-1") -> AgentInvocation:
         invocation_id="invocation-1",
         trace_id="trace-1",
         turn_id=turn_id,
-        graph_version="typed-supervisor-v1",
+        graph_version="core-primary-v1",
         agent_role="response_style",
         agent_version="style-v1",
         input_artifact_ids=artifact_ids,

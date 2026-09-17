@@ -32,7 +32,7 @@ from slim_guard.runtime.invocation import (
 RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v3"
 RESPONSE_REVIEWER_PROMPT = (
     "You are SlimGuard's response fidelity reviewer. Judge only whether the styled "
-    "response is faithful to the supplied ResponsePlan, directive, assessment, evidence "
+    "response is faithful to the supplied ResponsePlan, assessment, evidence "
     "summaries, uncertainty, risks, and citations. Read the actual response text: its "
     "declared preserved references alone do not prove fidelity. Evidence summaries are "
     "the selected factual content; IDs alone never prove a claim. Missing summaries do "

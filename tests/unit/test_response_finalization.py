@@ -116,7 +116,7 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
         assert core.output_schema == "ResponsePlan"
         assert style.parent_invocation_id == core.invocation_id
         assert style.output_schema == "StyledResponse"
-        assert not any(item.agent_role == AgentRole.ORCHESTRATOR.value for item in invocations)
+        assert not any(item.agent_role == "orchestrator" for item in invocations)
         assert {item.artifact_type for item in artifacts} >= {
             "response_plan",
             "neutral_response",
@@ -213,7 +213,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
             item for item in artifacts if item.artifact_type == "reviewer_verdict"
         )
         assert verdict.payload["verdict"] == "pass"
-        assert not any(item.agent_role == AgentRole.ORCHESTRATOR.value for item in invocations)
+        assert not any(item.agent_role == "orchestrator" for item in invocations)
     finally:
         await database.close()
 

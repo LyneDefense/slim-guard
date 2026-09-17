@@ -22,20 +22,20 @@ function artifact(id, type, payload) {
 
 function render(payload, changes = {}) {
   return renderToStaticMarkup(createElement(StyleTracePanel, { workflow: {
-    mode: "on", invocations: [], transitions: [], timeline: [], shadowComparison: null,
+    mode: "core_primary", invocations: [], transitions: [], timeline: [],
     artifacts: [artifact("TEST-resolution", "style_resolution", payload)],
     ...changes,
   } }));
 }
 
-test("Style Trace shows frozen version, act, canary source and expression IDs", () => {
+test("Style Trace shows frozen active version, act and expression IDs", () => {
   const html = render({
     style_profile_id: "TEST-style", style_profile_version: "TEST-style-v1",
     requested_style_profile_version: "TEST-style-v1", communication_act: "explain",
-    style_selection_source: "canary", example_ids: ["TEST-example-1", "TEST-example-2"],
+    style_selection_source: "default", example_ids: ["TEST-example-1", "TEST-example-2"],
   });
   assert.ok(html.includes("TEST-style-v1"));
-  assert.ok(html.includes("内部用户灰度"));
+  assert.ok(html.includes("当前启用版本"));
   assert.ok(html.includes("解释"));
   assert.ok(html.includes("TEST-example-1"));
   assert.ok(html.includes("TEST-example-2"));
@@ -94,12 +94,12 @@ test("style metadata does not reveal expression bodies, plans or raw conversatio
   assert.ok(html.includes("TEST-example"));
 });
 
-test("style adoption labels distinguish a shadow candidate from a final output", () => {
+test("style adoption labels distinguish an unadopted render from final output", () => {
   for (const final of [false, true]) {
     const html = render({ style_profile_version: "TEST-style-v1" }, {
       timeline: [{ sequence: 1, operation: "response_adopted", details: { artifact_id: "TEST-output", final } }],
     });
-    assert.ok(html.includes(final ? "最终采用" : "Shadow 候选"));
+    assert.ok(html.includes(final ? "最终采用" : "未采用渲染"));
     assert.ok(html.includes(final ? "进入最终输出" : "未发送给用户"));
   }
 });

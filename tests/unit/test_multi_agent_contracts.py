@@ -17,35 +17,25 @@ from slim_guard.agents.contracts import (
     ResponsePlan,
     ReviewerVerdict,
     StyledResponse,
-    TurnDirective,
 )
 
 
-def test_professional_directive_requires_a_question_and_evidence() -> None:
-    with pytest.raises(ValidationError, match="professional_question"):
-        TurnDirective(
-            response_path="professional_assessment",
-            interaction_kind="question",
-            user_need_summary="需要分析午餐",
-            response_brief="分析结构和下一步",
-            evidence_refs=("meal-1",),
-            voice_act="explain",
-        )
-
-
 def test_contracts_are_frozen_and_reject_unknown_fields() -> None:
-    directive = TurnDirective(
-        response_path="direct",
-        interaction_kind="chat",
-        user_need_summary="普通交流",
-        response_brief="简短回应",
-        voice_act="acknowledge",
+    plan = ResponsePlan(
+        communication_act="acknowledge",
+        content_blocks=(
+            ResponseContentBlock(
+                block_id="social-1",
+                kind="social_act",
+                text="收到。",
+            ),
+        ),
     )
 
     with pytest.raises(ValidationError, match="frozen"):
-        directive.response_brief = "changed"  # type: ignore[misc]
+        plan.requested_detail = "detailed"  # type: ignore[misc]
     with pytest.raises(ValidationError, match="Extra inputs"):
-        TurnDirective.model_validate({**directive.model_dump(), "secret": "not allowed"})
+        ResponsePlan.model_validate({**plan.model_dump(), "secret": "not allowed"})
 
 
 def test_rag_claim_must_resolve_to_a_real_citation() -> None:
@@ -146,7 +136,7 @@ def test_invocation_accepts_legacy_envelope_aliases_but_keeps_trusted_fields() -
         trace_id="trace-1",
         thread_id="thread-1",
         turn_id="turn-1",
-        graph_version="typed-supervisor-v1",
+        graph_version="core-primary-v1",
         callee="nutrition_expert",
         agent_version="nutrition-v1",
         parent_artifact_ids=("artifact-1",),
@@ -169,8 +159,8 @@ def test_artifact_factory_computes_and_validates_canonical_hash() -> None:
     artifact = AgentArtifact.create(
         artifact_id="artifact-1",
         turn_id="turn-1",
-        producer_role=ArtifactProducerRole.ORCHESTRATOR,
-        artifact_type="TurnDirective",
+        producer_role=ArtifactProducerRole.CORE,
+        artifact_type="ResponsePlan",
         schema_version="1",
         payload={"b": 2, "a": 1},
         created_at=datetime.now(UTC),

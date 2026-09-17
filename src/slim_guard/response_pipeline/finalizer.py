@@ -198,7 +198,6 @@ class AgentResponseFinalizer:
             and verdict.repair_target
             in {
                 RepairTarget.CORE,
-                RepairTarget.ORCHESTRATOR,
                 RepairTarget.NUTRITION_EXPERT,
             }
             and first_review.status is InvocationStatus.SUCCEEDED

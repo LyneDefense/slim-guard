@@ -73,7 +73,7 @@ export function WorkflowGraph({ workflow }: { workflow: WorkflowTraceView }) {
               <article className={`workflow-node workflow-node-${statusTone(step.invocation?.status)}`}>
                 <header>
                   <span className="workflow-node-number">{index + 1}</span>
-                  <small>{step.invocation ? "AGENT" : "COORDINATOR"}</small>
+                  <small>{step.invocation ? "AGENT" : "HARNESS"}</small>
                 </header>
                 <h3>{step.invocation ? agentRoleLabel(step.invocation.agent_role) : nodeLabel(step.node)}</h3>
                 <code>{step.node}</code>

@@ -37,10 +37,8 @@ def test_agent_runtime_defaults_to_harness() -> None:
 
     assert settings.agent_runtime_mode == "harness"
     assert settings.multi_agent_mode == "off"
-    assert settings.multi_agent_canary_users == frozenset()
-    assert settings.multi_agent_graph_version == "typed-supervisor-v1"
-    assert settings.multi_agent_max_model_calls == 12
-    assert settings.multi_agent_max_total_tokens == 64_000
+    assert settings.multi_agent_graph_version == "core-primary-v1"
+    assert settings.agent_specialist_timeout_seconds == 20
     assert settings.multi_agent_invocation_max_total_tokens == 32_000
     assert settings.default_style_profile == "slimguard_default_v1"
     assert settings.style_render_all_normal_replies is True
@@ -48,10 +46,6 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.nutrition_rag_enabled is False
     assert settings.nutrition_require_rag_citations is True
     assert settings.response_reviewer_enabled is False
-    assert settings.meal_guidance_enabled is False
-    assert settings.dish_recognition_enabled is True
-    assert settings.nutrition_retrieval_enabled is True
-    assert settings.diet_guidance_enabled is True
     assert settings.memory_health_review_days == 180
     assert settings.memory_recent_turn_count == 3
     assert settings.memory_recent_dialogue_max_chars == 1500
@@ -168,62 +162,36 @@ def test_agent_runtime_rejects_unknown_mode() -> None:
         Settings(agent_runtime_mode="unknown")
 
 
-def test_multi_agent_canary_users_are_normalized() -> None:
-    settings = Settings(
-        multi_agent_mode="canary",
-        multi_agent_canary_user_ids=" user-2,user-1,user-2, ",
-    )
-
-    assert settings.multi_agent_canary_users == frozenset({"user-1", "user-2"})
-    assert settings.multi_agent_executes_for("user-1") is True
-    assert settings.multi_agent_executes_for("user-3") is False
-    assert settings.multi_agent_adopts_for("user-1") is True
-    assert settings.multi_agent_adopts_for("user-3") is False
-
-    shadow = Settings(multi_agent_mode="shadow")
-    assert shadow.multi_agent_executes_for("any-user") is True
-    assert shadow.multi_agent_adopts_for("any-user") is False
-
+def test_obsolete_dual_path_modes_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Settings(multi_agent_mode="shadow")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        Settings(multi_agent_mode="canary")  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
         Settings(multi_agent_mode="unknown")
 
 
-def test_multi_agent_invocation_budget_cannot_exceed_workflow_budget() -> None:
-    with pytest.raises(ValidationError, match="INVOCATION_MAX_TOTAL_TOKENS"):
-        Settings(
-            multi_agent_max_total_tokens=32_000,
-            multi_agent_invocation_max_total_tokens=32_001,
-        )
+def test_legacy_shadow_timeout_env_alias_configures_specialist_timeout() -> None:
+    settings = Settings(
+        _env_file=None,
+        MULTI_AGENT_SHADOW_TIMEOUT_SECONDS="45",
+    )
 
-    with pytest.raises(ValidationError, match="invocation token budget"):
-        AgentRuntimeDefinition(
-            model_provider="test",
-            text_model="test",
-            vision_model="test",
-            code_revision="test",
-            multi_agent_max_total_tokens=32_000,
-            multi_agent_invocation_max_total_tokens=32_001,
-        )
+    assert settings.agent_specialist_timeout_seconds == 45
 
 
-def test_unimplemented_shadow_runtime_mode_fails_fast() -> None:
-    settings = Settings(agent_runtime_mode="shadow")
-
-    with pytest.raises(ValueError, match="not implemented yet"):
-        create_app(settings)
+def test_obsolete_runtime_modes_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Settings(agent_runtime_mode="shadow")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        Settings(agent_runtime_mode="legacy")  # type: ignore[arg-type]
 
 
 def test_multi_agent_adoption_modes_require_reviewer() -> None:
-    for mode in ("canary", "on"):
-        with pytest.raises(ValueError, match="requires Response Reviewer"):
-            create_app(Settings(multi_agent_mode=mode))  # type: ignore[arg-type]
-        app = create_app(Settings(multi_agent_mode=mode, response_reviewer_enabled=True))
-        assert app.state.multi_agent_mode == mode
-
-
-def test_multi_agent_cannot_silently_run_with_legacy_runtime() -> None:
-    with pytest.raises(ValueError, match="requires AGENT_RUNTIME_MODE=harness"):
-        create_app(Settings(agent_runtime_mode="legacy", multi_agent_mode="on"))
+    with pytest.raises(ValueError, match="requires Response Reviewer"):
+        create_app(Settings(multi_agent_mode="on"))
+    app = create_app(Settings(multi_agent_mode="on", response_reviewer_enabled=True))
+    assert app.state.multi_agent_mode == "on"
 
 
 def test_nutrition_rag_requires_agent_and_mandatory_citations() -> None:
@@ -292,11 +260,6 @@ def test_response_reviewer_requires_style_rendering() -> None:
         )
 
 
-def test_meal_guidance_requires_nutrition_agent() -> None:
-    with pytest.raises(ValueError, match="MEAL_GUIDANCE_ENABLED"):
-        Settings(meal_guidance_enabled=True, nutrition_agent_enabled=False)
-
-
 def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
     settings = Settings(
         agent_runtime_mode="harness",
@@ -307,7 +270,7 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
 
     assert app.state.agent_runtime_mode == "harness"
     assert app.state.multi_agent_mode == "off"
-    assert app.state.multi_agent_graph_version == "typed-supervisor-v1"
+    assert app.state.multi_agent_graph_version == "core-primary-v1"
     assert dict(app.state.agent_manifest.tool_versions) == {
         "get_recent_weight_trend": "v1",
         "record_body_fat": "v1",
@@ -337,23 +300,21 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "clear_user_memories": "v8",
         "remember_long_term_memory": "v1",
         "list_long_term_memories": "v1",
-            "forget_long_term_memory": "v1",
-            "clear_long_term_memories": "v1",
-            "resolve_pending_user_action": "v1",
+        "forget_long_term_memory": "v1",
+        "clear_long_term_memories": "v1",
+        "resolve_pending_user_action": "v1",
     }
     assert app.state.agent_manifest.code_revision == "test-harness-commit"
-    assert app.state.agent_graph_manifest.graph_version == "typed-supervisor-v1"
+    assert app.state.agent_graph_manifest.graph_version == "core-primary-v1"
     assert [role for role, _node in app.state.agent_graph_manifest.nodes] == [
-        "dish_recognition",
+        "core",
         "nutrition_expert",
-        "nutrition_retrieval",
-        "orchestrator",
         "response_reviewer",
         "response_style",
     ]
     graph_nodes = dict(app.state.agent_graph_manifest.nodes)
-    assert graph_nodes["nutrition_expert"].prompt_version == "diet-guidance-zh-v1"
-    assert {node.max_total_tokens for node in graph_nodes.values()} == {32_000}
+    assert graph_nodes["nutrition_expert"].prompt_version == "nutrition-assessment-v1"
+    assert {node.max_total_tokens for node in graph_nodes.values()} == {32_000, 64_000}
     assert dict(app.state.agent_graph_manifest.nutrition_tool_versions) == {
         "calculate_bmi": "1",
         "calculate_weight_trend": "1",
@@ -364,11 +325,11 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
 
 
 def test_create_app_exposes_current_agent_manifest() -> None:
-    settings = Settings(agent_runtime_mode="legacy", agent_code_revision="test-commit")
+    settings = Settings(agent_runtime_mode="harness", agent_code_revision="test-commit")
 
     app = create_app(settings)
 
-    assert app.state.agent_runtime_mode == "legacy"
+    assert app.state.agent_runtime_mode == "harness"
     assert app.state.agent_manifest.text_model == "glm-5.2"
     assert app.state.agent_manifest.code_revision == "test-commit"
     assert app.state.agent_manifest.version_id.startswith("agent-")

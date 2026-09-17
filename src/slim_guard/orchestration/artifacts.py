@@ -175,7 +175,7 @@ class InMemoryArtifactStore:
             self.append(artifact)
 
 
-# The ledger name communicates the append-only semantics to coordinator callers.
+# The ledger name communicates the append-only semantics to Harness callers.
 ArtifactLedger = InMemoryArtifactStore
 
 

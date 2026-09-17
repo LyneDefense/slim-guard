@@ -35,16 +35,10 @@ export function TraceOperatorSummary({
   let title = "本次回复状态需要核对";
   let explanation = "当前记录不足以确定新流程是否用于最终回复。";
   let tone: SummaryTone = "neutral";
-  if (["off", "legacy"].includes(workflow.mode) && !workflow.hasMultiAgentTrace) {
-    title = delivered ? "用户已收到旧流程回复" : "旧流程回复尚未确认送达";
-    explanation = "本轮没有运行 Multi-Agent，因此没有使用营养 RAG、医生风格或审查节点。";
+  if (!workflow.hasAgentTrace) {
+    title = delivered ? "用户已收到回复，但缺少 Agent 执行记录" : "本轮执行记录不完整";
+    explanation = "这通常是迁移前的历史记录，无法从当前 Trace 还原 Core、风格和审查步骤。";
     tone = delivered ? "neutral" : "warn";
-  } else if (workflow.mode === "shadow") {
-    title = delivered ? "用户已收到旧流程回复；新流程仅做影子评估" : "影子评估已运行";
-    explanation = multiAgentFailed
-      ? failureSentence(failureOwner, failureCode, true)
-      : "影子候选不会发送给用户，用于上线前观察新流程表现。";
-    tone = multiAgentFailed ? "warn" : "neutral";
   } else if (finalAdopted && delivered && !multiAgentFailed) {
     title = "本轮处理已完成并送达";
     explanation = "Core 主路径已完成必要的专业调用、风格处理和审查，最终文案已交给发送渠道。";
@@ -128,16 +122,8 @@ function workflowCard(
   failed: boolean,
   finalAdopted: boolean,
 ): SummaryCard {
-  if (["off", "legacy"].includes(workflow.mode) && !workflow.hasMultiAgentTrace) {
-    return { label: "Agent 主路径", value: "未运行", detail: "本轮使用历史流程", tone: "neutral" };
-  }
-  if (workflow.mode === "shadow") {
-    return {
-      label: "Agent 主路径",
-      value: failed ? "影子失败" : "仅影子运行",
-      detail: "候选不会发送给用户",
-      tone: failed ? "bad" : "neutral",
-    };
+  if (!workflow.hasAgentTrace) {
+    return { label: "Agent 主路径", value: "未记录", detail: "迁移前历史 Trace", tone: "neutral" };
   }
   if (failed) {
     return { label: "Agent 主路径", value: "已降级", detail: "查看明确的失败节点", tone: "bad" };
@@ -187,15 +173,14 @@ function friendlyFailure(code: string | null): string {
   if (!code) return "未记录具体原因";
   const labels: Record<string, string> = {
     token_budget_exhausted: "单个 Agent 的 Token 预算不足",
-    turn_token_budget_exhausted: "整轮 Multi-Agent 的 Token 预算不足",
-    turn_model_budget_exhausted: "整轮 Multi-Agent 的模型调用次数不足",
+    turn_token_budget_exhausted: "整轮 Agent 管线的 Token 预算不足",
+    turn_model_budget_exhausted: "整轮 Agent 管线的模型调用次数不足",
     invocation_budget_persistence_rejected: "调用结果超过预算，记录被拒绝",
     workflow_deadline_exceeded: "工作流执行超时",
     deadline_exceeded: "Agent 执行超时",
     workflow_cancelled: "工作流被取消",
     model_gateway_error: "模型服务调用异常",
     workflow_interrupted: "工作流被中断（旧记录没有保留更具体原因）",
-    shadow_internal_error: "新流程发生内部错误",
   };
   return labels[code] ?? `系统错误（${code}）`;
 }

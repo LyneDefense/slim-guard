@@ -26,7 +26,6 @@ from slim_guard.agents.contracts import (
     ResponsePlan,
     ReviewerVerdict,
     StyledResponse,
-    TurnDirective,
 )
 from slim_guard.agents.reviewer import (
     ResponseReviewerAgent,
@@ -35,9 +34,8 @@ from slim_guard.agents.reviewer import (
     ReviewerEvidenceSummary,
     ReviewerVerdictValidator,
 )
-from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1
-from slim_guard.orchestration.graph import InvocationGrant
+from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 
 
 def invocation(**updates: object) -> AgentInvocation:
@@ -46,7 +44,7 @@ def invocation(**updates: object) -> AgentInvocation:
             "invocation_id": "review-1",
             "trace_id": "trace-1",
             "turn_id": "turn-1",
-            "graph_version": "typed-supervisor-v1",
+            "graph_version": "core-primary-v1",
             "agent_role": "response_reviewer",
             "agent_version": "review-v1",
             "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
@@ -93,15 +91,6 @@ def context() -> ReviewerContext:
             ),
             uncertainty_note="尚缺连续体重数据。",
         ),
-        directive=TurnDirective(
-            response_path="professional_assessment",
-            interaction_kind="review",
-            user_need_summary="了解近期体重趋势。",
-            response_brief="根据记录解释趋势及数据局限。",
-            professional_question="近期体重趋势如何？",
-            evidence_refs=("weight-1",),
-            voice_act="explain",
-        ),
         available_evidence_ids=("weight-1",),
         evidence_summaries=(
             ReviewerEvidenceSummary(evidence_id="weight-1", summary="仅有单次体重：77.6kg。"),
@@ -117,10 +106,10 @@ def response(content: str) -> ModelResponse:
 
 
 def agent(gateway: ScriptedModelGateway) -> ResponseReviewerAgent:
-    return ResponseReviewerAgent(runner=StructuredAgentRunner(model=gateway), model="test-model")
+    return ResponseReviewerAgent(runner=InvocationRunner(model=gateway), model="test-model")
 
 
-async def test_pass_receives_minimal_facts_and_directive_without_tools() -> None:
+async def test_pass_receives_minimal_facts_and_plan_without_tools() -> None:
     gateway = ScriptedModelGateway([response('{"verdict":"pass"}')])
     result = await agent(gateway).run(invocation=invocation(), context=context())
     assert result.status is InvocationStatus.SUCCEEDED
@@ -136,7 +125,7 @@ async def test_pass_receives_minimal_facts_and_directive_without_tools() -> None
     assert data["evidence_summaries"] == [
         {"evidence_id": "weight-1", "summary": "仅有单次体重：77.6kg。"}
     ]
-    assert data["directive"]["professional_question"] == "近期体重趋势如何？"
+    assert data["response_plan"]["content_blocks"][0]["source_refs"] == ["weight-claim"]
     assert "payload" not in data
 
 
@@ -145,7 +134,7 @@ async def test_pass_receives_minimal_facts_and_directive_without_tools() -> None
     [
         ("changed_uncertainty", "response_style"),
         ("unsupported_professional_claim", "nutrition_expert"),
-        ("missing_user_evidence", "orchestrator"),
+        ("missing_user_evidence", "core"),
     ],
 )
 async def test_semantic_issues_reach_only_their_repair_target(issue: str, target: str) -> None:
@@ -164,7 +153,7 @@ async def test_semantic_issues_reach_only_their_repair_target(issue: str, target
         ]
     )
     review_context = context()
-    if target == "orchestrator":
+    if target == "core":
         review_context = review_context.model_copy(
             update={"available_evidence_ids": (), "evidence_summaries": ()}
         )
@@ -306,10 +295,26 @@ def test_unknown_references_without_assessment_are_not_implicitly_trusted() -> N
     assert "unsupported_claim" in report.detected_issue_types
 
 
-def test_directive_missing_evidence_is_checked_without_assessment() -> None:
+def test_response_plan_missing_evidence_is_checked_without_assessment() -> None:
     review_context = context().model_copy(
         update={
             "assessment": None,
+            "response_plan": ResponsePlan(
+                communication_act="explain",
+                content_blocks=(
+                    ResponseContentBlock(
+                        block_id="weight-fact",
+                        kind="fact",
+                        text="本次记录体重 77.6kg。",
+                        source_refs=("weight-1",),
+                    ),
+                ),
+            ),
+            "styled_response": StyledResponse(
+                text="本次记录体重 77.6kg。",
+                used_block_ids=("weight-fact",),
+                style_profile_version=SLIMGUARD_DEFAULT_V1.version,
+            ),
             "available_evidence_ids": (),
             "evidence_summaries": (),
         }

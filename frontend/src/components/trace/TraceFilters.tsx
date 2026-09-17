@@ -13,7 +13,7 @@ const SELECT_FILTERS: Array<{
 }> = [
   { key: "generation_status", label: "生成状态", options: [["succeeded", "成功"], ["waiting", "等待确认"], ["degraded", "降级"], ["failed", "失败"], ["unknown", "未知"], ["skipped", "跳过"]] },
   { key: "delivery_status", label: "投递状态", options: [["accepted", "已送达"], ["sending", "发送中"], ["pending_review", "待审核"], ["failed", "失败"], ["unknown", "未知"], ["deferred_external_session", "人工会话中"], ["skipped", "跳过"]] },
-  { key: "mode", label: "运行模式", options: [["off", "Legacy / Off"], ["shadow", "Shadow"], ["canary", "Canary"], ["on", "On"]] },
+  { key: "mode", label: "运行模式", options: [["core_primary", "Core 主路径"], ["on", "Core 主路径（兼容记录）"], ["off", "风格与审查关闭"]] },
   { key: "agent_failure", label: "Agent 失败", options: [["true", "有失败"], ["false", "无失败"]] },
   { key: "rag", label: "RAG", options: [["true", "已使用"], ["false", "未使用"]] },
   { key: "repair", label: "返回修复", options: [["true", "已修复"], ["false", "未修复"]] },

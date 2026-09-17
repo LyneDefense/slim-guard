@@ -98,7 +98,7 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                     inbound_msgid="inbound-1",
                     open_kfid="wk-test",
                     external_userid="external-1",
-                    content="已记录。",
+                    content="风格化回复",
                     status="accepted",
                     completed_at=now,
                 )
@@ -120,8 +120,8 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                     completed_at=now,
                 )
             )
-            candidate_payload = {
-                "text": "Shadow 候选回复",
+            styled_payload = {
+                "text": "风格化回复",
                 "style_profile_version": "slimguard_default_v1",
                 "prompt": "不得展示的系统提示词",
                 "chain_of_thought": "不得展示的隐藏推理",
@@ -131,11 +131,11 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                     id="invocation-1",
                     trace_id="trace-1",
                     turn_id="turn-1",
-                    graph_version="shadow-v1",
+                    graph_version="core-primary-v1",
                     agent_role="response_style",
                     agent_version="style-v1",
                     attempt=1,
-                    caller="coordinator",
+                    caller="turn_harness",
                     input_artifact_ids_json="[]",
                     input_schema_version="1",
                     allowed_tools_json="[]",
@@ -144,7 +144,7 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                     max_model_calls=1,
                     max_tool_calls=0,
                     max_total_tokens=1000,
-                    input_payload_json='{"prompt":"also hidden"}',
+                    input_payload_json='{"mode":"on","prompt":"also hidden"}',
                     status="succeeded",
                     output_schema="StyledResponse",
                     output_schema_version="1",
@@ -166,12 +166,12 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                     artifact_type="StyledResponse",
                     schema_version="1",
                     parent_artifact_ids_json="[]",
-                    payload_sha256=payload_sha256(candidate_payload),
+                    payload_sha256=payload_sha256(styled_payload),
                     payload_json=(
                         '{"chain_of_thought":"不得展示的隐藏推理",'
                         '"prompt":"不得展示的系统提示词",'
                         '"style_profile_version":"slimguard_default_v1",'
-                        '"text":"Shadow 候选回复"}'
+                        '"text":"风格化回复"}'
                     ),
                     created_at=now,
                 )
@@ -185,8 +185,8 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                         sequence=1,
                         item_type="workflow_transition",
                         status="completed",
-                        payload_json=(
-                            '{"attempt":1,"from_node":"orchestrator",'
+                            payload_json=(
+                                '{"attempt":1,"from_node":"core",'
                             '"reason_code":"plan_ready",'
                             '"to_node":"response_style",'
                             '"transition_type":"route"}'
@@ -200,7 +200,9 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
                         sequence=2,
                         item_type="response_adopted",
                         status="completed",
-                        payload_json=('{"artifact_id":"artifact-1","final":false,"mode":"shadow"}'),
+                        payload_json=(
+                            '{"artifact_id":"artifact-1","final":true,"mode":"on"}'
+                        ),
                         created_at=now,
                     ),
                 )
@@ -268,15 +270,15 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             "memory_ingestion_count": 0,
             "memory_recall_count": 0,
         }
-        assert detail.json()["output"]["content"] == "已记录。"
+        assert detail.json()["output"]["content"] == "风格化回复"
         assert detail.json()["input"] == {"messages": [], "images": []}
         style_comparison = detail.json()["style_comparison"]
         assert style_comparison == {
             "profile_version": "slimguard_default_v1",
             "neutral_text": None,
             "renders": style_comparison["renders"],
-            "final_artifact_id": None,
-            "final_text": "已记录。",
+            "final_artifact_id": "artifact-1",
+            "final_text": "风格化回复",
         }
         assert len(style_comparison["renders"]) == 1
         render = style_comparison["renders"][0]
@@ -285,15 +287,15 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
         } == {
             "artifact_id": "artifact-1",
             "attempt": 1,
-            "text": "Shadow 候选回复",
+            "text": "风格化回复",
             "profile_version": "slimguard_default_v1",
             "used_fallback": False,
             "failure_code": None,
         }
         assert render["created_at"].startswith("2026-08-31T10:00:00")
         assert detail.json()["workflow"]["summary"] == {
-            "mode": "shadow",
-            "graph_version": "shadow-v1",
+            "mode": "on",
+            "graph_version": "core-primary-v1",
             "status": "succeeded",
             "model_call_count": 1,
             "tool_call_count": 0,
@@ -301,7 +303,7 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
             "repair_count": 0,
             "degraded": False,
             "style_profile_version": "slimguard_default_v1",
-            "style_status": "shadow_candidate",
+            "style_status": "adopted",
             "style_bypassed": False,
             "style_degraded": False,
             "style_adopted": True,
@@ -313,32 +315,18 @@ async def test_admin_api_is_authenticated_and_user_scoped(test_settings: Setting
         assert detail.json()["artifacts"][0]["body_redacted"] is True
         assert detail.json()["workflow"]["style"] == {
             "style_profile_version": "slimguard_default_v1",
-            "status": "shadow_candidate",
+            "status": "adopted",
             "bypassed": False,
             "bypass_reason": None,
             "degraded": False,
             "degraded_reason": None,
             "adopted": True,
             "adopted_artifact_id": "artifact-1",
-            "adoption_mode": "shadow",
-            "final": False,
+            "adoption_mode": "on",
+            "final": True,
         }
         assert detail.json()["transitions"][0]["to_node"] == "response_style"
-        assert detail.json()["shadow_comparison"] == {
-            "mode": "shadow",
-            "delivery_status": "not_sent",
-            "business_writes": "no_business_writes",
-            "legacy": {
-                "artifact_id": None,
-                "content": "已记录。",
-                "status": "accepted",
-            },
-            "candidate": {
-                "artifact_id": "artifact-1",
-                "content": "Shadow 候选回复",
-                "status": "succeeded",
-            },
-        }
+        assert "shadow_comparison" not in detail.json()
         assert "不得展示" not in detail.text
         assert wrong_user.status_code == 404
         assert logout.status_code == 200

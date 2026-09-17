@@ -15,7 +15,6 @@ class MessageRole(StrEnum):
 
 class ModelPurpose(StrEnum):
     HARNESS_TURN = "harness_turn"
-    ORCHESTRATOR = "orchestrator"
     NUTRITION = "nutrition"
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"

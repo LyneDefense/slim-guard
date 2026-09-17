@@ -26,7 +26,7 @@ from slim_guard.agents.nutrition import (
     bind_candidates,
 )
 from slim_guard.agents.nutrition.tools import EmptyNutritionKnowledgeRepository
-from slim_guard.agents.structured_runner import StructuredAgentRunner
+from slim_guard.runtime.invocation import InvocationRunner
 
 
 def candidate(
@@ -106,7 +106,7 @@ def invocation() -> AgentInvocation:
         invocation_id="nutrition-invocation-1",
         trace_id="trace-1",
         turn_id="turn-1",
-        graph_version="typed-supervisor-v1",
+        graph_version="core-primary-v1",
         agent_role="nutrition_expert",
         agent_version="nutrition-assessment-v1",
         deadline_at=datetime.now(UTC) + timedelta(seconds=30),
@@ -284,7 +284,7 @@ async def test_nutrition_agent_repairs_a_changed_citation_once() -> None:
     invalid = cited_assessment(context, citation=changed_citation)
     gateway = ScriptedModelGateway((model_response(invalid), model_response(valid)))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -320,7 +320,7 @@ async def test_nutrition_prompt_excludes_rejected_candidate_content() -> None:
     assessment = cited_assessment(context)
     gateway = ScriptedModelGateway((model_response(assessment),))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 

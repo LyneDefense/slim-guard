@@ -43,7 +43,9 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                 id="test-runtime-version", manifest_json="{}", code_revision="test", created_at=NOW
             )
         )
-        for index, label in enumerate(("off", "shadow", "canary", "on", "legacy", "other-user")):
+        for index, label in enumerate(
+            ("unavailable", "off", "core_primary", "on", "historical", "other-user")
+        ):
             owner = "test-user-b" if label == "other-user" else "test-user-a"
             created = NOW + timedelta(minutes=6 - index)
             turn_id = f"turn-{label}"
@@ -74,28 +76,28 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                     completed_at=created,
                 )
             )
-            if label not in {"off", "legacy"}:
+            if label not in {"unavailable", "historical"}:
                 roles = (
                     ("response_style", "response_reviewer")
-                    if label == "canary"
+                    if label == "core_primary"
                     else ("response_style",)
                 )
                 for role in roles:
                     version = (
                         "reviewer-v2"
                         if role == "response_reviewer"
-                        else ("style-v1" if label == "shadow" else "style-v2")
+                        else ("style-v1" if label == "off" else "style-v2")
                     )
                     session.add(
                         AgentInvocationRecord(
                             id=f"inv-{label}-{role}",
                             trace_id=trace_id,
                             turn_id=turn_id,
-                            graph_version="graph-v1" if label == "shadow" else "graph-v2",
+                            graph_version="graph-v1" if label == "off" else "graph-v2",
                             agent_role=role,
                             agent_version=version,
                             attempt=1,
-                            caller="coordinator",
+                            caller="turn_harness",
                             input_schema_version="1",
                             deadline_at=created + timedelta(seconds=30),
                             max_model_calls=2,
@@ -114,7 +116,7 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                     )
                 style_payload = {
                     "text": "TEST PRIVATE RESPONSE BODY",
-                    "style_profile_version": "profile-v1" if label == "shadow" else "profile-v2",
+                    "style_profile_version": "profile-v1" if label == "off" else "profile-v2",
                 }
                 session.add(
                     AgentArtifactRecord(
@@ -130,7 +132,7 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                     )
                 )
             sequence = 0
-            if label in {"canary", "legacy", "other-user"}:
+            if label in {"core_primary", "other-user"}:
                 sequence += 1
                 session.add(
                     AgentItemRecord(
@@ -144,13 +146,13 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                             {
                                 "artifact_id": f"style-{label}",
                                 "mode": "on" if label == "other-user" else label,
-                                "final": label != "on",
+                                "final": True,
                             }
                         ),
                         created_at=created,
                     )
                 )
-            if label in {"canary", "other-user"}:
+            if label in {"core_primary", "other-user"}:
                 rag_payload = {
                     "knowledge": {
                         "corpus_status": "ready",
@@ -162,7 +164,7 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                     AgentArtifactRecord(
                         id=f"rag-{label}",
                         turn_id=turn_id,
-                        producer_role="coordinator",
+                        producer_role="core",
                         artifact_type="nutrition_observations",
                         schema_version="1",
                         parent_artifact_ids_json="[]",
@@ -171,7 +173,7 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                         created_at=created,
                     )
                 )
-            if label == "canary":
+            if label == "core_primary":
                 sequence += 1
                 session.add(
                     AgentItemRecord(
@@ -202,9 +204,9 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("off", {"trace-off", "trace-legacy"}),
-        ("shadow", {"trace-shadow"}),
-        ("canary", {"trace-canary"}),
+        ("unavailable", {"trace-unavailable", "trace-historical"}),
+        ("off", {"trace-off"}),
+        ("core_primary", {"trace-core_primary"}),
         ("on", {"trace-on"}),
     ],
 )
@@ -219,8 +221,8 @@ async def test_mode_filters_include_historical_legacy_as_off(traces, mode, expec
     "facet,true_trace",
     [
         ("agent_failure", "trace-on"),
-        ("rag", "trace-canary"),
-        ("repair", "trace-canary"),
+        ("rag", "trace-core_primary"),
+        ("repair", "trace-core_primary"),
         ("degraded", "trace-on"),
     ],
 )
@@ -242,7 +244,7 @@ async def test_version_filters_use_invocation_versions_and_style_asset_version(t
         user_id="test-user-a",
         limit=20,
         offset=0,
-        mode="canary",
+        mode="core_primary",
         graph_version="graph-v2",
         agent_version="reviewer-v2",
         profile_version="profile-v2",
@@ -250,7 +252,7 @@ async def test_version_filters_use_invocation_versions_and_style_asset_version(t
         repair=True,
         degraded=False,
     )
-    assert [item["id"] for item in result["items"]] == ["trace-canary"]
+    assert [item["id"] for item in result["items"]] == ["trace-core_primary"]
     item = result["items"][0]
     assert set(item["agent_versions"]) == {"style-v2", "reviewer-v2"}
     assert item["graph_version"] == "graph-v2"
@@ -266,7 +268,7 @@ async def test_pagination_total_is_computed_after_facet_filters(traces):
     assert result["total"] == 4
     assert result["limit"] == 1
     assert result["offset"] == 1
-    assert [item["id"] for item in result["items"]] == ["trace-shadow"]
+    assert [item["id"] for item in result["items"]] == ["trace-off"]
     beyond = await traces.list_traces(user_id="test-user-a", limit=1, offset=9, agent_failure=False)
     assert beyond["total"] == 4
     assert beyond["items"] == []

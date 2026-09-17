@@ -114,7 +114,7 @@ async def test_scheduled_turn_can_start_without_external_inputs(tmp_path) -> Non
                 user_id=user.id,
                 agent_version_id=manifest.version_id,
                 trigger=TurnTrigger.DAILY_REVIEW,
-                execution_mode=ToolExecutionMode.SHADOW,
+                execution_mode=ToolExecutionMode.EVALUATION,
             )
         )
 

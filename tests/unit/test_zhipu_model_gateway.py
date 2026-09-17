@@ -200,9 +200,9 @@ async def test_gateway_requests_json_object_response_explicitly() -> None:
         await gateway.complete(
             request.model_copy(
                 update={
-                    "purpose": ModelPurpose.ORCHESTRATOR,
+                    "purpose": ModelPurpose.HARNESS_TURN,
                     "response_format": ResponseFormat.JSON_OBJECT,
-                    "output_schema_name": "TurnDirective",
+                    "output_schema_name": "ResponsePlan",
                 }
             )
         )

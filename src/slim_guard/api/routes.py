@@ -42,7 +42,7 @@ async def ready(request: Request) -> dict[str, str]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="No user channel is configured",
         )
-    if settings.agent_runtime_mode == "harness" and not settings.zhipu_is_configured:
+    if not settings.zhipu_is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Harness model is not configured",

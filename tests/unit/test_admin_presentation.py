@@ -73,21 +73,21 @@ def test_workflow_trace_events_are_presented_in_plain_language() -> None:
         ),
         (
             "response_adopted",
-            {"artifact_id": "artifact-output", "mode": "shadow", "final": False},
+            {"artifact_id": "artifact-output", "mode": "on", "final": True},
             "output",
-            "采用候选回复",
-            "尚未作为最终回复发送",
+            "采用最终回复",
+            "最终安全检查和发送流程",
         ),
         (
             "response_degraded",
             {
                 "artifact_id": "artifact-output",
                 "reason_code": "style_timeout",
-                "fallback_type": "legacy_response",
+                "fallback_type": "core_response",
             },
             "output",
             "回复进入降级路径",
-            "现有回复",
+            "Core 中性回复",
         ),
     ]
 

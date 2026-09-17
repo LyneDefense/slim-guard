@@ -8,7 +8,6 @@ from slim_guard.agents.contracts import (
     ProfessionalAssessment,
     ResponsePlan,
     StyledResponse,
-    TurnDirective,
 )
 from slim_guard.agents.reviewer.contracts import ReviewerContext, ReviewerEvidenceSummary
 from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1, StyleProfile
@@ -24,7 +23,6 @@ class ReviewerContextCompiler:
         assessment: ProfessionalAssessment | None = None,
         style_profile: StyleProfile = SLIMGUARD_DEFAULT_V1,
         available_evidence_ids: Sequence[str] | None = None,
-        directive: TurnDirective | None = None,
         evidence_summaries: Sequence[ReviewerEvidenceSummary] = (),
     ) -> ReviewerContext:
         return ReviewerContext(
@@ -33,7 +31,6 @@ class ReviewerContextCompiler:
             styled_response=styled_response,
             style_profile=style_profile,
             assessment=assessment,
-            directive=directive,
             evidence_summaries=tuple(evidence_summaries),
             available_evidence_ids=(
                 tuple(available_evidence_ids) if available_evidence_ids is not None else None

@@ -30,22 +30,26 @@ class Settings(DatabaseSettings):
     wecom_open_kf_id: str = ""
     wecom_callback_token: str = ""
     wecom_callback_aes_key: str = ""
-    agent_runtime_mode: Literal["legacy", "harness", "shadow"] = "harness"
+    agent_runtime_mode: Literal["harness"] = "harness"
     agent_code_revision: str = "development"
-    multi_agent_mode: Literal["off", "shadow", "canary", "on"] = "off"
-    multi_agent_canary_user_ids: str = ""
-    multi_agent_graph_version: str = "typed-supervisor-v1"
-    multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
-    multi_agent_max_model_calls: int = Field(default=12, ge=1, le=32)
-    multi_agent_max_total_tokens: int = Field(default=64_000, ge=1024, le=10_000_000)
+    multi_agent_mode: Literal["off", "on"] = "off"
+    multi_agent_graph_version: str = "core-primary-v1"
+    agent_specialist_timeout_seconds: float = Field(
+        default=20.0,
+        gt=0,
+        le=120,
+        validation_alias=AliasChoices(
+            "AGENT_SPECIALIST_TIMEOUT_SECONDS",
+            "MULTI_AGENT_SHADOW_TIMEOUT_SECONDS",
+            "agent_specialist_timeout_seconds",
+        ),
+    )
     multi_agent_invocation_max_total_tokens: int = Field(
         default=32_000,
         ge=1024,
         le=10_000_000,
     )
     default_style_profile: str = Field(default="slimguard_default_v1", min_length=1, max_length=128)
-    style_canary_profile: str = Field(default="", max_length=128)
-    style_canary_user_ids: str = ""
     style_render_all_normal_replies: bool = True
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
@@ -75,10 +79,6 @@ class Settings(DatabaseSettings):
     nutrition_embedding_dimensions: Literal[1024] = 1024
     nutrition_rerank_provider: Literal["zhipu"] = "zhipu"
     nutrition_rerank_model: str = Field(default="rerank", min_length=1, max_length=128)
-    meal_guidance_enabled: bool = False
-    dish_recognition_enabled: bool = True
-    nutrition_retrieval_enabled: bool = True
-    diet_guidance_enabled: bool = True
     response_reviewer_enabled: bool = False
     style_iteration_worker_enabled: bool = True
     style_iteration_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
@@ -187,14 +187,6 @@ class Settings(DatabaseSettings):
     def validate_admin_credentials(self) -> Settings:
         if self.default_style_profile != self.default_style_profile.strip():
             raise ValueError("DEFAULT_STYLE_PROFILE must be a nonblank exact version")
-        if self.style_canary_profile != self.style_canary_profile.strip():
-            raise ValueError("STYLE_CANARY_PROFILE must be an exact version")
-        if self.multi_agent_invocation_max_total_tokens > self.multi_agent_max_total_tokens:
-            raise ValueError(
-                "MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS cannot exceed MULTI_AGENT_MAX_TOTAL_TOKENS"
-            )
-        if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
-            raise ValueError("MEAL_GUIDANCE_ENABLED requires NUTRITION_AGENT_ENABLED")
         if self.tencent_cos_prefix.startswith("/") or self.tencent_cos_prefix.endswith("/"):
             raise ValueError("TENCENT_COS_PREFIX must not start or end with '/'")
         if ".." in self.tencent_cos_prefix.split("/"):
@@ -255,32 +247,6 @@ class Settings(DatabaseSettings):
     @cached_property
     def admin_is_configured(self) -> bool:
         return bool(self.admin_username and self.admin_password)
-
-    @cached_property
-    def style_canary_users(self) -> frozenset[str]:
-        return frozenset(
-            entry.strip() for entry in self.style_canary_user_ids.split(",") if entry.strip()
-        )
-
-    @cached_property
-    def multi_agent_canary_users(self) -> frozenset[str]:
-        return frozenset(
-            user_id
-            for entry in self.multi_agent_canary_user_ids.split(",")
-            if (user_id := entry.strip())
-        )
-
-    def multi_agent_executes_for(self, user_id: str) -> bool:
-        if self.multi_agent_mode == "off":
-            return False
-        if self.multi_agent_mode == "canary":
-            return user_id in self.multi_agent_canary_users
-        return True
-
-    def multi_agent_adopts_for(self, user_id: str) -> bool:
-        return self.multi_agent_mode in {"canary", "on"} and (
-            self.multi_agent_mode == "on" or user_id in self.multi_agent_canary_users
-        )
 
     @cached_property
     def mobile_is_configured(self) -> bool:

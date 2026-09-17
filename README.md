@@ -61,45 +61,35 @@ WECOM_CALLBACK_AES_KEY=EncodingAESKey
 ZHIPU_API_KEY=智谱 API Key
 ```
 
-Agent Runtime 默认使用 `harness`：企业微信文字和图片消息会进入新版 Harness，并可调用
+Agent Runtime 只使用 `harness`：企业微信文字和图片消息会进入 Turn Harness 与 Core Agent，并可调用
 图片检查、体重、体脂、饮食、运动、纠错和提醒日程工具。图片作为用户隔离的短期资产默认保留
 7 天，可通过 `AGENT_IMAGE_RETENTION_SECONDS` 调整；后台默认每 6 小时物理清理过期图片。
-多 Agent 使用独立开关，默认 `off`，不会改变当前生产回复；`shadow` 会运行无写权限的候选工作流并
-在管理台展示对比，但候选不会发送：
-
-Shadow 候选的所有正常沟通会经过版本化 `slimguard_default_v1` Style Profile。Style Agent 只能调整
+Core Agent 是唯一主业务路径；不会再先生成 Legacy baseline，再运行一套候选流程。
+`MULTI_AGENT_MODE=on` 启用最终 Style + Safety/Fidelity Reviewer 管线。所有正常沟通会经过当前
+启用的 Style Profile。Style Agent 只能调整
 表达，required 内容块、数字、记录状态、专业结论、风险与引用均由代码校验；模型或校验失败时使用
 中性渲染器，安全与操作模板明确绕过普通风格层。
 
 ```dotenv
-# harness：新版 Agent Harness；legacy：仅供回滚的旧版单次回复
 AGENT_RUNTIME_MODE=harness
 # 部署流水线可以写入 Git commit；未设置时为 development
 AGENT_CODE_REVISION=development
 MULTI_AGENT_MODE=off
-MULTI_AGENT_CANARY_USER_IDS=
-MULTI_AGENT_GRAPH_VERSION=typed-supervisor-v1
-MULTI_AGENT_SHADOW_TIMEOUT_SECONDS=20
-MULTI_AGENT_MAX_MODEL_CALLS=12
-MULTI_AGENT_MAX_TOTAL_TOKENS=64000
+MULTI_AGENT_GRAPH_VERSION=core-primary-v1
+AGENT_SPECIALIST_TIMEOUT_SECONDS=20
 MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
 DEFAULT_STYLE_PROFILE=slimguard_default_v1
 NUTRITION_AGENT_ENABLED=false
 NUTRITION_RAG_ENABLED=false
 NUTRITION_REQUIRE_RAG_CITATIONS=true
-MEAL_GUIDANCE_ENABLED=false
-DISH_RECOGNITION_ENABLED=true
-NUTRITION_RETRIEVAL_ENABLED=true
-DIET_GUIDANCE_ENABLED=true
 RESPONSE_REVIEWER_ENABLED=false
 ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
 
-`MULTI_AGENT_MODE` 支持 `off → shadow → canary → on`。首次部署保持 `off`；完成 Shadow 验证前不要
-直接进入 Canary 或全量。关闭该开关不影响现有 Harness、用户 Thread 或已经写入的健康记录。
-Canary/on 要求启用 Style 和 Reviewer，失败沿用本轮原回复而不重复执行工具。名单使用内部 user_id，
-不是显示名；配置变更需重启服务。量化门槛、只读验收命令和回退步骤见
-[Multi-Agent 发布手册](MULTI_AGENT_ROLLOUT.md)。默认保持 `off`，本仓库不自动放量。
+`MULTI_AGENT_MODE` 只支持 `off|on`。`off` 仍使用 Core Agent 与全部业务/专业工具，只关闭最终的
+Style + Reviewer 管线；`on` 要求 `RESPONSE_REVIEWER_ENABLED=true`。风格或审查失败时保留同一轮
+已经生成并通过确定性保护的 Core 中性稿，不会重新执行业务工具，也不会生成竞争 baseline。
+配置变更需重启服务，验证与回退步骤见 [Agent 主路径运行手册](MULTI_AGENT_ROLLOUT.md)。
 
 离线表达语料使用独立 SQLite 文件，不连接用户 Memory 或营养 RAG。通用准备工具已提供，但
 `doctor_strict_v1` 已完成真实语料授权、隐私处理、自动评估和首轮实名 A/B 人评；人工结果为接受 1、
@@ -113,7 +103,7 @@ Canary/on 要求启用 Style 和 Reviewer，失败沿用本轮原回复而不重
 基于首轮批注修订的 `doctor_strict_v2` 已作为 12 条带具体场景的 A/B Case 导入管理台；第二轮实名
 人工评分接受 7、拒绝 5，因此仍未发布或启用。管理台“风格纠正”可继续追加已脱敏的真实测试场景、
 当前回复与期望回复，作为下一版本素材；它不是即时微调，不会修改当前 Profile。当前单人开发阶段，
-候选版本整套人评全部接受并发布后，按已批准策略跳过 Style Canary，直接切换 `DEFAULT_STYLE_PROFILE`；
+待评版本整套人评全部接受并发布后，按已批准策略直接切换 `DEFAULT_STYLE_PROFILE`；
 生产环境不继承该便利。自动评估通过不等于发布批准。
 `doctor_strict_v3` 已根据 v2 的全部评分生成并完成 12/12 自动评估，当前作为 12 条待评 Case 留在
 管理台，仍未发布或启用。后续每次版本迭代都先冻结上一版本的实名 A/B 结果和“风格纠正”记录，再生成
@@ -200,13 +190,13 @@ uv run python -m slim_guard.tools.migrate_nutrition_manifest_v2 \
 Content Review；Applicability Review 和 Rights Review 必须在管理台重新确认。随后在网页创建候选
 Release、运行不少于 100 条的冻结评测集、人工验收并启用。
 
-完成资料审核后，才在 Shadow 模式打开 `NUTRITION_AGENT_ENABLED=true` 和
+完成资料审核后，才在 Core 主路径打开 `NUTRITION_AGENT_ENABLED=true` 和
 `NUTRITION_RAG_ENABLED=true`。RAG 打开时不能关闭 `NUTRITION_REQUIRE_RAG_CITATIONS`；每条知识性
 Claim 都必须保留当前 Nutrition invocation 的 Citation，并完整通过 Style 渲染。
 
-菜品识别与饮食判断使用 `MEAL_GUIDANCE_ENABLED` 总开关。餐食图片会输出逐道菜候选；置信度不足、
-候选接近或图片质量有问题时只问一个确认问题，不会先给饮食结论。Canary/on 模式会把待确认菜名保存
-24 小时，用户下一轮明确更正后复用原识别结果，不会重复调用视觉模型。确认后的菜名先查版本化菜品库，
+餐食图片会输出逐道菜候选；置信度不足、
+候选接近或图片质量有问题时只问必要的确认问题，不会先给饮食结论。用户下一轮明确更正后，Core Agent
+通过近期对话与保留的图片上下文继续处理；仍有多个合理候选时会再次询问。确认后的菜名先查版本化菜品库，
 再查已发布的 Nutrition RAG；资料不足时明确返回 `insufficient_information`，不会猜热量、克重或营养素。
 管理台 Trace 会分开展示识别、确认、检索和建议；“人工更正菜名”只追加审核 Artifact，原识别结果保持
 不变，也不会未经审核自动修改 Prompt 或菜品库。生产资料准备步骤见 `DISH_GUIDANCE_DATA_RUNBOOK.md`。
@@ -225,15 +215,15 @@ uv run python -m slim_guard.tools.manage_dish_knowledge retire ENTITY_ID --revie
 uv run python -m slim_guard.tools.manage_dish_knowledge show ENTITY_ID
 ```
 
-建议先用 `MULTI_AGENT_MODE=shadow`、`MEAL_GUIDANCE_ENABLED=true`、
-`NUTRITION_AGENT_ENABLED=true` 验证识别和空资料降级。只有菜品库与 RAG 数据完成审核、Reviewer 人工样本
-通过后，才打开 `NUTRITION_RAG_ENABLED=true` 并进入 canary/on。三个内部开关只用于排障；任一关闭时
-流程会保守退出，不绕过缺失模块继续生成建议。
+建议先用 `MULTI_AGENT_MODE=off`、`NUTRITION_AGENT_ENABLED=true` 验证 Core 调用专业 Agent、
+图片不确定性和空资料降级。资料完成审核并启用后打开 `NUTRITION_RAG_ENABLED=true`；确认医生风格与
+Reviewer 回归样本后，再设置 `MULTI_AGENT_MODE=on`。缺少可靠资料时 Nutrition Agent 会保守退出，
+不会绕过 RAG 生成肯定的专业结论。
 
-`RESPONSE_REVIEWER_ENABLED=true` 开启候选回复审查，要求同时开启 Style 渲染。
-审查将风格问题返回 Style、无依据专业结论返回 Nutrition、缺少用户信息返回 Orchestrator 询问。
+`RESPONSE_REVIEWER_ENABLED=true` 开启最终回复的安全与事实保真审查，要求同时开启 Style 渲染。
+审查将语义漂移返回 Style、无依据专业结论返回 Nutrition、缺少用户信息返回 Core 处理。
 每个目标最多修复一次，全 Turn 最多两次返回；每次专业修复都重新渲染并审查。
-拒绝、预算耗尽或审查失败会生成保守候选；Shadow 阶段仍交付原 Harness 回复。
+拒绝、预算耗尽或审查失败会使用安全降级输出。
 管理台展示审查结果、返回边、版本关系和过去 7 天的拒绝/修复/降级率。
 
 智谱可选配置：

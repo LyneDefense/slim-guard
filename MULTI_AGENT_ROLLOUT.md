@@ -1,105 +1,78 @@
-# Multi-Agent 发布与回退手册
+# Core Agent 主路径启用与回退手册
 
-本手册对应通用 `slimguard_default_v1`。代码支持 Canary/on，不等于本仓库已经完成真实用户放量。
-`doctor_strict_v1` 仍等待风格需求评审和真实授权语料；不能用合成测试结果替代医生资产验收。
+> 适用于 `core-primary-v1`。旧版 shadow/canary 双轨工作流已经删除。
 
 ## 运行边界
 
-`AGENT_RUNTIME_MODE=harness` 保持不变，只调整 `MULTI_AGENT_MODE`：
+`AGENT_RUNTIME_MODE` 固定为 `harness`。Core Agent 始终是唯一主业务路径，可调用普通业务工具和
+Nutrition Agent Tool；系统不会预先生成 Legacy baseline，也不会并行生成候选回复。
 
-| 模式 | 执行范围 | 最终回复 |
-| --- | --- | --- |
-| off | 原 Harness | 原回复 |
-| shadow | 全部正常输入的只读候选图 | 原回复，候选不投递 |
-| canary | `MULTI_AGENT_CANARY_USER_IDS` 精确匹配的内部 user_id | 合格候选或原回复 |
-| on | 全部正常输入 | 合格候选或原回复 |
+`MULTI_AGENT_MODE` 目前只控制最终回复管线：
 
-Canary/on 必须同时打开 `STYLE_RENDER_ALL_NORMAL_REPLIES=true` 和 `RESPONSE_REVIEWER_ENABLED=true`。
-名单不是微信昵称、手机号或 test1 等显示名；应在受控测试环境确认对应内部 ID，再配置逗号分隔的名单。
-空名单不会采用任何候选。无须为了回退而切换旧版 `AGENT_RUNTIME_MODE=legacy`。
+| 模式 | Core 与业务/专业工具 | Style + Reviewer | 最终回复 |
+| --- | --- | --- | --- |
+| `off` | 正常运行 | 关闭 | Core 的安全中性稿 |
+| `on` | 正常运行 | 开启 | 通过医生风格和必要审查的最终稿 |
 
-真实采用发生在业务工具执行、原 Harness 文本生成及 OutputGuard 检查之后。随后刷新权威数据库
-快照并加入本轮结构化工具回执，生成 Plan → Style → Reviewer 候选；专业路径另经 Nutrition。
-只有成功状态、同 Turn 最终候选、完整 Payload 哈希和精确候选血缘上的最新 pass Verdict，以及
-最终 OutputGuard 都成立时，才记 `response_adopted.final=true` 并保存一条最终 Agent 消息。
-采用不是渠道送达，WeCom Outbox 仍负责投递。紧急输入或被 OutputGuard 修正的原回复不走普通风格。
+启用 `on` 时必须同时配置：
 
-超时、模型故障、证据刷新失败、返修耗尽、审查拒绝或总预算不足时，保留已生成的安全原回复。
-不重新运行记录工具、记忆摄取或整个 Turn。`MULTI_AGENT_SHADOW_TIMEOUT_SECONDS` 同时限制候选图，
-并受原 Turn 剩余 Deadline 约束；Canary/on 各节点及修复共享扣除 Harness 已用量后的调用/Token 预算。
-默认每 Turn 最多 6 次模型调用，因此复杂工具轮次可能没有足够余量完成图，届时明确降级。
-Token 总量由供应商返回的 usage 核算：响应使额度超限时拒绝采用并阻止后续调用，不能预知供应商计费。
-
-## 放量顺序与量化门槛
-
-依次进行 off 基线 → shadow → test1～test5 测试账户 → 小名单真实用户 → on。
-每阶段保持同一 Graph/Agent/Profile 版本采样；版本变化后重新验收，不混入旧版本的好样本。
-部署时将 `AGENT_CODE_REVISION` 固定到实际 commit，不能用默认 `development` 代替可复现发布标识。
-初始门槛保存在 `slim_guard.rollout`，调整须通过代码评审，不能由模型自行降低。
-
-| 目标阶段 | 最少已审工作流 | 最少人工配对评分 |
-| --- | ---: | ---: |
-| test_canary | 20 | 20 |
-| small_canary | 100 | 50 |
-| on | 500 | 100 |
-
-所有阶段要求：拒绝率 ≤ 2%、实际返修率 ≤ 15%、降级率 ≤ 5%、各节点失败率 ≤ 2%、
-p95 端到端延迟 ≤ 60 秒、p95 Token ≤ 64,000；知识 Claim 引用覆盖率 100%，无效引用、
-高危安全失败和重复业务写入均为 0。启用 RAG 时必须有实际 RAG Claim 样本。
-这些是首版运营门槛，不是已观测到的性能承诺。
-
-人工对同一输入的 Legacy/Candidate 采用 1～5 分量表评价事实准确、必要信息完整、表达与下一步，
-候选均分不得低于 Legacy。保存具名评分记录引用，不把隐私回复正文放入公开仓库。管理台提供候选、
-实际采用及版本对比；它不把修复事件或模型自评冒充人工质量评分。
-报告需列出固定回归项的通过结果与测试日志/受控 Trace 引用；真实失败样本必须全部复测通过，
-没有观测到失败时如实记录 0，不能编造样本。报告时间必须在过去 7 天内。
-
-```bash
-uv run python -m slim_guard.tools.check_workflow_rollout --schema
-uv run python -m slim_guard.tools.check_workflow_rollout /secure/reviewed-rollout-report.json
+```dotenv
+AGENT_RUNTIME_MODE=harness
+MULTI_AGENT_MODE=on
+MULTI_AGENT_GRAPH_VERSION=core-primary-v1
+AGENT_SPECIALIST_TIMEOUT_SECONDS=20
+MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
+STYLE_RENDER_ALL_NORMAL_REPLIES=true
+RESPONSE_REVIEWER_ENABLED=true
+DEFAULT_STYLE_PROFILE=doctor_strict_v3
 ```
 
-报告 Schema 要求 Graph/Agent/Profile 版本、actor、metrics_ref、quality_review_ref、采样计数和
-`regressions`（`case_id/passed/evidence_ref`）。固定 case_id 以 `slim_guard.rollout.REQUIRED_REGRESSIONS`
-为准；缺项即不通过。退出码 0 为报告满足门槛，1 为门槛未通过，2 为报告格式或读取错误。
-命令只读，不自动查询隐私材料、不替操作者确认输入真实性、不改配置、不部署；通过报告后仍由
-负责发布的人确认目标环境、名单、窗口和批准。全局管理台指标不可直接当作某个版本/名单的验收样本。
+`DEFAULT_STYLE_PROFILE` 必须是数据库中已经发布并启用的精确版本。配置修改后需要重新部署或重启服务。
 
-## 固定回归与运行验证
+## 建议启用顺序
+
+1. 保持 `MULTI_AGENT_MODE=off`，验证 Core 的记录、查询、图片观察和 Nutrition Agent Tool。
+2. 确认已发布的 Nutrition RAG Release 能返回可靠引用；需要 RAG 时启用
+   `NUTRITION_AGENT_ENABLED=true` 与 `NUTRITION_RAG_ENABLED=true`。
+3. 在管理台完成医生 Style Profile 的 A/B 人评、发布和全量启用。
+4. 用测试账户验证 Trace 中能看到中性稿、风格稿、Reviewer 判决和最终采用。
+5. 设置 `MULTI_AGENT_MODE=on` 并重新部署。
+
+系统仍处于开发阶段，不保留复杂的名单灰度或影子候选机制。需要降低风险时，应在测试账户上验收后直接
+启用；出现问题时关闭最终管线即可，Core、用户 Thread、RAG Release 和已经写入的健康记录不受影响。
+
+## 验收重点
+
+- 一条用户消息只产生一条主业务生成链；
+- 业务写工具只执行一次；
+- Nutrition Agent 的每次检索绑定当前 Invocation 和冻结的 RAG Release；
+- 专业 Claim 有可追溯 Citation，资料不足时不生成肯定结论；
+- 风格前后数字、事实、风险、不确定性和引用保持一致；
+- Reviewer 只判决，不直接改文案；返工交回 Style、Nutrition 或 Core；
+- 风格/审查管线失败时使用已生成的 Core 中性稿，不再次调用 Core；
+- Trace 首屏能读出用户输入、实际路线、工具、记忆、RAG、风格变化和最终回复。
+
+建议验证命令：
 
 ```bash
-uv run ruff check .
+uv run ruff check src tests
 uv run mypy src
-uv run pytest
-uv run python -m compileall -q src
-npm --prefix frontend run check
+uv run pytest -q tests/unit/test_agent_runtime.py \
+  tests/unit/test_nutrition_agent_tool.py \
+  tests/unit/test_response_finalization.py \
+  tests/unit/test_harness_loop.py
 npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
-自动化回归使用合成数据及确定性模型替身，覆盖契约、只读权限、幂等写入、视觉不确定性、
-引用治理、风格忠实度、有限返回边、候选采用和故障回退。真实模型质量、真实失败样本和线上性能
-必须另做受控复测，不能以单元测试通过代替。尚未得到的验收数据应使发布停在前一阶段。
-
-当前明确待补的真实模型场景包括：当前值/目标值的自然语言区分、连续“保存刚才内容再继续”意图、
-清晰/模糊/多图归属与指代、用户拒绝建议或打卡、体重平台期、两份已批准资料存在语义冲突、
-非关键词紧急表达，以及自然改写后的忠实度与 Reviewer 准确率。现有引用冲突测试主要验证
-版本、哈希和调用归属，并不等于模型已经正确解决相互矛盾的专业资料。不得把这些缺口记作通过。
-
-管理台列表支持运行模式、节点失败、RAG、实际修复、降级及 Graph/Agent/Profile 版本筛选；
-详情保持真实返回边和采用状态。全局 7 天指标显示各自分母，缺样本不是 0% 成功证明。
-Reviewer 拒绝/返修率与节点失败率衡量不同对象，不应直接混比。
-引用统计针对图内最新专业结果，不表示该结果已被采用或送达。Token 为有图工作流中已记录的
-原 Harness 模型用量加图节点用量；供应商未返回的中断请求费用无法由本地精确还原。
-未使用工作流筛选时列表保留数据库分页；组合工作流筛选目前需读取该用户历史后计算总数，
-大历史用户和大窗口指标应在正式放量前做查询压测，后续可改为索引化投影，不能承诺无限规模。
+这些自动化测试验证代码契约，不替代真实模型、真实资料和测试账户的人工验收。
 
 ## 回退步骤
 
-1. 设置目标环境 `MULTI_AGENT_MODE=off`，按既有发布流程重启/滚动更新服务；配置不是热更新。
-2. 确认新 Turn 不再启动多 Agent invocation，仍正常执行原 Harness 和 Outbox。
-3. 复核同一用户 Thread、原已保存记录和工具幂等键仍在；不要删数据、重放输入或手工再发已入 Outbox 的回复。
-4. 保存 Graph/Agent/Profile 版本和失败 Trace 引用，修复后回到 Shadow 重新验收。
+1. 在 `deploy/.env.server` 设置 `MULTI_AGENT_MODE=off`。
+2. 保持 `AGENT_RUNTIME_MODE=harness`，不要切回已删除的 legacy/shadow 路径。
+3. 通过 `ssh me` 登录服务器，在项目目录执行 `./deploy.sh`。
+4. 打开 `https://enceladus.online/admin/`，确认新 Turn 仍由 Core 执行，最终输出使用中性稿。
+5. 保存失败 Trace、Graph/Profile/RAG Release 版本和错误码，修复后用测试账户重新验收再开启。
 
-回退仅影响使用新配置的 Turn；已在执行的 Turn 和已经排队的消息不会被撤销，渠道已发送消息也不会
-被自动收回。若问题要求撤回或暂停既有队列，需要单独的运维处置授权，不能把切换开关当成撤回保证。
+回退只影响重启后的新 Turn；已经进入 Outbox 或已经发送的消息不会自动撤回。

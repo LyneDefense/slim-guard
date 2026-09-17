@@ -36,7 +36,7 @@ function metricsHtml(metrics) {
 
 function workflow(changes = {}) {
   return {
-    mode: "on",
+    mode: "core_primary",
     status: "completed",
     summary: null,
     reviewSummary: { verdicts: [{ artifact_id: "TEST-verdict", verdict: "pass", attempt: 1 }] },
@@ -44,6 +44,7 @@ function workflow(changes = {}) {
     artifacts: [],
     transitions: [],
     timeline: [],
+    hasAgentTrace: true,
     ...changes,
   };
 }
@@ -128,17 +129,17 @@ test("recorded metrics retain durations, tokens, percentages and sample counts",
   assertCard(html, "无效引用率", "10.0%");
   assert.match(html, /表达风格 Agent<\/th><td>1<\/td><td>4<\/td><td>25\.0%/);
   assert.ok(html.includes("延迟样本：4 条；Token 工作流样本：4 条"));
-  assert.ok(html.includes("Multi-Agent 存在节点失败"));
+  assert.ok(html.includes("Agent 主路径存在节点失败"));
   assert.ok(html.includes("回复生成成功"));
 });
 
-test("operator summary distinguishes delivered fallback from a working multi-agent reply", () => {
+test("operator summary distinguishes delivered fallback from a working core path", () => {
   const failed = operatorHtml(workflow({
-    hasMultiAgentTrace: true,
+    hasAgentTrace: true,
     status: "failed",
     invocations: [{
-      invocation_id: "TEST-orchestrator",
-      agent_role: "orchestrator",
+      invocation_id: "TEST-core",
+      agent_role: "core",
       status: "failed",
       failure_code: "token_budget_exhausted",
     }],
@@ -150,10 +151,10 @@ test("operator summary distinguishes delivered fallback from a working multi-age
   assert.ok(failed.includes("未执行到"));
 
   const succeeded = operatorHtml(workflow({
-    hasMultiAgentTrace: true,
+    hasAgentTrace: true,
     status: "succeeded",
     invocations: [
-      { invocation_id: "TEST-rag", agent_role: "nutrition_retrieval", status: "succeeded", failure_code: null },
+      { invocation_id: "TEST-rag", agent_role: "nutrition_expert", status: "succeeded", failure_code: null },
       { invocation_id: "TEST-style", agent_role: "response_style", status: "succeeded", failure_code: null },
       { invocation_id: "TEST-review", agent_role: "response_reviewer", status: "succeeded", failure_code: null },
     ],
@@ -253,31 +254,31 @@ test("zero denominators suppress rates and latency even when the API supplies ze
 
 test("URL filters retain false values and exclude pagination and unknown fields", () => {
   const params = new URLSearchParams({
-    mode: "canary", agent_failure: "false", rag: "true", repair: "false", degraded: "false",
+    mode: "core_primary", agent_failure: "false", rag: "true", repair: "false", degraded: "false",
     graph_version: " graph/v2 ", agent_version: "agent & v3", profile_version: "profile-v4",
     offset: "30", unrelated: "TEST-discard",
   });
   const filters = filtersModule.traceFiltersFromParams(params);
   assert.deepEqual(filters, {
-    mode: "canary", agent_failure: "false", rag: "true", repair: "false", degraded: "false",
+    mode: "core_primary", agent_failure: "false", rag: "true", repair: "false", degraded: "false",
     graph_version: "graph/v2", agent_version: "agent & v3", profile_version: "profile-v4",
   });
   const html = renderToStaticMarkup(createElement(filtersModule.TraceFilters, {
     params,
     onApply: () => {},
   }));
-  assert.match(html, /value="canary" selected/);
+  assert.match(html, /value="core_primary" selected/);
   assert.match(html, /name="agent_failure"[^]*?value="false" selected/);
   assert.ok(html.includes('name="profile_version"'));
 });
 
-test("mode comparisons distinguish execution success from human quality and delivery", () => {
+test("core path metrics distinguish execution success from human quality and delivery", () => {
   const html = metricsHtml({ outcomes_by_mode: {
     off: { total: 4, succeeded: 3, degraded: 1, failed: 0 },
-    canary: { total: 2, succeeded: 1, degraded: 0, failed: 1 },
+    core_primary: { total: 2, succeeded: 1, degraded: 0, failed: 1 },
   } });
-  assert.match(html, /Legacy \/ Off<\/th><td>4<\/td><td>3/);
-  assert.match(html, /canary<\/th><td>2<\/td><td>1/);
+  assert.match(html, /风格与审查关闭<\/th><td>4<\/td><td>3/);
+  assert.match(html, /Core 主路径<\/th><td>2<\/td><td>1/);
   assert.ok(html.includes("不代表人工质量评分或渠道送达"));
   assert.ok(metricsHtml({}).includes("没有可用的模式对比记录"));
 });
@@ -291,7 +292,7 @@ test("trace requests encode identifiers and version values without dropping fals
   };
   try {
     await apiModule.api.traces("TEST/user id", 30, {
-      mode: "canary", agent_failure: "false", rag: "true", repair: "false", degraded: "false",
+      mode: "core_primary", agent_failure: "false", rag: "true", repair: "false", degraded: "false",
       graph_version: "graph/v2", agent_version: "agent & v3+版本", profile_version: "",
     });
     assert.equal(requests.length, 1);
@@ -388,17 +389,17 @@ test("Reviewer adopts only explicit final=true events", () => {
   assert.ok(!html.includes("未记录最终采用 Artifact"));
 });
 
-test("Shadow candidates never appear as final adoption even in legacy summary payloads", () => {
+test("non-final adoption events never appear as the final adopted artifact", () => {
   const html = reviewerHtml(workflow({
-    mode: "shadow",
+    mode: "core_primary",
     reviewSummary: {
       verdicts: [{ artifact_id: "TEST-verdict", verdict: "pass" }],
-      comparison: { final_adopted: { artifact_id: "TEST-SHADOW-CANDIDATE" }, changed: true },
+      comparison: { final_adopted: { artifact_id: "TEST-NONFINAL" }, changed: true },
     },
-    timeline: [{ operation: "response_adopted", details: { artifact_id: "TEST-SHADOW-CANDIDATE", final: false } }],
+    timeline: [{ operation: "response_adopted", details: { artifact_id: "TEST-NONFINAL", final: false } }],
   }));
-  assert.ok(html.includes("Shadow 候选未作为最终输出采用"));
-  assert.ok(!html.includes("TEST-SHADOW-CANDIDATE"));
+  assert.ok(html.includes("未记录最终采用 Artifact"));
+  assert.ok(!html.includes("TEST-NONFINAL"));
   assert.ok(!html.includes("Artifact 已变化"));
 });
 

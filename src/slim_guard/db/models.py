@@ -2792,10 +2792,10 @@ class DishCatalogReviewRecord(Base):
 
 
 class AgentInvocationRecord(Base):
-    """A coordinator-issued, bounded agent invocation and its terminal result.
+    """A Harness-issued, bounded agent invocation and its terminal result.
 
     The input payload is retained for deterministic recovery, but is deliberately not
-    exposed by the admin query layer.  Coordinator-owned limits and grants live in
+    exposed by the admin query layer. Harness-owned limits and grants live in
     first-class columns so they cannot be confused with model-generated output.
     """
 
@@ -2829,7 +2829,7 @@ class AgentInvocationRecord(Base):
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     # A shadow run can start before an InteractionTrace row exists (for example in
-    # an isolated harness test).  Keep the coordinator's causal identifier without
+    # an isolated harness test). Keep the Harness causal identifier without
     # requiring the delivery trace to have been materialized first.
     trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
     turn_id: Mapped[str] = mapped_column(

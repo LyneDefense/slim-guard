@@ -165,7 +165,7 @@ export function ReviewerTracePanel({ workflow }: { workflow: WorkflowTraceView }
           <span className="review-artifact-arrow">→</span>
           <ArtifactColumn
             artifacts={[comparison.finalAdopted]}
-            empty={workflow.mode === "shadow" ? "Shadow 候选未作为最终输出采用" : "未记录最终采用 Artifact"}
+            empty="未记录最终采用 Artifact"
             label="最终采用 Artifact"
           />
         </div>
@@ -439,11 +439,10 @@ function buildComparison(
     summary.repaired_artifact_id,
     ...reviewerInvocations.slice(1).map((invocation) => invocation.input_artifact_ids[0]),
   ]).filter((id) => id !== originalId);
-  const finalId = workflow.mode === "shadow" ? null : firstString(
-    finalRef?.artifact_id,
-    summary.final_artifact_id,
-    latestFinalAdoptedId(workflow),
-  );
+  const finalEventId = latestFinalAdoptedId(workflow);
+  const finalId = finalEventId
+    ? firstString(finalEventId, finalRef?.artifact_id, summary.final_artifact_id)
+    : null;
   return {
     original: resolveArtifact(originalId, originalRef, workflow.artifacts),
     repaired: repairedIds.map((id) => resolveArtifact(
@@ -452,8 +451,9 @@ function buildComparison(
       workflow.artifacts,
     )),
     finalAdopted: resolveArtifact(finalId, finalRef, workflow.artifacts),
-    changed: workflow.mode === "shadow" ? null : booleanValue(comparison.changed)
-      ?? (originalId && finalId ? originalId !== finalId : null),
+    changed: finalId
+      ? (booleanValue(comparison.changed) ?? (originalId ? originalId !== finalId : null))
+      : null,
   };
 }
 
@@ -650,7 +650,8 @@ function VerdictBadge({ value }: { value: string }) {
 
 function repairTargetLabel(value: string): string {
   const labels: Record<string, string> = {
-    orchestrator: "对话编排 Agent",
+    core: "主教练 Agent",
+    orchestrator: "历史对话编排 Agent",
     nutrition_expert: "营养专业 Agent",
     dish_recognition: "菜品识别 Agent",
     nutrition_retrieval: "营养证据检索 Agent",
@@ -662,8 +663,10 @@ function repairTargetLabel(value: string): string {
 
 function targetForNode(value: string | undefined): string | null {
   const targets: Record<string, string> = {
-    orchestrator: "orchestrator",
-    orchestrator_running: "orchestrator",
+    core: "core",
+    core_running: "core",
+    orchestrator: "core",
+    orchestrator_running: "core",
     expert_running: "nutrition_expert",
     nutrition_expert: "nutrition_expert",
     nutrition_running: "nutrition_expert",

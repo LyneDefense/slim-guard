@@ -4,7 +4,7 @@
 >
 > 日期：2026-09-17
 >
-> 状态：讨论结论已冻结，等待实施
+> 状态：核心重构已实施；本文同时保留重构前基线，供迁移审计
 >
 > 适用范围：Agent 编排、Harness、专业 Agent、医生风格、内容审查、记忆、运行追踪与后台可视化
 
@@ -56,6 +56,23 @@ SlimGuard 应重构为：
 16. 普通长期记忆抽取放在回复完成后异步执行；用户明确要求“记住/忘记”时同步执行。
 17. 管理后台以“一条用户消息到一条最终回复”为一轮展示，默认呈现业务流程，技术细节按需展开；不得显示隐藏思维链。
 18. 暂不引入 LangGraph。当前已有的 Turn、Invocation、Artifact、权限、预算、持久化和 Trace 足以承载目标架构，引入 LangGraph 只会形成两套状态与观测系统。
+
+### 2.1 2026-09-17 实施结果
+
+本文定义的主控制流已经落地：
+
+- `TurnHarness` 负责整轮生命周期，`InvocationRunner` 统一执行每次 Agent Invocation；
+- `Core Agent` 是唯一主业务生成入口，可调用普通业务工具和 Nutrition Agent Tool；
+- 正常链路不再生成 legacy baseline 与 Multi-Agent candidate 两份答案；
+- Response Pipeline 只处理 Core 生成的一份中性稿，依次执行 ResponsePlan、当前 active Style Profile 和按策略启用的 Reviewer；
+- Reviewer 的返工目标收口为 `core / nutrition_expert / response_style`，责任 Agent 生成新 Artifact 后再审；
+- Nutrition Agent 在 Invocation 内冻结并使用 RAG release/profile，RAG 仍维持独立发布、评测与管理边界；
+- 领域历史改为 Core 按需工具查询；普通长期记忆抽取移到回复完成后，PostgreSQL 为权威源、Mem0 为语义索引；
+- 后台 Turn Trace 以用户输入、实际 Agent 调用、记忆/RAG、风格前后、审查返工和最终输出组织，不再展示 shadow/baseline 对比；
+- 生产运行开关仅保留 `MULTI_AGENT_MODE=off|on`：`off` 关闭风格/审查管线但仍由 Core 处理任务，`on` 启用完整单主链路；
+- 旧 Coordinator、旧工作流图、旧 standalone retrieval/guidance Agent 与 rollout/canary 代码已经删除。历史数据库中的旧角色和值仍可由后台按历史记录展示，但新运行时不会再生成。
+
+实现没有引入 LangGraph；Agent 之间继续通过项目自有的 Invocation、Grant、Artifact 与 ToolObservation 契约通信。
 
 ## 3. 用户提出的问题与对应结论
 
@@ -251,14 +268,12 @@ ResponsePlan 解决“内容正确”和“表达像医生”混在同一 Prompt
 风格是否符合 Profile 由风格 Agent 自检、离线 A/B 评测、人工评审和版本发布流程负责。运行时审查只在
 风格转换造成语义漂移时介入，而不是再做一套风格打分。
 
-### 3.10 审查不通过后谁修改，当前是否已实现
+### 3.10 审查不通过后谁修改，以及实施状态
 
-当前候选工作流已经有“审查只判决、责任 Agent 返工”的雏形：`ReviewerVerdict` 输出
-`pass / repair / reject`、问题类型和 `repair_target`；协调器把问题分别送回风格、营养或编排节点，之后再次审查。
-
-但当前实现只存在于旧 `AgentWorkflowCoordinator` 候选链路里，还不是 Core-primary 架构；并且存在一处必须修复的
-契约不一致：Reviewer Prompt 将部分无依据菜品建议问题指向风格层，而 `ReviewerVerdict` Schema 又要求这些问题
-只能由营养 Agent 修复，可能导致判决校验失败并直接降级。
+重构前只有旧候选工作流具备“审查只判决、责任 Agent 返工”的雏形。重构后该能力已进入唯一主路径：
+`ReviewerVerdict` 输出 `pass / repair / reject`、问题类型和 `repair_target`，Response Pipeline 仅按结构化目标将任务交回
+Style、Nutrition 或 Core。Reviewer Prompt、IssueType 与 Schema 的返工目标已经统一，不再允许旧的
+`orchestrator` 返工目标。
 
 目标返工归属为：
 
@@ -273,7 +288,7 @@ ResponsePlan 解决“内容正确”和“表达像医生”混在同一 Prompt
 Reviewer 不能返回任意字符串形式的“请改一下”，必须返回结构化 `ReviewVerdict`。返工后必须产生新 Artifact，保留
 旧 Artifact 和父子引用，不能覆盖历史。
 
-当前实现的核心思想可以简化为：
+重构前的路由方式可以简化为：
 
 ```python
 target_node = {
@@ -300,11 +315,11 @@ else:
 
 这只是职责示意；实际执行仍必须经过 Invocation Harness、Grant、Schema、预算和 Artifact 持久化。
 
-## 4. 当前实现基线与主要问题
+## 4. 重构前实现基线与主要问题
 
-### 4.1 当前真实流程
+### 4.1 重构前真实流程
 
-根据当前代码，主要执行链路是：
+重构开始前的主要执行链路是：
 
 ```text
 初始化 Turn
@@ -322,7 +337,7 @@ else:
 
 这是一套为渐进上线设计的“双路径”，不是目标终态。
 
-#### 当前输入安全实际检查的内容
+#### 重构前输入安全实际检查的内容
 
 当前 `DefaultInputSafetyPolicy` 主要识别：
 
@@ -334,7 +349,7 @@ else:
 这套实现以确定性关键词为主，能力有限。目标方案保留它作为薄硬门，并增强权限攻击和输入文件边界检查；年龄只改变
 适用标准，不重新引入“未成年人不能使用教练”的 blanket rule。
 
-#### 当前每轮实际预载的数据
+#### 重构前每轮实际预载的数据
 
 `AuthoritativeContextDataProvider` 当前会一次性加载：
 
@@ -352,7 +367,7 @@ else:
 
 这些数据不是全都不该存在，而是不该不分场景地在每轮一次性塞给 Core Agent。目标方案将其中的领域历史改为按需工具查询。
 
-#### 当前记忆摄取实际范围
+#### 重构前记忆摄取实际范围
 
 当前 `ModelFirstMemoryIngestor` 在回复生成前同步运行，读取当前用户消息、最多 20 条先前用户证据（合计最多 6000 字符）
 和数据库 active memories；模型最多提出 8 个记忆工具调用。它只允许调用结构化记忆工具，因此本质上是结构化资料抽取器。

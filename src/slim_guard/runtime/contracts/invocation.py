@@ -13,9 +13,6 @@ from slim_guard.runtime.contracts.base import ContractModel
 
 class AgentRole(StrEnum):
     CORE = "core"
-    ORCHESTRATOR = "orchestrator"
-    DISH_RECOGNITION = "dish_recognition"
-    NUTRITION_RETRIEVAL = "nutrition_retrieval"
     NUTRITION_EXPERT = "nutrition_expert"
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
@@ -38,7 +35,7 @@ class AgentInvocation(ContractModel):
     agent_role: AgentRole = Field(validation_alias=AliasChoices("agent_role", "callee"))
     agent_version: str = Field(min_length=1, max_length=128)
     attempt: int = Field(default=1, ge=1, le=16, strict=True)
-    caller: str = Field(default="coordinator", min_length=1, max_length=128)
+    caller: str = Field(default="turn_harness", min_length=1, max_length=128)
     parent_invocation_id: str | None = Field(default=None, min_length=1, max_length=128)
     input_artifact_ids: tuple[str, ...] = Field(
         default=(),

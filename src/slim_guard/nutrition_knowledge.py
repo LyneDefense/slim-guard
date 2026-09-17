@@ -1218,7 +1218,7 @@ class NutritionKnowledgeService:
             "candidates": candidates,
             "adopted_citations": adopted,
             # Existing NutritionKnowledgeRepository consumers can keep reading
-            # citations. A coordinator binds the invocation ID before model use.
+            # citations. The Turn Harness binds the invocation ID before model use.
             "citations": citations,
             "query_summary": (
                 f"lexical_vector_candidates={len(candidates)};adopted={len(adopted)}"

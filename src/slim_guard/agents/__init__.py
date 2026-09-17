@@ -6,13 +6,11 @@ from slim_guard.agents.contracts import (
     AgentResult,
     Artifact,
     ContentBlock,
-    Directive,
     KnowledgeCitation,
     ProfessionalAssessment,
     ResponsePlan,
     ReviewerVerdict,
     StyledResponse,
-    TurnDirective,
 )
 
 __all__ = [
@@ -21,11 +19,9 @@ __all__ = [
     "AgentResult",
     "Artifact",
     "ContentBlock",
-    "Directive",
     "KnowledgeCitation",
     "ProfessionalAssessment",
     "ResponsePlan",
     "ReviewerVerdict",
     "StyledResponse",
-    "TurnDirective",
 ]

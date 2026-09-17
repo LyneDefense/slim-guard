@@ -59,17 +59,17 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
     async with database.session() as session, session.begin():
         session.add(SlimGuardUser(id="test-rollback-user", first_seen_at=NOW, last_seen_at=NOW))
 
-    baseline = "已记录今天的体重77.6kg。"
-    adopted_text = "已记录今天的体重77.6kg！"
-    legacy_after_rollback = "之前的77.6kg记录还在，这次没有新增记录。"
+    core_draft = "已记录今天的体重77.6kg。"
+    styled_text = "已记录今天的体重77.6kg！"
+    core_after_pipeline_disabled = "之前的77.6kg记录还在，这次没有新增记录。"
     on_model = ScriptedModelGateway(
         [
             tool_response("test-write-once", "record_weight", {"value": 77.6, "unit": "kg"}),
-            text_response(baseline),
+            text_response(core_draft),
             text_response(
                 json.dumps(
                     {
-                        "text": adopted_text,
+                        "text": styled_text,
                         "used_block_ids": ["core-neutral-draft"],
                         "used_claim_ids": [],
                         "used_action_ids": [],
@@ -84,7 +84,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
     off_model = ScriptedModelGateway(
         [
             tool_response("test-read-existing", "get_recent_weight_trend", {"limit": 7}),
-            text_response(legacy_after_rollback),
+            text_response(core_after_pipeline_disabled),
         ]
     )
     definition = AgentRuntimeDefinition(
@@ -111,7 +111,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
             )
         )
         assert first.termination is HarnessTermination.FINAL_RESPONSE
-        assert first.final_text == adopted_text
+        assert first.final_text == styled_text
         before = await WeightRepository(database).recent_trend("test-rollback-user")
         assert len(before.records) == 1
         record = before.records[0]
@@ -153,7 +153,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
             )
         )
         assert second.termination is HarnessTermination.FINAL_RESPONSE
-        assert second.final_text == legacy_after_rollback
+        assert second.final_text == core_after_pipeline_disabled
         assert second.thread_id == first.thread_id
         assert second.turn_id != first.turn_id
         after = await WeightRepository(database).recent_trend("test-rollback-user")
@@ -175,7 +175,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
         ] == ["get_recent_weight_trend"]
         finals = [item for item in second_items if item.item_type is ItemType.AGENT_MESSAGE]
         assert len(finals) == 1
-        assert finals[0].payload["text"] == legacy_after_rollback
+        assert finals[0].payload["text"] == core_after_pipeline_disabled
         for turn_id in (first.turn_id, second.turn_id):
             stored_turn = await store.get_turn(turn_id)
             assert stored_turn is not None and stored_turn.status is TurnStatus.COMPLETED

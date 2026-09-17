@@ -545,25 +545,6 @@ button:disabled { cursor: default; }
 .review-artifact-card dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 8px; }
 .review-artifact-card > code { display: block; overflow: hidden; color: #818b86; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .review-artifact-empty { min-height: 104px; display: grid; place-items: center; padding: 12px; border: 1px dashed #d8d1dc; border-radius: 10px; color: var(--muted); text-align: center; font-size: 8px; }
-.shadow-comparison { margin: 30px 0 36px; overflow: hidden; border: 1px solid #d9d1e9; border-radius: 19px; background: #faf8fd; }
-.shadow-comparison > header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 22px; border-bottom: 1px solid #e4dff0; }
-.shadow-kicker { color: #6d4ba2; font-size: 9px; font-weight: 900; letter-spacing: .14em; }
-.shadow-comparison h2 { margin: 6px 0 4px; font-size: 19px; }
-.shadow-comparison > header p { margin: 0; color: var(--muted); font-size: 11px; }
-.shadow-safety-flags { display: flex; gap: 7px; flex-shrink: 0; }
-.shadow-safety-flags span { padding: 6px 9px; border-radius: 8px; color: #684592; background: #eee8f7; font-size: 10px; font-weight: 800; }
-.shadow-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #e4dff0; }
-.shadow-panel { min-width: 0; padding: 20px 22px; background: white; }
-.shadow-panel-candidate { background: #fbf9fe; }
-.shadow-panel > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-.shadow-panel small { color: var(--muted); font-size: 9px; }
-.shadow-panel h3 { margin: 5px 0 0; font-size: 15px; }
-.shadow-panel header > span { padding: 4px 7px; border-radius: 7px; color: #53635b; background: #e9eeeb; font-size: 9px; white-space: nowrap; }
-.shadow-panel-candidate header > span { color: #684592; background: #eee8f7; }
-.shadow-panel > p { min-height: 82px; margin: 18px 0 0; color: #34453d; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
-.shadow-comparison > footer { display: flex; justify-content: space-between; gap: 14px; padding: 11px 22px; color: var(--muted); font-size: 9px; }
-.shadow-comparison > footer code { overflow-wrap: anywhere; }
-.shadow-comparison > footer strong { color: #684592; }
 .invocation-section { margin: 34px 0; }
 .invocation-filters { flex-wrap: wrap; margin-bottom: 17px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: white; }
 .invocation-list { display: grid; gap: 11px; }
@@ -1042,8 +1023,6 @@ button:disabled { cursor: default; }
   .review-artifact-flow { grid-template-columns: 1fr; }
   .review-artifact-arrow { justify-self: center; transform: rotate(90deg); }
   .dish-guidance-grid, .dish-correction-fields { grid-template-columns: 1fr; }
-  .shadow-comparison > header { align-items: start; flex-direction: column; }
-  .shadow-panels { grid-template-columns: 1fr; }
   .invocation-card > summary { grid-template-columns: auto minmax(150px, 1fr) auto; }
   .invocation-flags { grid-column: 2 / 3; justify-content: flex-start; flex-wrap: wrap; }
   .invocation-card > summary::after { grid-column: 3; grid-row: 1; }
@@ -1099,8 +1078,7 @@ button:disabled { cursor: default; }
   .review-verdict > header > code { max-width: 100%; }
   .review-verdict dl { grid-template-columns: 1fr; }
   .review-repairs article > header small { margin-left: 0; }
-  .shadow-safety-flags { flex-wrap: wrap; }
-  .shadow-comparison > footer, .invocation-body > footer { flex-direction: column; }
+  .invocation-body > footer { flex-direction: column; }
   .invocation-explanation > dl { grid-template-columns: repeat(2, 1fr); }
   .style-ab-case-list, .style-ab-outputs, .style-ab-score-grid, .style-ab-judge { grid-template-columns: 1fr; }
   .style-ab-detail > header, .style-ab-review-form > header { flex-direction: column; }

@@ -23,7 +23,6 @@ import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
 import { DishGuidanceTracePanel } from "./components/trace/DishGuidanceTracePanel";
 import { EvidencePanel } from "./components/trace/EvidencePanel";
 import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
-import { ShadowComparison } from "./components/trace/ShadowComparison";
 import { StyleTracePanel } from "./components/trace/StyleTracePanel";
 import { TraceOperatorSummary } from "./components/trace/TraceOperatorSummary";
 import { TurnTraceOverview } from "./components/trace/TurnTraceOverview";
@@ -402,15 +401,14 @@ function TracePage() {
         <summary><span>查看完整流程与工程排障信息</span><small>Agent 节点、RAG 证据、风格、审查、Token 与原始事件</small></summary>
         <div className="trace-technical-body">
           <ExecutionOverview data={data} />
-          {workflow.hasMultiAgentTrace && <WorkflowGraph workflow={workflow} />}
+          {workflow.hasAgentTrace && <WorkflowGraph workflow={workflow} />}
           <DishGuidanceTracePanel workflow={workflow} userId={user.id} traceId={traceId} />
           <EvidencePanel workflow={workflow} />
           <StyleTracePanel workflow={workflow} />
           <ReviewerTracePanel workflow={workflow} />
-          {workflow.shadowComparison && <ShadowComparison comparison={workflow.shadowComparison} />}
-          {workflow.hasMultiAgentTrace
+          {workflow.hasAgentTrace
             ? <MultiAgentTimeline workflow={workflow} />
-            : <LegacyTimeline timeline={data.timeline} />}
+            : <TurnEventTimeline timeline={data.timeline} />}
           {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
           {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
         </div>
@@ -420,7 +418,7 @@ function TracePage() {
   );
 }
 
-function LegacyTimeline({ timeline }: { timeline: TimelineEvent[] }) {
+function TurnEventTimeline({ timeline }: { timeline: TimelineEvent[] }) {
   return (
     <>
       <div className="section-heading"><div><h2>Agent 是怎么完成这次回复的</h2><p>按 Harness 的真实事件解释上下文、模型动作、工具观察和投递过程。</p></div><span>{timeline.length} 个步骤</span></div>

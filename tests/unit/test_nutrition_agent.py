@@ -31,8 +31,8 @@ from slim_guard.agents.nutrition.specialist import (
     NutritionSpecialist,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
-from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.nutrition_rag import NutritionRuntimeSnapshot
+from slim_guard.runtime.invocation import InvocationRunner
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,7 @@ def invocation(**updates: object) -> AgentInvocation:
         "invocation_id": "nutrition-invocation-1",
         "trace_id": "trace-1",
         "turn_id": "turn-1",
-        "graph_version": "typed-supervisor-v1",
+        "graph_version": "core-primary-v1",
         "agent_role": "nutrition_expert",
         "agent_version": "nutrition-v1",
         "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
@@ -405,7 +405,7 @@ def test_validator_accepts_an_approved_citation_from_the_same_invocation() -> No
 async def test_nutrition_agent_returns_valid_assessment_without_tools() -> None:
     gateway = ScriptedModelGateway((model_response(valid_assessment()),))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -524,7 +524,7 @@ async def test_nutrition_agent_repairs_visual_confidence_once() -> None:
         (model_response(invalid, tokens=30), model_response(repaired, tokens=40))
     )
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -542,7 +542,7 @@ async def test_nutrition_agent_repairs_invalid_schema_once() -> None:
     malformed = ModelResponse(message=ModelMessage(role=MessageRole.ASSISTANT, content="not-json"))
     gateway = ScriptedModelGateway((malformed, model_response(valid_assessment())))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -570,7 +570,7 @@ async def test_nutrition_agent_degrades_after_second_integrity_failure() -> None
     )
     gateway = ScriptedModelGateway((model_response(invalid), model_response(invalid)))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -608,7 +608,7 @@ async def test_nutrition_agent_rejects_high_risk_model_prior_only_output() -> No
     )
     gateway = ScriptedModelGateway((unsafe_response, unsafe_response))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -624,7 +624,7 @@ async def test_nutrition_agent_rejects_high_risk_model_prior_only_output() -> No
 async def test_nutrition_agent_degrades_on_provider_failure_without_retry() -> None:
     gateway = ScriptedModelGateway((ModelTimeoutError("planned timeout"),))
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 
@@ -640,7 +640,7 @@ async def test_nutrition_agent_degrades_on_provider_failure_without_retry() -> N
 async def test_nutrition_agent_rejects_write_permissions_before_model_call() -> None:
     gateway = ScriptedModelGateway(())
     agent = NutritionAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-nutrition-model",
     )
 

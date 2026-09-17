@@ -276,10 +276,10 @@ class AuthoritativeContextDataProvider:
                 at=current_time,
             )
             if pending:
+                # ``confirm_dishes`` belonged to the retired graph workflow.  Do not
+                # expose an action that the Core Agent can no longer resolve; current
+                # image clarification stays in recent dialogue/image working memory.
                 ordinary = [action for action in pending if action.tool_name != "confirm_dishes"]
-                dish_confirmations = [
-                    action for action in pending if action.tool_name == "confirm_dishes"
-                ]
                 if ordinary:
                     working_memory["pending_user_confirmations"] = [
                         {
@@ -289,15 +289,6 @@ class AuthoritativeContextDataProvider:
                             "expires_at": action.expires_at.isoformat(),
                         }
                         for action in ordinary
-                    ]
-                if dish_confirmations:
-                    working_memory["pending_dish_confirmation"] = [
-                    {
-                        "action_id": action.id,
-                        "question": action.reason,
-                        "expires_at": action.expires_at.isoformat(),
-                    }
-                        for action in dish_confirmations
                     ]
         if working_memory:
             context["working_memory"] = working_memory

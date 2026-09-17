@@ -14,7 +14,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     ToolChoice,
 )
-from slim_guard.harness.events import TurnStatus
+from slim_guard.harness.events import ItemType, TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
 from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.safety import (
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class FinalResponseCandidate:
+class ResponsePipelineResult:
     text: str
     model_call_count: int = 0
     total_token_count: int = 0
@@ -41,9 +41,9 @@ class FinalResponseCandidate:
     final_output_artifact_id: str | None = None
 
 
-FinalResponseHook = Callable[
+ResponsePipelineHook = Callable[
     [str, tuple[ModelMessage, ...], tuple[ToolCallOutcome, ...], tuple[ModelResponse, ...]],
-    Awaitable[FinalResponseCandidate],
+    Awaitable[ResponsePipelineResult],
 ]
 
 
@@ -89,14 +89,14 @@ class HarnessLoopResult:
     model_responses: tuple[ModelResponse, ...]
     tool_outcomes: tuple[ToolCallOutcome, ...]
     failure: HarnessFailure | None = None
-    workflow_model_call_count: int = 0
-    workflow_total_token_count: int = 0
+    pipeline_model_call_count: int = 0
+    pipeline_total_token_count: int = 0
     core_output_artifact_id: str | None = None
     final_output_artifact_id: str | None = None
 
     @property
     def model_call_count(self) -> int:
-        return len(self.model_responses) + self.workflow_model_call_count
+        return len(self.model_responses) + self.pipeline_model_call_count
 
     @property
     def tool_call_count(self) -> int:
@@ -106,7 +106,7 @@ class HarnessLoopResult:
     def total_token_count(self) -> int:
         return (
             sum(response.usage.total_tokens for response in self.model_responses)
-            + self.workflow_total_token_count
+            + self.pipeline_total_token_count
         )
 
 
@@ -143,7 +143,7 @@ class HarnessLoop:
         now: datetime,
         trusted_evidence_item_ids: tuple[str, ...] = (),
         safety_assessment: SafetyAssessment | None = None,
-        final_response_hook: FinalResponseHook | None = None,
+        response_pipeline_hook: ResponsePipelineHook | None = None,
         before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
         messages = list(request.messages)
@@ -251,20 +251,20 @@ class HarnessLoop:
                         code=guarded.code,
                     )
                 final_text = guarded.text
-                workflow_calls = 0
-                workflow_tokens = 0
+                pipeline_calls = 0
+                pipeline_tokens = 0
                 core_output_artifact_id = None
                 final_output_artifact_id = None
-                if final_response_hook is not None and not guarded.modified:
+                if response_pipeline_hook is not None and not guarded.modified:
                     try:
-                        proposed = await final_response_hook(
+                        proposed = await response_pipeline_hook(
                             final_text,
                             tuple(messages),
                             tuple(tool_outcomes),
                             tuple(model_responses),
                         )
-                        workflow_calls = proposed.model_call_count
-                        workflow_tokens = proposed.total_token_count
+                        pipeline_calls = proposed.model_call_count
+                        pipeline_tokens = proposed.total_token_count
                         core_output_artifact_id = proposed.core_output_artifact_id
                         final_output_artifact_id = proposed.final_output_artifact_id
                         checked = self._output_guard.review(
@@ -274,6 +274,16 @@ class HarnessLoop:
                         )
                         if not checked.modified:
                             final_text = checked.text
+                        else:
+                            await self._recorder.record_workflow_event(
+                                turn_id=context.turn_id,
+                                event_type=ItemType.RESPONSE_DEGRADED,
+                                payload={
+                                    "artifact_id": proposed.final_output_artifact_id,
+                                    "reason_code": "response_pipeline_output_guard_modified",
+                                    "fallback_type": "core_response",
+                                },
+                            )
                     except Exception as error:
                         logger.warning(
                             "final_response_workflow_failed",
@@ -282,6 +292,15 @@ class HarnessLoop:
                             },
                             exc_info=error,
                         )
+                        await self._recorder.record_workflow_event(
+                            turn_id=context.turn_id,
+                            event_type=ItemType.RESPONSE_DEGRADED,
+                            payload={
+                                "artifact_id": None,
+                                "reason_code": "response_pipeline_failed",
+                                "fallback_type": "core_response",
+                            },
+                        )
                 return await self._finish(
                     context=context,
                     termination=HarnessTermination.FINAL_RESPONSE,
@@ -289,8 +308,8 @@ class HarnessLoop:
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
-                    workflow_model_call_count=workflow_calls,
-                    workflow_total_token_count=workflow_tokens,
+                    pipeline_model_call_count=pipeline_calls,
+                    pipeline_total_token_count=pipeline_tokens,
                     core_output_artifact_id=core_output_artifact_id,
                     final_output_artifact_id=final_output_artifact_id,
                     before_finish_hook=before_finish_hook,
@@ -413,8 +432,8 @@ class HarnessLoop:
         tool_outcomes: list[ToolCallOutcome],
         final_text: str | None = None,
         failure: HarnessFailure | None = None,
-        workflow_model_call_count: int = 0,
-        workflow_total_token_count: int = 0,
+        pipeline_model_call_count: int = 0,
+        pipeline_total_token_count: int = 0,
         core_output_artifact_id: str | None = None,
         final_output_artifact_id: str | None = None,
         before_finish_hook: BeforeFinishHook | None = None,
@@ -426,8 +445,8 @@ class HarnessLoop:
             model_responses=tuple(model_responses),
             tool_outcomes=tuple(tool_outcomes),
             failure=failure,
-            workflow_model_call_count=workflow_model_call_count,
-            workflow_total_token_count=workflow_total_token_count,
+            pipeline_model_call_count=pipeline_model_call_count,
+            pipeline_total_token_count=pipeline_total_token_count,
             core_output_artifact_id=core_output_artifact_id,
             final_output_artifact_id=final_output_artifact_id,
         )
@@ -437,9 +456,9 @@ class HarnessLoop:
             turn_id=context.turn_id,
             termination=termination,
             final_text=final_text,
-            model_call_count=len(model_responses) + workflow_model_call_count,
+            model_call_count=len(model_responses) + pipeline_model_call_count,
             tool_call_count=len(tool_outcomes),
-            total_token_count=self._total_tokens(model_responses) + workflow_total_token_count,
+            total_token_count=self._total_tokens(model_responses) + pipeline_total_token_count,
             failure=failure,
         )
         return result

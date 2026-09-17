@@ -117,7 +117,7 @@ class ReviewerVerdictValidator:
                     ReviewerIssueType.FORBIDDEN_NUTRITION_ESTIMATE,
                 }
             )
-        if target in {RepairTarget.CORE, RepairTarget.ORCHESTRATOR}:
+        if target is RepairTarget.CORE:
             return issue_types == {ReviewerIssueType.MISSING_USER_EVIDENCE}
         return False
 
@@ -180,7 +180,7 @@ class ReviewerVerdictValidator:
         ):
             detected.add(ReviewerIssueType.OMITTED_REQUIRED_CONTENT)
         if context.available_evidence_ids is not None:
-            referenced = set(context.directive.evidence_refs) if context.directive else set()
+            referenced = source_refs(ContentBlockKind.FACT)
             if assessment is not None:
                 referenced.update(
                     reference for claim in assessment.findings for reference in claim.evidence_refs

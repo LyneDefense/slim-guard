@@ -31,8 +31,8 @@ export function WorkflowMetricsData({ metrics }: { metrics: TraceWorkflowReviewM
   const hasNodeMetrics = nodes.some(([, node]) => valid(node.total) && node.total > 0);
   const hasOutcomeMetrics = outcomes.some(([, row]) => valid(row.total));
   const nodeFailures = nodes.reduce((total, [, node]) => total + (valid(node.failed) ? node.failed : 0), 0);
-  const multiAgentTraces = outcomes.reduce(
-    (total, [mode, row]) => total + (mode === "off" || !valid(row.total) ? 0 : row.total),
+  const agentTraces = outcomes.reduce(
+    (total, [mode, row]) => total + (mode === "unavailable" || !valid(row.total) ? 0 : row.total),
     0,
   );
   const fallbackReplies = outcomes.reduce(
@@ -53,11 +53,11 @@ export function WorkflowMetricsData({ metrics }: { metrics: TraceWorkflowReviewM
       <div className={`workflow-health ${nodeFailures > 0 ? "workflow-health-bad" : hasNodeMetrics ? "workflow-health-good" : "workflow-health-neutral"}`}>
         <div>
           <span className="eyebrow">运行结论</span>
-          <strong>{nodeFailures > 0 ? "Multi-Agent 存在节点失败" : hasNodeMetrics ? "暂未发现 Multi-Agent 节点失败" : "暂无可判断节点状态的数据"}</strong>
-          <p>“回复生成成功”只表示系统产出了回复，不代表 Multi-Agent、RAG 或医生风格真正执行成功。</p>
+          <strong>{nodeFailures > 0 ? "Agent 主路径存在节点失败" : hasNodeMetrics ? "暂未发现 Agent 节点失败" : "暂无可判断节点状态的数据"}</strong>
+          <p>“回复生成成功”只表示系统产出了回复，不代表专业 Agent、RAG 或医生风格都执行成功。</p>
         </div>
         <dl>
-          <div><dt>Multi-Agent Trace</dt><dd>{count(hasOutcomeMetrics ? multiAgentTraces : null)}</dd></div>
+          <div><dt>Agent Trace</dt><dd>{count(hasOutcomeMetrics ? agentTraces : null)}</dd></div>
           <div><dt>节点失败</dt><dd>{count(hasNodeMetrics ? nodeFailures : null)}</dd></div>
           <div><dt>记录为降级</dt><dd>{count(hasOutcomeMetrics ? fallbackReplies : null)}</dd></div>
         </dl>
@@ -78,13 +78,13 @@ export function WorkflowMetricsData({ metrics }: { metrics: TraceWorkflowReviewM
               <tbody>{nodes.map(([role, node]) => <tr key={role}><th scope="row">{agentRoleLabel(role)}</th><td>{count(node.failed)}</td><td>{count(node.total)}</td><td>{rate(node.total === 0 ? null : node.rate)}</td></tr>)}</tbody>
             </table></div>
           ) : <p className="workflow-metric-note">该时间窗口没有可用的节点失败率记录。</p>}
-          <h3>Legacy / Multi-Agent 执行结果对比</h3>
-          <p className="workflow-metric-note">以下是回复生成状态，不代表人工质量评分或渠道送达；候选质量仍需同输入配对评审。</p>
+          <h3>Core 主路径执行结果</h3>
+          <p className="workflow-metric-note">以下是回复生成状态，不代表人工质量评分或渠道送达。</p>
           {outcomes.length > 0 ? (
             <div className="workflow-metric-table"><table>
               <thead><tr><th>模式</th><th>样本</th><th>生成成功</th><th>降级</th><th>失败</th></tr></thead>
               <tbody>{outcomes.map(([mode, row]) => <tr key={mode}>
-                <th scope="row">{mode === "off" ? "Legacy / Off" : mode}</th>
+                <th scope="row">{modeLabel(mode)}</th>
                 <td>{count(row.total)}</td><td>{count(row.succeeded)}</td>
                 <td>{count(row.degraded)}</td><td>{count(row.failed)}</td>
               </tr>)}</tbody>
@@ -98,6 +98,12 @@ export function WorkflowMetricsData({ metrics }: { metrics: TraceWorkflowReviewM
 
 function valid(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function modeLabel(mode: string): string {
+  if (mode === "core_primary" || mode === "on") return "Core 主路径";
+  if (mode === "off") return "风格与审查关闭";
+  return mode === "unavailable" ? "历史记录未标注" : mode;
 }
 
 function count(value: number | null | undefined): string {

@@ -24,7 +24,7 @@ def test_reviewer_summary_normalizes_aliases_and_keeps_comparison_metadata_only(
             "repair_budget": {
                 "max_style_repairs": 1,
                 "max_nutrition_repairs": 1,
-                "max_orchestrator_repairs": 1,
+                "max_core_repairs": 1,
                 "max_upstream_repairs": 2,
                 "unsafe_note": "must not leak",
             },
@@ -132,7 +132,7 @@ def test_reviewer_summary_normalizes_aliases_and_keeps_comparison_metadata_only(
     assert summary["verdict_count"] == 2
     assert summary["issue_count"] == 2
     assert summary["repair_counts"] == {
-        "orchestrator": 0,
+        "core": 0,
         "nutrition_expert": 0,
         "response_style": 1,
         "unknown": 0,

@@ -192,8 +192,8 @@ async def test_workflow_events_are_privacy_minimized_and_json_serializable(tmp_p
             event_type=ItemType.RESPONSE_ADOPTED,
             payload={
                 "artifact_id": "artifact-output",
-                "mode": "shadow",
-                "final": False,
+                "mode": "on",
+                "final": True,
             },
         )
         await recorder.record_workflow_event(
@@ -202,7 +202,7 @@ async def test_workflow_events_are_privacy_minimized_and_json_serializable(tmp_p
             payload={
                 "artifact_id": None,
                 "reason_code": "style_timeout",
-                "fallback_type": "legacy_response",
+                "fallback_type": "core_response",
             },
         )
 

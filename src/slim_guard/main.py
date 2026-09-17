@@ -38,7 +38,6 @@ from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.routine.jobs import RoutineJobPlanner, RoutineJobRepository
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.routine.status import DailyCheckinStatusRepository
-from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
@@ -87,11 +86,8 @@ from slim_guard.services.proactive_delivery import (
     ProactiveDeliveryRepository,
 )
 from slim_guard.services.reply_agent import (
-    SLIM_GUARD_INSTRUCTIONS,
-    SLIM_GUARD_PROMPT_VERSION,
     ReplyAgentProtocol,
     StaticReplyAgent,
-    ZhipuReplyAgent,
 )
 from slim_guard.services.routine_scheduler import RoutineSchedulerService
 from slim_guard.style_iteration_builder import StyleIterationBuilder, StyleIterationWorker
@@ -110,12 +106,6 @@ def create_app(
     memory_engine: MemoryEngine | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
-    if app_settings.agent_runtime_mode == "shadow":
-        raise ValueError(
-            f"AGENT_RUNTIME_MODE={app_settings.agent_runtime_mode!r} is not implemented yet"
-        )
-    if app_settings.multi_agent_mode != "off" and app_settings.agent_runtime_mode != "harness":
-        raise ValueError("MULTI_AGENT_MODE requires AGENT_RUNTIME_MODE=harness")
     if app_settings.nutrition_rag_enabled and not app_settings.nutrition_agent_enabled:
         raise ValueError("NUTRITION_RAG_ENABLED requires NUTRITION_AGENT_ENABLED")
     if app_settings.nutrition_rag_enabled and not app_settings.nutrition_require_rag_citations:
@@ -151,47 +141,21 @@ def create_app(
         memory_recall_search_limit=app_settings.memory_recall_search_limit,
         memory_recall_max_selected=app_settings.memory_recall_max_selected,
         multi_agent_mode=app_settings.multi_agent_mode,
-        multi_agent_canary_users=app_settings.multi_agent_canary_users,
         multi_agent_graph_version=app_settings.multi_agent_graph_version,
-        multi_agent_shadow_timeout_seconds=(app_settings.multi_agent_shadow_timeout_seconds),
-        multi_agent_max_model_calls=app_settings.multi_agent_max_model_calls,
-        multi_agent_max_total_tokens=app_settings.multi_agent_max_total_tokens,
+        agent_specialist_timeout_seconds=(app_settings.agent_specialist_timeout_seconds),
         multi_agent_invocation_max_total_tokens=(
             app_settings.multi_agent_invocation_max_total_tokens
         ),
         default_style_profile=app_settings.default_style_profile,
-        style_canary_profile=app_settings.style_canary_profile,
-        style_canary_users=app_settings.style_canary_users,
         style_render_all_normal_replies=app_settings.style_render_all_normal_replies,
         nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
         nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
         nutrition_require_rag_citations=app_settings.nutrition_require_rag_citations,
-        meal_guidance_enabled=app_settings.meal_guidance_enabled,
-        dish_recognition_enabled=app_settings.dish_recognition_enabled,
-        nutrition_retrieval_enabled=app_settings.nutrition_retrieval_enabled,
-        diet_guidance_enabled=app_settings.diet_guidance_enabled,
         response_reviewer_enabled=app_settings.response_reviewer_enabled,
     )
     agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
-    agent_manifest = (
-        build_agent_manifest(runtime_definition)
-        if app_settings.agent_runtime_mode == "harness"
-        else AgentManifest.build(
-            model_provider="zhipu",
-            text_model=app_settings.zhipu_text_model,
-            vision_model=app_settings.zhipu_vision_model,
-            model_parameters=model_parameters,
-            system_prompt_version=SLIM_GUARD_PROMPT_VERSION,
-            system_prompt=SLIM_GUARD_INSTRUCTIONS,
-            context_policy_version="legacy-single-turn-v1",
-            memory_policy_version="none-v1",
-            compaction_policy_version="none-v1",
-            safety_policy_version="legacy-prompt-v1",
-            code_revision=app_settings.agent_code_revision,
-        )
-    )
+    agent_manifest = build_agent_manifest(runtime_definition)
     owned_client: WeComClient | None = None
-    owned_reply_agent: ZhipuReplyAgent | None = None
     owned_model_gateway: ZhipuModelGateway | None = None
     owned_vision_gateway: ZhipuVisionModelGateway | None = None
     owned_memory_engine: Mem0HttpMemoryEngine | None = None
@@ -202,7 +166,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         nonlocal owned_client, owned_memory_engine, owned_model_gateway
-        nonlocal owned_reply_agent, owned_vision_gateway
+        nonlocal owned_vision_gateway
         nonlocal owned_nutrition_embedding, owned_nutrition_reranker
         nonlocal owned_nutrition_fetcher
         configure_logging(app_settings.log_level)
@@ -213,8 +177,6 @@ def create_app(
         await style_profiles.ensure_default()
         try:
             await style_profiles.require_published(app_settings.default_style_profile)
-            if app_settings.style_canary_profile:
-                await style_profiles.require_published(app_settings.style_canary_profile)
         except Exception:
             await database.close()
             raise
@@ -322,7 +284,7 @@ def create_app(
 
         active_runtime: AgentRuntime | None = None
         active_reply_agent = reply_agent
-        if active_reply_agent is None and app_settings.agent_runtime_mode == "harness":
+        if active_reply_agent is None:
             active_model = active_model_for_services
             if active_model is None and app_settings.zhipu_is_configured:
                 owned_model_gateway = ZhipuModelGateway(
@@ -362,17 +324,6 @@ def create_app(
                     max_reply_chars=app_settings.agent_reply_max_chars,
                     traces=traces,
                 )
-        elif active_reply_agent is None and app_settings.zhipu_is_configured:
-            owned_reply_agent = ZhipuReplyAgent(
-                api_key=app_settings.zhipu_api_key,
-                text_model=app_settings.zhipu_text_model,
-                vision_model=app_settings.zhipu_vision_model,
-                base_url=app_settings.zhipu_base_url,
-                timeout_seconds=app_settings.zhipu_http_timeout_seconds,
-                max_output_tokens=app_settings.zhipu_max_output_tokens,
-                max_reply_chars=app_settings.agent_reply_max_chars,
-            )
-            active_reply_agent = owned_reply_agent
         if active_reply_agent is None:
             logger.warning("zhipu_not_configured_using_fallback_reply")
             active_reply_agent = StaticReplyAgent(app_settings.agent_fallback_reply_text)
@@ -691,8 +642,6 @@ def create_app(
                 await nutrition_knowledge_task
             if owned_client is not None:
                 await owned_client.close()
-            if owned_reply_agent is not None:
-                await owned_reply_agent.close()
             if owned_model_gateway is not None:
                 await owned_model_gateway.close()
             if owned_vision_gateway is not None:

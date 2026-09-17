@@ -11,7 +11,7 @@ def node(role: str) -> AgentGraphNodeManifest:
         model="glm-5.2",
         prompt_version=f"{role}-v1",
         prompt=f"Instructions for {role}",
-        output_schema="TurnDirective" if role == "orchestrator" else "AgentOutput",
+        output_schema="CoreResponse" if role == "core" else "AgentOutput",
         allowed_tool_names=("tool_b", "tool_a", "tool_a"),
         privacy_scopes=("scope_b", "scope_a"),
     )
@@ -19,18 +19,16 @@ def node(role: str) -> AgentGraphNodeManifest:
 
 def manifest() -> AgentGraphManifest:
     roles = (
-        "orchestrator",
-        "dish_recognition",
-        "nutrition_retrieval",
+        "core",
         "nutrition_expert",
         "response_style",
         "response_reviewer",
     )
     return AgentGraphManifest.build(
-        graph_version="typed-supervisor-v1",
+        graph_version="core-primary-v1",
         nodes={role: node(role) for role in reversed(roles)},
         style_profile_version="slimguard_default_v1",
-        routing_policy_version="model-directed-code-validated-v1",
+        routing_policy_version="core-tool-directed-v1",
         evidence_policy_version="typed-provenance-v1",
         safety_policy_version="health-output-guard-v2",
         business_tool_versions={"record_weight": "v1"},
@@ -52,8 +50,8 @@ def test_graph_manifest_is_canonical_and_content_addressed() -> None:
 def test_graph_manifest_requires_all_controlled_roles() -> None:
     with pytest.raises(ValueError, match="missing required nodes"):
         AgentGraphManifest.build(
-            graph_version="typed-supervisor-v1",
-            nodes={"orchestrator": node("orchestrator")},
+            graph_version="core-primary-v1",
+            nodes={"core": node("core")},
             style_profile_version="slimguard_default_v1",
             routing_policy_version="routing-v1",
             evidence_policy_version="evidence-v1",
@@ -64,19 +62,17 @@ def test_graph_manifest_requires_all_controlled_roles() -> None:
 
 def test_graph_manifest_rejects_role_key_mismatch() -> None:
     roles = (
-        "orchestrator",
-        "dish_recognition",
-        "nutrition_retrieval",
+        "core",
         "nutrition_expert",
         "response_style",
         "response_reviewer",
     )
     nodes = {role: node(role) for role in roles}
-    nodes["response_style"] = node("orchestrator")
+    nodes["response_style"] = node("core")
 
     with pytest.raises(ValueError, match="keys must match"):
         AgentGraphManifest.build(
-            graph_version="typed-supervisor-v1",
+            graph_version="core-primary-v1",
             nodes=nodes,
             style_profile_version="slimguard_default_v1",
             routing_policy_version="routing-v1",

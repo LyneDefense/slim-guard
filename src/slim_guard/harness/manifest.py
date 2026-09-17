@@ -111,9 +111,7 @@ class AgentGraphManifest:
         code_revision: str,
     ) -> AgentGraphManifest:
         required = {
-            "orchestrator",
-            "dish_recognition",
-            "nutrition_retrieval",
+            "core",
             "nutrition_expert",
             "response_style",
             "response_reviewer",

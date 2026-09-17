@@ -408,12 +408,10 @@ class AdminQueryRepository:
             if isinstance(raw_mode, str)
             else invocation_modes[0]
             if invocation_modes
-            else "shadow"
+            else "core_primary"
             if invocations
-            else "off"
+            else "unavailable"
         )
-        if mode == "legacy":
-            mode = "off"
 
         graph_versions = cls._unique_string_field(invocations, "graph_version")
         agent_versions = cls._unique_string_field(invocations, "agent_version")
@@ -739,7 +737,6 @@ class AdminQueryRepository:
                 "invocations": workflow["invocations"],
                 "artifacts": workflow["artifacts"],
                 "transitions": workflow["transitions"],
-                "shadow_comparison": workflow["shadow_comparison"],
                 "evidence": workflow["evidence"],
                 "review": workflow["review"],
                 "privacy": {
@@ -1222,7 +1219,7 @@ class AdminQueryRepository:
         def rate(numerator: int, denominator: int) -> float:
             return numerator / denominator if denominator else 0.0
 
-        target_names = ("orchestrator", "nutrition_expert", "response_style", "unknown")
+        target_names = ("core", "nutrition_expert", "response_style", "unknown")
         latency_values = [
             duration
             for workflow in workflows
@@ -1548,16 +1545,16 @@ class AdminQueryRepository:
             if isinstance(mode_value, str)
             else invocation_modes[0]
             if invocation_modes
-            else "shadow"
+            else "core_primary"
             if invocations
-            else "legacy"
+            else "unavailable"
         )
         degraded = bool(degraded_events) or any(
             item["status"] == "degraded" for item in invocations
         )
         statuses = {item["status"] for item in invocations}
         if not invocations:
-            workflow_status = "legacy"
+            workflow_status = "unknown"
         elif degraded:
             workflow_status = "degraded"
         elif "started" in statuses:
@@ -1571,7 +1568,7 @@ class AdminQueryRepository:
 
         graph_version = next(
             (row.graph_version for row in invocation_rows if row.graph_version),
-            "legacy",
+            "unrecorded",
         )
         repair_count = sum(cls._is_review_repair_transition(item) for item in transitions)
         style = cls._style_summary(
@@ -1612,18 +1609,6 @@ class AdminQueryRepository:
             "style_degraded": style["degraded"],
             "style_adopted": style["adopted"],
         }
-        shadow_comparison = (
-            cls._shadow_comparison(
-                mode=mode,
-                adopted=adopted if isinstance(adopted, dict) else {},
-                artifacts=artifacts,
-                artifact_rows=artifact_rows,
-                invocations=invocations,
-                output=output,
-            )
-            if mode == "shadow"
-            else None
-        )
         evidence = cls._evidence_summary(artifacts)
         review = cls._review_summary(
             artifacts=artifacts,
@@ -1637,7 +1622,6 @@ class AdminQueryRepository:
             "invocations": invocations,
             "artifacts": artifacts,
             "transitions": transitions,
-            "shadow_comparison": shadow_comparison,
             "style": style,
             "evidence": evidence,
             "review": review,
@@ -1658,7 +1642,7 @@ class AdminQueryRepository:
         input_payload = cls._json_load(row.input_payload_json)
         workflow_mode = input_payload.get("mode") if isinstance(input_payload, dict) else None
         workflow_mode = (
-            workflow_mode if workflow_mode in {"off", "shadow", "canary", "on"} else None
+            workflow_mode if workflow_mode in {"off", "on", "core_primary"} else None
         )
         return {
             "invocation_id": row.id,
@@ -2678,7 +2662,7 @@ class AdminQueryRepository:
                 or "repair" in str(invocation.get("reason_summary", "")).lower()
             )
             and str(invocation.get("agent_role", "")).lower()
-            in {"orchestrator", "nutrition_expert", "response_style"}
+            in {"core", "nutrition_expert", "response_style"}
         ]
         used_invocation_ids: set[str] = set()
         repair_attempts: list[dict[str, Any]] = []
@@ -2725,7 +2709,7 @@ class AdminQueryRepository:
                 }
             )
 
-        target_names = ("orchestrator", "nutrition_expert", "response_style")
+        target_names = ("core", "nutrition_expert", "response_style")
         repair_counts = {
             target: sum(1 for attempt in repair_attempts if attempt["target"] == target)
             for target in target_names
@@ -2936,16 +2920,16 @@ class AdminQueryRepository:
             "nutrition_running",
         }:
             return "nutrition_expert"
-        if node in {"orchestrator", "orchestrator_running"}:
-            return "orchestrator"
+        if node in {"core", "core_running", "orchestrator", "orchestrator_running"}:
+            return "core"
         if transition.get("reason_code") == "budget_exhausted":
             source = str(transition.get("from_node", "")).lower()
             if source in {"style", "style_running", "response_style"}:
                 return "response_style"
             if source in {"expert_running", "nutrition", "nutrition_expert"}:
                 return "nutrition_expert"
-            if source in {"orchestrator", "orchestrator_running"}:
-                return "orchestrator"
+            if source in {"core", "core_running", "orchestrator", "orchestrator_running"}:
+                return "core"
         return None
 
     @staticmethod
@@ -3035,7 +3019,7 @@ class AdminQueryRepository:
         elif adopted_flag and final is True:
             status = "adopted"
         elif adopted_flag:
-            status = "shadow_candidate"
+            status = "not_adopted"
         elif response_artifacts:
             status = "generated"
         else:
@@ -3058,50 +3042,6 @@ class AdminQueryRepository:
                 adopted.get("mode") if isinstance(adopted.get("mode"), str) else None
             ),
             "final": final,
-        }
-
-    @classmethod
-    def _shadow_comparison(
-        cls,
-        *,
-        mode: str,
-        adopted: dict[str, Any],
-        artifacts: list[dict[str, Any]],
-        artifact_rows: tuple[AgentArtifactRecord, ...],
-        invocations: list[dict[str, Any]],
-        output: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        artifact_id = adopted.get("artifact_id")
-        candidate_artifact = next(
-            (artifact for artifact in artifacts if artifact["artifact_id"] == artifact_id),
-            None,
-        )
-        candidate_status = next(
-            (
-                invocation["status"]
-                for invocation in reversed(invocations)
-                if invocation["output_artifact_id"] == artifact_id
-            ),
-            "generated" if candidate_artifact is not None else None,
-        )
-        candidate_row = next(
-            (row for row in artifact_rows if row.id == artifact_id),
-            None,
-        )
-        return {
-            "mode": mode,
-            "delivery_status": "not_sent",
-            "business_writes": "no_business_writes",
-            "legacy": {
-                "artifact_id": None,
-                "content": output.get("content") if output is not None else None,
-                "status": output.get("status") if output is not None else None,
-            },
-            "candidate": {
-                "artifact_id": artifact_id if isinstance(artifact_id, str) else None,
-                "content": cls._stored_artifact_content(candidate_row),
-                "status": candidate_status,
-            },
         }
 
     @classmethod

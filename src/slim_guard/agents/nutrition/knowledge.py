@@ -176,7 +176,7 @@ def bind_candidates(
     policy: CitationValidationPolicy | None = None,
     query_summary: str | None = None,
 ) -> KnowledgeRetrieval:
-    """Concise function API for coordinators that already have an invocation ID."""
+    """Concise function API for callers that already have an invocation ID."""
 
     return KnowledgeCandidateBinder().bind_candidates(
         invocation_id=invocation_id,

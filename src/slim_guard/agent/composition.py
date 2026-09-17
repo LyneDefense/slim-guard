@@ -11,24 +11,16 @@ from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agents.core import CoreResponseRepairAgent
-from slim_guard.agents.diet_guidance import DIET_GUIDANCE_PROMPT, DIET_GUIDANCE_PROMPT_VERSION
-from slim_guard.agents.dish_recognition import (
-    DISH_RECOGNITION_PROMPT,
-    DISH_RECOGNITION_PROMPT_VERSION,
-)
 from slim_guard.agents.nutrition import (
+    DEFAULT_NUTRITION_PROMPT_VERSION,
     NUTRITION_AGENT_ALLOWED_TOOLS,
+    NUTRITION_AGENT_PROMPT,
     NutritionAgentToolHandler,
     NutritionSpecialist,
     nutrition_agent_tool_definitions,
     nutrition_agent_tool_executors,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
-from slim_guard.agents.nutrition_retrieval import (
-    NUTRITION_RETRIEVAL_PROMPT,
-    NUTRITION_RETRIEVAL_PROMPT_VERSION,
-    NutritionRetrievalAgent,
-)
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
     RESPONSE_REVIEWER_PROMPT_VERSION,
@@ -40,7 +32,6 @@ from slim_guard.agents.style import (
     ResponseStyleAgent,
 )
 from slim_guard.db.session import Database
-from slim_guard.dish_knowledge import DishCatalogRepository
 from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
@@ -72,11 +63,6 @@ from slim_guard.memory.working import ConversationWindowRepository
 from slim_guard.nutrition_knowledge import (
     NutritionKnowledgeRepository,
     NutritionKnowledgeService,
-)
-from slim_guard.orchestration.coordinator import (
-    SHADOW_ORCHESTRATOR_PROMPT,
-    SHADOW_ORCHESTRATOR_PROMPT_VERSION,
-    AgentWorkflowCoordinator,
 )
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.response_pipeline import AgentResponseFinalizer, StyleProfileResolver
@@ -118,6 +104,7 @@ class NutritionKnowledgeRuntime(Protocol):
         max_results: int,
         metadata_filter: Mapping[str, Any] | None = None,
         retrieved_in_invocation_id: str | None = None,
+        release_id: str | None = None,
     ) -> Mapping[str, Any]: ...
 
     async def get_source(
@@ -151,16 +138,13 @@ class AgentRuntimeDefinition(BaseModel):
     memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
     memory_recall_search_limit: int = Field(default=12, ge=1, le=100)
     memory_recall_max_selected: int = Field(default=8, ge=1, le=20)
-    multi_agent_mode: Literal["off", "shadow", "canary", "on"] = "off"
-    multi_agent_canary_users: frozenset[str] = frozenset()
+    multi_agent_mode: Literal["off", "on"] = "off"
     multi_agent_graph_version: str = Field(
-        default="typed-supervisor-v1",
+        default="core-primary-v1",
         min_length=1,
         max_length=128,
     )
-    multi_agent_shadow_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
-    multi_agent_max_model_calls: int = Field(default=12, ge=1, le=32)
-    multi_agent_max_total_tokens: int = Field(default=64_000, ge=1024, le=10_000_000)
+    agent_specialist_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     multi_agent_invocation_max_total_tokens: int = Field(
         default=32_000,
         ge=1024,
@@ -171,33 +155,21 @@ class AgentRuntimeDefinition(BaseModel):
         min_length=1,
         max_length=128,
     )
-    style_canary_profile: str = Field(default="", max_length=128)
-    style_canary_users: frozenset[str] = frozenset()
     style_render_all_normal_replies: bool = True
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
-    meal_guidance_enabled: bool = False
-    dish_recognition_enabled: bool = True
-    nutrition_retrieval_enabled: bool = True
-    diet_guidance_enabled: bool = True
     response_reviewer_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_nutrition_rag(self) -> AgentRuntimeDefinition:
-        if self.multi_agent_invocation_max_total_tokens > self.multi_agent_max_total_tokens:
-            raise ValueError(
-                "Multi-agent invocation token budget cannot exceed the workflow budget"
-            )
         if self.nutrition_rag_enabled and not self.nutrition_agent_enabled:
             raise ValueError("Nutrition RAG requires the Nutrition Agent")
-        if self.meal_guidance_enabled and not self.nutrition_agent_enabled:
-            raise ValueError("Meal guidance requires the Nutrition Agent")
         if self.nutrition_rag_enabled and not self.nutrition_require_rag_citations:
             raise ValueError("Nutrition RAG citations cannot be disabled")
         if self.response_reviewer_enabled and not self.style_render_all_normal_replies:
             raise ValueError("Response Reviewer requires the Response Style path")
-        if self.multi_agent_mode in {"canary", "on"} and not self.response_reviewer_enabled:
+        if self.multi_agent_mode == "on" and not self.response_reviewer_enabled:
             raise ValueError("Multi-agent adoption requires Response Reviewer")
         return self
 
@@ -311,7 +283,7 @@ def build_agent_runtime(
         specialist=nutrition_specialist,
         state=state,
         context_data=context_data,
-        timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
+        timeout=timedelta(seconds=definition.agent_specialist_timeout_seconds),
         clock=clock,
     )
     executors = {
@@ -428,56 +400,6 @@ def build_agent_runtime(
         memory_recaller=memory_recaller,
         output_guard=SlimGuardOutputGuard(),
         response_finalizer=response_finalizer,
-        shadow_workflow=(
-            AgentWorkflowCoordinator(
-                model=model,
-                recorder=recorder,
-                model_name=definition.text_model,
-                graph_version=definition.multi_agent_graph_version,
-                timeout=timedelta(seconds=definition.multi_agent_shadow_timeout_seconds),
-                max_output_tokens=definition.vision_max_output_tokens,
-                max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
-                persistence=invocation_store,
-                style_profiles=StyleProfileRepository(database),
-                default_style_profile=definition.default_style_profile,
-                active_style_version=StyleRuntimeVersionResolver(
-                    database,
-                    fallback_version=definition.default_style_profile,
-                ),
-                style_canary_profile=definition.style_canary_profile,
-                style_canary_users=definition.style_canary_users,
-                style_enabled=definition.style_render_all_normal_replies,
-                nutrition_enabled=definition.nutrition_agent_enabled,
-                meal_guidance_enabled=definition.meal_guidance_enabled,
-                dish_recognition_enabled=definition.dish_recognition_enabled,
-                nutrition_retrieval_enabled=definition.nutrition_retrieval_enabled,
-                diet_guidance_enabled=definition.diet_guidance_enabled,
-                nutrition_retrieval_agent=NutritionRetrievalAgent(
-                    catalog=DishCatalogRepository(database),
-                    knowledge=(
-                        active_nutrition_knowledge if definition.nutrition_rag_enabled else None
-                    ),
-                ),
-                pending_dish_confirmations=pending_actions,
-                reviewer_enabled=definition.response_reviewer_enabled,
-                nutrition_tools=nutrition_tools,
-                clock=clock,
-            )
-            if definition.multi_agent_mode in {"shadow", "canary"}
-            else None
-        ),
-        shadow_enabled_for=lambda _user_id: definition.multi_agent_mode == "shadow",
-        workflow_mode=definition.multi_agent_mode,
-        workflow_adopts_for=lambda user_id: (
-            definition.multi_agent_mode == "on"
-            or (
-                definition.multi_agent_mode == "canary"
-                and user_id in definition.multi_agent_canary_users
-            )
-        ),
-        workflow_timeout_seconds=definition.multi_agent_shadow_timeout_seconds,
-        workflow_max_model_calls=definition.multi_agent_max_model_calls,
-        workflow_max_total_tokens=definition.multi_agent_max_total_tokens,
         invocation_store=invocation_store,
         graph_version=definition.multi_agent_graph_version,
         clock=clock,
@@ -526,54 +448,27 @@ def build_agent_manifest(definition: AgentRuntimeDefinition) -> AgentManifest:
 
 
 def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraphManifest:
-    """Freeze active and planned roles for the typed workflow."""
+    """Freeze the single Core-primary runtime and its bounded specialists."""
 
     nodes = {
-        "orchestrator": AgentGraphNodeManifest.build(
-            role="orchestrator",
+        "core": AgentGraphNodeManifest.build(
+            role="core",
             model=definition.text_model,
-            prompt_version=SHADOW_ORCHESTRATOR_PROMPT_VERSION,
-            prompt=SHADOW_ORCHESTRATOR_PROMPT,
-            output_schema="TurnDirective",
-            privacy_scopes=("current_user_message", "trusted_context"),
-            max_model_calls=2,
-            max_tool_calls=0,
-            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
-        ),
-        "dish_recognition": AgentGraphNodeManifest.build(
-            role="dish_recognition",
-            model=definition.vision_model,
-            prompt_version=DISH_RECOGNITION_PROMPT_VERSION,
-            prompt=DISH_RECOGNITION_PROMPT,
-            output_schema="DishRecognitionResult",
-            privacy_scopes=("current_meal_image", "current_user_image_text"),
-            max_model_calls=1,
-            max_tool_calls=0,
-            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
-        ),
-        "nutrition_retrieval": AgentGraphNodeManifest.build(
-            role="nutrition_retrieval",
-            model=definition.text_model,
-            prompt_version=NUTRITION_RETRIEVAL_PROMPT_VERSION,
-            prompt=NUTRITION_RETRIEVAL_PROMPT,
-            output_schema="DishEvidenceBundle",
-            allowed_tool_names=(
-                "search_dish_entities",
-                "get_dish_evidence",
-                "search_nutrition_knowledge",
-                "get_nutrition_source",
-            ),
-            privacy_scopes=("confirmed_dishes", "goal_and_constraint_tags"),
-            max_model_calls=1,
-            max_tool_calls=24,
-            max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
+            prompt_version=SLIM_GUARD_PROMPT_VERSION,
+            prompt=SLIM_GUARD_HARNESS_PROMPT,
+            output_schema="CoreResponse",
+            allowed_tool_names=tuple(dict(build_agent_manifest(definition).tool_versions)),
+            privacy_scopes=("current_user_input", "working_memory", "profile"),
+            max_model_calls=definition.limits.max_model_calls,
+            max_tool_calls=definition.limits.max_tool_calls,
+            max_total_tokens=definition.limits.max_total_tokens,
         ),
         "nutrition_expert": AgentGraphNodeManifest.build(
             role="nutrition_expert",
             model=definition.text_model,
-            prompt_version=DIET_GUIDANCE_PROMPT_VERSION,
-            prompt=DIET_GUIDANCE_PROMPT,
-            output_schema="DietGuidanceAssessment",
+            prompt_version=DEFAULT_NUTRITION_PROMPT_VERSION,
+            prompt=NUTRITION_AGENT_PROMPT,
+            output_schema="ProfessionalAssessment",
             allowed_tool_names=NUTRITION_AGENT_ALLOWED_TOOLS,
             privacy_scopes=("evidence_packet", "nutrition_observations"),
             max_model_calls=2,
@@ -607,7 +502,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
         graph_version=definition.multi_agent_graph_version,
         nodes=nodes,
         style_profile_version=definition.default_style_profile,
-        routing_policy_version="model-directed-code-validated-v1",
+        routing_policy_version="core-tool-directed-v1",
         evidence_policy_version="typed-provenance-v1",
         safety_policy_version="health-output-guard-v2",
         business_tool_versions=dict(build_agent_manifest(definition).tool_versions),

@@ -23,7 +23,6 @@ class ToolEffectLevel(StrEnum):
 
 class ToolExecutionMode(StrEnum):
     LIVE = "live"
-    SHADOW = "shadow"
     EVALUATION = "evaluation"
 
 

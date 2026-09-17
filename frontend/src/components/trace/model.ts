@@ -4,13 +4,12 @@ import type {
   TraceAgentArtifact,
   TraceAgentInvocation,
   TraceDetail,
-  TraceShadowComparison,
   TraceReviewerSummary,
   TraceWorkflowSummary,
   TraceWorkflowTransition,
 } from "../../types";
 
-const MULTI_AGENT_OPERATIONS = new Set([
+const AGENT_OPERATIONS = new Set([
   "invocation_started",
   "invocation_result",
   "artifact_created",
@@ -35,20 +34,6 @@ export interface AgentInvocationView extends TraceAgentInvocation {
   events: TimelineEvent[];
 }
 
-export interface ShadowResponseView {
-  artifact_id: string | null;
-  content: string | null;
-  status: string | null;
-}
-
-export interface ShadowComparisonView {
-  mode: string;
-  delivery_status: string;
-  business_writes: string;
-  legacy: ShadowResponseView;
-  candidate: ShadowResponseView;
-}
-
 export interface WorkflowTraceView {
   mode: string;
   graph_version: string | null;
@@ -58,10 +43,9 @@ export interface WorkflowTraceView {
   invocations: AgentInvocationView[];
   artifacts: TraceAgentArtifact[];
   transitions: TraceWorkflowTransition[];
-  shadowComparison: ShadowComparisonView | null;
   timeline: TimelineEvent[];
   turnEvents: TimelineEvent[];
-  hasMultiAgentTrace: boolean;
+  hasAgentTrace: boolean;
 }
 
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
@@ -98,8 +82,9 @@ export function buildWorkflowTrace(data: TraceDetail): WorkflowTraceView {
   const summary = data.workflow?.summary;
   const adopted = latestEventDetails(data.timeline, "response_adopted");
   const mode =
-    summary?.mode ?? stringValue(adopted?.mode) ?? (invocations.length > 0 ? "unknown" : "legacy");
-  const apiComparison = data.workflow?.shadow_comparison ?? data.shadow_comparison ?? null;
+    summary?.mode
+    ?? stringValue(adopted?.mode)
+    ?? (invocations.length > 0 ? "core_primary" : "unavailable");
 
   return {
     mode,
@@ -110,13 +95,12 @@ export function buildWorkflowTrace(data: TraceDetail): WorkflowTraceView {
     invocations,
     artifacts,
     transitions,
-    shadowComparison: buildShadowComparison(data, apiComparison, artifacts, mode, adopted),
     timeline: data.timeline,
     turnEvents: grouped.turnEvents,
-    hasMultiAgentTrace:
+    hasAgentTrace:
       invocations.length > 0 ||
       transitions.length > 0 ||
-      data.timeline.some((event) => MULTI_AGENT_OPERATIONS.has(event.operation)),
+      data.timeline.some((event) => AGENT_OPERATIONS.has(event.operation)),
   };
 }
 
@@ -243,7 +227,7 @@ function groupEventsByInvocation(
         );
       }
     }
-    if (!invocationId && !MULTI_AGENT_OPERATIONS.has(event.operation)) {
+    if (!invocationId && !AGENT_OPERATIONS.has(event.operation)) {
       invocationId = active.at(-1) ?? null;
     }
 
@@ -270,48 +254,6 @@ function latestActiveInvocation(
   for (let index = active.length - 1; index >= 0; index -= 1) {
     const invocation = invocations.find((item) => item.invocation_id === active[index]);
     if (invocation?.agent_role === role) return invocation.invocation_id;
-  }
-  return null;
-}
-
-function buildShadowComparison(
-  data: TraceDetail,
-  comparison: TraceShadowComparison | null,
-  artifacts: TraceAgentArtifact[],
-  mode: string,
-  adopted: Record<string, unknown> | null,
-): ShadowComparisonView | null {
-  const comparisonMode = comparison?.mode ?? mode;
-  if (comparisonMode !== "shadow") return null;
-
-  const adoptedArtifactId = nullableString(adopted?.artifact_id);
-  const adoptedArtifact = artifacts.find((artifact) => artifact.artifact_id === adoptedArtifactId);
-  const candidateContent = contentFromPayload(adoptedArtifact?.payload);
-  return {
-    mode: comparisonMode,
-    delivery_status: comparison?.delivery_status ?? "not_sent",
-    business_writes: comparison?.business_writes ?? "no_business_writes",
-    legacy: comparison?.legacy ?? {
-      artifact_id: null,
-      content: data.output?.content ?? null,
-      status: data.output?.status ?? null,
-    },
-    candidate: comparison?.candidate ?? {
-      artifact_id: adoptedArtifactId,
-      content: candidateContent,
-      status: candidateContent ? "generated" : "unavailable",
-    },
-  };
-}
-
-function contentFromPayload(payload: unknown): string | null {
-  const value = asRecord(payload);
-  const direct = stringValue(value.content) ?? stringValue(value.text);
-  if (direct) return direct;
-  for (const key of ["response", "styled_response", "candidate"]) {
-    const nested = asRecord(value[key]);
-    const content = stringValue(nested.content) ?? stringValue(nested.text);
-    if (content) return content;
   }
   return null;
 }

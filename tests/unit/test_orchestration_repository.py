@@ -90,8 +90,8 @@ def artifact(
     return AgentArtifact.create(
         artifact_id=artifact_id,
         turn_id=turn_id,
-        producer_role="orchestrator",
-        artifact_type="TurnDirective",
+        producer_role="core",
+        artifact_type="ResponsePlan",
         schema_version="1",
         parent_artifact_ids=parents,
         payload=payload or {"artifact_id": artifact_id},
@@ -104,9 +104,9 @@ def invocation(*artifact_ids: str, turn_id: str = "turn-1") -> AgentInvocation:
         invocation_id=f"invocation-{turn_id}",
         trace_id="standalone-correlation",
         turn_id=turn_id,
-        graph_version="shadow-v1",
-        agent_role="orchestrator",
-        agent_version="orchestrator-v1",
+        graph_version="core-primary-v1",
+        agent_role="core",
+        agent_version="core-v1",
         input_artifact_ids=artifact_ids,
         deadline_at=datetime.now(UTC) + timedelta(seconds=30),
         max_model_calls=1,
@@ -125,7 +125,7 @@ async def test_repository_persists_invocation_and_immutable_artifact_lineage(
             invocation("input"),
             reason_summary="生成结构化回复计划",
         )
-        output = artifact("output", parents=("input",), payload={"text": "候选回复"})
+        output = artifact("output", parents=("input",), payload={"text": "中性内容稿"})
         await repository.append_artifact(
             output,
             invocation_id=started.invocation_id,
@@ -134,7 +134,7 @@ async def test_repository_persists_invocation_and_immutable_artifact_lineage(
             AgentResult(
                 invocation_id=started.invocation_id,
                 status="succeeded",
-                output_schema="TurnDirective",
+                output_schema="ResponsePlan",
                 output_schema_version="1",
                 artifact_id=output.artifact_id,
                 model_call_count=1,
@@ -145,7 +145,7 @@ async def test_repository_persists_invocation_and_immutable_artifact_lineage(
 
         assert completed.status == "succeeded"
         assert completed.output_artifact_id == "output"
-        assert (await repository.require_artifact("output")).payload == {"text": "候选回复"}
+        assert (await repository.require_artifact("output")).payload == {"text": "中性内容稿"}
         assert tuple(item.artifact_id for item in await repository.lineage("output")) == (
             "output",
             "input",
@@ -167,7 +167,7 @@ async def test_repository_preserves_observable_token_budget_failure(
             AgentResult(
                 invocation_id=started.invocation_id,
                 status="failed",
-                output_schema="TurnDirective",
+                output_schema="ResponsePlan",
                 output_schema_version="1",
                 model_call_count=1,
                 tool_call_count=0,
@@ -186,7 +186,7 @@ async def test_repository_preserves_observable_token_budget_failure(
                 AgentResult(
                     invocation_id=second.invocation_id,
                     status="failed",
-                    output_schema="TurnDirective",
+                    output_schema="ResponsePlan",
                     output_schema_version="1",
                     model_call_count=1,
                     tool_call_count=0,

@@ -1,7 +1,7 @@
 """Strict, immutable contracts exchanged by workflow agents.
 
 The models in this module are deliberately independent from model-provider payloads.
-Trusted invocation metadata is supplied by the coordinator, while models only produce
+Trusted invocation metadata is supplied by the Turn Harness, while models only produce
 the typed business payloads defined below.
 """
 
@@ -32,22 +32,6 @@ from slim_guard.runtime.contracts import (
     payload_sha256,
     validate_contract,
 )
-
-
-class ResponsePath(StrEnum):
-    DIRECT = "direct"
-    DISH_GUIDANCE = "dish_guidance"
-    PROFESSIONAL_ASSESSMENT = "professional_assessment"
-    SAFETY = "safety"
-
-
-class InteractionKind(StrEnum):
-    CHECKIN = "checkin"
-    CORRECTION = "correction"
-    QUESTION = "question"
-    REVIEW = "review"
-    REMINDER = "reminder"
-    CHAT = "chat"
 
 
 class CommunicationAct(StrEnum):
@@ -133,59 +117,8 @@ class ReviewerIssueType(StrEnum):
 
 class RepairTarget(StrEnum):
     CORE = "core"
-    # Kept while historical shadow-workflow traces remain readable.
-    ORCHESTRATOR = "orchestrator"
     NUTRITION_EXPERT = "nutrition_expert"
     RESPONSE_STYLE = "response_style"
-
-
-class TurnDirective(ContractModel):
-    schema_version: Literal["1"] = "1"
-    response_path: ResponsePath
-    interaction_kind: InteractionKind
-    user_need_summary: str = Field(min_length=1, max_length=1000)
-    response_brief: str = Field(min_length=1, max_length=4000)
-    evidence_refs: tuple[str, ...] = Field(default=(), max_length=128)
-    professional_question: str | None = Field(default=None, min_length=1, max_length=2000)
-    dish_names: tuple[str, ...] = Field(default=(), max_length=20)
-    resolves_pending_dish_confirmation: bool = False
-    voice_act: CommunicationAct
-    requested_detail: RequestedDetail = RequestedDetail.NORMAL
-
-    @field_validator("evidence_refs", "dish_names")
-    @classmethod
-    def validate_evidence_refs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if any(not item.strip() for item in value):
-            raise ValueError("Directive evidence references cannot be blank")
-        if len(value) != len(set(value)):
-            raise ValueError("Directive evidence references must be unique")
-        return value
-
-    @model_validator(mode="after")
-    def validate_response_path(self) -> Self:
-        if self.response_path is ResponsePath.PROFESSIONAL_ASSESSMENT:
-            if self.professional_question is None:
-                raise ValueError("Professional assessment requires professional_question")
-            if not self.evidence_refs:
-                raise ValueError("Professional assessment requires evidence_refs")
-        elif self.response_path is ResponsePath.DISH_GUIDANCE:
-            if self.professional_question is None:
-                raise ValueError("Dish guidance requires professional_question")
-        elif self.professional_question is not None:
-            raise ValueError("professional_question is only valid for professional assessment")
-        if self.response_path is not ResponsePath.DISH_GUIDANCE and self.dish_names:
-            raise ValueError("dish_names are only valid for dish guidance")
-        if (
-            self.response_path is not ResponsePath.DISH_GUIDANCE
-            and self.resolves_pending_dish_confirmation
-        ):
-            raise ValueError("Only dish guidance may resolve a pending dish confirmation")
-        if self.resolves_pending_dish_confirmation and not self.dish_names:
-            raise ValueError("Resolving a dish confirmation requires user-supplied dish names")
-        return self
-
-
-Directive = TurnDirective
 
 
 class ResponseContentBlock(ContractModel):
@@ -517,10 +450,7 @@ class ReviewerVerdict(ContractModel):
                 _NUTRITION_ISSUES
             ):
                 raise ValueError("The issue type cannot be repaired by nutrition_expert")
-            if self.repair_target in {
-                RepairTarget.CORE,
-                RepairTarget.ORCHESTRATOR,
-            } and issue_types != {
+            if self.repair_target is RepairTarget.CORE and issue_types != {
                 ReviewerIssueType.MISSING_USER_EVIDENCE
             }:
                 raise ValueError("Only missing_user_evidence can return to core")
@@ -544,9 +474,7 @@ __all__ = [
     "ContentBlock",
     "ContentBlockKind",
     "ContractModel",
-    "Directive",
     "ImmutableContentBlock",
-    "InteractionKind",
     "Invocation",
     "InvocationStatus",
     "KnowledgeCitation",
@@ -558,14 +486,12 @@ __all__ = [
     "RepairTarget",
     "RequestedDetail",
     "ResponseContentBlock",
-    "ResponsePath",
     "ResponsePlan",
     "ReviewerIssue",
     "ReviewerIssueType",
     "ReviewerVerdict",
     "ReviewerVerdictStatus",
     "StyledResponse",
-    "TurnDirective",
     "VoiceAct",
     "canonical_payload_bytes",
     "payload_sha256",

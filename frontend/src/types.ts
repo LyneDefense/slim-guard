@@ -783,26 +783,11 @@ export interface TraceProfessionalAssessmentPayload {
 
 export type TraceWorkflowTransition = WorkflowTransitionDetails;
 
-export interface TraceComparedResponse {
-  artifact_id: string | null;
-  content: string | null;
-  status: string | null;
-}
-
-export interface TraceShadowComparison {
-  mode: string;
-  delivery_status: string;
-  business_writes: string;
-  legacy: TraceComparedResponse;
-  candidate: TraceComparedResponse;
-}
-
 export interface TraceWorkflow {
   summary: TraceWorkflowSummary;
   invocations: TraceAgentInvocation[];
   artifacts: TraceAgentArtifact[];
   transitions: TraceWorkflowTransition[];
-  shadow_comparison: TraceShadowComparison | null;
   review?: TraceReviewerSummary | null;
 }
 
@@ -895,7 +880,6 @@ export interface TraceDetail {
   invocations?: TraceAgentInvocation[];
   artifacts?: TraceAgentArtifact[];
   transitions?: TraceWorkflowTransition[];
-  shadow_comparison?: TraceShadowComparison | null;
   review?: TraceReviewerSummary | null;
   execution_summary: {
     architecture: string;

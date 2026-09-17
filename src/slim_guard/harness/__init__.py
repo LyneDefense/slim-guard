@@ -29,9 +29,6 @@ from slim_guard.harness.pending_resume import (
     PendingResumeOutcome,
 )
 from slim_guard.harness.runner import (
-    HarnessTurnGrants,
-    HarnessTurnRunner,
-    HarnessTurnRunResult,
     TurnGrants,
     TurnHarness,
     TurnRunResult,
@@ -48,9 +45,6 @@ __all__ = [
     "HarnessLoop",
     "HarnessLoopResult",
     "HarnessTurnContext",
-    "HarnessTurnGrants",
-    "HarnessTurnRunner",
-    "HarnessTurnRunResult",
     "TurnGrants",
     "TurnHarness",
     "TurnRunResult",

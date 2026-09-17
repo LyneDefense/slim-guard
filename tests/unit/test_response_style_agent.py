@@ -18,7 +18,6 @@ from slim_guard.agents.contracts import (
     ResponsePlan,
     StyledResponse,
 )
-from slim_guard.agents.structured_runner import StructuredAgentRunner
 from slim_guard.agents.style import (
     SLIMGUARD_DEFAULT_V1,
     NeutralRenderer,
@@ -29,6 +28,7 @@ from slim_guard.agents.style import (
     StyleIntegrityIssueCode,
     StyleResponseValidator,
 )
+from slim_guard.runtime.invocation import InvocationRunner
 
 
 def response_plan() -> ResponsePlan:
@@ -134,7 +134,7 @@ def invocation(**updates: object) -> AgentInvocation:
         "invocation_id": "style-invocation-1",
         "trace_id": "trace-1",
         "turn_id": "turn-1",
-        "graph_version": "typed-supervisor-v1",
+        "graph_version": "core-primary-v1",
         "agent_role": "response_style",
         "agent_version": "response-style-v1",
         "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
@@ -264,7 +264,7 @@ def test_validator_rejects_an_invented_need_or_next_step() -> None:
 async def test_style_agent_returns_valid_model_response_without_repair() -> None:
     gateway = ScriptedModelGateway((model_response(valid_styled_response()),))
     agent = ResponseStyleAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-style-model",
     )
 
@@ -315,7 +315,7 @@ async def test_style_agent_repairs_a_semantically_invalid_json_response_once() -
         )
     )
     agent = ResponseStyleAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-style-model",
     )
 
@@ -334,7 +334,7 @@ async def test_style_agent_repairs_invalid_json_once() -> None:
     )
     gateway = ScriptedModelGateway((malformed, model_response(valid_styled_response())))
     agent = ResponseStyleAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-style-model",
     )
 
@@ -350,7 +350,7 @@ async def test_style_agent_degrades_to_neutral_after_second_invalid_response() -
     invalid = valid_styled_response().model_copy(update={"used_claim_ids": ()})
     gateway = ScriptedModelGateway((model_response(invalid), model_response(invalid)))
     agent = ResponseStyleAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-style-model",
     )
 
@@ -366,7 +366,7 @@ async def test_style_agent_degrades_to_neutral_after_second_invalid_response() -
 async def test_style_agent_degrades_on_model_failure_and_never_grants_tools() -> None:
     gateway = ScriptedModelGateway((ModelTimeoutError("planned timeout"),))
     agent = ResponseStyleAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-style-model",
     )
 
@@ -387,7 +387,7 @@ async def test_style_agent_degrades_on_model_failure_and_never_grants_tools() ->
 async def test_style_agent_rejects_tool_permissions_before_calling_model() -> None:
     gateway = ScriptedModelGateway(())
     agent = ResponseStyleAgent(
-        runner=StructuredAgentRunner(model=gateway),
+        runner=InvocationRunner(model=gateway),
         model="fake-style-model",
     )
 

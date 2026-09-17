@@ -18,13 +18,12 @@ from slim_guard.agents.contracts import (
     ReviewerIssueType,
     ReviewerVerdict,
     StyledResponse,
-    TurnDirective,
 )
 from slim_guard.agents.style.contracts import StyleProfile
 
 
 class ReviewerEvidenceSummary(ContractModel):
-    """Coordinator-selected fact content; no database rows or raw conversations."""
+    """Harness-selected fact content; no database rows or raw conversations."""
 
     evidence_id: str = Field(min_length=1, max_length=128)
     summary: str = Field(min_length=1, max_length=4000)
@@ -46,7 +45,6 @@ class ReviewerContext(ContractModel):
     styled_response: StyledResponse
     style_profile: StyleProfile
     assessment: ProfessionalAssessment | None = None
-    directive: TurnDirective | None = None
     available_evidence_ids: tuple[str, ...] | None = Field(default=None, max_length=128)
     evidence_summaries: tuple[ReviewerEvidenceSummary, ...] = Field(default=(), max_length=128)
 

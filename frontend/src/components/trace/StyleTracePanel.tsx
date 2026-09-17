@@ -35,7 +35,7 @@ export function StyleTracePanel({ workflow }: { workflow: WorkflowTraceView }) {
   const renderer = view.styleInvocationStatus
     ? "Style Agent"
     : view.renderedArtifact
-      ? "Coordinator 中性渲染"
+      ? "Harness 中性渲染"
       : view.bypassReason
         ? "风格层已绕过"
         : "Style 未运行";
@@ -95,7 +95,7 @@ export function StyleTracePanel({ workflow }: { workflow: WorkflowTraceView }) {
         />
         <span className="style-flow-arrow">→</span>
         <ArtifactStep
-          label={view.adoptionFinal === false ? "Shadow 候选" : view.adoptionFinal ? "最终采用" : "采用状态"}
+          label={view.adoptionFinal === false ? "未采用渲染" : view.adoptionFinal ? "最终采用" : "采用状态"}
           artifactId={view.adoptedArtifactId}
           detail={view.adoptionFinal === false ? "未发送给用户" : view.adoptionFinal ? "进入最终输出" : "未记录采用事件"}
         />
@@ -159,9 +159,7 @@ function buildStyleTrace(workflow: WorkflowTraceView): StyleTraceView | null {
   const styled = payloadAs<TraceStyledResponsePayload>(renderedArtifact);
   const profile = payloadAs<TraceResolvedStyleProfilePayload>(profileArtifact);
   const blocks = summarizeBlocks(plan.content_blocks);
-  const adoptedArtifactId = stringValue(adopted?.artifact_id)
-    ?? workflow.shadowComparison?.candidate.artifact_id
-    ?? null;
+  const adoptedArtifactId = stringValue(adopted?.artifact_id);
   const degradedFallback = stringValue(degraded?.fallback_type);
   const bypassReason = stringValue(bypass?.reason_code)
     ?? stringValue(bypass?.bypass_reason)
@@ -284,7 +282,7 @@ function communicationActLabel(value: string | null): string {
 }
 
 function selectionSourceLabel(value: string | null): string {
-  const labels: Record<string, string> = { default: "默认配置", canary: "内部用户灰度", fallback: "默认风格回退" };
+  const labels: Record<string, string> = { default: "当前启用版本", fallback: "默认风格回退" };
   return value ? labels[value] ?? value : "未记录";
 }
 
@@ -299,7 +297,6 @@ function profileFallbackLabel(value: string): string {
 
 function profileDisplayName(version: string | null): string | null {
   if (version === "slimguard_default_v1") return "SlimGuard 默认风格";
-  if (version === "neutral_shadow_v1") return "Shadow 中性风格";
   return null;
 }
 

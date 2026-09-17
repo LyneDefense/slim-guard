@@ -386,21 +386,6 @@ def test_snapshot_rejects_foreign_examples_and_is_immutable():
         snapshot.profile = profile
 
 
-def test_style_canary_configuration_is_independent_and_can_be_disabled():
-    settings = Settings(
-        _env_file=None,
-        multi_agent_mode="off",
-        style_canary_profile="TEST-style-v1",
-        style_canary_user_ids="TEST-user-a, TEST-user-b,TEST-user-a",
-    )
-    assert settings.style_canary_users == frozenset({"TEST-user-a", "TEST-user-b"})
-    assert settings.default_style_profile == "slimguard_default_v1"
-    assert Settings(_env_file=None).style_canary_profile == ""
-    disabled = Settings(_env_file=None, style_canary_user_ids="TEST-user")
-    assert disabled.style_canary_profile == ""
-    assert disabled.style_canary_users == frozenset({"TEST-user"})
-
-
 @pytest.mark.parametrize("complete", [False, True])
 async def test_doctor_strict_requires_all_six_expression_acts(repository, monkeypatch, complete):
     monkeypatch.setattr(StyleProfileRepository, "_require_bundle_approval", synthetic_approval)
@@ -435,12 +420,11 @@ async def test_doctor_strict_requires_all_six_expression_acts(repository, monkey
             await publish(repository, data)
 
 
-@pytest.mark.parametrize("field", ["default_style_profile", "style_canary_profile"])
-async def test_startup_fails_closed_for_unpublished_configured_profile(tmp_path, field):
+async def test_startup_fails_closed_for_unpublished_configured_profile(tmp_path):
     settings = Settings(
         _env_file=None,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'TEST-startup.sqlite'}",
-        **{field: "TEST-unpublished"},
+        default_style_profile="TEST-unpublished",
     )
     app = create_app(settings)
     with pytest.raises(StyleProfileNotFound, match="not published"):

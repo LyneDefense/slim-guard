@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-09-04
-> 状态：实施中
+> 状态：历史实施计划；shadow/canary 双轨方案已由 Core-primary 架构取代
 > 关联设计：`MULTI_AGENT_ARCHITECTURE.md`
 
 ## 1. 目标与交付原则
