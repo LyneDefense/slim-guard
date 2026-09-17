@@ -18,6 +18,7 @@ import { api, UnauthorizedError } from "./api";
 import { StyleABReviewPage } from "./components/style/StyleABReviewPage";
 import { StyleFeedbackPage } from "./components/style/StyleFeedbackPage";
 import { StyleIterationPage } from "./components/style/StyleIterationPage";
+import { StyleProfilePage } from "./components/style/StyleProfilePage";
 import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
 import { DishGuidanceTracePanel } from "./components/trace/DishGuidanceTracePanel";
@@ -197,11 +198,8 @@ function Shell({ username }: { username: string }) {
           <NavLink to="/style-ab" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>◫</span> 风格 A/B 人评
           </NavLink>
-          <NavLink to="/style-iterations" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
-            <span>↻</span> 风格版本
-          </NavLink>
-          <NavLink to="/style-feedback" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
-            <span>✎</span> 风格纠正
+          <NavLink to="/styles" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
+            <span>✎</span> 表达风格
           </NavLink>
           <NavLink to="/nutrition-knowledge" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>⌘</span> 营养知识库
@@ -653,6 +651,7 @@ export function App() {
         <Route path="style-ab" element={<StyleABReviewPage />} />
         <Route path="style-feedback" element={<StyleFeedbackPage />} />
         <Route path="style-iterations" element={<StyleIterationPage />} />
+        <Route path="styles" element={<StyleProfilePage />} />
         <Route path="nutrition-knowledge" element={<NutritionKnowledgePage />} />
         <Route path="users/:userId" element={<UserLayout />}>
           <Route index element={<TraceList />} />
