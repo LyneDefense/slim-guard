@@ -1575,6 +1575,52 @@ class StyleABHumanReviewRecord(Base):
     )
 
 
+class StyleExampleRecord(Base):
+    """Unified style example corpus; legacy A/B rows remain the audit source."""
+
+    __tablename__ = "style_examples"
+    __table_args__ = (
+        UniqueConstraint("source_kind", "source_id", name="uq_style_example_source"),
+        Index("ix_style_example_profile_created", "style_profile_key", "created_at"),
+        Index("ix_style_example_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    style_profile_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_input: Mapped[str] = mapped_column(Text, nullable=False)
+    original_response: Mapped[str] = mapped_column(Text, nullable=False)
+    desired_response: Mapped[str] = mapped_column(Text, nullable=False)
+    scenario_label: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    legacy_communication_act: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending_build")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class StyleExampleReviewRecord(Base):
+    """Append-only review of a unified style example."""
+
+    __tablename__ = "style_example_reviews"
+    __table_args__ = (
+        CheckConstraint("style_match BETWEEN 1 AND 5", name="ck_style_example_review_style"),
+        CheckConstraint("fidelity BETWEEN 1 AND 5", name="ck_style_example_review_fidelity"),
+        CheckConstraint("appropriateness BETWEEN 1 AND 5", name="ck_style_example_review_appropriateness"),
+        CheckConstraint("decision IN ('accept','reject')", name="ck_style_example_review_decision"),
+        Index("ix_style_example_review_example_created", "example_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    example_id: Mapped[str] = mapped_column(ForeignKey("style_examples.id", ondelete="RESTRICT"), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    style_match: Mapped[int] = mapped_column(Integer, nullable=False)
+    fidelity: Mapped[int] = mapped_column(Integer, nullable=False)
+    appropriateness: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    comment: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class StyleCorrectionFeedbackRecord(Base):
     """Append-only, named corrections captured during real style testing."""
 

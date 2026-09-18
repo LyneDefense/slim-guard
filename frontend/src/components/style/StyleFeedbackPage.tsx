@@ -218,7 +218,7 @@ export function StyleFeedbackPage() {
 
       <section className="style-feedback-history">
         <div className="section-heading">
-          <div><h2>已记录的纠正</h2><p>按提交时间倒序显示；历史记录不可编辑或删除。</p></div>
+          <div><h2>全部示例</h2><p>当前风格的全量示例素材，按提交时间倒序分页展示；历史记录不可编辑或删除。</p></div>
           <span>{feedback.data?.total ?? 0} 条</span>
         </div>
         <div className="filters style-ab-filters">

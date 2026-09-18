@@ -122,6 +122,43 @@ async def _add_memory_evidence_item(connection: AsyncConnection) -> None:
     )
 
 
+async def _migrate_unified_style_examples(connection: AsyncConnection) -> None:
+    """Create the style corpus boundary and copy legacy rows without deleting history."""
+    await _create_application_tables(connection)
+    existing = {
+        row[0]
+        for row in (await connection.execute(text("SELECT source_kind || ':' || source_id FROM style_examples"))).all()
+    }
+    feedback_rows = (await connection.execute(text(
+        "SELECT id, profile_version, scenario, user_message, agent_response, desired_response, communication_act, created_at "
+        "FROM style_correction_feedback"
+    ))).mappings().all()
+    for row in feedback_rows:
+        key = f"style_feedback:{row['id']}"
+        if key in existing:
+            continue
+        await connection.execute(text(
+            "INSERT INTO style_examples (id, style_profile_key, user_input, original_response, desired_response, "
+            "scenario_label, source_kind, source_id, legacy_communication_act, status, created_at) "
+            "VALUES (:id, :profile, :user_input, :original, :desired, :scenario, 'style_feedback', :source, :act, 'pending_build', :created_at)"
+        ), {"id": new_uuid(), "profile": row["profile_version"], "user_input": row["user_message"], "original": row["agent_response"], "desired": row["desired_response"], "scenario": row["scenario"], "source": row["id"], "act": row["communication_act"], "created_at": row["created_at"]})
+    case_rows = (await connection.execute(text(
+        "SELECT id, candidate_profile_version, scenario_json, candidate_response_json, communication_act, created_at "
+        "FROM style_ab_evaluation_cases"
+    ))).mappings().all()
+    for row in case_rows:
+        key = f"style_ab_case:{row['id']}"
+        if key in existing:
+            continue
+        scenario = json.loads(row["scenario_json"] or "{}")
+        candidate = json.loads(row["candidate_response_json"] or "{}")
+        original = candidate.get("text") or candidate.get("response") or ""
+        desired = scenario.get("response_goal") or "请忠实回答用户，并保持当前风格的表达。"
+        await connection.execute(text(
+            "INSERT INTO style_examples (id, style_profile_key, user_input, original_response, desired_response, "
+            "scenario_label, source_kind, source_id, legacy_communication_act, status, created_at) "
+            "VALUES (:id, :profile, :user_input, :original, :desired, :scenario, 'style_ab_case', :source, :act, 'pending_build', :created_at)"
+        ), {"id": new_uuid(), "profile": row["candidate_profile_version"], "user_input": scenario.get("user_situation") or "", "original": original, "desired": desired, "scenario": scenario.get("title"), "source": row["id"], "act": row["communication_act"], "created_at": row["created_at"]})
 async def _allow_mobile_test_account_identity(connection: AsyncConnection) -> None:
     """Allow the development-only test account identity provider on PostgreSQL."""
 
@@ -781,6 +818,7 @@ MIGRATIONS = (
         "20260908_03_style_correction_feedback",
         _create_style_correction_feedback,
     ),
+    SchemaMigration("20260918_01_unified_style_examples", _migrate_unified_style_examples),
     SchemaMigration(
         "20260909_01_style_iteration_control_plane",
         _create_style_iteration_control_plane,

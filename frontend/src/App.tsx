@@ -195,9 +195,6 @@ function Shell({ username }: { username: string }) {
           <NavLink to="/users" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>◎</span> 用户中心
           </NavLink>
-          <NavLink to="/style-ab" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
-            <span>◫</span> 风格 A/B 人评
-          </NavLink>
           <NavLink to="/styles" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>✎</span> 表达风格
           </NavLink>

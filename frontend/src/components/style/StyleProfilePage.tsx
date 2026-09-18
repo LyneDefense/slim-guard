@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { StyleFeedbackPage } from "./StyleFeedbackPage";
 import { StyleIterationPage } from "./StyleIterationPage";
-import { StyleABReviewPage } from "./StyleABReviewPage";
+import { StyleReviewPage } from "./StyleReviewPage";
 
 type Tab = "build" | "review" | "correction";
 
@@ -43,7 +43,7 @@ export function StyleProfilePage() {
         {tabs.map(([value, label]) => <button type="button" key={value} className={tab === value ? "active" : ""} onClick={() => setTab(value)}>{label}</button>)}
       </nav>
       {tab === "build" && <StyleIterationPage />}
-      {tab === "review" && <StyleABReviewPage />}
+      {tab === "review" && <StyleReviewPage />}
       {tab === "correction" && <StyleFeedbackPage />}
     </div>
   );
