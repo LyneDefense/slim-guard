@@ -6,13 +6,14 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from slim_guard.agents.contracts import ContentBlockKind, StyledResponse
 
 if TYPE_CHECKING:
-    from slim_guard.agents.style.contracts import StyleContext
+    from slim_guard.expression_style.contracts import StyleContext
 
 
 class StyleIntegrityIssueCode(StrEnum):
@@ -27,7 +28,6 @@ class StyleIntegrityIssueCode(StrEnum):
     PROTECTED_CONTENT_CHANGED = "protected_content_changed"
     NUMBER_CHANGED = "number_changed"
     PROHIBITED_PHRASE_USED = "prohibited_phrase_used"
-    UNSUPPORTED_CONTENT_ADDED = "unsupported_content_added"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,28 +65,8 @@ _PROTECTED_KINDS = frozenset(
         ContentBlockKind.UNCERTAINTY,
     }
 )
-_NUMBER_PATTERN = re.compile(r"\d+(?:[.,]\d+)*(?:%|％)?")
+_NUMBER_PATTERN = re.compile(r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?")
 _IGNORABLE_TEXT = re.compile(r"[\s\u3000，。！？；：、,.!?;:'\"“”‘’（）()【】\[\]《》<>—–-]+")
-_HIGH_CONSEQUENCE_TERMS = (
-    "已记录",
-    "已保存",
-    "保存成功",
-    "写入失败",
-    "患有",
-    "得了",
-    "诊断",
-    "糖尿病",
-    "高血压",
-    "胰岛素抵抗",
-    "处方",
-    "卡路里",
-    "热量",
-    "建议",
-    "应该",
-    "必须",
-    "需要",
-    "下一步",
-)
 
 
 class StyleResponseValidator:
@@ -94,7 +74,8 @@ class StyleResponseValidator:
 
     Protected blocks intentionally remain verbatim modulo whitespace and punctuation.
     This conservative boundary prevents a style-only model from changing facts,
-    conclusions, actions, risks, or uncertainty before the reviewer exists.
+    conclusions, actions, risks, or uncertainty explicitly protected by upstream.
+    Other semantic equivalence and unsupported additions belong to the shared model review.
     """
 
     def validate(
@@ -182,16 +163,6 @@ class StyleResponseValidator:
             issues.append(StyleIntegrityIssue(StyleIntegrityIssueCode.NUMBER_CHANGED, "text"))
 
         normalized_candidate = unicodedata.normalize("NFKC", response.text).casefold()
-        normalized_source = unicodedata.normalize("NFKC", selected_text).casefold()
-        for term in _HIGH_CONSEQUENCE_TERMS:
-            normalized_term = unicodedata.normalize("NFKC", term).casefold()
-            if normalized_term in normalized_candidate and normalized_term not in normalized_source:
-                issues.append(
-                    StyleIntegrityIssue(
-                        StyleIntegrityIssueCode.UNSUPPORTED_CONTENT_ADDED,
-                        term,
-                    )
-                )
         for phrase in context.profile.prohibited_phrases:
             if unicodedata.normalize("NFKC", phrase).casefold() in normalized_candidate:
                 issues.append(
@@ -242,9 +213,12 @@ class StyleResponseValidator:
     @staticmethod
     def _numbers(value: str) -> Counter[str]:
         normalized = unicodedata.normalize("NFKC", value)
-        return Counter(
-            match.group(0).replace(",", "") for match in _NUMBER_PATTERN.finditer(normalized)
-        )
+        values = []
+        for match in _NUMBER_PATTERN.finditer(normalized):
+            raw = match.group(0).replace(",", "")
+            suffix = "%" if raw.endswith("%") else ""
+            values.append(f"{Decimal(raw.rstrip('%')).normalize()}{suffix}")
+        return Counter(values)
 
 
 __all__ = [

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from slim_guard.agents.contracts import ProfessionalAssessment, ResponsePlan
-from slim_guard.agents.style.contracts import (
+from slim_guard.expression_style.contracts import (
     SLIMGUARD_DEFAULT_V1,
     StyleContext,
     StyleExample,
@@ -24,6 +24,10 @@ class StyleContextCompiler:
         profile: StyleProfile = SLIMGUARD_DEFAULT_V1,
         assessment: ProfessionalAssessment | None = None,
         examples: Sequence[StyleExample] = (),
+        user_input: str = "",
+        minimal_context: tuple[str, ...] = (),
+        compiled_prompt: str = "",
+        package_hash: str = "",
     ) -> StyleContext:
         return StyleContext(
             turn_id=turn_id,
@@ -31,6 +35,10 @@ class StyleContextCompiler:
             profile=profile,
             assessment=assessment,
             examples=tuple(examples),
+            user_input=user_input,
+            minimal_context=minimal_context,
+            compiled_prompt=compiled_prompt,
+            package_hash=package_hash,
         )
 
 

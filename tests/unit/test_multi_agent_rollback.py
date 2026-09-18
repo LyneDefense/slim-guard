@@ -79,7 +79,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
                     }
                 )
             ),
-            text_response('{"passed":true,"issues":[]}'),
+            text_response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
         ]
     )
     off_model = ScriptedModelGateway(

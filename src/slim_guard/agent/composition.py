@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
 from slim_guard.agent.runtime import AgentRuntime
-from slim_guard.agent_models.embeddings import EmbeddingGateway
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agents.core import CoreResponseRepairAgent
@@ -179,7 +178,6 @@ def build_agent_runtime(
     memory_engine: MemoryEngine | None = None,
     vision: VisionModelGateway | None = None,
     nutrition_knowledge: NutritionKnowledgeRuntime | None = None,
-    style_embedding: EmbeddingGateway | None = None,
     definition: AgentRuntimeDefinition,
     manifest: AgentManifest | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -367,7 +365,6 @@ def build_agent_runtime(
             nutrition_specialist=nutrition_specialist,
             profile_resolver=StyleProfileResolver(
                 profiles=RuntimeStyles(database),
-                embedding=style_embedding,
                 active_version=RuntimeStyles(database),
                 default_version="slimguard_default_v1",
             ),

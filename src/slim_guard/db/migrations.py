@@ -38,6 +38,7 @@ from slim_guard.nutrition_rag.profiles import (
     QUERY_PLAN_VERSION,
 )
 from slim_guard.style_management.migration import reset_style_schema
+from slim_guard.style_management.trainer_migration import migrate_trainer_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,6 +532,7 @@ MIGRATIONS = (
     SchemaMigration("20260917_01_conversational_long_term_memory", _create_application_tables),
     SchemaMigration("20260918_01_unified_style_examples", _create_application_tables),
     SchemaMigration("20260918_02_reset_expression_styles", reset_style_schema),
+    SchemaMigration("20260918_03_style_trainer", migrate_trainer_schema),
 )
 
 

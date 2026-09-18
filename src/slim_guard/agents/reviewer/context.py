@@ -10,7 +10,7 @@ from slim_guard.agents.contracts import (
     StyledResponse,
 )
 from slim_guard.agents.reviewer.contracts import ReviewerContext, ReviewerEvidenceSummary
-from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1, StyleProfile
+from slim_guard.expression_style.contracts import SLIMGUARD_DEFAULT_V1, StyleProfile
 
 
 class ReviewerContextCompiler:

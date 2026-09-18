@@ -34,7 +34,7 @@ from slim_guard.agents.reviewer import (
     ReviewerEvidenceSummary,
     ReviewerVerdictValidator,
 )
-from slim_guard.agents.style.contracts import SLIMGUARD_DEFAULT_V1
+from slim_guard.expression_style.contracts import SLIMGUARD_DEFAULT_V1
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 
 

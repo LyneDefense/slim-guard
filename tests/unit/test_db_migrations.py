@@ -85,6 +85,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260917_01_conversational_long_term_memory",
             "20260918_01_unified_style_examples",
             "20260918_02_reset_expression_styles",
+            "20260918_03_style_trainer",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -96,6 +97,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "expression_versions",
             "expression_examples",
             "expression_review_cases",
+            "expression_build_runs",
             "dish_catalog_import_batches",
             "dish_entities",
             "dish_aliases",
@@ -237,6 +239,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260917_01_conversational_long_term_memory",
             "20260918_01_unified_style_examples",
             "20260918_02_reset_expression_styles",
+            "20260918_03_style_trainer",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
@@ -266,6 +269,7 @@ async def test_existing_style_tables_are_removed_by_reset_migration(tmp_path) ->
         assert await database.migrate() == (
             "20260918_01_unified_style_examples",
             "20260918_02_reset_expression_styles",
+            "20260918_03_style_trainer",
         )
         async with database.engine.connect() as connection:
             names = await connection.run_sync(lambda c: set(inspect(c).get_table_names()))

@@ -43,8 +43,6 @@ class StyleExample(ContractModel):
     style_profile_version: str = Field(min_length=1, max_length=128)
     original_response: str = ""
     text: str = Field(min_length=1, max_length=4000)
-    embedding: tuple[float, ...] = Field(default=(), exclude=True)
-    embedding_model: str = Field(default="", exclude=True)
 
 
 class StyleContext(ContractModel):
@@ -55,7 +53,11 @@ class StyleContext(ContractModel):
     response_plan: ResponsePlan
     profile: StyleProfile
     assessment: ProfessionalAssessment | None = None
-    examples: tuple[StyleExample, ...] = Field(default=(), max_length=5)
+    examples: tuple[StyleExample, ...] = ()
+    user_input: str = ""
+    minimal_context: tuple[str, ...] = ()
+    compiled_prompt: str = ""
+    package_hash: str = ""
 
     @model_validator(mode="after")
     def validate_examples(self) -> StyleContext:
@@ -77,6 +79,8 @@ class StyleProfileSnapshot(ContractModel):
 
     profile: StyleProfile
     examples: tuple[StyleExample, ...] = ()
+    compiled_prompt: str = ""
+    package_hash: str = ""
 
     @model_validator(mode="after")
     def validate_library(self) -> StyleProfileSnapshot:
@@ -88,8 +92,6 @@ class StyleProfileSnapshot(ContractModel):
 
 
 class StyleProfileRepository(Protocol):
-    async def get_profile(self, version: str) -> StyleProfile | None: ...
-
     async def get_runtime_snapshot(self, version: str) -> StyleProfileSnapshot | None: ...
 
 

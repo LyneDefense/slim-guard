@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Admin inputs only. Training artifacts live in expression_style."""
 
 from typing import Literal
 
@@ -17,12 +17,14 @@ class StyleInput(Input):
 class ExampleInput(Input):
     user_input: str = Field(min_length=1, max_length=4000)
     original_response: str = Field(min_length=1, max_length=4000)
-    desired_response: str = Field(min_length=1, max_length=4000)
+    desired_response: str = Field(default="", max_length=4000)
+    correction_opinion: str = Field(default="", max_length=2000)
 
-
-class ExampleState(Input):
-    status: Literal["pending", "approved", "excluded", "conflict"]
-    reason: str = Field(default="", max_length=2000)
+    @model_validator(mode="after")
+    def needs_feedback(self) -> "ExampleInput":
+        if not self.desired_response and not self.correction_opinion:
+            raise ValueError("期望回答与纠正意见至少填写一项")
+        return self
 
 
 class ReviewInput(Input):
@@ -34,30 +36,7 @@ class ReviewInput(Input):
     desired_response: str = Field(default="", max_length=4000)
 
     @model_validator(mode="after")
-    def require_reason(self) -> ReviewInput:
+    def require_reason(self) -> "ReviewInput":
         if self.decision == "reject" and not self.reason:
             raise ValueError("拒绝时必须填写理由")
         return self
-
-
-class GuideRule(Input):
-    text: str = Field(min_length=1, max_length=500)
-    evidence_ids: list[str] = Field(default_factory=list)
-    confidence: Literal["stable", "candidate", "conflict"]
-
-
-class Guide(Input):
-    summary: str = Field(min_length=1, max_length=1000)
-    rules: list[GuideRule] = Field(min_length=1, max_length=32)
-    prohibited_phrases: list[str] = Field(default_factory=list, max_length=64)
-
-
-class Analysis(Input):
-    example_id: str
-    category: Literal["expression", "content_change", "conflict", "unusable"]
-    reason: str = Field(min_length=1, max_length=1000)
-    expression_rule: str = Field(default="", max_length=500)
-
-
-class AnalysisBatch(Input):
-    items: list[Analysis]

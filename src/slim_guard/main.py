@@ -151,7 +151,6 @@ def create_app(
     owned_vision_gateway: ZhipuVisionModelGateway | None = None
     owned_memory_engine: Mem0HttpMemoryEngine | None = None
     owned_nutrition_embedding: ZhipuEmbeddingGateway | None = None
-    owned_style_embedding: ZhipuEmbeddingGateway | None = None
     owned_nutrition_reranker: ZhipuRerankGateway | None = None
     owned_nutrition_fetcher: NutritionRemoteDocumentFetcher | None = None
 
@@ -159,7 +158,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         nonlocal owned_client, owned_memory_engine, owned_model_gateway
         nonlocal owned_vision_gateway
-        nonlocal owned_nutrition_embedding, owned_nutrition_reranker, owned_style_embedding
+        nonlocal owned_nutrition_embedding, owned_nutrition_reranker
         nonlocal owned_nutrition_fetcher
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
@@ -198,12 +197,6 @@ def create_app(
             if app_settings.tencent_cos_is_configured
             else None
         )
-        if app_settings.zhipu_is_configured:
-            owned_style_embedding = ZhipuEmbeddingGateway(
-                api_key=app_settings.zhipu_api_key,
-                base_url=app_settings.zhipu_base_url,
-                timeout_seconds=45,
-            )
         active_nutrition_knowledge = None
         if (
             app_settings.nutrition_rag_engine == "v2"
@@ -307,7 +300,6 @@ def create_app(
                     memory_engine=active_memory_engine,
                     vision=active_vision,
                     nutrition_knowledge=active_nutrition_knowledge,
-                    style_embedding=owned_style_embedding,
                     definition=runtime_definition,
                     manifest=agent_manifest,
                 )
@@ -537,7 +529,6 @@ def create_app(
                 active_model_for_services,
                 app_settings.zhipu_text_model,
                 app_settings.style_iteration_poll_seconds,
-                embedding=owned_style_embedding,
             )
             style_iteration_stop = asyncio.Event()
             style_iteration_task = asyncio.create_task(
@@ -644,8 +635,6 @@ def create_app(
                 await owned_nutrition_reranker.close()
             if owned_nutrition_embedding is not None:
                 await owned_nutrition_embedding.close()
-            if owned_style_embedding is not None:
-                await owned_style_embedding.close()
             await database.close()
 
     application = FastAPI(

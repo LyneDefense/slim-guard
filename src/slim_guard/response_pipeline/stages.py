@@ -139,7 +139,7 @@ class ResponseStageExecutor:
             role=AgentRole.RESPONSE_STYLE,
             version=RESPONSE_STYLE_PROMPT_VERSION,
             input_schema="StyleContext",
-            privacy_scopes=("response_plan", "style_profile", "style_examples"),
+            privacy_scopes=("response_plan", "style_profile", "style_examples", "recent_dialogue"),
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=parents,
             attempt=attempt,
@@ -151,6 +151,17 @@ class ResponseStageExecutor:
             profile=selection.snapshot.profile,
             assessment=planned.assessment,
             examples=selection.snapshot.examples,
+            compiled_prompt=selection.snapshot.compiled_prompt,
+            package_hash=selection.snapshot.package_hash,
+            user_input=next(
+                (m.content or "" for m in reversed(request.messages) if m.role.value == "user"),
+                "",
+            ),
+            minimal_context=tuple(
+                f"{m.role.value}: {m.content[:1000]}"
+                for m in request.messages[:-1][-4:]
+                if m.role.value in {"user", "assistant"} and m.content and not m.tool_calls
+            ),
         )
         result = await self._style_agent.run(
             invocation=invocation,

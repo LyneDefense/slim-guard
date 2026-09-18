@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""One style management API: material, build process, and final-version review."""
 
 from collections.abc import Awaitable
 from typing import Annotated, Any, Literal, TypeVar
@@ -7,9 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import IntegrityError
 
 from slim_guard.api.admin_routes import AdminPrincipal, _authenticate
+from slim_guard.expression_style.trainer.contracts import BuildBudget
 
-from .contracts import ExampleInput, ExampleState, ReviewInput, StyleInput
-from .repository import Repository
+from .builds import BuildRepository
+from .contracts import ExampleInput, ReviewInput, StyleInput
+from .corpus import CorpusRepository
+from .versions import VersionRepository
 
 T = TypeVar("T")
 
@@ -35,21 +38,17 @@ async def invoke(call: Awaitable[T]) -> T:
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     except IntegrityError as exc:
-        raise HTTPException(409, "名称已存在或操作与当前构建冲突") from exc
-
-
-def repo(request: Request) -> Repository:
-    return Repository(request.app.state.database)
+        raise HTTPException(409, "名称已存在或与其他构建冲突") from exc
 
 
 @router.get("")
 async def styles(request: Request) -> dict[str, Any]:
-    return {"items": await repo(request).styles()}
+    return {"items": await CorpusRepository(request.app.state.database).styles()}
 
 
 @router.post("", status_code=201)
 async def create_style(request: Request, payload: StyleInput) -> dict[str, Any]:
-    return await invoke(repo(request).create_style(payload))
+    return await invoke(CorpusRepository(request.app.state.database).create_style(payload))
 
 
 @router.get("/{style_id}/examples")
@@ -59,19 +58,12 @@ async def examples(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     q: str = Query("", max_length=200),
-    category: str = "",
-    source: str = "",
-    status: str = "",
+    participation: Literal["", "used", "unused"] = "",
+    role: str = "",
 ) -> dict[str, Any]:
     return await invoke(
-        repo(request).examples(
-            style_id,
-            limit=limit,
-            offset=offset,
-            q=q,
-            category=category,
-            source=source,
-            status=status,
+        CorpusRepository(request.app.state.database).examples(
+            style_id, limit=limit, offset=offset, q=q, participation=participation, role=role
         )
     )
 
@@ -83,29 +75,105 @@ async def append(
     payload: ExampleInput,
     principal: Annotated[AdminPrincipal, Depends(access)],
 ) -> dict[str, Any]:
-    return await invoke(repo(request).append(style_id, payload, principal.username))
+    return await invoke(
+        CorpusRepository(request.app.state.database).append(style_id, payload, principal.username)
+    )
 
 
-@router.patch("/{style_id}/examples/{example_id}")
-async def example_state(
-    request: Request, style_id: str, example_id: str, payload: ExampleState
+@router.put("/{style_id}/examples/{example_id}")
+async def edit(
+    request: Request, style_id: str, example_id: str, payload: ExampleInput
 ) -> dict[str, Any]:
-    return await invoke(repo(request).example_state(style_id, example_id, payload))
+    return await invoke(
+        CorpusRepository(request.app.state.database).edit(style_id, example_id, payload)
+    )
 
 
-@router.get("/{style_id}/versions")
-async def versions(request: Request, style_id: str) -> dict[str, Any]:
-    return {"items": await invoke(repo(request).versions(style_id))}
+@router.delete("/{style_id}/examples/{example_id}")
+async def delete_example(request: Request, style_id: str, example_id: str) -> dict[str, str]:
+    return await invoke(CorpusRepository(request.app.state.database).delete(style_id, example_id))
 
 
-@router.post("/{style_id}/versions", status_code=202)
+@router.get("/{style_id}/builds")
+async def builds(
+    request: Request,
+    style_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    return await invoke(BuildRepository(request.app.state.database).runs(style_id, limit, offset))
+
+
+@router.post("/{style_id}/builds", status_code=202)
 async def build(
     request: Request, style_id: str, principal: Annotated[AdminPrincipal, Depends(access)]
 ) -> dict[str, Any]:
     settings = request.app.state.settings
     if not settings.style_iteration_worker_enabled or not settings.zhipu_is_configured:
         raise HTTPException(409, "风格构建 worker 或模型尚未配置")
-    return await invoke(repo(request).build(style_id, principal.username))
+    key = request.headers.get("Idempotency-Key")
+    if key is not None and (not key.strip() or len(key) > 128):
+        raise HTTPException(422, "无效幂等键")
+    return await invoke(
+        BuildRepository(request.app.state.database).build(
+            style_id,
+            principal.username,
+            model=settings.zhipu_text_model,
+            request_key=key,
+            budget=BuildBudget(
+                max_rounds=settings.style_training_max_rounds,
+                max_calls=settings.style_training_max_calls,
+                max_tokens=settings.style_training_max_tokens,
+                max_seconds=settings.style_training_max_seconds,
+            ),
+        )
+    )
+
+
+@router.get("/{style_id}/builds/{run_id}")
+async def build_detail(request: Request, style_id: str, run_id: str) -> dict[str, Any]:
+    return await invoke(BuildRepository(request.app.state.database).detail(style_id, run_id))
+
+
+@router.get("/{style_id}/builds/{run_id}/events")
+async def build_events(
+    request: Request,
+    style_id: str,
+    run_id: str,
+    after: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+) -> dict[str, Any]:
+    return await invoke(
+        BuildRepository(request.app.state.database).events(style_id, run_id, after, limit)
+    )
+
+
+@router.get("/{style_id}/builds/{run_id}/artifacts")
+async def build_artifact(
+    request: Request,
+    style_id: str,
+    run_id: str,
+    key: str = Query(max_length=150),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    return await invoke(
+        BuildRepository(request.app.state.database).artifact(style_id, run_id, key, limit, offset)
+    )
+
+
+@router.post("/{style_id}/builds/{run_id}/{action}")
+async def build_action(
+    request: Request, style_id: str, run_id: str, action: Literal["cancel", "resume"]
+) -> dict[str, Any]:
+    return await invoke(
+        BuildRepository(request.app.state.database).action(style_id, run_id, action)
+    )
+
+
+@router.get("/{style_id}/versions")
+async def versions(request: Request, style_id: str) -> dict[str, Any]:
+    return {"items": await invoke(VersionRepository(request.app.state.database).versions(style_id))}
 
 
 @router.get("/{style_id}/versions/{version_id}/cases")
@@ -116,7 +184,9 @@ async def cases(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
-    return await invoke(repo(request).cases(style_id, version_id, limit, offset))
+    return await invoke(
+        VersionRepository(request.app.state.database).cases(style_id, version_id, limit, offset)
+    )
 
 
 @router.post("/{style_id}/reviews/{case_id}")
@@ -127,14 +197,17 @@ async def review(
     payload: ReviewInput,
     principal: Annotated[AdminPrincipal, Depends(access)],
 ) -> dict[str, Any]:
-    return await invoke(repo(request).review(style_id, case_id, payload, principal.username))
+    return await invoke(
+        VersionRepository(request.app.state.database).review(
+            style_id, case_id, payload, principal.username
+        )
+    )
 
 
 @router.post("/{style_id}/versions/{version_id}/{action}")
-async def action(
-    request: Request,
-    style_id: str,
-    version_id: str,
-    action: Literal["publish", "activate", "retry"],
+async def version_action(
+    request: Request, style_id: str, version_id: str, action: Literal["publish", "activate"]
 ) -> dict[str, Any]:
-    return await invoke(repo(request).action(style_id, version_id, action))
+    return await invoke(
+        VersionRepository(request.app.state.database).action(style_id, version_id, action)
+    )

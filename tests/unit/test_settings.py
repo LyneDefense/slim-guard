@@ -64,6 +64,21 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.mobile_is_configured is False
 
 
+def test_style_training_budgets_accept_environment_strings(monkeypatch):
+    monkeypatch.setenv("STYLE_TRAINING_MAX_ROUNDS", "3")
+    monkeypatch.setenv("STYLE_TRAINING_MAX_CALLS", "250")
+    monkeypatch.setenv("STYLE_TRAINING_MAX_TOKENS", "300000")
+    monkeypatch.setenv("STYLE_TRAINING_MAX_SECONDS", "1200")
+    settings = Settings(_env_file=None)
+    assert settings.style_training_max_rounds == 3
+    assert settings.style_training_max_calls == 250
+    assert settings.style_training_max_tokens == 300000
+    assert settings.style_training_max_seconds == 1200
+    monkeypatch.setenv("STYLE_TRAINING_MAX_ROUNDS", "100")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
 def test_embedding_dimensions_accepts_env_style_string() -> None:
     settings = Settings(
         _env_file=None,

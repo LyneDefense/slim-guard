@@ -109,7 +109,7 @@ class AgentResponseFinalizer:
             invocation_id=request.core_invocation_id,
         )
 
-        selection = await self._profile_resolver.resolve(request.neutral_draft)
+        selection = await self._profile_resolver.resolve()
         resolution_artifact = self._stages.artifact(
             request,
             producer=ArtifactProducerRole.STYLE_RESOLVER,

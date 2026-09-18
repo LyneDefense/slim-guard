@@ -84,6 +84,10 @@ class Settings(DatabaseSettings):
     response_reviewer_enabled: bool = False
     style_iteration_worker_enabled: bool = True
     style_iteration_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
+    style_training_max_rounds: int = Field(default=2, ge=1, le=4)
+    style_training_max_calls: int = Field(default=350, ge=20, le=2000)
+    style_training_max_tokens: int = Field(default=1_000_000, ge=10000, le=10_000_000)
+    style_training_max_seconds: int = Field(default=3600, ge=120, le=7200)
     agent_fallback_reply_text: str = "抱歉，我刚才没有成功分析这条记录，请稍后再发一次。"
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
     wecom_human_idle_timeout_seconds: int = Field(default=600, ge=60, le=86_400)

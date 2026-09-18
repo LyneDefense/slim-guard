@@ -71,7 +71,7 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
         (
             response("已记录今天的数据。"),
             response(json.dumps(styled, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
         )
     )
     runtime = build_agent_runtime(
@@ -158,7 +158,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
             response(json.dumps(assessment, ensure_ascii=False)),
             response("目前信息还不够，请告诉我晚餐具体吃什么和大概份量。"),
             response(json.dumps(styled, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -248,7 +248,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
             response(json.dumps(assessment, ensure_ascii=False)),
             response("请先告诉我今晚准备吃什么和大概份量。"),
             response(json.dumps(first_style, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response(
                 json.dumps(
                     {
@@ -261,7 +261,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -347,7 +347,7 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             response(json.dumps(assessment, ensure_ascii=False)),
             response("晚餐这样搭配就行。"),
             response(json.dumps(first_style, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response(
                 json.dumps(
                     {
@@ -366,7 +366,7 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -449,7 +449,7 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             response(json.dumps(initial_assessment, ensure_ascii=False)),
             response("照旧吃就可以。"),
             response(json.dumps(first_style, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response(
                 json.dumps(
                     {
@@ -469,7 +469,7 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
-            response('{"passed":true,"issues":[]}'),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )

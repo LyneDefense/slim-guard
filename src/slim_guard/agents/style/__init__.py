@@ -8,14 +8,14 @@ from slim_guard.agents.style.agent import (
     StyleAgentResult,
 )
 from slim_guard.agents.style.context import StyleContextCompiler
-from slim_guard.agents.style.contracts import (
+from slim_guard.agents.style.renderer import NeutralRenderer
+from slim_guard.expression_style.contracts import (
     SLIMGUARD_DEFAULT_V1,
     StyleContext,
     StyleExample,
     StyleProfile,
     StyleProfileRepository,
 )
-from slim_guard.agents.style.renderer import NeutralRenderer
 from slim_guard.expression_style.review.integrity import (
     StyleIntegrityError,
     StyleIntegrityIssue,

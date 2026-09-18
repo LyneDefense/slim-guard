@@ -19,7 +19,7 @@ from slim_guard.agents.contracts import (
     ReviewerVerdict,
     StyledResponse,
 )
-from slim_guard.agents.style.contracts import StyleProfile
+from slim_guard.expression_style.contracts import StyleProfile
 
 
 class ReviewerEvidenceSummary(ContractModel):

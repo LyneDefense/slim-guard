@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from slim_guard.agents.contracts import ContentBlockKind, StyledResponse
-from slim_guard.agents.style.contracts import StyleContext
+from slim_guard.expression_style.contracts import StyleContext
 
 
 class NeutralRenderer:

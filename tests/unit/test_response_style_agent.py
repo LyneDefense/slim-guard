@@ -157,7 +157,10 @@ def model_response(response: StyledResponse, *, tokens: int = 50) -> ModelRespon
 
 def semantic_pass() -> ModelResponse:
     return ModelResponse(
-        message=ModelMessage(role=MessageRole.ASSISTANT, content='{"passed":true,"issues":[]}')
+        message=ModelMessage(
+            role=MessageRole.ASSISTANT,
+            content='{"fidelity_passed":true,"expression_passed":true,"issues":[]}',
+        )
     )
 
 
@@ -217,50 +220,6 @@ def test_validator_rejects_changed_content_numbers_and_reference_sets() -> None:
     assert StyleIntegrityIssueCode.CITATION_REFERENCE_CHANGED in codes
     assert StyleIntegrityIssueCode.PROTECTED_CONTENT_CHANGED in codes
     assert StyleIntegrityIssueCode.NUMBER_CHANGED in codes
-
-
-def test_validator_rejects_new_record_medical_or_advice_claims() -> None:
-    plan = ResponsePlan(
-        content_blocks=(
-            ResponseContentBlock(
-                block_id="social",
-                kind="social_act",
-                text="收到。",
-            ),
-        ),
-    )
-    context = StyleContextCompiler().compile(turn_id="turn-1", response_plan=plan)
-    response = StyledResponse(
-        text="收到，已经保存。你得了糖尿病，建议每天绝食。",
-        used_block_ids=("social",),
-        style_profile_version="slimguard_default_v1",
-    )
-
-    report = StyleResponseValidator().validate(context, response)
-
-    assert StyleIntegrityIssueCode.UNSUPPORTED_CONTENT_ADDED in set(report.issue_codes)
-
-
-def test_validator_rejects_an_invented_need_or_next_step() -> None:
-    plan = ResponsePlan(
-        content_blocks=(
-            ResponseContentBlock(
-                block_id="social",
-                kind="social_act",
-                text="目前还不能直接得出结论。",
-            ),
-        ),
-    )
-    context = StyleContextCompiler().compile(turn_id="turn-1", response_plan=plan)
-    response = StyledResponse(
-        text="目前还不能直接得出结论。下一步需要补齐更多信息。",
-        used_block_ids=("social",),
-        style_profile_version="slimguard_default_v1",
-    )
-
-    report = StyleResponseValidator().validate(context, response)
-
-    assert StyleIntegrityIssueCode.UNSUPPORTED_CONTENT_ADDED in set(report.issue_codes)
 
 
 async def test_style_agent_returns_valid_model_response_without_repair() -> None:
