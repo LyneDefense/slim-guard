@@ -14,6 +14,7 @@ from slim_guard.runtime.contracts.base import ContractModel
 class AgentRole(StrEnum):
     CORE = "core"
     NUTRITION_EXPERT = "nutrition_expert"
+    PARTICIPANT_ROUTER = "participant_router"
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
 

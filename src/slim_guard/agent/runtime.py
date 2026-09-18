@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from slim_guard.domain.assets.contracts import SaveImageAssetCommand
 from slim_guard.domain.assets.repository import ImageAssetRepository
+from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,
@@ -66,6 +67,7 @@ class AgentRuntimeResult:
     termination: HarnessTermination
     final_text: str | None
     failure_code: str | None
+    messages: tuple[ChatMessage, ...] = ()
 
 
 class AgentScheduledRequest(BaseModel):
@@ -201,6 +203,7 @@ class AgentRuntime:
             termination=run.loop.termination,
             final_text=run.final_text,
             failure_code=run.loop.failure.code if run.loop.failure is not None else None,
+            messages=run.loop.outgoing_messages,
         )
 
     async def run_scheduled(
@@ -226,6 +229,7 @@ class AgentRuntime:
             termination=run.loop.termination,
             final_text=run.final_text,
             failure_code=run.loop.failure.code if run.loop.failure is not None else None,
+            messages=run.loop.outgoing_messages,
         )
 
     @staticmethod

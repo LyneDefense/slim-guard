@@ -143,6 +143,7 @@ def create_app(
         nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
         nutrition_require_rag_citations=app_settings.nutrition_require_rag_citations,
         response_reviewer_enabled=app_settings.response_reviewer_enabled,
+        group_chat_enabled=app_settings.group_chat_enabled,
     )
     agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
     agent_manifest = build_agent_manifest(runtime_definition)
@@ -667,6 +668,7 @@ def create_app(
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
     application.state.multi_agent_mode = app_settings.multi_agent_mode
     application.state.multi_agent_graph_version = app_settings.multi_agent_graph_version
+    application.state.group_chat_enabled = app_settings.group_chat_enabled
     application.state.mobile_auth = None
     application.state.mobile_service = None
     application.state.mobile_platform = None

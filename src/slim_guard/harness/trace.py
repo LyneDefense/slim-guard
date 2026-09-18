@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
+from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.errors import TurnStateConflict
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, WorkflowTraceEvent
 from slim_guard.harness.failures import HarnessFailure
@@ -95,6 +96,7 @@ class HarnessRunRecorder(Protocol):
         tool_call_count: int,
         total_token_count: int,
         failure: HarnessFailure | None,
+        outgoing_messages: tuple[ChatMessage, ...] = (),
     ) -> None: ...
 
 
@@ -181,6 +183,7 @@ class NullHarnessRunRecorder:
         tool_call_count: int,
         total_token_count: int,
         failure: HarnessFailure | None,
+        outgoing_messages: tuple[ChatMessage, ...] = (),
     ) -> None:
         return None
 
@@ -363,16 +366,34 @@ class PersistentHarnessRunRecorder:
         tool_call_count: int,
         total_token_count: int,
         failure: HarnessFailure | None,
+        outgoing_messages: tuple[ChatMessage, ...] = (),
     ) -> None:
         if termination is HarnessTermination.FINAL_RESPONSE:
             if final_text is None:
                 raise ValueError("Final response termination requires final text")
-            await self._store.append_item(
-                turn_id=turn_id,
-                item_type=ItemType.AGENT_MESSAGE,
-                status=ItemStatus.COMPLETED,
-                payload={"text": final_text},
-            )
+            if outgoing_messages:
+                for message in outgoing_messages:
+                    await self._store.append_item(
+                        turn_id=turn_id,
+                        item_type=ItemType.AGENT_MESSAGE,
+                        status=ItemStatus.COMPLETED,
+                        payload={
+                            **message.model_dump(mode="json"),
+                            "participant": message.participant.value,
+                            "kind": message.kind.value,
+                        },
+                    )
+            else:
+                await self._store.append_item(
+                    turn_id=turn_id,
+                    item_type=ItemType.AGENT_MESSAGE,
+                    status=ItemStatus.COMPLETED,
+                    payload={
+                        "text": final_text,
+                        "participant": "system_assistant",
+                        "kind": "text",
+                    },
+                )
             await self._store.transition_turn(
                 turn_id=turn_id,
                 target=TurnStatus.COMPLETED,

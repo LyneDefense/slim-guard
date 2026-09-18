@@ -32,6 +32,7 @@ from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.contracts import RoutinePreferenceCommand, RoutineSetting
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.group_chat.contracts import ChatMessage, ParticipantRole
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.repository import MemoryRepository
@@ -216,6 +217,7 @@ class MobileApplicationService:
                 "The idempotency key was already used for different content",
             )
         if not claim.created:
+            replayed_messages = await self._messages_for_turn(user_id, claim.turn_id)
             return ChatResponse(
                 request_id=claim.id,
                 status=claim.status,
@@ -223,6 +225,7 @@ class MobileApplicationService:
                 text=claim.final_text,
                 failure_code=claim.failure_code,
                 replayed=True,
+                messages=replayed_messages,
             )
 
         trace_id = await self._traces.start_user_trace(
@@ -253,6 +256,7 @@ class MobileApplicationService:
             )
             if result.termination is HarnessTermination.FINAL_RESPONSE and result.final_text:
                 final_text = result.final_text.strip()
+                messages = self._message_views(result.messages)
                 await self._complete_request(
                     claim.id,
                     status="succeeded",
@@ -266,6 +270,7 @@ class MobileApplicationService:
                     status="succeeded",
                     turn_id=result.turn_id,
                     text=final_text,
+                    messages=messages,
                 )
             if result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
                 final_text = "这项操作需要你再次确认。确认执行，还是取消？"
@@ -282,6 +287,17 @@ class MobileApplicationService:
                     status="succeeded",
                     turn_id=result.turn_id,
                     text=final_text,
+                    messages=[
+                        ChatMessageView(
+                            id=f"pending-{result.turn_id}",
+                            turn_id=result.turn_id,
+                            participant="system_assistant",
+                            role="assistant",
+                            kind="text",
+                            text=final_text,
+                            created_at=datetime.now(UTC),
+                        )
+                    ],
                 )
             failure_code = result.failure_code or result.termination.value
             await self._complete_request(
@@ -322,6 +338,7 @@ class MobileApplicationService:
         claim = await self._find_request(user_id, idempotency_key)
         if claim is None:
             raise MobileServiceError("request_not_found", "Chat request was not found")
+        replayed_messages = await self._messages_for_turn(user_id, claim.turn_id)
         return ChatResponse(
             request_id=claim.id,
             status=claim.status,
@@ -329,6 +346,7 @@ class MobileApplicationService:
             text=claim.final_text,
             failure_code=claim.failure_code,
             replayed=True,
+            messages=replayed_messages,
         )
 
     async def history(self, user_id: str, *, limit: int = 50) -> ChatHistoryView:
@@ -360,20 +378,44 @@ class MobileApplicationService:
             if payload.get("redacted") is True:
                 continue
             item_type = ItemType(row.item_type)
-            role = "assistant" if item_type is ItemType.AGENT_MESSAGE else "user"
-            kind = "image" if item_type is ItemType.IMAGE_ATTACHMENT else "text"
+            if item_type is ItemType.AGENT_MESSAGE:
+                participant = payload.get("participant", "system_assistant")
+                if participant not in {"coach", "system_assistant"}:
+                    participant = "system_assistant"
+                role = "assistant"
+                kind = payload.get("kind", "text")
+                if kind not in {"text", "image", "card"}:
+                    kind = "text"
+            else:
+                participant = "user"
+                role = "user"
+                kind = "image" if item_type is ItemType.IMAGE_ATTACHMENT else "text"
             text = payload.get("text")
             items.append(
                 ChatMessageView(
                     id=row.id,
                     turn_id=row.turn_id,
+                    participant=participant,
                     role=role,
                     kind=kind,
                     text=text if isinstance(text, str) else None,
+                    card=payload.get("card") if isinstance(payload.get("card"), dict) else None,
                     created_at=self._aware(row.created_at),
                 )
             )
         return ChatHistoryView(items=items)
+
+    async def _messages_for_turn(
+        self, user_id: str, turn_id: str | None
+    ) -> list[ChatMessageView]:
+        if turn_id is None:
+            return []
+        history = await self.history(user_id, limit=200)
+        return [
+            item
+            for item in history.items
+            if item.turn_id == turn_id and item.participant != "user"
+        ]
 
     async def memories(self, user_id: str) -> list[MemoryView]:
         now = datetime.now(UTC)
@@ -660,6 +702,22 @@ class MobileApplicationService:
             failure_code=row.failure_code,
             created=created,
         )
+
+    @classmethod
+    def _message_views(cls, messages: tuple[ChatMessage, ...]) -> list[ChatMessageView]:
+        return [
+            ChatMessageView(
+                id=message.id,
+                turn_id=message.turn_id,
+                participant=message.participant.value,
+                role=("user" if message.participant is ParticipantRole.USER else "assistant"),
+                kind=message.kind.value,
+                text=message.text,
+                card=(message.card.model_dump(mode="json") if message.card is not None else None),
+                created_at=cls._aware(message.created_at),
+            )
+            for message in messages
+        ]
 
     @classmethod
     def _coach_profile_view(

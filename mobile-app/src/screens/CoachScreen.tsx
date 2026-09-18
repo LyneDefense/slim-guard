@@ -148,18 +148,37 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
 }
 
 function Bubble({ message }: { message: ChatMessage }) {
-  const mine = message.role === 'user';
+  const mine = message.participant === 'user' || message.role === 'user';
+  const coach = message.participant === 'coach';
   const displayedText = (message.text || (message.kind === 'image' ? '📷 图片' : '')).replace(/\*\*/g, '');
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
-      {!mine ? <View style={styles.smallAvatar}><Ionicons name="leaf" size={13} color={colors.white} /></View> : null}
-      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleCoach, message.failed && styles.bubbleFailed]}>
-        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{displayedText}</Text>
+      {!mine ? <View style={[styles.smallAvatar, coach ? styles.coachAvatar : styles.systemAvatar]}><Ionicons name={coach ? 'medkit-outline' : 'settings-outline'} size={13} color={colors.white} /></View> : null}
+      <View style={[styles.bubble, mine ? styles.bubbleMine : coach ? styles.bubbleCoach : styles.bubbleSystem, message.failed && styles.bubbleFailed]}>
+        {!mine ? <Text style={styles.senderLabel}>{coach ? '医生教练' : '系统助手'}</Text> : null}
+        {message.kind === 'card' && message.card ? <CardContent card={message.card} /> : null}
+        {message.kind !== 'card' ? <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{displayedText}</Text> : null}
         {message.pending ? <Text style={[styles.messageState, mine && { color: '#D8E5DC' }]}>发送中…</Text> : null}
         {message.failed ? <Text style={styles.failedText}>发送失败，可重新发送</Text> : null}
       </View>
     </View>
   );
+}
+
+function CardContent({ card }: { card: NonNullable<ChatMessage['card']> }) {
+  const data = card.data || {};
+  const title = card.card_type === 'meal_record' ? '已记录餐食' : '已完成记录';
+  const details = Object.entries(data)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => {
+      const label = key === 'meal_type' ? '餐次' : key === 'foods' ? '内容' : key;
+      const rendered = Array.isArray(value)
+        ? value.map((item) => typeof item === 'object' && item !== null && 'name' in item ? (item as { name: string }).name : String(item)).join('、')
+        : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      return `${label}: ${rendered}`;
+    })
+    .join(' · ');
+  return <View style={styles.card}><Text style={styles.cardTitle}>{title}</Text>{details ? <Text style={styles.cardText}>{details}</Text> : null}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -180,6 +199,13 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 19, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: 6 },
   bubbleCoach: { backgroundColor: colors.surface, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
+  bubbleSystem: { backgroundColor: colors.surfaceMuted, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
+  coachAvatar: { backgroundColor: colors.primary },
+  systemAvatar: { backgroundColor: colors.inkMuted },
+  senderLabel: { color: colors.inkMuted, fontSize: 11, fontWeight: '700', marginBottom: 4 },
+  card: { minWidth: 190, backgroundColor: colors.surface, borderRadius: 13, padding: spacing.md },
+  cardTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  cardText: { color: colors.inkMuted, fontSize: 12, lineHeight: 18, marginTop: 5 },
   bubbleFailed: { borderWidth: 1, borderColor: colors.danger },
   bubbleText: { color: colors.ink, fontSize: 15, lineHeight: 23 },
   bubbleTextMine: { color: colors.white },

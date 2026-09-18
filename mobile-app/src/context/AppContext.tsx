@@ -201,6 +201,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const optimistic: ChatMessage = {
       id: `local-${idempotencyKey}`,
       turn_id: '',
+      participant: 'user',
       role: 'user',
       kind: image ? 'image' : 'text',
       text: text.trim() || (image ? '📷 饮食照片' : null),
@@ -222,9 +223,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...current,
         messages: [
           ...current.messages.map((message) => message.id === optimistic.id ? { ...message, pending: false } : message),
-          ...(response.text ? [{
+          ...(response.messages?.length ? response.messages : response.text ? [{
             id: `reply-${response.request_id}`,
             turn_id: response.turn_id || '',
+            participant: 'system_assistant' as const,
             role: 'assistant' as const,
             kind: 'text' as const,
             text: response.text,

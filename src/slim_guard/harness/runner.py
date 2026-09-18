@@ -251,6 +251,7 @@ class TurnHarness:
                     model_call_count=finalization_result.model_call_count,
                     total_token_count=finalization_result.total_token_count,
                     core_output_artifact_id=finalization_result.core_output_artifact_id,
+                    messages=(),
                 )
             await self._recorder.record_workflow_event(
                 turn_id=initialized.turn.id,
@@ -267,6 +268,7 @@ class TurnHarness:
                 total_token_count=finalization_result.total_token_count,
                 core_output_artifact_id=finalization_result.core_output_artifact_id,
                 final_output_artifact_id=finalization_result.final_output_artifact_id,
+                messages=finalization_result.messages,
             )
 
         core_invocation = AgentInvocation(

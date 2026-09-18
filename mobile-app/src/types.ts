@@ -91,14 +91,17 @@ export type ChatResponse = {
   text: string | null;
   failure_code: string | null;
   replayed: boolean;
+  messages?: ChatMessage[];
 };
 
 export type ChatMessage = {
   id: string;
   turn_id: string;
+  participant: 'user' | 'coach' | 'system_assistant';
   role: 'user' | 'assistant';
-  kind: 'text' | 'image';
+  kind: 'text' | 'image' | 'card';
   text: string | null;
+  card?: { card_type?: string; status?: string; data?: Record<string, unknown> } | null;
   created_at: string;
   pending?: boolean;
   failed?: boolean;

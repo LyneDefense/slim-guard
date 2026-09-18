@@ -31,6 +31,7 @@ class ArtifactProducerRole(StrEnum):
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
     COORDINATOR = "coordinator"
+    PARTICIPANT_ROUTER = "participant_router"
 
 
 def canonical_payload_bytes(payload: dict[str, Any]) -> bytes:

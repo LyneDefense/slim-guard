@@ -243,14 +243,18 @@ class ChatResponse(BaseModel):
     text: str | None = None
     failure_code: str | None = None
     replayed: bool = False
+    messages: list[ChatMessageView] = Field(default_factory=list)
 
 
 class ChatMessageView(BaseModel):
     id: str
     turn_id: str
+    participant: Literal["user", "coach", "system_assistant"]
+    # Kept for old mobile builds; new clients render participant instead.
     role: Literal["user", "assistant"]
-    kind: Literal["text", "image"]
+    kind: Literal["text", "image", "card"]
     text: str | None
+    card: dict[str, object] | None = None
     created_at: datetime
 
 

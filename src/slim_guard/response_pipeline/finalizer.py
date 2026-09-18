@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
-from slim_guard.agents.contracts import RepairTarget, ReviewerVerdictStatus
+from slim_guard.agents.contracts import ContentBlockKind, RepairTarget, ReviewerVerdictStatus
 from slim_guard.agents.core import CoreResponseRepairAgent
 from slim_guard.agents.nutrition import NutritionSpecialist
+from slim_guard.agents.participant_router import ParticipantRoutingAgent
 from slim_guard.agents.reviewer import ResponseReviewerAgent, ReviewerContextCompiler
 from slim_guard.agents.style import ResponseStyleAgent, StyleContextCompiler
+from slim_guard.group_chat.composer import compose_messages
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
@@ -55,9 +57,12 @@ class AgentResponseFinalizer:
         core_repair_agent: CoreResponseRepairAgent | None = None,
         nutrition_specialist: NutritionSpecialist | None = None,
         clock: Callable[[], datetime] | None = None,
+        participant_agent: ParticipantRoutingAgent | None = None,
+        group_chat_enabled: bool = False,
     ) -> None:
         self._profile_resolver = profile_resolver
         self._reviewer_enabled = reviewer_enabled
+        self._group_chat_enabled = group_chat_enabled
         self._reviewer_agent = reviewer_agent
         self._plan_builder = plan_builder or ResponsePlanBuilder()
         self._stages = ResponseStageExecutor(
@@ -72,6 +77,7 @@ class AgentResponseFinalizer:
             style_compiler=style_compiler or StyleContextCompiler(),
             reviewer_compiler=reviewer_compiler or ReviewerContextCompiler(),
             clock=clock,
+            participant_agent=participant_agent,
         )
         self._owner_repairs = OwnerRepairCoordinator(
             stages=self._stages,
@@ -108,6 +114,14 @@ class AgentResponseFinalizer:
             neutral_artifact,
             invocation_id=request.core_invocation_id,
         )
+
+        if self._group_chat_enabled and self._stages.participant_routing_enabled:
+            return await self._finalize_group_chat(
+                request=request,
+                planned=planned,
+                plan_artifact=plan_artifact,
+                neutral_artifact=neutral_artifact,
+            )
 
         selection = await self._profile_resolver.resolve()
         resolution_artifact = self._stages.artifact(
@@ -219,6 +233,153 @@ class AgentResponseFinalizer:
             calls=calls,
             tokens=tokens,
             failure_code=first_review.failure_code or "review_rejected",
+        )
+
+    async def _finalize_group_chat(
+        self,
+        *,
+        request: ResponseFinalizationRequest,
+        planned: PlannedResponse,
+        plan_artifact: AgentArtifact,
+        neutral_artifact: AgentArtifact,
+    ) -> ResponseFinalizationResult:
+        selection = await self._profile_resolver.resolve()
+        resolution_artifact = self._stages.artifact(
+            request,
+            producer=ArtifactProducerRole.STYLE_RESOLVER,
+            artifact_type="style_resolution",
+            payload={
+                "profile_id": selection.snapshot.profile.profile_id,
+                "profile_version": selection.snapshot.profile.version,
+                "requested_version": selection.requested_version,
+                "source": selection.source,
+                "fallback_reason": selection.fallback_reason,
+                "example_ids": [example.example_id for example in selection.snapshot.examples],
+            },
+            parents=(plan_artifact.artifact_id,),
+        )
+        await self._stages.persist(resolution_artifact)
+        pending = any(
+            block.kind in {ContentBlockKind.QUESTION, ContentBlockKind.UNCERTAINTY}
+            for block in planned.plan.content_blocks
+        )
+        routed = await self._stages.run_participant_routing(
+            request=request,
+            system_text=request.neutral_draft,
+            plan_artifact=plan_artifact,
+            parent_invocation_id=request.core_invocation_id,
+            semantic_summary={
+                "response_plan": planned.plan.model_dump(mode="json"),
+                "professional_assessment": (
+                    planned.assessment.model_dump(mode="json")
+                    if planned.assessment is not None
+                    else None
+                ),
+            },
+            allowed_source_refs=planned.plan.citation_refs,
+            pending_clarification=pending,
+        )
+        calls = routed.model_call_count
+        tokens = routed.total_token_count
+        coach = routed.routing.coach
+        if coach is None:
+            messages = compose_messages(
+                turn_id=request.turn_id,
+                system_text=routed.routing.system_text,
+                coach_text=None,
+                tool_outcomes=request.tool_outcomes,
+            )
+            return ResponseFinalizationResult(
+                text=routed.routing.system_text,
+                status=routed.status,
+                core_output_artifact_id=plan_artifact.artifact_id,
+                final_output_artifact_id=routed.artifact.artifact_id,
+                style_profile_version=selection.snapshot.profile.version,
+                model_call_count=calls,
+                total_token_count=tokens,
+                messages=messages,
+                failure_code=routed.failure_code,
+            )
+
+        coach_planned = self._plan_builder.build(
+            neutral_draft=coach.text,
+            tool_outcomes=(),
+        )
+        coach_neutral_artifact = self._stages.artifact(
+            request,
+            producer=ArtifactProducerRole.PARTICIPANT_ROUTER,
+            artifact_type="coach_neutral_response",
+            payload={"text": coach.text, "source_refs": coach.source_refs},
+            parents=(routed.artifact.artifact_id,),
+        )
+        await self._stages.persist(coach_neutral_artifact)
+        style = await self._stages.run_style(
+            request=request,
+            planned=coach_planned,
+            selection=selection,
+            plan_artifact=plan_artifact,
+            neutral_artifact=coach_neutral_artifact,
+            resolution_artifact=resolution_artifact,
+            parent_invocation_id=routed.invocation_id,
+            attempt=1,
+        )
+        calls += style.model_call_count
+        tokens += style.total_token_count
+        reviewer_ran = self._reviewer_enabled and self._reviewer_agent is not None
+        if reviewer_ran:
+            review = await self._stages.run_review(
+                request=request,
+                planned=coach_planned,
+                selection=selection,
+                styled=style.response,
+                styled_artifact=style.artifact,
+                plan_artifact=plan_artifact,
+                parent_invocation_id=style.invocation_id,
+                attempt=1,
+            )
+            calls += review.model_call_count
+            tokens += review.total_token_count
+            if (
+                review.status is not InvocationStatus.SUCCEEDED
+                or review.verdict.verdict is not ReviewerVerdictStatus.PASS
+            ):
+                messages = compose_messages(
+                    turn_id=request.turn_id,
+                    system_text=routed.routing.system_text,
+                    coach_text=None,
+                    tool_outcomes=request.tool_outcomes,
+                )
+                return ResponseFinalizationResult(
+                    text=routed.routing.system_text,
+                    status=InvocationStatus.DEGRADED,
+                    core_output_artifact_id=plan_artifact.artifact_id,
+                    final_output_artifact_id=review.artifact.artifact_id,
+                    style_profile_version=selection.snapshot.profile.version,
+                    model_call_count=calls,
+                    total_token_count=tokens,
+                    reviewer_ran=True,
+                    messages=messages,
+                    failure_code=review.failure_code or "coach_message_rejected",
+                )
+        messages = compose_messages(
+            turn_id=request.turn_id,
+            system_text=routed.routing.system_text,
+            coach_text=style.response.text,
+            coach_source_refs=coach.source_refs,
+            style_profile_version=selection.snapshot.profile.version,
+            tool_outcomes=request.tool_outcomes,
+        )
+        return ResponseFinalizationResult(
+            text="\n".join(item.text for item in messages if item.text),
+            status=style.status,
+            core_output_artifact_id=plan_artifact.artifact_id,
+            final_output_artifact_id=style.artifact.artifact_id,
+            style_profile_version=selection.snapshot.profile.version,
+            model_call_count=calls,
+            total_token_count=tokens,
+            reviewer_ran=reviewer_ran,
+            messages=messages,
+            failure_code=style.failure_code,
         )
 
     async def _repair_style(

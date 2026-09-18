@@ -17,6 +17,10 @@ from slim_guard.agents.core import (
     CoreRepairContext,
     CoreResponseRepairAgent,
 )
+from slim_guard.agents.participant_router import (
+    PARTICIPANT_ROUTER_PROMPT_VERSION,
+    ParticipantRoutingAgent,
+)
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT_VERSION,
     ResponseReviewerAgent,
@@ -81,6 +85,17 @@ class CoreRepairStage:
     total_token_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class ParticipantStage:
+    routing: object
+    artifact: AgentArtifact
+    model_call_count: int
+    total_token_count: int
+    status: InvocationStatus
+    failure_code: str | None
+    invocation_id: str
+
+
 class ResponseStageExecutor:
     """Run bounded response stages and persist their immutable audit records."""
 
@@ -98,6 +113,7 @@ class ResponseStageExecutor:
         style_compiler: StyleContextCompiler,
         reviewer_compiler: ReviewerContextCompiler,
         clock: Callable[[], datetime] | None = None,
+        participant_agent: ParticipantRoutingAgent | None = None,
     ) -> None:
         self._style_agent = style_agent
         self._reviewer_agent = reviewer_agent
@@ -110,6 +126,84 @@ class ResponseStageExecutor:
         self._style_compiler = style_compiler
         self._reviewer_compiler = reviewer_compiler
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._participant_agent = participant_agent
+
+    @property
+    def participant_routing_enabled(self) -> bool:
+        return self._participant_agent is not None
+
+    async def run_participant_routing(
+        self,
+        *,
+        request: ResponseFinalizationRequest,
+        system_text: str,
+        semantic_summary: dict[str, object] | None = None,
+        plan_artifact: AgentArtifact,
+        parent_invocation_id: str,
+        allowed_source_refs: tuple[str, ...] = (),
+        pending_clarification: bool = False,
+    ) -> ParticipantStage:
+        if self._participant_agent is None:
+            raise RuntimeError("Participant routing is not configured")
+        invocation = self._invocation(
+            request=request,
+            role=AgentRole.PARTICIPANT_ROUTER,
+            version=PARTICIPANT_ROUTER_PROMPT_VERSION,
+            input_schema="ParticipantRoutingDecision",
+            privacy_scopes=("response_plan", "tool_outcomes"),
+            parent_invocation_id=parent_invocation_id,
+            input_artifact_ids=(plan_artifact.artifact_id,),
+            attempt=1,
+        )
+        await self._start(invocation, "判断本轮是否需要由教练补充关系性表达")
+        result = await self._participant_agent.run(
+            invocation=invocation,
+            system_text=system_text,
+            semantic_summary=semantic_summary,
+            allowed_source_refs=allowed_source_refs,
+            pending_clarification=pending_clarification,
+            grant=self._grant(invocation),
+        )
+        artifact = self.artifact(
+            request,
+            producer=ArtifactProducerRole.PARTICIPANT_ROUTER,
+            artifact_type="participant_routing",
+            payload={
+                "system_text": system_text,
+                "coach_text": result.routing.coach.text if result.routing.coach else None,
+                "coach_source_refs": (
+                    list(result.routing.coach.source_refs) if result.routing.coach else []
+                ),
+                "suppressed_reason": result.routing.suppressed_reason,
+                "status": result.status.value,
+                "failure_code": result.failure_code,
+            },
+            parents=(plan_artifact.artifact_id,),
+        )
+        await self.persist(artifact, invocation_id=invocation.invocation_id)
+        await self._complete(
+            invocation,
+            result=AgentResult(
+                invocation_id=invocation.invocation_id,
+                status=result.status,
+                output_schema="ParticipantRoutingDecision",
+                output_schema_version="1",
+                artifact_id=artifact.artifact_id,
+                model_call_count=result.model_call_count,
+                tool_call_count=0,
+                token_usage=result.total_token_count,
+                failure_code=result.failure_code,
+            ),
+        )
+        return ParticipantStage(
+            routing=result.routing,
+            artifact=artifact,
+            model_call_count=result.model_call_count,
+            total_token_count=result.total_token_count,
+            status=result.status,
+            failure_code=result.failure_code,
+            invocation_id=invocation.invocation_id,
+        )
 
     async def run_style(
         self,

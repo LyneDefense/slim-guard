@@ -21,6 +21,7 @@ from slim_guard.agents.nutrition import (
     nutrition_agent_tool_executors,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
+from slim_guard.agents.participant_router import ParticipantRoutingAgent
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
     RESPONSE_REVIEWER_PROMPT_VERSION,
@@ -155,6 +156,7 @@ class AgentRuntimeDefinition(BaseModel):
     nutrition_rag_enabled: bool = False
     nutrition_require_rag_citations: bool = True
     response_reviewer_enabled: bool = False
+    group_chat_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_nutrition_rag(self) -> AgentRuntimeDefinition:
@@ -373,6 +375,15 @@ def build_agent_runtime(
             graph_version=definition.multi_agent_graph_version,
             max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
             clock=clock,
+            participant_agent=(
+                ParticipantRoutingAgent(
+                    runner=structured_runner,
+                    model=definition.text_model,
+                )
+                if definition.group_chat_enabled
+                else None
+            ),
+            group_chat_enabled=definition.group_chat_enabled,
         )
         if definition.multi_agent_mode == "on" and definition.style_render_all_normal_replies
         else None
@@ -454,6 +465,26 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             max_model_calls=definition.limits.max_model_calls,
             max_tool_calls=definition.limits.max_tool_calls,
             max_total_tokens=definition.limits.max_total_tokens,
+        ),
+        **(
+            {
+                "participant_router": AgentGraphNodeManifest.build(
+                    role="participant_router",
+                    model=definition.text_model,
+                    prompt_version="participant-router-v1",
+                    prompt=(
+                        "判断本轮是否需要由教练补充关系性表达；系统助手负责事实、状态、"
+                        "澄清和卡片，教练不得输出原始 RAG 证据。"
+                    ),
+                    output_schema="ParticipantRoutingDecision",
+                    privacy_scopes=("response_plan", "tool_outcomes"),
+                    max_model_calls=2,
+                    max_tool_calls=0,
+                    max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
+                )
+            }
+            if definition.group_chat_enabled and definition.multi_agent_mode == "on"
+            else {}
         ),
         "nutrition_expert": AgentGraphNodeManifest.build(
             role="nutrition_expert",

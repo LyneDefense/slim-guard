@@ -134,6 +134,73 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
         await database.close()
 
 
+async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
+    tmp_path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    styled = {
+        "text": "行，这顿搭配挺好。",
+        "used_block_ids": ["core-neutral-draft"],
+        "used_claim_ids": [],
+        "used_action_ids": [],
+        "preserved_risk_flags": [],
+        "preserved_citation_refs": [],
+        "style_profile_version": "doctor_builtin_v1",
+    }
+    model = ScriptedModelGateway(
+        (
+            response("已记录今日晚餐。"),
+            response(
+                json.dumps(
+                    {"schema_version": "1", "coach_text": "这顿搭配不错。"},
+                    ensure_ascii=False,
+                )
+            ),
+            response(json.dumps(styled, ensure_ascii=False)),
+            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response('{"verdict":"pass"}'),
+        )
+    )
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            model_provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+            code_revision="group-chat-test",
+            multi_agent_mode="on",
+            response_reviewer_enabled=True,
+            group_chat_enabled=True,
+        ),
+        clock=lambda: NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="这是我的晚餐。",
+                execution_mode=ToolExecutionMode.EVALUATION,
+                isolated_write_environment=True,
+            )
+        )
+
+        assert result.messages[0].participant.value == "coach"
+        assert result.messages[0].text == styled["text"]
+        assert result.messages[1].participant.value == "system_assistant"
+        assert result.messages[1].text == "已记录今日晚餐。"
+        assert result.final_text == "行，这顿搭配挺好。\n已记录今日晚餐。"
+        assert [request.purpose.value for request in model.requests] == [
+            "harness_turn",
+            "participant_routing",
+            "response_style",
+            "response_style",
+            "response_reviewer",
+        ]
+    finally:
+        await database.close()
+
+
 async def test_professional_response_runs_nutrition_style_and_reviewer_as_children(
     tmp_path,
 ) -> None:

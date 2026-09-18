@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from slim_guard.agent_models.gateway import ModelMessage, ModelResponse
+from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.runtime.contracts import InvocationStatus
 
@@ -40,6 +41,7 @@ class ResponseFinalizationResult:
     core_repaired: bool = False
     used_neutral_fallback: bool = False
     failure_code: str | None = None
+    messages: tuple[ChatMessage, ...] = ()
 
 
 class ResponseFinalizer(Protocol):

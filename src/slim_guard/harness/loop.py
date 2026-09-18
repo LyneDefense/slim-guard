@@ -14,6 +14,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     ToolChoice,
 )
+from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import ItemType, TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
 from slim_guard.harness.limits import HarnessLimits
@@ -39,6 +40,7 @@ class ResponsePipelineResult:
     total_token_count: int = 0
     core_output_artifact_id: str | None = None
     final_output_artifact_id: str | None = None
+    messages: tuple[ChatMessage, ...] = ()
 
 
 ResponsePipelineHook = Callable[
@@ -93,6 +95,7 @@ class HarnessLoopResult:
     pipeline_total_token_count: int = 0
     core_output_artifact_id: str | None = None
     final_output_artifact_id: str | None = None
+    outgoing_messages: tuple[ChatMessage, ...] = ()
 
     @property
     def model_call_count(self) -> int:
@@ -255,6 +258,7 @@ class HarnessLoop:
                 pipeline_tokens = 0
                 core_output_artifact_id = None
                 final_output_artifact_id = None
+                outgoing_messages: tuple[ChatMessage, ...] = ()
                 if response_pipeline_hook is not None and not guarded.modified:
                     try:
                         proposed = await response_pipeline_hook(
@@ -267,6 +271,7 @@ class HarnessLoop:
                         pipeline_tokens = proposed.total_token_count
                         core_output_artifact_id = proposed.core_output_artifact_id
                         final_output_artifact_id = proposed.final_output_artifact_id
+                        outgoing_messages = proposed.messages
                         checked = self._output_guard.review(
                             text=proposed.text,
                             assessment=active_assessment,
@@ -312,6 +317,7 @@ class HarnessLoop:
                     pipeline_total_token_count=pipeline_tokens,
                     core_output_artifact_id=core_output_artifact_id,
                     final_output_artifact_id=final_output_artifact_id,
+                    outgoing_messages=outgoing_messages,
                     before_finish_hook=before_finish_hook,
                 )
 
@@ -436,6 +442,7 @@ class HarnessLoop:
         pipeline_total_token_count: int = 0,
         core_output_artifact_id: str | None = None,
         final_output_artifact_id: str | None = None,
+        outgoing_messages: tuple[ChatMessage, ...] = (),
         before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
         result = HarnessLoopResult(
@@ -449,6 +456,7 @@ class HarnessLoop:
             pipeline_total_token_count=pipeline_total_token_count,
             core_output_artifact_id=core_output_artifact_id,
             final_output_artifact_id=final_output_artifact_id,
+            outgoing_messages=outgoing_messages,
         )
         if before_finish_hook is not None:
             await before_finish_hook(result)
@@ -460,6 +468,7 @@ class HarnessLoop:
             tool_call_count=len(tool_outcomes),
             total_token_count=self._total_tokens(model_responses) + pipeline_total_token_count,
             failure=failure,
+            outgoing_messages=outgoing_messages,
         )
         return result
 

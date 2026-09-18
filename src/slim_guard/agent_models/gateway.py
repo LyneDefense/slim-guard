@@ -16,6 +16,7 @@ class MessageRole(StrEnum):
 class ModelPurpose(StrEnum):
     HARNESS_TURN = "harness_turn"
     NUTRITION = "nutrition"
+    PARTICIPANT_ROUTING = "participant_routing"
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
     MEMORY_INGESTION = "memory_ingestion"

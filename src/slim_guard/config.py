@@ -82,6 +82,7 @@ class Settings(DatabaseSettings):
     nutrition_rerank_provider: Literal["zhipu"] = "zhipu"
     nutrition_rerank_model: str = Field(default="rerank", min_length=1, max_length=128)
     response_reviewer_enabled: bool = False
+    group_chat_enabled: bool = True
     style_iteration_worker_enabled: bool = True
     style_iteration_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
     style_training_max_rounds: int = Field(default=2, ge=1, le=4)

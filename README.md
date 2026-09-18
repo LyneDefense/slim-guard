@@ -88,6 +88,10 @@ ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 `MULTI_AGENT_MODE` 只支持 `off|on`。`off` 仍使用 Core Agent 与全部业务/专业工具，只关闭最终的
 Style + Reviewer 管线；`on` 要求 `RESPONSE_REVIEWER_ENABLED=true`。风格或审查失败时保留同一轮
 已经生成并通过确定性保护的 Core 中性稿，不会重新执行业务工具，也不会生成竞争 baseline。
+
+移动端群聊输出由 `GROUP_CHAT_ENABLED` 控制。开启后，用户、教练和系统助手分别作为消息参与者；
+系统助手负责状态、澄清和卡片，只有教练候选会进入 Style Agent。该开关仅在
+`MULTI_AGENT_MODE=on` 时生效，无法安全路由时自动只发送系统助手消息。
 配置变更需重启服务，验证与回退步骤见 [Agent 主路径运行手册](MULTI_AGENT_ROLLOUT.md)。
 
 表达风格统一由管理台 [表达风格](https://enceladus.online/admin/styles) 管理。进入医生风格后有
