@@ -49,7 +49,6 @@ class Settings(DatabaseSettings):
         ge=1024,
         le=10_000_000,
     )
-    default_style_profile: str = Field(default="slimguard_default_v1", min_length=1, max_length=128)
     style_render_all_normal_replies: bool = True
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
@@ -188,8 +187,6 @@ class Settings(DatabaseSettings):
 
     @model_validator(mode="after")
     def validate_admin_credentials(self) -> Settings:
-        if self.default_style_profile != self.default_style_profile.strip():
-            raise ValueError("DEFAULT_STYLE_PROFILE must be a nonblank exact version")
         if self.tencent_cos_prefix.startswith("/") or self.tencent_cos_prefix.endswith("/"):
             raise ValueError("TENCENT_COS_PREFIX must not start or end with '/'")
         if ".." in self.tencent_cos_prefix.split("/"):

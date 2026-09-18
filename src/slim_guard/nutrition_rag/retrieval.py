@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlalchemy import exists, func, literal, or_, select
 
+from slim_guard.agent_models.embeddings import EmbeddingError, EmbeddingGateway
 from slim_guard.db.models import (
     NutritionChunkEmbeddingRecord,
     NutritionCorpusReleaseSourceRecord,
@@ -32,7 +33,6 @@ from slim_guard.nutrition_rag.answerability import (
 )
 from slim_guard.nutrition_rag.contracts import NutritionRuntimeSnapshot
 from slim_guard.nutrition_rag.gateways import (
-    EmbeddingGateway,
     NutritionModelGatewayError,
     RerankGateway,
 )
@@ -242,7 +242,7 @@ class HybridNutritionRagService:
                 rerank_order=rerank_order,
                 loaded=by_chunk,
             )
-        except (NutritionModelGatewayError, ValueError) as error:
+        except (EmbeddingError, NutritionModelGatewayError, ValueError) as error:
             run_id = await self._record_run(
                 release=release,
                 profile=profile,

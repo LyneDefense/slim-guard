@@ -22,7 +22,6 @@ from slim_guard.agents.contracts import (
 
 def test_contracts_are_frozen_and_reject_unknown_fields() -> None:
     plan = ResponsePlan(
-        communication_act="acknowledge",
         content_blocks=(
             ResponseContentBlock(
                 block_id="social-1",
@@ -86,7 +85,6 @@ def test_rag_claim_must_resolve_to_a_real_citation() -> None:
 
 def test_response_plan_and_styled_response_preserve_required_blocks_and_citations() -> None:
     plan = ResponsePlan(
-        communication_act="explain",
         content_blocks=(
             ResponseContentBlock(
                 block_id="claim-1",

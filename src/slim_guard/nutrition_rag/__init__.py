@@ -2,11 +2,8 @@
 
 from slim_guard.nutrition_rag.contracts import NutritionRuntimeSnapshot
 from slim_guard.nutrition_rag.gateways import (
-    EmbeddingBatch,
-    EmbeddingGateway,
     RerankGateway,
     RerankResult,
-    ZhipuEmbeddingGateway,
     ZhipuRerankGateway,
 )
 from slim_guard.nutrition_rag.profiles import (
@@ -26,12 +23,9 @@ __all__ = [
     "DEFAULT_LEXICAL_PROFILE_KEY",
     "DEFAULT_RETRIEVAL_PROFILE_ID",
     "DEFAULT_RETRIEVAL_PROFILE_KEY",
-    "EmbeddingBatch",
-    "EmbeddingGateway",
     "NUTRITION_LEXICON_SHA256",
     "NutritionRuntimeSnapshot",
     "RerankGateway",
     "RerankResult",
-    "ZhipuEmbeddingGateway",
     "ZhipuRerankGateway",
 ]

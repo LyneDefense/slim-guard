@@ -14,13 +14,13 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from slim_guard.agent_models.embeddings import EmbeddingError, EmbeddingGateway
 from slim_guard.nutrition_knowledge import (
     KnowledgeDocument,
     NutritionKnowledgeRepository,
     NutritionKnowledgeService,
 )
 from slim_guard.nutrition_rag.gateways import (
-    EmbeddingGateway,
     NutritionModelGatewayError,
 )
 from slim_guard.nutrition_rag.processing import (
@@ -386,6 +386,7 @@ class NutritionKnowledgeWorker:
                 )
         except (
             NutritionModelGatewayError,
+            EmbeddingError,
             NutritionObjectStoreError,
             NutritionRemoteFetchError,
             httpx.HTTPError,

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
 from slim_guard.agent.runtime import AgentRuntime
+from slim_guard.agent_models.embeddings import EmbeddingGateway
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agents.core import CoreResponseRepairAgent
@@ -68,8 +69,7 @@ from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.response_pipeline import AgentResponseFinalizer, StyleProfileResolver
 from slim_guard.runtime.invocation import InvocationRunner
 from slim_guard.runtime.turn import TurnHarness
-from slim_guard.style_iteration_lifecycle import StyleRuntimeVersionResolver
-from slim_guard.style_profiles import StyleProfileRepository
+from slim_guard.style_management.runtime import RuntimeStyles
 from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
@@ -150,11 +150,6 @@ class AgentRuntimeDefinition(BaseModel):
         ge=1024,
         le=10_000_000,
     )
-    default_style_profile: str = Field(
-        default="slimguard_default_v1",
-        min_length=1,
-        max_length=128,
-    )
     style_render_all_normal_replies: bool = True
     nutrition_agent_enabled: bool = False
     nutrition_rag_enabled: bool = False
@@ -183,6 +178,7 @@ def build_agent_runtime(
     memory_engine: MemoryEngine | None = None,
     vision: VisionModelGateway | None = None,
     nutrition_knowledge: NutritionKnowledgeRuntime | None = None,
+    style_embedding: EmbeddingGateway | None = None,
     definition: AgentRuntimeDefinition,
     manifest: AgentManifest | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -369,12 +365,10 @@ def build_agent_runtime(
             ),
             nutrition_specialist=nutrition_specialist,
             profile_resolver=StyleProfileResolver(
-                profiles=StyleProfileRepository(database),
-                active_version=StyleRuntimeVersionResolver(
-                    database,
-                    fallback_version=definition.default_style_profile,
-                ),
-                default_version=definition.default_style_profile,
+                profiles=RuntimeStyles(database),
+                embedding=style_embedding,
+                active_version=RuntimeStyles(database),
+                default_version="slimguard_default_v1",
             ),
             persistence=invocation_store,
             recorder=recorder,
@@ -501,7 +495,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
     return AgentGraphManifest.build(
         graph_version=definition.multi_agent_graph_version,
         nodes=nodes,
-        style_profile_version=definition.default_style_profile,
+        style_profile_version="slimguard_default_v1",
         routing_policy_version="core-tool-directed-v1",
         evidence_policy_version="typed-provenance-v1",
         safety_policy_version="health-output-guard-v2",

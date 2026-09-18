@@ -7,7 +7,6 @@ from typing import Literal, Protocol
 from pydantic import Field, field_validator, model_validator
 
 from slim_guard.agents.contracts import (
-    CommunicationAct,
     ContractModel,
     ProfessionalAssessment,
     ResponsePlan,
@@ -42,8 +41,10 @@ class StyleExample(ContractModel):
 
     example_id: str = Field(min_length=1, max_length=128)
     style_profile_version: str = Field(min_length=1, max_length=128)
-    communication_act: CommunicationAct
-    text: str = Field(min_length=1, max_length=2000)
+    original_response: str = ""
+    text: str = Field(min_length=1, max_length=4000)
+    embedding: tuple[float, ...] = Field(default=(), exclude=True)
+    embedding_model: str = Field(default="", exclude=True)
 
 
 class StyleContext(ContractModel):
@@ -68,13 +69,6 @@ class StyleContext(ContractModel):
         }
         if foreign_profiles:
             raise ValueError("Style examples must belong to the selected profile version")
-        wrong_acts = {
-            example.communication_act
-            for example in self.examples
-            if example.communication_act is not self.response_plan.communication_act
-        }
-        if wrong_acts:
-            raise ValueError("Style examples must match the response communication act")
         return self
 
 
@@ -82,7 +76,7 @@ class StyleProfileSnapshot(ContractModel):
     """One published version and its immutable reviewed example library for a Turn."""
 
     profile: StyleProfile
-    examples: tuple[StyleExample, ...] = Field(default=(), max_length=1000)
+    examples: tuple[StyleExample, ...] = ()
 
     @model_validator(mode="after")
     def validate_library(self) -> StyleProfileSnapshot:
@@ -91,9 +85,6 @@ class StyleProfileSnapshot(ContractModel):
         if len({item.example_id for item in self.examples}) != len(self.examples):
             raise ValueError("Style example IDs must be unique")
         return self
-
-    def for_act(self, act: CommunicationAct) -> tuple[StyleExample, ...]:
-        return tuple(item for item in self.examples if item.communication_act is act)[:5]
 
 
 class StyleProfileRepository(Protocol):

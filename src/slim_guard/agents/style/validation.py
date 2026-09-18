@@ -240,8 +240,7 @@ class StyleResponseValidator:
     def _numbers(value: str) -> Counter[str]:
         normalized = unicodedata.normalize("NFKC", value)
         return Counter(
-            match.group(0).replace(",", "")
-            for match in _NUMBER_PATTERN.finditer(normalized)
+            match.group(0).replace(",", "") for match in _NUMBER_PATTERN.finditer(normalized)
         )
 
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from sqlalchemy import delete, insert, inspect, select, text
 
 from slim_guard.db.migrations import MIGRATIONS
@@ -49,9 +47,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             evaluation_indexes = await connection.run_sync(
                 lambda sync_connection: {
                     index["name"]
-                    for index in inspect(sync_connection).get_indexes(
-                        "nutrition_evaluation_runs"
-                    )
+                    for index in inspect(sync_connection).get_indexes("nutrition_evaluation_runs")
                 }
             )
             retrieval_profiles = {
@@ -87,6 +83,8 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260916_01_nutrition_answerability_profile",
             "20260916_02_nutrition_answerability_v2_profile",
             "20260917_01_conversational_long_term_memory",
+            "20260918_01_unified_style_examples",
+            "20260918_02_reset_expression_styles",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -94,14 +92,10 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "nutrition_knowledge_sources",
             "nutrition_knowledge_chunks",
             "nutrition_knowledge_reviews",
-            "style_ab_evaluation_cases",
-            "style_ab_human_reviews",
-            "style_correction_feedback",
-            "style_iteration_runs",
-            "style_iteration_inputs",
-            "style_iteration_events",
-            "style_runtime_configuration",
-            "style_activation_events",
+            "expression_styles",
+            "expression_versions",
+            "expression_examples",
+            "expression_review_cases",
             "dish_catalog_import_batches",
             "dish_entities",
             "dish_aliases",
@@ -241,6 +235,8 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260916_01_nutrition_answerability_profile",
             "20260916_02_nutrition_answerability_v2_profile",
             "20260917_01_conversational_long_term_memory",
+            "20260918_01_unified_style_examples",
+            "20260918_02_reset_expression_styles",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"
@@ -248,15 +244,12 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
         await database.close()
 
 
-async def test_existing_style_ab_rows_receive_an_explicit_legacy_scenario(tmp_path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'style-ab-upgrade.sqlite3'}")
+async def test_existing_style_tables_are_removed_by_reset_migration(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'style-upgrade.sqlite3'}")
     try:
         async with database.engine.begin() as connection:
             await connection.run_sync(
-                lambda sync_connection: SchemaMigrationRecord.__table__.create(
-                    sync_connection,
-                    checkfirst=True,
-                )
+                lambda c: SchemaMigrationRecord.__table__.create(c, checkfirst=True)
             )
             await connection.execute(
                 text("CREATE TABLE style_ab_evaluation_cases (id VARCHAR(36) PRIMARY KEY)")
@@ -265,31 +258,23 @@ async def test_existing_style_ab_rows_receive_an_explicit_legacy_scenario(tmp_pa
                 text("INSERT INTO style_ab_evaluation_cases (id) VALUES ('TEST-case')")
             )
             for migration in MIGRATIONS:
-                if migration.version == "20260908_02_style_ab_scenarios":
+                if migration.version.startswith("20260918"):
                     continue
                 await connection.execute(
                     insert(SchemaMigrationRecord).values(version=migration.version)
                 )
-
-        assert await database.migrate() == ("20260908_02_style_ab_scenarios",)
+        assert await database.migrate() == (
+            "20260918_01_unified_style_examples",
+            "20260918_02_reset_expression_styles",
+        )
         async with database.engine.connect() as connection:
-            columns = await connection.run_sync(
-                lambda sync_connection: {
-                    column["name"]
-                    for column in inspect(sync_connection).get_columns("style_ab_evaluation_cases")
-                }
+            names = await connection.run_sync(lambda c: set(inspect(c).get_table_names()))
+            assert "style_ab_evaluation_cases" not in names
+            assert "expression_review_cases" in names
+            active = await connection.scalar(
+                text("SELECT active_version_id FROM expression_styles WHERE id = 'doctor'")
             )
-            row = (
-                await connection.execute(
-                    text(
-                        "SELECT scenario_json, scenario_sha256 "
-                        "FROM style_ab_evaluation_cases WHERE id = 'TEST-case'"
-                    )
-                )
-            ).one()
-
-        assert {"scenario_json", "scenario_sha256"}.issubset(columns)
-        assert json.loads(row.scenario_json)["title"].startswith("历史 A/B 用例")
-        assert len(row.scenario_sha256) == 64
+            assert active == "doctor_builtin_v1"
+        assert await database.migrate() == ()
     finally:
         await database.close()

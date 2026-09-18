@@ -33,7 +33,6 @@ from slim_guard.runtime.invocation import InvocationRunner
 
 def response_plan() -> ResponsePlan:
     return ResponsePlan(
-        communication_act="explain",
         requested_detail="normal",
         content_blocks=(
             ResponseContentBlock(
@@ -138,7 +137,7 @@ def invocation(**updates: object) -> AgentInvocation:
         "agent_role": "response_style",
         "agent_version": "response-style-v1",
         "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
-        "max_model_calls": 2,
+        "max_model_calls": 4,
         "max_tool_calls": 0,
         "max_total_tokens": 4096,
     }
@@ -156,6 +155,12 @@ def model_response(response: StyledResponse, *, tokens: int = 50) -> ModelRespon
     )
 
 
+def semantic_pass() -> ModelResponse:
+    return ModelResponse(
+        message=ModelMessage(role=MessageRole.ASSISTANT, content='{"passed":true,"issues":[]}')
+    )
+
+
 def test_style_profile_and_context_are_version_scoped() -> None:
     assert SLIMGUARD_DEFAULT_V1.version == "slimguard_default_v1"
     assert SLIMGUARD_DEFAULT_V1.preferred_max_paragraphs == 3
@@ -163,7 +168,6 @@ def test_style_profile_and_context_are_version_scoped() -> None:
     wrong_example = StyleExample(
         example_id="example-1",
         style_profile_version="another-profile-v1",
-        communication_act="explain",
         text="示例",
     )
     with pytest.raises(ValidationError, match="selected profile version"):
@@ -217,7 +221,6 @@ def test_validator_rejects_changed_content_numbers_and_reference_sets() -> None:
 
 def test_validator_rejects_new_record_medical_or_advice_claims() -> None:
     plan = ResponsePlan(
-        communication_act="acknowledge",
         content_blocks=(
             ResponseContentBlock(
                 block_id="social",
@@ -240,7 +243,6 @@ def test_validator_rejects_new_record_medical_or_advice_claims() -> None:
 
 def test_validator_rejects_an_invented_need_or_next_step() -> None:
     plan = ResponsePlan(
-        communication_act="explain",
         content_blocks=(
             ResponseContentBlock(
                 block_id="social",
@@ -262,7 +264,7 @@ def test_validator_rejects_an_invented_need_or_next_step() -> None:
 
 
 async def test_style_agent_returns_valid_model_response_without_repair() -> None:
-    gateway = ScriptedModelGateway((model_response(valid_styled_response()),))
+    gateway = ScriptedModelGateway((model_response(valid_styled_response()), semantic_pass()))
     agent = ResponseStyleAgent(
         runner=InvocationRunner(model=gateway),
         model="fake-style-model",
@@ -272,7 +274,7 @@ async def test_style_agent_returns_valid_model_response_without_repair() -> None
 
     assert result.status.value == "succeeded"
     assert result.response == valid_styled_response()
-    assert result.model_call_count == 1
+    assert result.model_call_count == 2
     assert result.used_fallback is False
     assert result.repair_attempted is False
     assert gateway.requests[0].purpose.value == "response_style"
@@ -305,13 +307,12 @@ async def test_style_agent_returns_valid_model_response_without_repair() -> None
 
 
 async def test_style_agent_repairs_a_semantically_invalid_json_response_once() -> None:
-    invalid = valid_styled_response().model_copy(
-        update={"text": "今天体重 88kg，已经记录。"}
-    )
+    invalid = valid_styled_response().model_copy(update={"text": "今天体重 88kg，已经记录。"})
     gateway = ScriptedModelGateway(
         (
             model_response(invalid, tokens=30),
             model_response(valid_styled_response(), tokens=40),
+            semantic_pass(),
         )
     )
     agent = ResponseStyleAgent(
@@ -323,16 +324,16 @@ async def test_style_agent_repairs_a_semantically_invalid_json_response_once() -
 
     assert result.status.value == "succeeded"
     assert result.repair_attempted is True
-    assert result.model_call_count == 2
+    assert result.model_call_count == 3
     assert result.total_token_count == 70
     assert "number_changed" in (gateway.requests[1].messages[-1].content or "")
 
 
 async def test_style_agent_repairs_invalid_json_once() -> None:
-    malformed = ModelResponse(
-        message=ModelMessage(role=MessageRole.ASSISTANT, content="not-json")
+    malformed = ModelResponse(message=ModelMessage(role=MessageRole.ASSISTANT, content="not-json"))
+    gateway = ScriptedModelGateway(
+        (malformed, model_response(valid_styled_response()), semantic_pass())
     )
-    gateway = ScriptedModelGateway((malformed, model_response(valid_styled_response())))
     agent = ResponseStyleAgent(
         runner=InvocationRunner(model=gateway),
         model="fake-style-model",
@@ -342,7 +343,7 @@ async def test_style_agent_repairs_invalid_json_once() -> None:
 
     assert result.status.value == "succeeded"
     assert result.repair_attempted is True
-    assert result.model_call_count == 2
+    assert result.model_call_count == 3
     assert json.loads(result.response.model_dump_json())["text"].startswith("今天体重")
 
 
@@ -359,7 +360,7 @@ async def test_style_agent_degrades_to_neutral_after_second_invalid_response() -
     assert result.status.value == "degraded"
     assert result.used_fallback is True
     assert result.repair_attempted is True
-    assert result.failure_code == "style_integrity_invalid_after_repair"
+    assert result.failure_code == "style_integrity_invalid"
     assert result.response == NeutralRenderer().render(style_context())
 
 

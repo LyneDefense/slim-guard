@@ -128,7 +128,6 @@ def test_style_summary_distinguishes_degraded_output_from_adoption() -> None:
 def test_response_plan_artifact_hides_block_text_from_admin_payload() -> None:
     payload = {
         "schema_version": "1",
-        "communication_act": "acknowledge",
         "requested_detail": "short",
         "content_blocks": [
             {

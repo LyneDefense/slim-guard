@@ -40,7 +40,6 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.multi_agent_graph_version == "core-primary-v1"
     assert settings.agent_specialist_timeout_seconds == 20
     assert settings.multi_agent_invocation_max_total_tokens == 32_000
-    assert settings.default_style_profile == "slimguard_default_v1"
     assert settings.style_render_all_normal_replies is True
     assert settings.nutrition_agent_enabled is False
     assert settings.nutrition_rag_enabled is False

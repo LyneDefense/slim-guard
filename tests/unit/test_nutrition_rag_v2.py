@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
+from slim_guard.agent_models.embeddings import EmbeddingBatch
 from slim_guard.agents.nutrition import KnowledgeCandidateBinder
 from slim_guard.db.models import NutritionRetrievalRunRecord
 from slim_guard.db.session import Database
@@ -24,7 +25,6 @@ from slim_guard.nutrition_rag.answerability import (
 )
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
 from slim_guard.nutrition_rag.gateways import (
-    EmbeddingBatch,
     RerankItem,
     RerankResult,
 )

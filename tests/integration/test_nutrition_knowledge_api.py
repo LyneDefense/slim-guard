@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from slim_guard.agent_models.embeddings import EmbeddingBatch
 from slim_guard.config import Settings
 from slim_guard.main import create_app
 from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
@@ -15,7 +16,6 @@ from slim_guard.nutrition_rag.answerability import (
     AnswerabilityResult,
 )
 from slim_guard.nutrition_rag.gateways import (
-    EmbeddingBatch,
     RerankItem,
     RerankResult,
 )

@@ -34,20 +34,6 @@ from slim_guard.runtime.contracts import (
 )
 
 
-class CommunicationAct(StrEnum):
-    ACKNOWLEDGE = "acknowledge"
-    CORRECT = "correct"
-    REMIND = "remind"
-    ENCOURAGE = "encourage"
-    EXPLAIN = "explain"
-    ASK = "ask"
-
-
-# The architecture originally called this field ``voice_act``.  Keep the type
-# name available while using the broader product term in new contracts.
-VoiceAct = CommunicationAct
-
-
 class RequestedDetail(StrEnum):
     SHORT = "short"
     NORMAL = "normal"
@@ -157,7 +143,6 @@ ImmutableContentBlock = ResponseContentBlock
 
 class ResponsePlan(ContractModel):
     schema_version: Literal["1"] = "1"
-    communication_act: CommunicationAct
     requested_detail: RequestedDetail = RequestedDetail.NORMAL
     content_blocks: tuple[ResponseContentBlock, ...] = Field(min_length=1, max_length=64)
     citation_refs: tuple[str, ...] = Field(default=(), max_length=128)
@@ -469,7 +454,6 @@ __all__ = [
     "Assessment",
     "AssessmentType",
     "ClaimBasis",
-    "CommunicationAct",
     "Confidence",
     "ContentBlock",
     "ContentBlockKind",
@@ -492,7 +476,6 @@ __all__ = [
     "ReviewerVerdict",
     "ReviewerVerdictStatus",
     "StyledResponse",
-    "VoiceAct",
     "canonical_payload_bytes",
     "payload_sha256",
     "validate_contract",

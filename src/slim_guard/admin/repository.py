@@ -1754,7 +1754,6 @@ class AdminQueryRepository:
                 if key
                 in {
                     "schema_version",
-                    "communication_act",
                     "requested_detail",
                     "citation_refs",
                     "prohibited_transformations",

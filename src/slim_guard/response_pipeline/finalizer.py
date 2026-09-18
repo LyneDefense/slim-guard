@@ -109,7 +109,7 @@ class AgentResponseFinalizer:
             invocation_id=request.core_invocation_id,
         )
 
-        selection = await self._profile_resolver.resolve()
+        selection = await self._profile_resolver.resolve(request.neutral_draft)
         resolution_artifact = self._stages.artifact(
             request,
             producer=ArtifactProducerRole.STYLE_RESOLVER,
@@ -120,12 +120,7 @@ class AgentResponseFinalizer:
                 "requested_version": selection.requested_version,
                 "source": selection.source,
                 "fallback_reason": selection.fallback_reason,
-                "example_ids": [
-                    example.example_id
-                    for example in selection.snapshot.for_act(
-                        planned.plan.communication_act
-                    )
-                ],
+                "example_ids": [example.example_id for example in selection.snapshot.examples],
             },
             parents=(plan_artifact.artifact_id,),
         )

@@ -149,7 +149,7 @@ class ResponseStageExecutor:
             response_plan=planned.plan,
             profile=selection.snapshot.profile,
             assessment=planned.assessment,
-            examples=selection.snapshot.for_act(planned.plan.communication_act),
+            examples=selection.snapshot.examples,
         )
         result = await self._style_agent.run(
             invocation=invocation,
@@ -166,6 +166,8 @@ class ResponseStageExecutor:
                 "attempt": attempt,
                 "neutral_text": request.neutral_draft,
                 "used_fallback": result.used_fallback,
+                "internal_checks": list(result.checks),
+                "internal_repair_attempted": result.repair_attempted,
                 "failure_code": result.failure_code,
             },
             parents=parents,
@@ -322,8 +324,7 @@ class ResponseStageExecutor:
                 assessment=assessment,
                 issue_types=self.review_feedback(verdict),
                 repair_instruction=(
-                    verdict.reason_summary
-                    or "按结构化问题类型修复内容，并保留所有已验证事实。"
+                    verdict.reason_summary or "按结构化问题类型修复内容，并保留所有已验证事实。"
                 ),
             ),
             grant=self._grant(invocation),
@@ -509,17 +510,13 @@ class ResponseStageExecutor:
             agent_role=role,
             agent_version=version,
             attempt=attempt,
-            caller=(
-                AgentRole.CORE.value
-                if attempt == 1
-                else AgentRole.RESPONSE_REVIEWER.value
-            ),
+            caller=(AgentRole.CORE.value if attempt == 1 else AgentRole.RESPONSE_REVIEWER.value),
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=input_artifact_ids,
             input_schema=input_schema,
             privacy_scopes=privacy_scopes,
             deadline_at=request.deadline_at,
-            max_model_calls=2,
+            max_model_calls=4 if role is AgentRole.RESPONSE_STYLE else 2,
             max_tool_calls=0,
             max_total_tokens=self._max_invocation_tokens,
         )

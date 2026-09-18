@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from slim_guard.agents.contracts import (
-    CommunicationAct,
     ContentBlockKind,
     ProfessionalAssessment,
     RequestedDetail,
@@ -61,7 +60,6 @@ class ResponsePlanBuilder:
         )
         return PlannedResponse(
             plan=ResponsePlan(
-                communication_act=self._communication_act(neutral_draft, tool_outcomes),
                 requested_detail=RequestedDetail.NORMAL,
                 content_blocks=(
                     ResponseContentBlock(
@@ -102,25 +100,6 @@ class ResponsePlanBuilder:
             artifact_id = payload.get("artifact_id")
             return assessment, artifact_id if isinstance(artifact_id, str) else None
         return None, None
-
-    @staticmethod
-    def _communication_act(
-        neutral_draft: str,
-        outcomes: tuple[ToolCallOutcome, ...],
-    ) -> CommunicationAct:
-        if any(outcome.execution.tool_name == CONSULT_NUTRITION_TOOL_NAME for outcome in outcomes):
-            return CommunicationAct.EXPLAIN
-        if any(
-            outcome.execution.result.status.value == "succeeded"
-            and outcome.execution.tool_name.startswith(
-                ("record_", "update_", "delete_", "set_", "cancel_")
-            )
-            for outcome in outcomes
-        ):
-            return CommunicationAct.ACKNOWLEDGE
-        if neutral_draft.rstrip().endswith(("?", "？")):
-            return CommunicationAct.ASK
-        return CommunicationAct.ENCOURAGE
 
 
 __all__ = ["PlannedResponse", "ResponsePlanBuilder"]

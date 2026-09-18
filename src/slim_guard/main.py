@@ -15,6 +15,7 @@ from slim_guard.agent.composition import (
     build_agent_runtime,
 )
 from slim_guard.agent.runtime import AgentRuntime
+from slim_guard.agent_models.embeddings import ZhipuEmbeddingGateway
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
@@ -23,14 +24,6 @@ from slim_guard.api.admin_routes import router as admin_router
 from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.nutrition_knowledge_routes import router as nutrition_knowledge_router
 from slim_guard.api.routes import router
-from slim_guard.api.style_feedback_routes import router as style_feedback_router
-from slim_guard.api.style_iteration_routes import (
-    router as style_iteration_router,
-)
-from slim_guard.api.style_iteration_routes import (
-    runtime_router as style_runtime_router,
-)
-from slim_guard.api.style_review_routes import router as style_review_router
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
@@ -63,7 +56,6 @@ from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
 from slim_guard.nutrition_rag.answerability import ModelAnswerabilityGateway
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
 from slim_guard.nutrition_rag.gateways import (
-    ZhipuEmbeddingGateway,
     ZhipuRerankGateway,
 )
 from slim_guard.nutrition_rag.ingestion import (
@@ -90,8 +82,8 @@ from slim_guard.services.reply_agent import (
     StaticReplyAgent,
 )
 from slim_guard.services.routine_scheduler import RoutineSchedulerService
-from slim_guard.style_iteration_builder import StyleIterationBuilder, StyleIterationWorker
-from slim_guard.style_profiles import StyleProfileRepository
+from slim_guard.style_management.routes import router as expression_style_router
+from slim_guard.style_management.worker import StyleWorker
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +138,6 @@ def create_app(
         multi_agent_invocation_max_total_tokens=(
             app_settings.multi_agent_invocation_max_total_tokens
         ),
-        default_style_profile=app_settings.default_style_profile,
         style_render_all_normal_replies=app_settings.style_render_all_normal_replies,
         nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
         nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
@@ -160,6 +151,7 @@ def create_app(
     owned_vision_gateway: ZhipuVisionModelGateway | None = None
     owned_memory_engine: Mem0HttpMemoryEngine | None = None
     owned_nutrition_embedding: ZhipuEmbeddingGateway | None = None
+    owned_style_embedding: ZhipuEmbeddingGateway | None = None
     owned_nutrition_reranker: ZhipuRerankGateway | None = None
     owned_nutrition_fetcher: NutritionRemoteDocumentFetcher | None = None
 
@@ -167,19 +159,12 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         nonlocal owned_client, owned_memory_engine, owned_model_gateway
         nonlocal owned_vision_gateway
-        nonlocal owned_nutrition_embedding, owned_nutrition_reranker
+        nonlocal owned_nutrition_embedding, owned_nutrition_reranker, owned_style_embedding
         nonlocal owned_nutrition_fetcher
         configure_logging(app_settings.log_level)
         database = Database(app_settings.database_url)
         await database.create_schema()
         await AgentVersionRepository(database).register(agent_manifest)
-        style_profiles = StyleProfileRepository(database)
-        await style_profiles.ensure_default()
-        try:
-            await style_profiles.require_published(app_settings.default_style_profile)
-        except Exception:
-            await database.close()
-            raise
         repository = MessageRepository(database)
         traces = InteractionTraceRepository(database)
         nutrition_control = NutritionRagRepository(database)
@@ -213,6 +198,12 @@ def create_app(
             if app_settings.tencent_cos_is_configured
             else None
         )
+        if app_settings.zhipu_is_configured:
+            owned_style_embedding = ZhipuEmbeddingGateway(
+                api_key=app_settings.zhipu_api_key,
+                base_url=app_settings.zhipu_base_url,
+                timeout_seconds=45,
+            )
         active_nutrition_knowledge = None
         if (
             app_settings.nutrition_rag_engine == "v2"
@@ -316,6 +307,7 @@ def create_app(
                     memory_engine=active_memory_engine,
                     vision=active_vision,
                     nutrition_knowledge=active_nutrition_knowledge,
+                    style_embedding=owned_style_embedding,
                     definition=runtime_definition,
                     manifest=agent_manifest,
                 )
@@ -540,14 +532,12 @@ def create_app(
                     thinking_enabled=False,
                 )
                 active_model_for_services = owned_model_gateway
-            style_iteration_worker = StyleIterationWorker(
-                builder=StyleIterationBuilder(
-                    database=database,
-                    gateway=active_model_for_services,
-                    model=app_settings.zhipu_text_model,
-                ),
-                worker_id=f"web-{id(app):x}",
-                poll_seconds=app_settings.style_iteration_poll_seconds,
+            style_iteration_worker = StyleWorker(
+                database,
+                active_model_for_services,
+                app_settings.zhipu_text_model,
+                app_settings.style_iteration_poll_seconds,
+                embedding=owned_style_embedding,
             )
             style_iteration_stop = asyncio.Event()
             style_iteration_task = asyncio.create_task(
@@ -654,6 +644,8 @@ def create_app(
                 await owned_nutrition_reranker.close()
             if owned_nutrition_embedding is not None:
                 await owned_nutrition_embedding.close()
+            if owned_style_embedding is not None:
+                await owned_style_embedding.close()
             await database.close()
 
     application = FastAPI(
@@ -676,11 +668,8 @@ def create_app(
         return response
 
     application.include_router(router)
+    application.include_router(expression_style_router)
     application.include_router(admin_router)
-    application.include_router(style_review_router)
-    application.include_router(style_feedback_router)
-    application.include_router(style_iteration_router)
-    application.include_router(style_runtime_router)
     application.include_router(nutrition_knowledge_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest

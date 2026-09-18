@@ -60,7 +60,6 @@ def context() -> ReviewerContext:
     return ReviewerContextCompiler().compile(
         turn_id="turn-1",
         response_plan=ResponsePlan(
-            communication_act="explain",
             content_blocks=(
                 ResponseContentBlock(
                     block_id="weight-block",
@@ -300,7 +299,6 @@ def test_response_plan_missing_evidence_is_checked_without_assessment() -> None:
         update={
             "assessment": None,
             "response_plan": ResponsePlan(
-                communication_act="explain",
                 content_blocks=(
                     ResponseContentBlock(
                         block_id="weight-fact",

@@ -65,12 +65,13 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
         "used_action_ids": [],
         "preserved_risk_flags": [],
         "preserved_citation_refs": [],
-        "style_profile_version": "slimguard_default_v1",
+        "style_profile_version": "doctor_builtin_v1",
     }
     model = ScriptedModelGateway(
         (
             response("已记录今天的数据。"),
             response(json.dumps(styled, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
         )
     )
     runtime = build_agent_runtime(
@@ -103,6 +104,7 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
         assert result.final_text == styled["text"]
         assert [request.purpose for request in model.requests] == [
             ModelPurpose.HARNESS_TURN,
+            ModelPurpose.RESPONSE_STYLE,
             ModelPurpose.RESPONSE_STYLE,
         ]
         assert {item.agent_role for item in invocations} == {
@@ -148,7 +150,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
         "used_action_ids": [],
         "preserved_risk_flags": [],
         "preserved_citation_refs": [],
-        "style_profile_version": "slimguard_default_v1",
+        "style_profile_version": "doctor_builtin_v1",
     }
     model = ScriptedModelGateway(
         (
@@ -156,6 +158,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
             response(json.dumps(assessment, ensure_ascii=False)),
             response("目前信息还不够，请告诉我晚餐具体吃什么和大概份量。"),
             response(json.dumps(styled, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -194,6 +197,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
             ModelPurpose.NUTRITION,
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.RESPONSE_STYLE,
+            ModelPurpose.RESPONSE_STYLE,
             ModelPurpose.RESPONSE_REVIEWER,
         ]
         assert set(by_role) == {
@@ -209,9 +213,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
         assert nutrition.parent_invocation_id == core.invocation_id
         assert style.parent_invocation_id == core.invocation_id
         assert reviewer.parent_invocation_id == style.invocation_id
-        verdict = next(
-            item for item in artifacts if item.artifact_type == "reviewer_verdict"
-        )
+        verdict = next(item for item in artifacts if item.artifact_type == "reviewer_verdict")
         assert verdict.payload["verdict"] == "pass"
         assert not any(item.agent_role == "orchestrator" for item in invocations)
     finally:
@@ -234,7 +236,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
         "used_action_ids": [],
         "preserved_risk_flags": [],
         "preserved_citation_refs": [],
-        "style_profile_version": "slimguard_default_v1",
+        "style_profile_version": "doctor_builtin_v1",
     }
     repaired_style = {
         **first_style,
@@ -246,6 +248,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
             response(json.dumps(assessment, ensure_ascii=False)),
             response("请先告诉我今晚准备吃什么和大概份量。"),
             response(json.dumps(first_style, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response(
                 json.dumps(
                     {
@@ -258,6 +261,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -289,19 +293,11 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
         invocations = await repository.list_turn_invocations(result.turn_id)
         artifacts = await repository.list_artifacts(result.turn_id)
         styles = sorted(
-            (
-                item
-                for item in invocations
-                if item.agent_role == AgentRole.RESPONSE_STYLE.value
-            ),
+            (item for item in invocations if item.agent_role == AgentRole.RESPONSE_STYLE.value),
             key=lambda item: item.attempt,
         )
         reviewers = sorted(
-            (
-                item
-                for item in invocations
-                if item.agent_role == AgentRole.RESPONSE_REVIEWER.value
-            ),
+            (item for item in invocations if item.agent_role == AgentRole.RESPONSE_REVIEWER.value),
             key=lambda item: item.attempt,
         )
 
@@ -311,17 +307,11 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
         assert styles[1].parent_invocation_id == reviewers[0].invocation_id
         assert reviewers[1].parent_invocation_id == styles[1].invocation_id
         styled_attempts = sorted(
-            item.payload["attempt"]
-            for item in artifacts
-            if item.artifact_type == "styled_response"
+            item.payload["attempt"] for item in artifacts if item.artifact_type == "styled_response"
         )
         assert styled_attempts == [1, 2]
         verdicts = sorted(
-            (
-                item
-                for item in artifacts
-                if item.artifact_type == "reviewer_verdict"
-            ),
+            (item for item in artifacts if item.artifact_type == "reviewer_verdict"),
             key=lambda item: item.payload["attempt"],
         )
         assert [item.payload["verdict"] for item in verdicts] == ["repair", "pass"]
@@ -345,7 +335,7 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
         "used_action_ids": [],
         "preserved_risk_flags": [],
         "preserved_citation_refs": [],
-        "style_profile_version": "slimguard_default_v1",
+        "style_profile_version": "doctor_builtin_v1",
     }
     repaired_style = {
         **first_style,
@@ -357,6 +347,7 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             response(json.dumps(assessment, ensure_ascii=False)),
             response("晚餐这样搭配就行。"),
             response(json.dumps(first_style, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response(
                 json.dumps(
                     {
@@ -370,15 +361,12 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             ),
             response(
                 json.dumps(
-                    {
-                        "neutral_draft": (
-                            "请告诉我今晚准备吃什么和大概份量，我再帮你判断。"
-                        )
-                    },
+                    {"neutral_draft": ("请告诉我今晚准备吃什么和大概份量，我再帮你判断。")},
                     ensure_ascii=False,
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -406,27 +394,17 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             )
         )
 
-        invocations = await OrchestrationRepository(database).list_turn_invocations(
-            result.turn_id
-        )
+        invocations = await OrchestrationRepository(database).list_turn_invocations(result.turn_id)
         cores = sorted(
             (item for item in invocations if item.agent_role == AgentRole.CORE.value),
             key=lambda item: item.attempt,
         )
         styles = sorted(
-            (
-                item
-                for item in invocations
-                if item.agent_role == AgentRole.RESPONSE_STYLE.value
-            ),
+            (item for item in invocations if item.agent_role == AgentRole.RESPONSE_STYLE.value),
             key=lambda item: item.attempt,
         )
         reviewers = sorted(
-            (
-                item
-                for item in invocations
-                if item.agent_role == AgentRole.RESPONSE_REVIEWER.value
-            ),
+            (item for item in invocations if item.agent_role == AgentRole.RESPONSE_REVIEWER.value),
             key=lambda item: item.attempt,
         )
 
@@ -459,7 +437,7 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
         "used_action_ids": [],
         "preserved_risk_flags": [],
         "preserved_citation_refs": [],
-        "style_profile_version": "slimguard_default_v1",
+        "style_profile_version": "doctor_builtin_v1",
     }
     repaired_style = {
         **first_style,
@@ -471,6 +449,7 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             response(json.dumps(initial_assessment, ensure_ascii=False)),
             response("照旧吃就可以。"),
             response(json.dumps(first_style, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response(
                 json.dumps(
                     {
@@ -485,15 +464,12 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             response(json.dumps(repaired_assessment, ensure_ascii=False)),
             response(
                 json.dumps(
-                    {
-                        "neutral_draft": (
-                            "请告诉我晚餐的具体食物和大概份量，我再帮你看。"
-                        )
-                    },
+                    {"neutral_draft": ("请告诉我晚餐的具体食物和大概份量，我再帮你看。")},
                     ensure_ascii=False,
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
+            response('{"passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
         )
     )
@@ -521,15 +497,9 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             )
         )
 
-        invocations = await OrchestrationRepository(database).list_turn_invocations(
-            result.turn_id
-        )
+        invocations = await OrchestrationRepository(database).list_turn_invocations(result.turn_id)
         nutrition = sorted(
-            (
-                item
-                for item in invocations
-                if item.agent_role == AgentRole.NUTRITION_EXPERT.value
-            ),
+            (item for item in invocations if item.agent_role == AgentRole.NUTRITION_EXPERT.value),
             key=lambda item: item.attempt,
         )
         cores = sorted(
@@ -537,11 +507,7 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             key=lambda item: item.attempt,
         )
         reviewers = sorted(
-            (
-                item
-                for item in invocations
-                if item.agent_role == AgentRole.RESPONSE_REVIEWER.value
-            ),
+            (item for item in invocations if item.agent_role == AgentRole.RESPONSE_REVIEWER.value),
             key=lambda item: item.attempt,
         )
 

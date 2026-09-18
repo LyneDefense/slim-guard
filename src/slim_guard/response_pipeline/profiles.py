@@ -6,8 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 
+from slim_guard.agent_models.embeddings import EmbeddingGateway
 from slim_guard.agents.style import SLIMGUARD_DEFAULT_V1, StyleProfileRepository
 from slim_guard.agents.style.contracts import StyleProfileSnapshot
+from slim_guard.agents.style.retrieval import similar_examples
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +33,14 @@ class StyleProfileResolver:
         profiles: StyleProfileRepository | None,
         active_version: ActiveStyleVersionResolver | None,
         default_version: str,
+        embedding: EmbeddingGateway | None = None,
     ) -> None:
         self._profiles = profiles
         self._active_version = active_version
         self._default_version = default_version
+        self._embedding = embedding
 
-    async def resolve(self) -> ResolvedStyleProfile:
+    async def resolve(self, neutral_text: str = "") -> ResolvedStyleProfile:
         requested = self._default_version
         source = "default"
         if self._active_version is not None:
@@ -53,6 +57,10 @@ class StyleProfileResolver:
             if self._profiles is not None:
                 snapshot = await self._profiles.get_runtime_snapshot(requested)
                 if snapshot is not None and snapshot.profile.version == requested:
+                    examples = await similar_examples(
+                        neutral_text, snapshot.examples, self._embedding
+                    )
+                    snapshot = snapshot.model_copy(update={"examples": examples})
                     return ResolvedStyleProfile(snapshot, requested, source)
                 if snapshot is not None:
                     failure = "profile_version_mismatch"
