@@ -11,6 +11,7 @@ from slim_guard.expression_style.package import canonical, content_hash
 
 from .contracts import BuildBudget
 from .ports import BuildPort
+from .structured_output import complete_structured
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -87,9 +88,6 @@ class TrainingClient:
                 "payload": payload,
             }
         )
-        cached = await self.port.load(key)
-        if cached is not None:
-            return schema.model_validate(cached)
         self.gateway.stage = stage
         request = ModelRequest(
             purpose="improvement",
@@ -109,14 +107,11 @@ class TrainingClient:
             temperature=0,
             max_output_tokens=8192,
         )
-        response = await self.gateway.complete(request)
-        if response.message.tool_calls or not response.message.content:
-            raise ValueError("训练模型没有返回有效结构化内容")
-        parsed = schema.model_validate_json(response.message.content)
-        await self.port.save(
-            key,
-            parsed.model_dump(mode="json"),
+        return await complete_structured(
+            gateway=self.gateway,
+            port=self.port,
+            request=request,
+            schema=schema,
+            key=key,
             stage=stage,
-            message=f"已保存 {schema.__name__} 结果",
         )
-        return parsed

@@ -22,6 +22,10 @@ const states: Record<string, string> = {
   completed: "已完成",
 };
 const artifactLabel = (key: string) => {
+  if (key.startsWith("validation:")) {
+    const [, schema, identifier] = key.split(":");
+    return `结构校验详情：${schema} · ${identifier.slice(0, 6)}`;
+  }
   const names: Record<string, string> = {
     input_materials: "本次全部素材",
     materials: "逐条处理结果",
@@ -118,6 +122,7 @@ export function BuildProgress({
   const waiting =
     activity.state === "waiting_model" && run.status === "running";
   const available = run.artifacts ?? [];
+  const diagnostics = available.filter((key) => key.startsWith("validation:"));
   return (
     <section className="expression-card build-progress">
       <header>
@@ -172,6 +177,11 @@ export function BuildProgress({
         </p>
       )}
       <div className="expression-actions">
+        {diagnostics.length > 0 && (
+          <button onClick={() => setSelected(diagnostics.at(-1)!)}>
+            查看结构校验详情
+          </button>
+        )}
         {["queued", "running"].includes(run.status) && (
           <button
             disabled={action.isPending}

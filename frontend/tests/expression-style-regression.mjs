@@ -49,7 +49,7 @@ const version = {
     auto_failed: 0,
   },
 };
-const run = {
+const baseRun = {
   id: "run-1",
   name: "本次训练",
   status: "running",
@@ -77,7 +77,8 @@ const run = {
   artifacts: ["input_materials", "materials"],
   error: null,
 };
-function render(path) {
+function render(path, runOverrides = {}) {
+  const run = { ...baseRun, ...runOverrides };
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
@@ -367,4 +368,79 @@ test("test preparation displays both isolated suites and minimal context", async
     "不会用于本轮优化",
   ])
     assert.ok(html.includes(text), text);
+});
+
+test("build progress links to persisted format errors without displaying raw output", () => {
+  const html = render("/styles/doctor/build", {
+    status: "failed",
+    error: "Comparison 结构校验失败，本次 3 次尝试已用尽",
+    artifacts: ["input_materials", "validation:Comparison:abcdef1234"],
+  });
+  for (const text of [
+    "查看结构校验详情",
+    "结构校验详情：Comparison",
+    "恢复本次构建",
+    "3 次尝试已用尽",
+  ])
+    assert.ok(html.includes(text), text);
+});
+
+test("diagnostic artifact renders field errors and escapes raw model output for both states", async () => {
+  const { BuildArtifact } = await server.ssrLoadModule(
+    "/src/components/style/BuildArtifacts.tsx",
+  );
+  for (const status of ["unresolved", "repaired"]) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    const key = "validation:Comparison:abcdef";
+    client.setQueryData(["build-artifact", "doctor", "run-1", key, 0, undefined], {
+      value: {
+        schema_name: "Comparison",
+        status,
+        max_attempts_per_execution: 3,
+        failures: [
+          {
+            number: 1,
+            execution_attempt: 1,
+            time: "2026-09-18T00:00:00Z",
+            raw_output: "<script>alert('model')</script>",
+            tool_calls: [],
+            finish_reason: "stop",
+            errors: [
+              {
+                path: "left_scores.fidelity",
+                type: "less_than_equal",
+                message: "必须小于等于 5",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(BuildArtifact, {
+          styleId: "doctor",
+          runId: "run-1",
+          artifactKey: key,
+        }),
+      ),
+    );
+    for (const text of [
+      "left_scores.fidelity",
+      "less_than_equal",
+      "必须小于等于 5",
+      "查看模型原始输出",
+      "&lt;script&gt;",
+    ])
+      assert.ok(html.includes(text), text);
+    assert.ok(
+      html.includes(status === "repaired" ? "已修复，失败记录仍保留" : "尚未修复"),
+    );
+    assert.ok(!html.includes("<script>"));
+    client.clear();
+  }
 });

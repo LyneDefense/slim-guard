@@ -13,6 +13,10 @@ import { materialRoles as roles } from "./labels";
 import { TestSuiteView, type FrozenSuite } from "./TestSuiteView";
 import { PackageView } from "./PackageView";
 import { ReportView, MetricView, DiffView } from "./TrainingReport";
+import {
+  ValidationDiagnostics,
+  type ValidationDiagnostic,
+} from "./ValidationDiagnostics";
 
 function EvaluationView({ row }: { row: EvaluationRow }) {
   return (
@@ -86,6 +90,9 @@ export function BuildArtifact({
   if (!data) return null;
   return (
     <div className="build-artifact">
+      {artifactKey.startsWith("validation:") && data.value != null && (
+        <ValidationDiagnostics value={data.value as ValidationDiagnostic} />
+      )}
       {(artifactKey.startsWith("candidate:") ||
         artifactKey === "selected" ||
         artifactKey === "draft") &&

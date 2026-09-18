@@ -17,6 +17,7 @@ from slim_guard.expression_style.trainer.client import TrainingClient, TrainingG
 from slim_guard.expression_style.trainer.contracts import BuildBudget
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
 from slim_guard.expression_style.trainer.service import StyleTrainer
+from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
 
 from .job_store import JobStore
 from .models import BuildRun
@@ -96,7 +97,9 @@ class StyleWorker:
         except Exception as exc:
             with suppress(BuildInterrupted):
                 await store.heartbeat(elapsed_before + monotonic() - started)
-            if isinstance(exc, ValidationError):
+            if isinstance(exc, StructuredOutputError):
+                error = str(exc)
+            elif isinstance(exc, ValidationError):
                 error = "模型结构化产物校验失败，请查看已保存阶段结果后重试"
             elif type(exc) is ValueError:
                 error = str(exc)[:1500]

@@ -5,6 +5,7 @@ from slim_guard.main import create_app
 from slim_guard.style_management.builds import BuildRepository
 from slim_guard.style_management.contracts import ExampleInput
 from slim_guard.style_management.corpus import CorpusRepository
+from slim_guard.style_management.models import BuildRun
 
 
 @pytest.fixture
@@ -80,9 +81,21 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
             "tester",
         )
         run = await BuildRepository(db).build("doctor", "tester", model="test-model")
+        diagnostic_key = "validation:Comparison:test"
+        diagnostic = {
+            "schema_name": "Comparison",
+            "status": "unresolved",
+            "failures": [{"raw_output": "private-model-output", "errors": [{"path": "winner"}]}],
+        }
+        async with db.session() as session, session.begin():
+            row = await session.get(BuildRun, run["id"])
+            row.checkpoints = {diagnostic_key: diagnostic}
         base = f"/api/admin/styles/doctor/builds/{run['id']}"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             assert (await client.get(base)).status_code == 401
+            assert (
+                await client.get(base + "/artifacts", params={"key": diagnostic_key})
+            ).status_code == 401
             await client.post(
                 "/api/admin/auth/login",
                 json={
@@ -93,6 +106,14 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
             data = (await client.get(base)).json()
             assert data["material_count"] == 1 and data["unused_count"] == 1
             assert not {"worker_token", "snapshot", "checkpoints", "lease_until"} & data.keys()
+            assert diagnostic_key in data["artifacts"]
+            assert "private-model-output" not in str(data)
+            detailed = await client.get(base + "/artifacts", params={"key": diagnostic_key})
+            assert detailed.status_code == 200 and detailed.json()["value"] == diagnostic
+            wrong_scope = base.replace("/doctor/", "/another-style/")
+            assert (
+                await client.get(wrong_scope + "/artifacts", params={"key": diagnostic_key})
+            ).status_code == 404
             events = (await client.get(base + "/events")).json()
             assert events["next_sequence"] == 1
             assert (await client.get(base + "/events?after=-1")).status_code == 422
