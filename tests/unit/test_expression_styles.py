@@ -214,7 +214,7 @@ async def test_semantic_schema_echo_is_rejected_then_retried(db):
 
     from slim_guard.agent_models.fake import ScriptedModelGateway
     from slim_guard.agent_models.gateway import ModelMessage, ModelResponse
-    from slim_guard.agents.style.agent import SemanticCheck
+    from slim_guard.expression_style.review.contracts import SemanticCheck
     from slim_guard.style_management.runtime import evaluate_example
 
     def response(value):

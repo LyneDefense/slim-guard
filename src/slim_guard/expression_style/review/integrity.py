@@ -7,9 +7,12 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from slim_guard.agents.contracts import ContentBlockKind, StyledResponse
-from slim_guard.agents.style.contracts import StyleContext
+
+if TYPE_CHECKING:
+    from slim_guard.agents.style.contracts import StyleContext
 
 
 class StyleIntegrityIssueCode(StrEnum):

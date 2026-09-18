@@ -16,7 +16,7 @@ from slim_guard.agents.style.contracts import (
     StyleProfileRepository,
 )
 from slim_guard.agents.style.renderer import NeutralRenderer
-from slim_guard.agents.style.validation import (
+from slim_guard.expression_style.review.integrity import (
     StyleIntegrityError,
     StyleIntegrityIssue,
     StyleIntegrityIssueCode,
