@@ -82,6 +82,7 @@ class StyleReviewService:
                             "user_input": context.user_input,
                             "minimal_context": context.minimal_context,
                             "content_contract": context.response_plan.model_dump(mode="json"),
+                            "protected_literals": context.protected_literals,
                             "style": json.loads(context.compiled_prompt)
                             if context.compiled_prompt
                             else context.profile.model_dump(mode="json"),

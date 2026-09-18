@@ -114,7 +114,11 @@ function ReviewCard({
   const [rejecting, setRejecting] = useState(false);
   const save = useMutation({
     mutationFn: (decision: "accept" | "reject") =>
-      stylesApi.review(styleId, value.id, { ...review, decision }),
+      stylesApi.review(styleId, value.id, {
+        ...review,
+        decision,
+        concern: decision === "accept" ? "output" : review.concern,
+      }),
     onSuccess: () => {
       setRejecting(false);
       void client.invalidateQueries({
@@ -158,6 +162,13 @@ function ReviewCard({
       {!value.automated.passed && (
         <p role="alert">
           自动审查未通过或使用了原稿兜底，不能作为风格成功发布。
+        </p>
+      )}
+      {value.review?.concern && value.review.concern !== "output" && (
+        <p role="alert">
+          待复核：
+          {value.review.concern === "test_case" ? "测试题或原稿" : "自动审查"}
+          存在争议。本条不进入下一次风格素材或回归题，不覆盖自动结果。
         </p>
       )}
       <details>
@@ -248,6 +259,22 @@ function ReviewCard({
             className="expression-card"
           >
             <h2 id={`reject-${value.id}`}>填写拒绝理由</h2>
+            <label>
+              问题出在哪里？
+              <select
+                value={review.concern ?? "output"}
+                onChange={(e) =>
+                  setReview({
+                    ...review,
+                    concern: e.target.value as Review["concern"],
+                  })
+                }
+              >
+                <option value="output">医生回答不合适</option>
+                <option value="test_case">测试题或中性原稿有问题</option>
+                <option value="automated_review">自动审查判决有问题</option>
+              </select>
+            </label>
             <textarea
               autoFocus
               aria-label="拒绝理由"

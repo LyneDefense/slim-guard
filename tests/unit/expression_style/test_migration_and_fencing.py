@@ -83,3 +83,28 @@ async def test_edit_during_build_does_not_falsely_mark_new_revision_used(style_d
     assert (await corpus.examples("doctor", participation="unused"))["total"] == 1
     frozen = (await builds.artifact("doctor", run["id"], "input_materials"))["items"][0]
     assert frozen["revision"] == 1 and frozen["desired_response"] == "不客气"
+
+
+async def test_activation_does_not_invalidate_previously_selected_published_snapshot(style_db):
+    from slim_guard.expression_style.package import Guide, make_package
+    from slim_guard.style_management.runtime import RuntimeStyles
+    from slim_guard.style_management.versions import VersionRepository
+
+    runtime = RuntimeStyles(style_db)
+    selected = await runtime.resolve()
+    package = make_package("doctor", "next", "医生", Guide(summary="另一个已评审版本"))
+    async with style_db.session() as s, s.begin():
+        s.add(
+            Version(
+                id="next",
+                style_id="doctor",
+                name="next",
+                status="published",
+                actor="test",
+                package=package.model_dump(mode="json"),
+            )
+        )
+    await VersionRepository(style_db).action("doctor", "next", "activate")
+    assert await runtime.resolve() == "next"
+    snapshot = await runtime.get_runtime_snapshot(selected)
+    assert snapshot.profile.version == "doctor_builtin_v1"

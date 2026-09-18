@@ -24,7 +24,9 @@ class RuntimeStyles:
             if row is None or row.status != "published":
                 return None
             style = await s.get(Style, row.style_id)
-            if style is None or style.active_version_id != version:
+            # The caller already selected this version. A concurrent activation must
+            # not invalidate a Turn's frozen choice between resolve() and this read.
+            if style is None:
                 return None
             package = StylePackage.model_validate(row.package)
             if package.style_id != row.style_id or package.version_id != row.id:

@@ -61,6 +61,7 @@ async def rewrite_case(
             package_hash=snapshot.package_hash,
             user_input=case.user_input,
             minimal_context=case.context,
+            protected_literals=case.protected_literals,
             response_plan=ResponsePlan(
                 content_blocks=(
                     ResponseContentBlock(
@@ -72,21 +73,17 @@ async def rewrite_case(
             ),
         ),
     )
-    protected = all(v in result.response.text for v in case.protected_literals)
     outcome = {
         "package_hash": package.package_hash,
         "text": result.response.text,
-        "passed": not result.used_fallback and protected,
+        "passed": not result.used_fallback,
         "fallback": result.used_fallback,
         "failure_code": result.failure_code,
         "checks": list(result.checks),
         "tokens": result.total_token_count,
         "model_calls": result.model_call_count,
         "execution": signature,
-        "protected_literals_passed": protected,
     }
-    if not protected:
-        outcome["failure_code"] = "protected_literal_changed"
     await client.port.save(key, outcome, stage=stage, message="已保存改写及共享审查结果")
     return outcome
 

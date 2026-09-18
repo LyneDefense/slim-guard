@@ -26,6 +26,7 @@ class StyleIntegrityIssueCode(StrEnum):
     RISK_REFERENCE_CHANGED = "risk_reference_changed"
     CITATION_REFERENCE_CHANGED = "citation_reference_changed"
     PROTECTED_CONTENT_CHANGED = "protected_content_changed"
+    PROTECTED_LITERAL_CHANGED = "protected_literal_changed"
     NUMBER_CHANGED = "number_changed"
     PROHIBITED_PHRASE_USED = "prohibited_phrase_used"
 
@@ -145,6 +146,14 @@ class StyleResponseValidator:
         )
 
         normalized_response = self._semantic_text(response.text)
+        for literal in context.protected_literals:
+            if literal not in response.text:
+                issues.append(
+                    StyleIntegrityIssue(
+                        StyleIntegrityIssueCode.PROTECTED_LITERAL_CHANGED,
+                        literal,
+                    )
+                )
         for block in plan.content_blocks:
             if block.kind not in _PROTECTED_KINDS:
                 continue

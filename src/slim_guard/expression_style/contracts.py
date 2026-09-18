@@ -56,11 +56,15 @@ class StyleContext(ContractModel):
     examples: tuple[StyleExample, ...] = ()
     user_input: str = ""
     minimal_context: tuple[str, ...] = ()
+    protected_literals: tuple[str, ...] = ()
     compiled_prompt: str = ""
     package_hash: str = ""
 
     @model_validator(mode="after")
     def validate_examples(self) -> StyleContext:
+        source = "\n".join(block.text for block in self.response_plan.content_blocks)
+        if any(not literal or literal not in source for literal in self.protected_literals):
+            raise ValueError("受保护字面量必须存在于原稿中")
         example_ids = tuple(example.example_id for example in self.examples)
         if len(example_ids) != len(set(example_ids)):
             raise ValueError("Style example IDs must be unique")

@@ -149,6 +149,7 @@ export interface Review {
   fidelity: number;
   appropriateness: number;
   decision: "accept" | "reject";
+  concern?: "output" | "test_case" | "automated_review";
   reason: string;
   desired_response: string;
 }
@@ -276,6 +277,7 @@ export const stylesApi = {
       fidelity: value.fidelity,
       appropriateness: value.appropriateness,
       decision: value.decision,
+      concern: value.concern ?? "output",
       reason: value.reason,
       desired_response: value.desired_response,
     }),

@@ -32,6 +32,7 @@ class ReviewInput(Input):
     fidelity: int = Field(ge=1, le=5, strict=True)
     appropriateness: int = Field(ge=1, le=5, strict=True)
     decision: Literal["accept", "reject"]
+    concern: Literal["output", "test_case", "automated_review"] = "output"
     reason: str = Field(default="", max_length=2000)
     desired_response: str = Field(default="", max_length=4000)
 
@@ -39,4 +40,6 @@ class ReviewInput(Input):
     def require_reason(self) -> "ReviewInput":
         if self.decision == "reject" and not self.reason:
             raise ValueError("拒绝时必须填写理由")
+        if self.concern != "output" and self.decision != "reject":
+            raise ValueError("测试题或自动审查存在争议时不能接受放行")
         return self

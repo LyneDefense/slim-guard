@@ -57,6 +57,9 @@ class BuildRepository:
                 await s.get(Version, style.active_version_id) if style.active_version_id else None
             )
             run_id = new_uuid()
+            output_feedback = [
+                c for c in cases if c.review and c.review.get("concern", "output") == "output"
+            ]
             feedback_materials = [
                 Material(
                     id=f"review:{c.id}",
@@ -66,7 +69,7 @@ class BuildRepository:
                     desired_response=c.review.get("desired_response", ""),
                     correction_opinion=c.review.get("reason", ""),
                 ).model_dump(mode="json")
-                for c in cases
+                for c in output_feedback
                 if c.review and (c.review.get("desired_response") or c.review.get("reason"))
             ]
             snapshot = {
@@ -85,8 +88,13 @@ class BuildRepository:
                 "human_feedback_count": len(feedback_materials),
                 "feedback": [
                     {"case": c.test_case, "doctor_response": c.doctor_response, "review": c.review}
-                    for c in cases
+                    for c in output_feedback
                     if c.review
+                ],
+                "evaluation_objections": [
+                    {"case": c.test_case, "review": c.review}
+                    for c in cases
+                    if c.review and c.review.get("concern", "output") != "output"
                 ],
                 "consumed_tests": [c.test_case for c in cases],
                 "baseline": baseline.package if baseline else {},

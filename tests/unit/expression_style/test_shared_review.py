@@ -223,3 +223,28 @@ async def test_equivalent_numbers_and_shortening_reach_semantic_review(source, r
         remaining_tokens=5000,
     )
     assert result.passed and len(gateway.requests) == 1
+
+
+async def test_literal_contract_is_checked_inside_agent_and_drives_repair():
+    protected_context = context().model_copy(update={"protected_literals": ("SlimGuard",)})
+    gateway = ScriptedModelGateway(
+        [
+            response(styled("叫我小助手。").model_dump()),
+            response(styled("叫我 SlimGuard 就行。").model_dump()),
+            response(decision()),
+        ]
+    )
+    result = await ResponseStyleAgent(runner=InvocationRunner(model=gateway), model="test").run(
+        invocation=invocation(),
+        context=protected_context,
+    )
+    assert result.repair_attempted and not result.used_fallback
+    assert "protected_literal_changed" in result.checks[0]["issues"]
+    assert len(gateway.requests) == 3
+
+
+def test_invalid_input_literal_contract_cannot_be_treated_as_safe_original():
+    raw = context().model_dump()
+    raw["protected_literals"] = ["不在原稿中的内容"]
+    with pytest.raises(ValidationError, match="必须存在于原稿"):
+        StyleContext.model_validate(raw)

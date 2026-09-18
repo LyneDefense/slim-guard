@@ -8,7 +8,7 @@ from slim_guard.expression_style.trainer.contracts import BuildBudget
 from slim_guard.style_management.builds import BuildRepository
 from slim_guard.style_management.contracts import ExampleInput, ReviewInput, StyleInput
 from slim_guard.style_management.corpus import CorpusRepository
-from slim_guard.style_management.models import Example, Version
+from slim_guard.style_management.models import BuildRun, Example, ReviewCase, Version
 from slim_guard.style_management.runtime import RuntimeStyles
 from slim_guard.style_management.versions import VersionRepository
 from slim_guard.style_management.worker import StyleWorker
@@ -177,3 +177,44 @@ async def test_budget_failures_and_style_scoping(style_db):
     assert detail["usage"]["calls"] == 20
     async with style_db.session() as s:
         assert await s.get(Version, run["id"]) is None
+
+
+async def test_bad_test_objection_never_becomes_style_material_or_regression(style_db):
+    from .fakes import suite_payload
+
+    await material(style_db)
+    case = suite_payload()["acceptance"][0]
+    async with style_db.session() as s, s.begin():
+        s.add(Version(id="bad-test-version", style_id="doctor", name="bad-test", actor="test"))
+        await s.flush()
+        s.add(
+            ReviewCase(
+                id="bad-case",
+                version_id="bad-test-version",
+                test_case=case,
+                user_input=case["user_input"],
+                original_response=case["source_text"],
+                doctor_response="原稿已有问题",
+                baseline_response="原稿已有问题",
+            )
+        )
+    await VersionRepository(style_db).review(
+        "doctor",
+        "bad-case",
+        ReviewInput(
+            style_match=3,
+            fidelity=3,
+            appropriateness=3,
+            decision="reject",
+            concern="test_case",
+            reason="题目声称保存失败，但中性原稿却说保存成功",
+        ),
+        "admin",
+    )
+    run = await BuildRepository(style_db).build("doctor", "admin", model="test-model")
+    async with style_db.session() as s:
+        snapshot = (await s.get(BuildRun, run["id"])).snapshot
+    assert snapshot["feedback"] == []
+    assert snapshot["human_feedback_count"] == 0
+    assert len(snapshot["evaluation_objections"]) == 1
+    assert snapshot["consumed_tests"] == [case]
