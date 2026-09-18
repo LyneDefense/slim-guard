@@ -1,19 +1,6 @@
 import type {
   MemoryRecord,
   Page,
-  StyleABCaseDetail,
-  StyleABCaseSummary,
-  StyleABContext,
-  StyleABHumanReview,
-  StyleABReviewInput,
-  StyleABStatistics,
-  StyleCorrectionFeedback,
-  StyleCorrectionFeedbackInput,
-  StyleFeedbackContext,
-  StyleIterationContext,
-  StyleIterationEvent,
-  StyleIterationRun,
-  StyleRuntimeContext,
   TraceDetail,
   DishRecognitionCorrectionInput,
   TraceListFilters,
@@ -45,7 +32,7 @@ export type AdminSession = {
 
 export class UnauthorizedError extends Error {}
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   redirectOnUnauthorized = true,
@@ -141,125 +128,6 @@ export const api = {
     request<TraceWorkflowReviewMetrics>(
       `/metrics/workflows?window_days=${encodeURIComponent(windowDays)}`,
     ),
-  styleABCases: (
-    offset = 0,
-    filters: {
-      candidate_profile_version?: string;
-      communication_act?: string;
-      decision?: string;
-    } = {},
-  ) => {
-    const query = new URLSearchParams({ limit: "30", offset: String(offset) });
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) query.set(key, value);
-    }
-    return request<Page<StyleABCaseSummary>>(`/style-ab/cases?${query.toString()}`);
-  },
-  styleABCase: (caseId: string) =>
-    request<StyleABCaseDetail>(`/style-ab/cases/${encodeURIComponent(caseId)}`),
-  styleABContext: () => request<StyleABContext>("/style-ab/context"),
-  styleABStatistics: (candidateProfileVersion = "") => {
-    const query = new URLSearchParams();
-    if (candidateProfileVersion) {
-      query.set("candidate_profile_version", candidateProfileVersion);
-    }
-    return request<StyleABStatistics>(
-      `/style-ab/statistics${query.size ? `?${query.toString()}` : ""}`,
-    );
-  },
-  reviewStyleABCase: (caseId: string, input: StyleABReviewInput) =>
-    request<StyleABHumanReview>(
-      `/style-ab/cases/${encodeURIComponent(caseId)}/reviews`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-SlimGuard-CSRF": "1",
-        },
-        body: JSON.stringify(input),
-      },
-    ),
-  styleFeedbackContext: () => request<StyleFeedbackContext>("/style-feedback/context"),
-  styleFeedback: (
-    offset = 0,
-    filters: { profile_version?: string; communication_act?: string } = {},
-  ) => {
-    const query = new URLSearchParams({ limit: "30", offset: String(offset) });
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) query.set(key, value);
-    }
-    return request<Page<StyleCorrectionFeedback>>(`/style-feedback?${query.toString()}`);
-  },
-  appendStyleFeedback: (input: StyleCorrectionFeedbackInput) =>
-    request<StyleCorrectionFeedback>(
-      "/style-feedback",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-SlimGuard-CSRF": "1",
-        },
-        body: JSON.stringify(input),
-      },
-    ),
-  styleIterationContext: () => request<StyleIterationContext>("/style-iterations/context"),
-  styleIterationEligibility: (sourceProfileVersion: string) =>
-    request<StyleIterationContext["build_eligibility"]>(
-      `/style-iterations/eligibility?source_profile_version=${encodeURIComponent(sourceProfileVersion)}`,
-    ),
-  styleIterations: () =>
-    request<Page<StyleIterationRun>>("/style-iterations?limit=30&offset=0"),
-  styleIteration: (runId: string) =>
-    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}`),
-  styleIterationEvents: (runId: string) =>
-    request<{ items: StyleIterationEvent[] }>(
-      `/style-iterations/${encodeURIComponent(runId)}/events`,
-    ),
-  createStyleIteration: (sourceProfileVersion: string, idempotencyKey: string) =>
-    request<StyleIterationRun>("/style-iterations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
-      body: JSON.stringify({
-        source_profile_version: sourceProfileVersion,
-        idempotency_key: idempotencyKey,
-        reviewed_inputs_confirmed: true,
-      }),
-    }),
-  cancelStyleIteration: (runId: string, reason: string) =>
-    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
-      body: JSON.stringify({ reason }),
-    }),
-  retryStyleIteration: (runId: string, reason: string) =>
-    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}/retry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
-      body: JSON.stringify({ reason }),
-    }),
-  publishStyleIteration: (runId: string) =>
-    request<StyleIterationRun>(`/style-iterations/${encodeURIComponent(runId)}/publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
-      body: JSON.stringify({
-        privacy_confirmed: true,
-        expression_only_confirmed: true,
-        evaluation_reviewed: true,
-      }),
-    }),
-  styleRuntime: () => request<StyleRuntimeContext>("/style-runtime"),
-  activateStyleVersion: (version: string, expectedRevision: number, reason: string) =>
-    request<StyleRuntimeContext>("/style-runtime/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
-      body: JSON.stringify({ version, expected_revision: expectedRevision, reason }),
-    }),
-  rollbackStyleVersion: (expectedRevision: number, reason: string) =>
-    request<StyleRuntimeContext>("/style-runtime/rollback", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-SlimGuard-CSRF": "1" },
-      body: JSON.stringify({ expected_revision: expectedRevision, reason }),
-    }),
   nutritionDashboard: () => request<NutritionDashboard>("/nutrition-knowledge/dashboard"),
   nutritionSources: (filters: { status?: string; search?: string; offset?: number } = {}) => {
     const query = new URLSearchParams({

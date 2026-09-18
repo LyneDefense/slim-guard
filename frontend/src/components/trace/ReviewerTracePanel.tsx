@@ -633,7 +633,7 @@ function safePayloadFields(payload: Record<string, unknown> | null | undefined):
   return [
     "schema_version", "verdict", "repair_target", "issue_types", "issue_count",
     "reviewed_artifact_ids", "content_blocks", "used_block_ids", "source_refs",
-    "citation_refs", "style_profile_version", "communication_act",
+    "citation_refs", "style_profile_version",
   ].filter((key) => Object.hasOwn(payload, key)).slice(0, 10);
 }
 

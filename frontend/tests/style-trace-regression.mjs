@@ -28,15 +28,15 @@ function render(payload, changes = {}) {
   } }));
 }
 
-test("Style Trace shows frozen active version, act and expression IDs", () => {
+test("Style Trace shows frozen active version, expression IDs without act categories", () => {
   const html = render({
     style_profile_id: "TEST-style", style_profile_version: "TEST-style-v1",
-    requested_style_profile_version: "TEST-style-v1", communication_act: "explain",
+    requested_style_profile_version: "TEST-style-v1",
     style_selection_source: "default", example_ids: ["TEST-example-1", "TEST-example-2"],
   });
   assert.ok(html.includes("TEST-style-v1"));
   assert.ok(html.includes("当前启用版本"));
-  assert.ok(html.includes("解释"));
+  assert.ok(!html.includes("沟通行为"));
   assert.ok(html.includes("TEST-example-1"));
   assert.ok(html.includes("TEST-example-2"));
   assert.ok(!html.includes("风格资产已回退"));
@@ -46,13 +46,13 @@ test("asset fallback preserves the requested version and shows the actual defaul
   const html = render({
     style_profile_version: "slimguard_default_v1", requested_style_profile_version: "TEST-missing-v1",
     style_selection_source: "fallback", style_fallback_reason: "profile_not_published",
-    communication_act: "ask", example_ids: [],
+    example_ids: [],
   });
   assert.ok(html.includes("slimguard_default_v1"));
   assert.ok(html.includes("TEST-missing-v1"));
   assert.ok(html.includes("所选版本未发布"));
   assert.ok(html.includes("本次未使用表达示例"));
-  assert.ok(html.includes("询问"));
+  assert.ok(!html.includes("沟通行为"));
 });
 
 test("legacy traces distinguish absent metadata from an explicitly empty example selection", () => {
@@ -62,18 +62,18 @@ test("legacy traces distinguish absent metadata from an explicitly empty example
   assert.ok(!html.includes("本次未使用表达示例"));
 });
 
-test("latest repair resolution supplies the current act and selected IDs", () => {
+test("latest repair resolution supplies the selected IDs", () => {
   const html = render({}, { artifacts: [
     artifact("TEST-initial", "style_resolution", {
-      style_profile_version: "TEST-style-v1", communication_act: "explain", example_ids: ["TEST-old-example"],
+      style_profile_version: "TEST-style-v1", example_ids: ["TEST-old-example"],
     }),
     artifact("TEST-repair", "style_resolution", {
-      style_profile_version: "TEST-style-v1", communication_act: "ask", example_ids: ["TEST-repair-example"],
+      style_profile_version: "TEST-style-v1", example_ids: ["TEST-repair-example"],
     }),
   ] });
   assert.ok(html.includes("TEST-repair-example"));
   assert.ok(!html.includes("TEST-old-example"));
-  assert.ok(html.includes("询问"));
+  assert.ok(!html.includes("沟通行为"));
 });
 
 test("style metadata does not reveal expression bodies, plans or raw conversations", () => {
@@ -83,7 +83,6 @@ test("style metadata does not reveal expression bodies, plans or raw conversatio
       examples: [{ text: "PRIVATE_TEST_EXAMPLE" }], raw_chat: "PRIVATE_TEST_CHAT",
     }),
     artifact("TEST-plan", "response_plan", {
-      communication_act: "explain",
       content_blocks: [{ kind: "fact", text: "PRIVATE_TEST_FACT", source_refs: [] }],
     }),
     artifact("TEST-response", "styled_response", {

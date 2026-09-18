@@ -12,7 +12,6 @@ interface StyleTraceView {
   requestedProfileVersion: string | null;
   selectionSource: string | null;
   profileFallbackReason: string | null;
-  communicationAct: string | null;
   exampleIds: string[] | null;
   planArtifact: TraceAgentArtifact | null;
   renderedArtifact: TraceAgentArtifact | null;
@@ -54,7 +53,6 @@ export function StyleTracePanel({ workflow }: { workflow: WorkflowTraceView }) {
         <div><span>执行状态</span><strong>{styleStatusLabel(view.styleInvocationStatus)}</strong></div>
         <div><span>请求版本</span><code>{view.requestedProfileVersion ?? "未记录"}</code></div>
         <div><span>选择来源</span><strong>{selectionSourceLabel(view.selectionSource)}</strong></div>
-        <div><span>沟通行为</span><strong>{communicationActLabel(view.communicationAct)}</strong></div>
       </div>
       <div className="style-block-summary">
         <header><div><h3>本轮表达示例</h3><p>仅显示已冻结的示例 ID，示例正文和原始群聊不在这里展示。</p></div></header>
@@ -185,7 +183,6 @@ function buildStyleTrace(workflow: WorkflowTraceView): StyleTraceView | null {
     requestedProfileVersion: stringValue(profile.requested_style_profile_version),
     selectionSource: stringValue(profile.style_selection_source),
     profileFallbackReason: stringValue(profile.style_fallback_reason),
-    communicationAct: stringValue(profile.communication_act) ?? stringValue(plan.communication_act),
     exampleIds: Array.isArray(profile.example_ids) ? [...new Set(stringArray(profile.example_ids))] : null,
     planArtifact,
     renderedArtifact,
@@ -274,12 +271,6 @@ function contentBlockLabel(kind: string): string {
   return labels[kind] ?? kind;
 }
 
-function communicationActLabel(value: string | null): string {
-  const labels: Record<string, string> = {
-    acknowledge: "确认", correct: "纠正", remind: "提醒", encourage: "鼓励", explain: "解释", ask: "询问",
-  };
-  return value ? labels[value] ?? value : "未记录";
-}
 
 function selectionSourceLabel(value: string | null): string {
   const labels: Record<string, string> = { default: "当前启用版本", fallback: "默认风格回退" };

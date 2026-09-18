@@ -15,9 +15,6 @@ import {
 } from "react-router-dom";
 
 import { api, UnauthorizedError } from "./api";
-import { StyleABReviewPage } from "./components/style/StyleABReviewPage";
-import { StyleFeedbackPage } from "./components/style/StyleFeedbackPage";
-import { StyleIterationPage } from "./components/style/StyleIterationPage";
 import { StyleProfilePage } from "./components/style/StyleProfilePage";
 import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
@@ -645,10 +642,8 @@ export function App() {
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/users" replace />} />
         <Route path="users" element={<UsersPage />} />
-        <Route path="style-ab" element={<StyleABReviewPage />} />
-        <Route path="style-feedback" element={<StyleFeedbackPage />} />
-        <Route path="style-iterations" element={<StyleIterationPage />} />
         <Route path="styles" element={<StyleProfilePage />} />
+        <Route path="styles/:styleId/:tab" element={<StyleProfilePage />} />
         <Route path="nutrition-knowledge" element={<NutritionKnowledgePage />} />
         <Route path="users/:userId" element={<UserLayout />}>
           <Route index element={<TraceList />} />

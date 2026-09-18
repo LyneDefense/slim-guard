@@ -198,8 +198,8 @@ function CorrectionForm({
         <textarea value={comment} maxLength={2000} onChange={(event) => setComment(event.target.value)} placeholder="例如：这道菜实际是地三鲜，不是红烧茄子。" />
       </label>
       <button disabled={!ready || mutation.isPending} type="submit">{mutation.isPending ? "保存中…" : "追加更正记录"}</button>
-      {mutation.isError && <p className="style-ab-form-error">{mutation.error instanceof Error ? mutation.error.message : "保存失败"}</p>}
-      {mutation.isSuccess && <p className="style-ab-form-success">更正已追加，原 Artifact 保持不变。</p>}
+      {mutation.isError && <p className="dish-correction-error">{mutation.error instanceof Error ? mutation.error.message : "保存失败"}</p>}
+      {mutation.isSuccess && <p className="dish-correction-success">更正已追加，原 Artifact 保持不变。</p>}
     </form>
   );
 }
