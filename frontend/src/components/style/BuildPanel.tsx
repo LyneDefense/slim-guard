@@ -1,99 +1,165 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { stylesApi, type Style, type Version } from "./api";
-export const states: Record<string, string> = {
-  queued: "排队中",
-  building: "构建中",
-  failed: "构建失败",
-  ready_for_review: "待人工评审",
-  published: "已发布",
-};
+import { Link, useSearchParams } from "react-router-dom";
+import { stylesApi, type Style } from "./api";
+import { BuildProgress } from "./BuildProgress";
+import { PackageView } from "./PackageView";
+import { ReportView } from "./TrainingReport";
+
 export function BuildPanel({ style }: { style: Style }) {
   const client = useQueryClient();
-  const query = useQuery({
+  const [params] = useSearchParams();
+  const [selected, setSelected] = useState(params.get("run") ?? "");
+  const [offset, setOffset] = useState(0);
+  const versions = useQuery({
     queryKey: ["expression-versions", style.id],
     queryFn: () => stylesApi.versions(style.id),
-    refetchInterval: 4000,
+    refetchInterval: 5000,
   });
-  const change = useMutation({
-    mutationFn: ({ id, action }: { id?: string; action: string }) =>
-      id ? stylesApi.action(style.id, id, action) : stylesApi.build(style.id),
-    onSuccess: () => {
-      void client.invalidateQueries({
-        queryKey: ["expression-versions", style.id],
-      });
-      void client.invalidateQueries({ queryKey: ["expression-styles"] });
+  const builds = useQuery({
+    queryKey: ["expression-builds", style.id, offset],
+    queryFn: () => stylesApi.builds(style.id, offset),
+    refetchInterval: 2500,
+  });
+  const refresh = () => {
+    void client.invalidateQueries({
+      queryKey: ["expression-versions", style.id],
+    });
+    void client.invalidateQueries({
+      queryKey: ["expression-builds", style.id],
+    });
+    void client.invalidateQueries({ queryKey: ["expression-styles"] });
+    void client.invalidateQueries({
+      queryKey: ["expression-examples", style.id],
+    });
+  };
+  const start = useMutation({
+    mutationFn: () => stylesApi.build(style.id, crypto.randomUUID()),
+    onSuccess: (run) => {
+      setSelected(run.id);
+      setOffset(0);
+      refresh();
     },
   });
-  const versions = query.data?.items ?? [];
-  const active = versions.find((v) => v.id === style.active_version_id);
+  const action = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: string }) =>
+      stylesApi.action(style.id, id, action),
+    onSuccess: refresh,
+  });
+  const active = versions.data?.items.find(
+    (v) => v.id === style.active_version_id,
+  );
+  const runs = builds.data?.items ?? [];
+  const current = selected || runs[0]?.id;
   return (
     <>
       <section className="expression-card">
         <h2>构建新版本</h2>
         <p>
-          冻结当前风格的全部可用示例，生成表达指引、自动评测和人工评审样例。不会立即替换线上版本。
+          全库素材参与筛选，联合构建表达指引与固定示例，在独立测试上比较效果。完成后仍需人评、发布和启用。
         </p>
-        <div className="expression-columns">
-          <div>
-            <h3>当前启用</h3>
-            <p>{active?.name ?? "尚未启用"}</p>
-            <p>{style.example_count} 条示例素材</p>
-          </div>
-          {active && <GuidePreview version={active} styleId={style.id} />}
-        </div>
+        <p>
+          当前启用：{active?.name ?? "尚未启用"} · 素材 {style.example_count} 条
+        </p>
+        {active && (
+          <details>
+            <summary>查看当前风格包</summary>
+            <PackageView value={active.package} />
+          </details>
+        )}
         <button
           disabled={
-            change.isPending ||
+            start.isPending ||
             !style.example_count ||
-            versions.some((v) => ["queued", "building"].includes(v.status))
+            runs.some((r) => ["queued", "running"].includes(r.status))
           }
-          onClick={() => change.mutate({ action: "build" })}
+          onClick={() => start.mutate()}
         >
           构建新版本
         </button>
-        {!style.example_count && (
-          <p>先到“追加纠正素材”加入示例，再构建专属版本。</p>
+        {!style.example_count && <p>先到“追加纠正素材”手工加入素材。</p>}
+        {start.error && <p role="alert">{start.error.message}</p>}
+      </section>
+      <section className="expression-card">
+        <h2>训练过程</h2>
+        <label>
+          查看本次或历史构建
+          <select
+            value={current ?? ""}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {builds.error && (
+          <p role="alert">无法更新构建列表：{builds.error.message}</p>
+        )}
+        {!runs.length && !builds.isLoading && <p>暂无构建任务。</p>}
+        {builds.data && builds.data.total > 20 && (
+          <div className="pager">
+            <button
+              disabled={!offset}
+              onClick={() => {
+                setSelected("");
+                setOffset(Math.max(0, offset - 20));
+              }}
+            >
+              上一页
+            </button>
+            <span>共 {builds.data.total} 次构建</span>
+            <button
+              disabled={offset + 20 >= builds.data.total}
+              onClick={() => {
+                setSelected("");
+                setOffset(offset + 20);
+              }}
+            >
+              下一页
+            </button>
+          </div>
         )}
       </section>
-      {query.error && <p role="alert">{query.error.message}</p>}
-      {change.error && <p role="alert">{change.error.message}</p>}
-      {versions.map((v) => (
+      {current && (
+        <BuildProgress key={current} styleId={style.id} runId={current} />
+      )}
+      <h2>最终风格版本</h2>
+      <p>这里不展示自动优化的中间候选。</p>
+      {versions.error && <p role="alert">{versions.error.message}</p>}
+      {action.error && <p role="alert">{action.error.message}</p>}
+      {versions.data?.items.map((v) => (
         <section className="expression-card" key={v.id}>
           <header>
             <h2>{v.name}</h2>
             <span>
               {v.id === style.active_version_id
                 ? "当前启用"
-                : (states[v.status] ?? v.status)}
+                : v.status === "published"
+                  ? "已发布"
+                  : "待人工评审"}
             </span>
           </header>
-          <p>
-            冻结素材：{v.snapshot.examples?.length ?? 0} 条 · 表达样例：
-            {v.examples.length} 条
-          </p>
-          <GuidePreview version={v} styleId={style.id} />
-          {v.review_summary.total > 0 && (
+          {v.report.conclusion && <ReportView report={v.report} />}
+          <details>
+            <summary>查看 Guide 与固定示例</summary>
+            <PackageView value={v.package} />
+          </details>
+          {!!v.review_summary.total && (
             <p>
-              待评审 {v.review_summary.pending} · 已接受{" "}
-              {v.review_summary.accept} · 已拒绝 {v.review_summary.reject} ·
-              自动检查失败 {v.review_summary.auto_failed}
+              待评审 {v.review_summary.pending} · 接受 {v.review_summary.accept}{" "}
+              · 拒绝 {v.review_summary.reject} · 自动检查失败{" "}
+              {v.review_summary.auto_failed}
             </p>
           )}
-          <p>当前阶段：{v.stage}</p>
-          <details>
-            <summary>查看构建过程</summary>
-            <ol className="expression-progress">
-              {v.events.map((e, i) => (
-                <li key={i}>
-                  <strong>{e.stage}</strong>
-                  <span>{e.message}</span>
-                </li>
-              ))}
-            </ol>
-          </details>
-          {v.error && <p role="alert">{v.error}</p>}
           <div className="expression-actions">
+            {v.build_run_id && (
+              <button onClick={() => setSelected(v.build_run_id ?? "")}>
+                查看本版本训练过程
+              </button>
+            )}
             {v.status === "ready_for_review" && (
               <>
                 <Link to={`/styles/${style.id}/review?version=${v.id}`}>
@@ -101,7 +167,8 @@ export function BuildPanel({ style }: { style: Style }) {
                 </Link>
                 <button
                   disabled={
-                    change.isPending ||
+                    action.isPending ||
+                    !v.report.release_eligible ||
                     !v.review_summary.total ||
                     v.review_summary.accept !== v.review_summary.total ||
                     !!v.review_summary.auto_failed
@@ -109,34 +176,26 @@ export function BuildPanel({ style }: { style: Style }) {
                   onClick={() => {
                     if (
                       window.confirm(
-                        `发布 ${v.name}？发布后不可修改，启用需要另行操作。`,
+                        `发布 ${v.name}？发布后不可修改，启用另行操作。`,
                       )
                     )
-                      change.mutate({ id: v.id, action: "publish" });
+                      action.mutate({ id: v.id, action: "publish" });
                   }}
                 >
                   采纳并发布
                 </button>
-                <small>全部人工接受且自动检查通过后可发布。</small>
+                <small>独立验收及回归检查通过、人工全部接受后可发布。</small>
               </>
             )}
             {v.status === "published" && v.id !== style.active_version_id && (
               <button
-                disabled={change.isPending}
+                disabled={action.isPending}
                 onClick={() => {
-                  if (window.confirm(`将 ${v.name} 设为当前风格的启用版本？`))
-                    change.mutate({ id: v.id, action: "activate" });
+                  if (window.confirm(`启用 ${v.name}？将影响后续的新回复。`))
+                    action.mutate({ id: v.id, action: "activate" });
                 }}
               >
                 启用此版本
-              </button>
-            )}
-            {v.status === "failed" && (
-              <button
-                disabled={change.isPending}
-                onClick={() => change.mutate({ id: v.id, action: "retry" })}
-              >
-                重试构建
               </button>
             )}
           </div>
@@ -144,56 +203,4 @@ export function BuildPanel({ style }: { style: Style }) {
       ))}
     </>
   );
-}
-function GuidePreview({
-  version,
-  styleId,
-}: {
-  version: Version;
-  styleId: string;
-}) {
-  return version.guide.summary ? (
-    <div className="expression-guide">
-      <h3>Style Guide · 表达指引</h3>
-      <p>{version.guide.summary}</p>
-      <ul>
-        {version.guide.rules?.map((r, i) => (
-          <li key={i}>
-            {r.text}
-            <small>
-              {" "}
-              ·{" "}
-              {(
-                {
-                  stable: "稳定规则",
-                  candidate: "候选规则",
-                  conflict: "冲突规则",
-                } as Record<string, string>
-              )[r.confidence] ?? r.confidence}{" "}
-              · {r.evidence_ids?.length ?? 0} 条证据
-            </small>
-            {r.evidence_ids?.length > 0 && (
-              <details>
-                <summary>查看来源示例</summary>
-                {r.evidence_ids.map((id, index) => (
-                  <Link
-                    key={id}
-                    to={`/styles/${styleId}/corrections?q=${encodeURIComponent(id)}`}
-                  >
-                    示例 {index + 1}{" "}
-                  </Link>
-                ))}
-              </details>
-            )}
-          </li>
-        ))}
-      </ul>
-      <small>
-        只有稳定规则用于线上改写；候选和冲突规则暂不采用，可追加素材澄清后重新构建。
-      </small>
-      {!!version.guide.prohibited_phrases?.length && (
-        <p>禁用表达：{version.guide.prohibited_phrases.join("、")}</p>
-      )}
-    </div>
-  ) : null;
 }

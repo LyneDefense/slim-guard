@@ -35,12 +35,12 @@ const version = {
   id: "test-v1",
   name: "测试风格 v1",
   status: "ready_for_review",
-  stage: "待人工评审",
-  guide: { summary: "简洁", rules: [] },
-  snapshot: { examples: [] },
-  examples: [{}],
-  events: [],
-  error: null,
+  build_run_id: "run-1",
+  package: {
+    guide: { summary: "简洁", rules: [], prohibited_phrases: [] },
+    examples: [],
+  },
+  report: { conclusion: "无明确提升", release_eligible: true },
   review_summary: {
     total: 1,
     pending: 1,
@@ -49,12 +49,71 @@ const version = {
     auto_failed: 0,
   },
 };
+const run = {
+  id: "run-1",
+  name: "本次训练",
+  status: "running",
+  stage: "construction",
+  material_count: 21,
+  library_count: 20,
+  human_feedback_count: 1,
+  unused_count: 2,
+  analyzed_count: 21,
+  round_count: 0,
+  max_rounds: 2,
+  baseline_version: "builtin",
+  last_event_sequence: 1,
+  report: {},
+  activity: {
+    state: "waiting_model",
+    message: "等待模型返回",
+    purpose: "Guide",
+    request_started_at: new Date().toISOString(),
+    timeout_seconds: 120,
+  },
+  usage: { calls: 3, tokens: 900, seconds: 12 },
+  heartbeat_at: new Date().toISOString(),
+  progress_at: new Date().toISOString(),
+  artifacts: ["input_materials", "materials"],
+  error: null,
+};
 function render(path) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   client.setQueryData(["expression-styles"], { items: [style] });
   client.setQueryData(["expression-versions", "doctor"], { items: [version] });
+  client.setQueryData(["expression-builds", "doctor", 0], {
+    items: [run],
+    total: 1,
+  });
+  client.setQueryData(["build-detail", "doctor", "run-1"], run);
+  client.setQueryData(["build-events", "doctor", "run-1", 0, 1], {
+    items: [],
+    total: 0,
+    next_sequence: 0,
+  });
+  client.setQueryData(
+    [
+      "build-artifact",
+      "doctor",
+      "run-1",
+      "input_materials",
+      0,
+      run.progress_at,
+    ],
+    {
+      items: [
+        {
+          user_input: "谢谢",
+          original_response: "不用客气",
+          desired_response: "不客气",
+          correction_opinion: "减少套话",
+        },
+      ],
+      total: 1,
+    },
+  );
   client.setQueryData(["expression-cases", "doctor", "test-v1", 0], {
     items: [
       {
@@ -62,7 +121,8 @@ function render(path) {
         user_input: "怎么称呼你",
         original_response: "我是 SlimGuard。",
         doctor_response: "叫我 SlimGuard 就行。",
-        desired_response: "叫我 SlimGuard。",
+        baseline_response: "我是 SlimGuard。",
+        test_case: { context: ["这是独立身份问答测试"] },
         automated: { passed: true },
         review: null,
       },
@@ -74,7 +134,7 @@ function render(path) {
     [
       "expression-examples",
       "doctor",
-      { q: "", category: "", source: "", status: "", offset: "0", limit: "20" },
+      { q: "", role: "", participation: "unused", offset: "0", limit: "20" },
     ],
     {
       items: [
@@ -83,12 +143,16 @@ function render(path) {
           user_input: "<script>TEST</script>",
           original_response: "历史回答",
           desired_response: "期望回答",
-          category: "expression",
-          status: "pending",
+          revision: 2,
+          processed_revision: 1,
+          correction_opinion: "少说套话",
+          last_result: {
+            role: "negative",
+            reason: "只有负面意见，不作为正面示例",
+          },
           source: "correction",
           actor: "TEST",
           created_at: "2026-09-18T00:00:00Z",
-          included_versions: ["测试风格 v1"],
         },
       ],
       total: 21,
@@ -135,7 +199,11 @@ test("build page has three nested tabs and publication waits for review", () => 
     "评审版本",
     "追加纠正素材",
     "构建新版本",
-    "查看构建过程",
+    "训练过程",
+    "等待模型",
+    "最后产物更新",
+    "查看阶段产物",
+    "固定表达示例",
   ])
     assert.ok(html.includes(text));
   assert.match(html, /<button disabled="">采纳并发布<\/button>/);
@@ -160,11 +228,14 @@ test("review shows three real texts and three scores without technical hashes", 
 test("corrections contains full searchable paginated library and escapes input", () => {
   const html = render("/styles/doctor/corrections");
   for (const text of [
-    "全部示例",
-    "纯表达差异",
+    "全部素材",
+    "未参与构建",
+    "已参与构建",
+    "正面表达",
+    "负面意见",
     "历史回答",
     "期望回答",
-    "测试风格 v1",
+    "少说套话",
     "下一页",
   ])
     assert.ok(html.includes(text));
@@ -217,4 +288,83 @@ test("old style routes and menu pages are not retained", async () => {
   );
   assert.ok(review.includes('role="dialog"'));
   assert.ok(review.includes("!review.reason.trim()"));
+});
+
+test("report shows actual comparison, regressions, dimensions and feedback without claiming success", async () => {
+  const { ReportView } = await server.ssrLoadModule(
+    "/src/components/style/TrainingReport.tsx",
+  );
+  const metrics = {
+    total: 12,
+    candidate_better: 3,
+    baseline_better: 2,
+    tie: 6,
+    uncertain: 1,
+    candidate_failed: 1,
+    regressions: 1,
+    repairs: 2,
+    fallbacks: 1,
+    dimensions: { baseline: {}, candidate: {} },
+  };
+  const html = renderToStaticMarkup(
+    createElement(ReportView, {
+      report: {
+        conclusion: "不建议采用",
+        metrics,
+        regression: { ...metrics, total: 2 },
+        difference: {
+          rules_added: [],
+          rules_removed: [],
+          rules_changed: [],
+          examples_before: ["a"],
+          examples_after: ["b"],
+          prompt_changed: false,
+        },
+        feedback_outcomes: [
+          {
+            example_id: "review:1",
+            role: "negative",
+            reason: "未作为正面表达对",
+            used_for_rule: true,
+          },
+        ],
+      },
+    }),
+  );
+  for (const text of [
+    "不建议采用",
+    "新增关键退步",
+    "原稿兜底",
+    "自然程度",
+    "历史拒绝用例回归",
+    "固定 Prompt 无变化",
+    "已用于 Guide",
+  ])
+    assert.ok(html.includes(text), text);
+});
+
+test("test preparation displays both isolated suites and minimal context", async () => {
+  const { TestSuiteView } = await server.ssrLoadModule(
+    "/src/components/style/TestSuiteView.tsx",
+  );
+  const item = {
+    id: "1",
+    user_input: "名字是什么",
+    source_text: "我是助手",
+    family: "身份",
+    context: ["无额外用户档案"],
+  };
+  const html = renderToStaticMarkup(
+    createElement(TestSuiteView, {
+      suite: { development: [item], acceptance: [{ ...item, id: "2" }] },
+    }),
+  );
+  for (const text of [
+    "开发评测题",
+    "独立验收题",
+    "我是助手",
+    "无额外用户档案",
+    "不会用于本轮优化",
+  ])
+    assert.ok(html.includes(text), text);
 });

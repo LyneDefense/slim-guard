@@ -127,8 +127,7 @@ button.style-profile-card {
   padding: 24px;
   margin: 20px 0;
 }
-.expression-card header,
-.expression-example footer {
+.expression-card header {
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -204,19 +203,6 @@ button.style-profile-card {
   grid-template-columns: 1fr 2fr;
   gap: 24px;
 }
-.expression-filters {
-  display: grid;
-  grid-template-columns: 2fr repeat(3, 1fr);
-  gap: 12px;
-}
-.expression-example {
-  border-top: 1px solid #dbe6df;
-  padding: 20px 0;
-}
-.expression-example footer span {
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
 .expression-actions {
   display: flex;
   gap: 12px;
@@ -242,9 +228,6 @@ button.style-profile-card {
   background: #f1f7f3;
   padding: 16px;
   border-radius: 12px;
-}
-.expression-guide li {
-  margin: 8px 0;
 }
 .expression-guide small {
   color: #70887b;
@@ -272,8 +255,51 @@ button.style-profile-card {
 }
 @media (max-width: 1000px) {
   .expression-three,
-  .expression-columns,
-  .expression-filters {
+  .expression-columns {
     grid-template-columns: 1fr;
   }
+}
+.style-material {
+  padding: 1rem 0;
+  border-bottom: 1px solid #dfe8e3;
+}
+.style-material p,
+.build-artifact p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.build-progress .expression-progress .current {
+  border-left: 4px solid #28785c;
+  padding-left: 1rem;
+}
+.build-progress .expression-progress li {
+  display: block;
+  padding-block: 0.75rem;
+}
+.build-progress .expression-progress li > span {
+  display: block;
+  margin-top: 0.35rem;
+}
+.build-progress details {
+  margin-block: 0.7rem;
+}
+.expression-guide blockquote {
+  border-left: 3px solid #abc8b9;
+  padding-left: 1rem;
+  margin-left: 0;
+}
+.expression-guide blockquote small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.style-score-table {
+  width: 100%;
+  margin-block: 1rem;
+  border-collapse: collapse;
+}
+.style-score-table td,
+.style-score-table th {
+  padding: 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid #dfe8e3;
 }

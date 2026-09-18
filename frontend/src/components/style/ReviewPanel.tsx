@@ -10,9 +10,7 @@ export function ReviewPanel({ style }: { style: Style }) {
     queryFn: () => stylesApi.versions(style.id),
   });
   const available =
-    versions.data?.items.filter(
-      (v) => v.status === "ready_for_review" || v.examples.length > 0,
-    ) ?? [];
+    versions.data?.items.filter((v) => v.review_summary.total > 0) ?? [];
   const version = params.get("version") ?? available[0]?.id ?? "";
   const cases = useQuery({
     queryKey: ["expression-cases", style.id, version, offset],
@@ -25,6 +23,9 @@ export function ReviewPanel({ style }: { style: Style }) {
     <>
       <section className="expression-card">
         <h2>评审版本</h2>
+        <p>
+          这里评审独立测试的实际输出，不是重新审核原素材。接受不会把模型回答加入素材库。
+        </p>
         <label>
           风格版本
           <select
@@ -120,7 +121,7 @@ function ReviewCard({
         queryKey: ["expression-cases", styleId],
       });
       void client.invalidateQueries({
-        queryKey: ["expression-examples", styleId],
+        queryKey: ["expression-versions", styleId],
       });
       void client.invalidateQueries({ queryKey: ["expression-styles"] });
     },
@@ -148,17 +149,36 @@ function ReviewCard({
         </section>
         <section>
           <h3>期望医生回答</h3>
-          <p>{value.desired_response}</p>
+          <p>{review.desired_response || "尚未填写，可在下方补充"}</p>
         </section>
       </div>
+      {!!value.test_case.context.length && (
+        <p>已知语境：{value.test_case.context.join("；")}</p>
+      )}
+      {!value.automated.passed && (
+        <p role="alert">
+          自动审查未通过或使用了原稿兜底，不能作为风格成功发布。
+        </p>
+      )}
       <details>
         <summary>查看改写前原文及自动检查</summary>
         <p>{value.original_response}</p>
         <p>
           {value.automated.passed
-            ? "语义检查通过"
+            ? "共享审查通过"
             : `未通过：${value.automated.failure_code ?? "需要修订"}`}
         </p>
+        <h3>对照版本回答</h3>
+        <p>{value.baseline_response}</p>
+        {value.automated.checks?.map((check) => (
+          <section key={check.attempt}>
+            <h4>
+              第 {check.attempt} 次改写 · {check.passed ? "通过" : "未通过"}
+            </h4>
+            <p>{check.output}</p>
+            <p>{check.issues.join("；")}</p>
+          </section>
+        ))}
       </details>
       <div className="expression-three">
         {(["style_match", "fidelity", "appropriateness"] as const).map(
@@ -183,7 +203,7 @@ function ReviewCard({
         )}
       </div>
       <label>
-        补充期望回答（选填，保存后加入示例库）
+        补充期望回答（选填，作为下次构建反馈，不修改本版本）
         <textarea
           disabled={readOnly}
           value={review.desired_response}

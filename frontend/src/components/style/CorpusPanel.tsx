@@ -1,33 +1,24 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { stylesApi, type Style } from "./api";
-import { useSearchParams } from "react-router-dom";
-const categories: Record<string, string> = {
-  unclassified: "待分析",
-  expression: "纯表达差异",
-  content_change: "内容变化",
-  conflict: "冲突素材",
-  unusable: "不可用素材",
-};
-const statuses: Record<string, string> = {
-  pending: "待构建",
-  approved: "可用",
-  excluded: "已排除",
-  conflict: "待解决冲突",
+import { Link, useSearchParams } from "react-router-dom";
+import { stylesApi, type Style, type MaterialInput } from "./api";
+
+import { materialRoles as roles } from "./labels";
+const empty: MaterialInput = {
+  user_input: "",
+  original_response: "",
+  desired_response: "",
+  correction_opinion: "",
 };
 export function CorpusPanel({ style }: { style: Style }) {
   const [params] = useSearchParams();
   const client = useQueryClient();
-  const [form, setForm] = useState({
-    user_input: "",
-    original_response: "",
-    desired_response: "",
-  });
+  const [form, setForm] = useState<MaterialInput>(empty);
+  const [editing, setEditing] = useState<string | null>(null);
   const [filters, setFilters] = useState({
     q: params.get("q") ?? "",
-    category: "",
-    source: "",
-    status: "",
+    role: "",
+    participation: "unused",
     offset: "0",
     limit: "20",
   });
@@ -41,196 +32,244 @@ export function CorpusPanel({ style }: { style: Style }) {
     });
     void client.invalidateQueries({ queryKey: ["expression-styles"] });
   };
-  const add = useMutation({
-    mutationFn: () => stylesApi.append(style.id, form),
+  const save = useMutation({
+    mutationFn: () =>
+      editing
+        ? stylesApi.edit(style.id, editing, form)
+        : stylesApi.append(style.id, form),
     onSuccess: () => {
-      setForm({ user_input: "", original_response: "", desired_response: "" });
-      setFilters({ ...filters, offset: "0" });
+      setForm(empty);
+      setEditing(null);
+      setFilters({ ...filters, participation: "unused", offset: "0" });
       refresh();
     },
   });
-  const change = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
-      stylesApi.state(style.id, id, status),
+  const remove = useMutation({
+    mutationFn: (id: string) => stylesApi.remove(style.id, id),
     onSuccess: refresh,
   });
-  const filter = (key: string, value: string) =>
-    setFilters({ ...filters, [key]: value, offset: "0" });
+  const valid =
+    form.user_input.trim() &&
+    form.original_response.trim() &&
+    (form.desired_response.trim() || form.correction_opinion.trim());
+  const offset = Number(filters.offset);
   return (
     <>
       <form
         className="expression-card"
         onSubmit={(e) => {
           e.preventDefault();
-          add.mutate();
+          save.mutate();
         }}
       >
-        <h2>追加纠正素材</h2>
-        <p>加入当前风格的完整示例库，下次构建时使用。不会修改已启用版本。</p>
-        <div className="expression-three">
+        <h2>{editing ? "修改素材（生成新修订）" : "追加纠正素材"}</h2>
+        <p>
+          纯人工填写。下次构建会分析两个 Tab 的全部素材，不立即影响线上风格。
+        </p>
+        <div className="expression-columns">
           {(
-            ["user_input", "original_response", "desired_response"] as const
+            [
+              "user_input",
+              "original_response",
+              "desired_response",
+              "correction_opinion",
+            ] as const
           ).map((key, i) => (
             <label key={key}>
-              {["用户输入", "医生回答", "期望医生回答"][i]}
+              {
+                [
+                  "用户输入（必填）",
+                  "已经发生的医生回答（必填）",
+                  "期望医生回答",
+                  "纠正意见",
+                ][i]
+              }
               <textarea
+                required={i < 2}
+                maxLength={i === 3 ? 2000 : 4000}
                 value={form[key]}
-                required
-                maxLength={4000}
                 onChange={(e) => setForm({ ...form, [key]: e.target.value })}
               />
             </label>
           ))}
         </div>
-        <button
-          disabled={add.isPending || Object.values(form).some((v) => !v.trim())}
-        >
-          加入示例库
+        <p>
+          期望回答与纠正意见至少填一项；只有负面意见也能提交，训练时会判断适用方式。
+        </p>
+        <button disabled={save.isPending || !valid}>
+          {editing ? "保存新修订" : "加入示例库"}
         </button>
-        {add.isSuccess && <p role="status">已加入示例库。</p>}
-        {add.error && <p role="alert">{add.error.message}</p>}
+        {editing && (
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(null);
+              setForm(empty);
+            }}
+          >
+            取消修改
+          </button>
+        )}
+        {save.error && <p role="alert">{save.error.message}</p>}
+        {save.isSuccess && <p role="status">已保存，当前修订尚未参与构建。</p>}
       </form>
       <section className="expression-card">
-        <header>
-          <h2>全部示例</h2>
-          <span>{query.data?.total ?? 0} 条</span>
-        </header>
+        <h2>全部素材</h2>
         <p>
-          分类描述素材质量与表达差异，仅供整理筛选，不用于意图路由或套用回复。
+          “已参与”不等于被选作示例或已经上线。排除与冲突项仍参与下次全库分析。
         </p>
-        <div className="expression-filters">
+        <div
+          className="style-detail-tabs"
+          role="tablist"
+          aria-label="素材参与状态"
+        >
+          {[
+            ["unused", "未参与构建"],
+            ["used", "已参与构建"],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={filters.participation === key}
+              className={filters.participation === key ? "active" : ""}
+              onClick={() =>
+                setFilters({ ...filters, participation: key, offset: "0" })
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="expression-columns">
           <label>
-            搜索
+            搜索素材
             <input
               value={filters.q}
-              onChange={(e) => filter("q", e.target.value)}
-              placeholder="用户输入或回答"
+              onChange={(e) =>
+                setFilters({ ...filters, q: e.target.value, offset: "0" })
+              }
             />
           </label>
           <label>
-            素材分类
+            处理结果
             <select
-              value={filters.category}
-              onChange={(e) => filter("category", e.target.value)}
+              value={filters.role}
+              onChange={(e) =>
+                setFilters({ ...filters, role: e.target.value, offset: "0" })
+              }
             >
               <option value="">全部</option>
-              {Object.entries(categories).map(([key, label]) => (
-                <option value={key} key={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            来源
-            <select
-              value={filters.source}
-              onChange={(e) => filter("source", e.target.value)}
-            >
-              <option value="">全部</option>
-              <option value="correction">纠正素材</option>
-              <option value="review">评审纠正</option>
-              <option value="accepted_review">评审接受</option>
-            </select>
-          </label>
-          <label>
-            状态
-            <select
-              value={filters.status}
-              onChange={(e) => filter("status", e.target.value)}
-            >
-              <option value="">全部</option>
-              {Object.entries(statuses).map(([key, label]) => (
-                <option value={key} key={key}>
-                  {label}
+              {Object.entries(roles).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
                 </option>
               ))}
             </select>
           </label>
         </div>
-        {query.isLoading && <p>正在加载示例…</p>}
+        {query.isLoading && <p>正在加载素材…</p>}
         {query.error && <p role="alert">{query.error.message}</p>}
-        {change.error && <p role="alert">{change.error.message}</p>}
-        {query.data?.total === 0 && <p>当前条件下没有示例。</p>}
-        {query.data?.items.map((e) => (
-          <article className="expression-example" key={e.id}>
+        {remove.error && <p role="alert">{remove.error.message}</p>}
+        {query.data?.total === 0 && <p>此分组暂无素材。</p>}
+        {query.data?.items.map((item) => (
+          <article className="style-material" key={item.id}>
             <header>
+              <strong>
+                修订 {item.revision} ·{" "}
+                {roles[item.last_result.role ?? ""] ?? "尚未分析"}
+              </strong>
               <span>
-                {categories[e.category] ?? e.category} ·{" "}
-                {statuses[e.status] ?? e.status} ·{" "}
-                {e.source === "accepted_review"
-                  ? "评审接受"
-                  : e.source === "review"
-                    ? "评审纠正"
-                    : "纠正素材"}
+                {item.actor} · {item.source}
               </span>
-              <small>
-                {e.actor} · {new Date(e.created_at).toLocaleString("zh-CN")}
-              </small>
             </header>
             <div className="expression-three">
               <section>
                 <h3>用户输入</h3>
-                <p>{e.user_input}</p>
+                <p>{item.user_input}</p>
               </section>
               <section>
                 <h3>医生回答</h3>
-                <p>{e.original_response}</p>
+                <p>{item.original_response}</p>
               </section>
               <section>
                 <h3>期望医生回答</h3>
-                <p>{e.desired_response}</p>
+                <p>{item.desired_response || "未提供，仅有纠正意见"}</p>
               </section>
             </div>
-            {e.reason && <p>整理说明：{e.reason}</p>}
-            <footer>
-              <span>
-                {e.included_versions.length
-                  ? `已纳入：${e.included_versions.join("、")}`
-                  : "尚未纳入构建"}
-              </span>
+            {item.correction_opinion && (
+              <p>纠正意见：{item.correction_opinion}</p>
+            )}
+            {item.last_result.reason && (
+              <p>处理原因：{item.last_result.reason}</p>
+            )}
+            {item.last_result.selected_example && (
+              <span className="status-chip success">固定示例</span>
+            )}
+            {item.last_result.used_for_rule && (
+              <span className="status-chip success">支持 Guide</span>
+            )}
+            <div className="expression-actions">
+              {item.last_run_id && (
+                <Link to={`/styles/${style.id}/build?run=${item.last_run_id}`}>
+                  查看关联构建
+                </Link>
+              )}
               <button
-                disabled={change.isPending}
-                onClick={() =>
-                  change.mutate({
-                    id: e.id,
-                    status: e.status === "excluded" ? "pending" : "excluded",
-                  })
-                }
+                onClick={() => {
+                  setEditing(item.id);
+                  setForm({
+                    user_input: item.user_input,
+                    original_response: item.original_response,
+                    desired_response: item.desired_response,
+                    correction_opinion: item.correction_opinion,
+                  });
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
               >
-                {e.status === "excluded" ? "重新纳入构建" : "排除素材"}
+                修改素材
               </button>
-            </footer>
+              <button
+                disabled={remove.isPending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "删除这条素材？后续构建不再使用，已有冻结版本不受影响。",
+                    )
+                  )
+                    remove.mutate(item.id);
+                }}
+              >
+                删除
+              </button>
+            </div>
           </article>
         ))}
-        <div className="pager">
-          <button
-            disabled={Number(filters.offset) === 0}
-            onClick={() =>
-              setFilters({
-                ...filters,
-                offset: String(Math.max(0, Number(filters.offset) - 20)),
-              })
-            }
-          >
-            上一页
-          </button>
-          <span>
-            第 {Math.floor(Number(filters.offset) / 20) + 1} 页 · 共{" "}
-            {query.data?.total ?? 0} 条
-          </span>
-          <button
-            disabled={Number(filters.offset) + 20 >= (query.data?.total ?? 0)}
-            onClick={() =>
-              setFilters({
-                ...filters,
-                offset: String(Number(filters.offset) + 20),
-              })
-            }
-          >
-            下一页
-          </button>
-        </div>
+        {query.data && (
+          <div className="pager">
+            <button
+              disabled={!offset}
+              onClick={() =>
+                setFilters({
+                  ...filters,
+                  offset: String(Math.max(0, offset - 20)),
+                })
+              }
+            >
+              上一页
+            </button>
+            <span>
+              共 {query.data.total} 条 · 第 {Math.floor(offset / 20) + 1} 页
+            </span>
+            <button
+              disabled={offset + 20 >= query.data.total}
+              onClick={() =>
+                setFilters({ ...filters, offset: String(offset + 20) })
+              }
+            >
+              下一页
+            </button>
+          </div>
+        )}
       </section>
     </>
   );
