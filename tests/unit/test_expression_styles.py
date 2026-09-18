@@ -203,5 +203,46 @@ async def test_style_agent_semantic_drift_retry_contains_reasons(db, repair_pass
         {"original_response": "叫我 SlimGuard。"},
     )
     assert result["automated"]["passed"] is repair_passes
+    assert len(result["automated"]["checks"]) == 2
+    assert result["automated"]["checks"][0]["issues"] == ["删掉了产品名称，回答变成鼓励"]
     assert result["text"] == ("叫我 SlimGuard 就行。" if repair_passes else "叫我 SlimGuard。")
     assert "删掉了产品名称" in gateway.requests[2].messages[-1].content
+
+
+async def test_semantic_schema_echo_is_rejected_then_retried(db):
+    import json
+
+    from slim_guard.agent_models.fake import ScriptedModelGateway
+    from slim_guard.agent_models.gateway import ModelMessage, ModelResponse
+    from slim_guard.agents.style.agent import SemanticCheck
+    from slim_guard.style_management.runtime import evaluate_example
+
+    def response(value):
+        return ModelResponse(message=ModelMessage(role="assistant", content=json.dumps(value)))
+
+    rewritten = {
+        "text": "叫我 SlimGuard 就行。",
+        "style_profile_version": "version-test",
+        "used_block_ids": ["neutral"],
+    }
+    # Captured provider failure: a verdict mixed with the schema is not a valid verdict.
+    echoed_schema = {**SemanticCheck.model_json_schema(), "passed": True, "issues": []}
+    gateway = ScriptedModelGateway(
+        [
+            response(rewritten),
+            response(echoed_schema),
+            response(rewritten),
+            response({"passed": True, "issues": []}),
+        ]
+    )
+    result = await evaluate_example(
+        gateway, "test", "version-test", {}, {"original_response": "你可以叫我 SlimGuard。"}
+    )
+    assert result["automated"]["passed"]
+    assert result["automated"]["model_calls"] == 4
+    assert result["automated"]["checks"][0]["passed"] is False
+    assert result["automated"]["checks"][1]["passed"] is True
+    prompt = gateway.requests[1].messages[0].content
+    assert "返回判决实例" in prompt
+    assert '{"passed":true,"issues":[]}' in prompt
+    assert '"properties"' not in prompt

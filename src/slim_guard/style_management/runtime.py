@@ -8,7 +8,14 @@ from sqlalchemy import select
 from slim_guard.agent_models.embeddings import EmbeddingGateway
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agents.contracts import AgentInvocation, ResponseContentBlock, ResponsePlan
-from slim_guard.agents.style import ResponseStyleAgent, StyleContext, StyleExample, StyleProfile
+from slim_guard.agents.style import (
+    RESPONSE_STYLE_PROMPT_VERSION,
+    STYLE_MAX_MODEL_CALLS,
+    ResponseStyleAgent,
+    StyleContext,
+    StyleExample,
+    StyleProfile,
+)
 from slim_guard.agents.style.contracts import StyleProfileSnapshot
 from slim_guard.agents.style.retrieval import similar_examples
 from slim_guard.db.models import new_uuid, utc_now
@@ -112,11 +119,11 @@ async def evaluate_example(
         turn_id=turn_id,
         graph_version="style-build-v2",
         agent_role="response_style",
-        agent_version="response-style-v6",
+        agent_version=RESPONSE_STYLE_PROMPT_VERSION,
         caller="style_builder",
         input_schema="StyleContext",
         deadline_at=utc_now() + timedelta(seconds=120),
-        max_model_calls=4,
+        max_model_calls=STYLE_MAX_MODEL_CALLS,
         max_tool_calls=0,
         max_total_tokens=16000,
     )

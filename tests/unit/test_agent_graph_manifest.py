@@ -5,6 +5,22 @@ import pytest
 from slim_guard.harness.manifest import AgentGraphManifest, AgentGraphNodeManifest
 
 
+def test_style_manifest_budget_matches_internal_generation_and_judge_loop() -> None:
+    from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_graph_manifest
+    from slim_guard.agents.style import STYLE_MAX_MODEL_CALLS
+
+    graph = build_agent_graph_manifest(
+        AgentRuntimeDefinition(
+            model_provider="test",
+            text_model="test",
+            vision_model="test",
+            code_revision="test",
+        )
+    )
+    assert dict(graph.nodes)["response_style"].max_model_calls == STYLE_MAX_MODEL_CALLS == 4
+    assert graph.style_profile_version == "resolved-from-active-version-per-turn"
+
+
 def node(role: str) -> AgentGraphNodeManifest:
     return AgentGraphNodeManifest.build(
         role=role,

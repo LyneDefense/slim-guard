@@ -24,6 +24,7 @@ from slim_guard.agents.reviewer import (
 )
 from slim_guard.agents.style import (
     RESPONSE_STYLE_PROMPT_VERSION,
+    STYLE_MAX_MODEL_CALLS,
     ResponseStyleAgent,
     StyleContextCompiler,
 )
@@ -516,7 +517,7 @@ class ResponseStageExecutor:
             input_schema=input_schema,
             privacy_scopes=privacy_scopes,
             deadline_at=request.deadline_at,
-            max_model_calls=4 if role is AgentRole.RESPONSE_STYLE else 2,
+            max_model_calls=STYLE_MAX_MODEL_CALLS if role is AgentRole.RESPONSE_STYLE else 2,
             max_tool_calls=0,
             max_total_tokens=self._max_invocation_tokens,
         )

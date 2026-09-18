@@ -30,6 +30,7 @@ from slim_guard.agents.reviewer import (
 from slim_guard.agents.style import (
     RESPONSE_STYLE_PROMPT,
     RESPONSE_STYLE_PROMPT_VERSION,
+    STYLE_MAX_MODEL_CALLS,
     ResponseStyleAgent,
 )
 from slim_guard.db.session import Database
@@ -476,7 +477,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
             prompt=RESPONSE_STYLE_PROMPT,
             output_schema="StyledResponse",
             privacy_scopes=("response_plan", "style_profile", "style_examples"),
-            max_model_calls=2,
+            max_model_calls=STYLE_MAX_MODEL_CALLS,
             max_tool_calls=0,
             max_total_tokens=definition.multi_agent_invocation_max_total_tokens,
         ),
@@ -495,7 +496,7 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
     return AgentGraphManifest.build(
         graph_version=definition.multi_agent_graph_version,
         nodes=nodes,
-        style_profile_version="slimguard_default_v1",
+        style_profile_version="resolved-from-active-version-per-turn",
         routing_policy_version="core-tool-directed-v1",
         evidence_policy_version="typed-provenance-v1",
         safety_policy_version="health-output-guard-v2",
