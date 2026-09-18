@@ -92,6 +92,7 @@ AGENT_ROLE_LABELS = {
     "nutrition_expert": "营养专业 Agent",
     "nutrition_tool": "营养只读工具",
     "style_resolver": "风格配置模块",
+    "participant_router": "群聊角色路由",
     "response_style": "表达风格 Agent",
     "response_reviewer": "回复审查 Agent",
     "coordinator": "工作流协调器",
@@ -316,11 +317,25 @@ def _present_agent_item(operation: str, details: Mapping[str, Any]) -> dict[str,
     if operation == "tool_result":
         return _tool_result_presentation(details)
     if operation == "agent_message":
-        return _presentation(
-            "output",
-            "Agent 确定最终回复",
-            "Harness 已确定本轮最终回复；正文已在页面顶部展示，随后进入发送流程。",
-        )
+        participant = str(details.get("participant") or "system_assistant")
+        participant_label = {
+            "coach": "医生教练",
+            "system_assistant": "系统助手",
+            "user": "用户",
+        }.get(participant, participant)
+        kind = str(details.get("kind") or "text")
+        card = _mapping(details.get("card"))
+        if card:
+            summary = f"{participant_label}发送一张系统卡片（{card.get('card_type', '未命名')}）。"
+        else:
+            summary = f"{participant_label}发送一条{kind}消息；正文已在页面顶部展示。"
+        return {
+            **_presentation("output", f"{participant_label}输出最终消息", summary),
+            "facts": [
+                {"label": "参与者", "value": participant_label},
+                {"label": "渲染类型", "value": kind},
+            ],
+        }
     if operation == "output_guard":
         return _presentation(
             "output",

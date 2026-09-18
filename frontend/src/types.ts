@@ -92,6 +92,7 @@ export interface TraceListFilters {
 
 export type AgentRole =
   | "core"
+  | "participant_router"
   | "orchestrator"
   | "dish_recognition"
   | "nutrition_retrieval"

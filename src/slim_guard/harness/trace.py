@@ -390,8 +390,6 @@ class PersistentHarnessRunRecorder:
                     status=ItemStatus.COMPLETED,
                     payload={
                         "text": final_text,
-                        "participant": "system_assistant",
-                        "kind": "text",
                     },
                 )
             await self._store.transition_turn(

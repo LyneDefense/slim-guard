@@ -334,6 +334,7 @@ class AdminQueryRepository:
                                     "workflow_transition",
                                     "response_adopted",
                                     "response_degraded",
+                                    "agent_message",
                                 )
                             ),
                         )
@@ -1124,6 +1125,7 @@ class AdminQueryRepository:
                                     "workflow_transition",
                                     "response_adopted",
                                     "response_degraded",
+                                    "agent_message",
                                 )
                             ),
                         )

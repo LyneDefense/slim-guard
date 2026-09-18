@@ -12,7 +12,10 @@ export function TurnTraceOverview({
     .map((message) => message.text ?? (message.redacted ? "[内容已脱敏]" : ""))
     .filter(Boolean)
     .join("\n");
-  const finalText = data.output?.content ?? data.style_comparison?.final_text ?? null;
+  const finalText =
+    data.output?.content
+    ?? data.style_comparison?.final_text
+    ?? visibleAgentOutput(data.timeline);
   const style = data.style_comparison;
   const adoptedRender = style?.renders.find(
     (render) => render.artifact_id === style.final_artifact_id,
@@ -111,6 +114,21 @@ export function TurnTraceOverview({
       <HarnessControls data={data} workflow={workflow} />
     </>
   );
+}
+
+function visibleAgentOutput(timeline: TraceDetail["timeline"]): string | null {
+  const messages = timeline
+    .filter((event) => event.operation === "agent_message")
+    .sort((left, right) => left.sequence - right.sequence)
+    .flatMap((event) => {
+      const details = recordValue(event.details);
+      const text = stringOrNull(details.text);
+      if (text) return [text];
+      const card = recordValue(details.card);
+      const cardType = stringOrNull(card.card_type);
+      return cardType ? [`[系统卡片：${cardType}]`] : [];
+    });
+  return messages.length > 0 ? messages.join("\n") : null;
 }
 
 interface RagOverview {
@@ -297,6 +315,7 @@ function TraceTextCard({
 function invocationDetail(role: string, attempt: number): string {
   const labels: Record<string, string> = {
     core: "理解任务并调用业务/专业工具",
+    participant_router: "判断系统助手与医生教练的消息责任",
     nutrition_expert: "结合证据与 RAG 形成专业评估",
     response_style: "使用同一已启用 Profile 整理表达",
     response_reviewer: "检查安全、依据与语义忠实度",

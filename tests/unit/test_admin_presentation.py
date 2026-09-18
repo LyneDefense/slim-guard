@@ -148,6 +148,24 @@ def test_model_tool_choice_is_presented_as_an_explicit_decision() -> None:
     assert "隐藏思维" in presentation["summary"]
 
 
+def test_visible_group_chat_messages_show_their_participant() -> None:
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "agent_message",
+            "details": {
+                "participant": "coach",
+                "kind": "text",
+                "text": "行，这顿搭配挺好。",
+            },
+        }
+    )
+
+    assert presentation["title"] == "医生教练输出最终消息"
+    assert "正文已在页面顶部展示" in presentation["summary"]
+    assert {"label": "参与者", "value": "医生教练"} in presentation["facts"]
+
+
 def test_memory_ingestion_model_is_presented_as_a_separate_stage() -> None:
     presentation = present_event(
         {
