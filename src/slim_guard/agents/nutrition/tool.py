@@ -167,10 +167,15 @@ def nutrition_agent_tool_definitions() -> tuple[RegisteredTool, ...]:
         RegisteredTool(
             name=CONSULT_NUTRITION_TOOL_NAME,
             description=(
-                "Ask the bounded Nutrition Agent for evidence-backed nutrition analysis. "
+                "Ask the bounded Nutrition Agent for nutrition analysis grounded in the "
+                "current evidence. Approved RAG citations are preferred; when no relevant "
+                "citation exists it may return a clearly low-risk, uncertainty-aware "
+                "common-knowledge observation, but never a medical or precise nutrient "
+                "claim. "
                 "Use this only when the user asks for dietary suitability, meal adjustment, "
-                "nutrition explanation, or another professional nutrition judgment. Do not "
-                "use it for simple meal logging, greetings, or unrelated conversation. The "
+                "nutrition explanation, an automatic post-record meal evaluation, or another "
+                "professional nutrition judgment. Do not "
+                "use it for greetings or unrelated conversation. The "
                 "specialist reads the current Turn evidence and approved nutrition corpus; "
                 "pass a concise professional question without inventing user facts."
             ),

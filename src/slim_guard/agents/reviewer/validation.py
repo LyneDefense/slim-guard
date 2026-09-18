@@ -34,7 +34,15 @@ class ReviewerVerdictValidator:
             declared.add(verdict.issue_type)
 
         if verdict.verdict is ReviewerVerdictStatus.PASS:
-            if verdict.reason_summary is not None:
+            # The participant router's coach-only social block is deliberately
+            # low-risk and may receive a short explanatory pass reason from the
+            # model. Keep the strict no-reason contract for factual/professional
+            # responses, where a pass reason can mask an integrity mismatch.
+            social_only = bool(context.response_plan.content_blocks) and all(
+                block.kind is ContentBlockKind.SOCIAL_ACT
+                for block in context.response_plan.content_blocks
+            )
+            if verdict.reason_summary is not None and not social_only:
                 issues.append(
                     ReviewerValidationIssue(
                         ReviewerValidationIssueCode.PASS_REASON_PRESENT,

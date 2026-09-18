@@ -304,6 +304,20 @@ async def test_recent_images_are_user_scoped_unexpired_and_include_observation(
                                 "asset_id": active.asset.id,
                                 "description": "一盘白米饭和蔬菜，部分食材不确定。",
                                 "requires_user_confirmation": True,
+                                "dish_recognition": {
+                                    "dishes": [
+                                        {
+                                            "dish_ref": "dish-egg",
+                                            "candidates": [
+                                                {"label": "火腿", "confidence": 0.6},
+                                                {"label": "肉末", "confidence": 0.4},
+                                            ],
+                                            "uncertainty_reasons": ["配料被遮挡"],
+                                            "requires_confirmation": True,
+                                        }
+                                    ],
+                                    "suggested_question": "炒鸡蛋里是火腿还是肉末？",
+                                },
                             },
                         },
                     },
@@ -328,5 +342,13 @@ async def test_recent_images_are_user_scoped_unexpired_and_include_observation(
         assert recent[0].mime_type == "image/png"
         assert recent[0].observation == "一盘白米饭和蔬菜，部分食材不确定。"
         assert recent[0].requires_user_confirmation is True
+        assert recent[0].dish_clarification == (
+            {
+                "dish_ref": "dish-egg",
+                "candidates": ["火腿", "肉末"],
+                "uncertainty_reasons": ["配料被遮挡"],
+            },
+        )
+        assert recent[0].suggested_question == "炒鸡蛋里是火腿还是肉末？"
     finally:
         await database.close()

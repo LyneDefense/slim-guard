@@ -21,7 +21,11 @@ from slim_guard.agents.nutrition import (
     nutrition_agent_tool_executors,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
-from slim_guard.agents.participant_router import ParticipantRoutingAgent
+from slim_guard.agents.participant_router import (
+    PARTICIPANT_ROUTER_PROMPT,
+    PARTICIPANT_ROUTER_PROMPT_VERSION,
+    ParticipantRoutingAgent,
+)
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
     RESPONSE_REVIEWER_PROMPT_VERSION,
@@ -471,11 +475,8 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
                 "participant_router": AgentGraphNodeManifest.build(
                     role="participant_router",
                     model=definition.text_model,
-                    prompt_version="participant-router-v1",
-                    prompt=(
-                        "判断本轮是否需要由教练补充关系性表达；系统助手负责事实、状态、"
-                        "澄清和卡片，教练不得输出原始 RAG 证据。"
-                    ),
+                    prompt_version=PARTICIPANT_ROUTER_PROMPT_VERSION,
+                    prompt=PARTICIPANT_ROUTER_PROMPT,
                     output_schema="ParticipantRoutingDecision",
                     privacy_scopes=("response_plan", "tool_outcomes"),
                     max_model_calls=2,

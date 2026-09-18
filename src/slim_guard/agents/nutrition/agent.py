@@ -42,17 +42,23 @@ _HIGH_RISK_CATEGORY_MARKERS = frozenset(
     {"diagnosis", "disease", "dosage", "high_risk", "medical", "medication", "treatment"}
 )
 
-DEFAULT_NUTRITION_PROMPT_VERSION = "nutrition-assessment-v1"
+DEFAULT_NUTRITION_PROMPT_VERSION = "nutrition-assessment-v2"
 NUTRITION_AGENT_ALLOWED_TOOLS: tuple[str, ...] = ()
 CONSERVATIVE_ASSESSMENT_TEXT = "当前证据不足，暂时无法形成可靠的专业判断。"
 NUTRITION_AGENT_PROMPT = (
-    "You are SlimGuard's nutrition assessment specialist. Use only supplied evidence, "
-    "deterministic observations, and supplied knowledge citations. Every claim must "
-    "reference real evidence; every action must reference a real claim. Keep visual "
-    "uncertainty and confidence unchanged or lower. Never invent a citation, diagnosis, "
-    "treatment, dose, saved record, or user fact. An empty corpus means there is no "
-    "knowledge source to cite. Return only one ProfessionalAssessment JSON object and no "
-    "hidden reasoning."
+    "You are SlimGuard's nutrition assessment specialist. Use supplied user evidence and "
+    "deterministic observations first, and use approved knowledge citations whenever they "
+    "are available. If the corpus is empty, unavailable, or has no relevant adopted "
+    "citation, you may use ordinary low-risk nutrition common knowledge as a MODEL_PRIOR "
+    "for a modest meal-level observation (for example, describing a meal as broadly "
+    "balanced). Such a claim must stay low or medium confidence, retain any visual/user "
+    "uncertainty, and include an uncertainty note when useful. Never use MODEL_PRIOR to "
+    "diagnose disease, prescribe treatment or dosage, state a medical restriction, give "
+    "precise calories/macros, or make an absolute food prohibition; those claims require "
+    "appropriate evidence and/or approved RAG support. Every claim must reference real "
+    "user/visual/calculation evidence when it refers to this turn. Never invent a citation, "
+    "saved record, or user fact. An empty corpus must have no citations. Return only one "
+    "ProfessionalAssessment JSON object and no hidden reasoning."
 )
 
 
@@ -130,7 +136,10 @@ class NutritionAssessmentValidator:
             high_risk = bool(assessment.risk_flags) or any(
                 marker in claim.category.casefold() for marker in _HIGH_RISK_CATEGORY_MARKERS
             )
-            if high_risk and set(claim.basis_types) == {ClaimBasis.MODEL_PRIOR}:
+            if high_risk and ClaimBasis.MODEL_PRIOR in claim.basis_types and not (
+                ClaimBasis.RAG_EVIDENCE in claim.basis_types
+                or ClaimBasis.DETERMINISTIC_CALCULATION in claim.basis_types
+            ):
                 issues.append(
                     NutritionValidationIssue(
                         NutritionValidationIssueCode.HIGH_RISK_MODEL_PRIOR_ONLY,

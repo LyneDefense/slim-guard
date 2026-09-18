@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from slim_guard.agent_models.gateway import NormalizedToolCall
-from slim_guard.db.models import SlimGuardUser
+from slim_guard.db.models import AgentItemRecord, SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.harness.events import ItemStatus, ItemType, TurnTrigger
@@ -222,3 +223,62 @@ async def test_uncertain_visual_meal_requires_model_grounded_user_confirmation(
         assert confirmed.output["foods"] == [{"name": "蒸蛋", "portion": None}]
     finally:
         await database.close()
+
+
+def test_visual_choice_confirmation_requires_each_candidate_name() -> None:
+    source = AgentItemRecord(
+        id="source-user",
+        thread_id="thread-1",
+        turn_id="turn-2",
+        sequence=1,
+        item_type="user_message",
+        status="completed",
+        payload_json=json.dumps({"text": "确认"}),
+    )
+    inspection = AgentItemRecord(
+        id="inspection-result",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        sequence=2,
+        item_type="tool_result",
+        status="completed",
+        payload_json=json.dumps(
+            {
+                "execution": {
+                    "tool_name": "inspect_image",
+                    "result": {
+                        "status": "succeeded",
+                        "output": {
+                            "requires_user_confirmation": True,
+                            "dish_recognition": {
+                                "dishes": [
+                                    {
+                                        "requires_confirmation": True,
+                                        "candidates": [
+                                            {"label": "火腿"},
+                                            {"label": "虾仁"},
+                                        ],
+                                    },
+                                    {
+                                        "requires_confirmation": True,
+                                        "candidates": [
+                                            {"label": "猪肉"},
+                                            {"label": "牛肉"},
+                                        ],
+                                    },
+                                ]
+                            },
+                        },
+                    },
+                }
+            }
+        ),
+    )
+
+    assert MealToolHandlers._unresolved_dish_choices((inspection,), source) == [
+        "火腿 / 虾仁",
+        "猪肉 / 牛肉",
+    ]
+
+    source.payload_json = json.dumps({"text": "火腿，猪肉"})
+    assert MealToolHandlers._unresolved_dish_choices((inspection,), source) == []

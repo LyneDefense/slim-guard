@@ -12,6 +12,8 @@ from slim_guard.agents.participant_router import ParticipantRoutingAgent
 from slim_guard.agents.reviewer import ResponseReviewerAgent, ReviewerContextCompiler
 from slim_guard.agents.style import ResponseStyleAgent, StyleContextCompiler
 from slim_guard.group_chat.composer import compose_messages
+from slim_guard.group_chat.routing import CoachCandidate
+from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
@@ -263,6 +265,7 @@ class AgentResponseFinalizer:
             block.kind in {ContentBlockKind.QUESTION, ContentBlockKind.UNCERTAINTY}
             for block in planned.plan.content_blocks
         )
+        confirmed_operations = self._coach_operation_summary(request.tool_outcomes)
         routed = await self._stages.run_participant_routing(
             request=request,
             system_text=request.neutral_draft,
@@ -275,13 +278,36 @@ class AgentResponseFinalizer:
                     if planned.assessment is not None
                     else None
                 ),
+                "confirmed_operations": confirmed_operations,
             },
-            allowed_source_refs=planned.plan.citation_refs,
+            allowed_source_refs=tuple(
+                dict.fromkeys(
+                    (
+                        *planned.plan.citation_refs,
+                        *(
+                            reference
+                            for block in planned.plan.content_blocks
+                            for reference in block.source_refs
+                        ),
+                    )
+                )
+            ),
             pending_clarification=pending,
         )
         calls = routed.model_call_count
         tokens = routed.total_token_count
         coach = routed.routing.coach
+        meal_operations = tuple(
+            operation
+            for operation in confirmed_operations
+            if operation.get("tool_name") == "record_meal"
+        )
+        if coach is None and meal_operations and not pending:
+            # A successful meal write always gets a small coach presence even if
+            # the optional routing model conservatively returns null. This is
+            # relationship-only acknowledgement; any food evaluation still
+            # has to come from the routed assessment above.
+            coach = CoachCandidate(text="行，这顿记上了。")
         if coach is None:
             messages = compose_messages(
                 turn_id=request.turn_id,
@@ -309,7 +335,11 @@ class AgentResponseFinalizer:
             request,
             producer=ArtifactProducerRole.PARTICIPANT_ROUTER,
             artifact_type="coach_neutral_response",
-            payload={"text": coach.text, "source_refs": coach.source_refs},
+            payload={
+                "text": coach.text,
+                "source_refs": coach.source_refs,
+                "fallback": not bool(routed.routing.coach),
+            },
             parents=(routed.artifact.artifact_id,),
         )
         await self._stages.persist(coach_neutral_artifact)
@@ -381,6 +411,44 @@ class AgentResponseFinalizer:
             messages=messages,
             failure_code=style.failure_code,
         )
+
+    @staticmethod
+    def _coach_operation_summary(
+        outcomes: tuple[ToolCallOutcome, ...],
+    ) -> tuple[dict[str, object], ...]:
+        """Expose verified operation facts without persistence internals."""
+
+        summary: list[dict[str, object]] = []
+        for outcome in outcomes:
+            execution = outcome.execution
+            if execution.result.status.value != "succeeded":
+                continue
+            if execution.tool_name not in {
+                "record_meal",
+                "record_weight",
+                "record_body_fat",
+                "record_exercise",
+            }:
+                continue
+            output = execution.result.output
+            item: dict[str, object] = {
+                "tool_name": execution.tool_name,
+                "source_ref": execution.tool_call_id,
+            }
+            if execution.tool_name == "record_meal":
+                meal_type = output.get("meal_type")
+                foods = output.get("foods")
+                if isinstance(meal_type, str):
+                    item["meal_type"] = meal_type
+                if isinstance(foods, list):
+                    item["foods"] = [
+                        food.get("name")
+                        for food in foods
+                        if isinstance(food, dict)
+                        and isinstance(food.get("name"), str)
+                    ]
+            summary.append(item)
+        return tuple(summary)
 
     async def _repair_style(
         self,

@@ -257,6 +257,16 @@ class AuthoritativeContextDataProvider:
                             if image.requires_user_confirmation is not None
                             else {}
                         ),
+                        **(
+                            {"dish_clarification": list(image.dish_clarification)}
+                            if image.dish_clarification
+                            else {}
+                        ),
+                        **(
+                            {"suggested_question": image.suggested_question}
+                            if image.suggested_question is not None
+                            else {}
+                        ),
                     }
                     for image in recent_images
                 ]

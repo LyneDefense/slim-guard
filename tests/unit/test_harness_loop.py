@@ -132,11 +132,16 @@ class RecordingRunRecorder(NullHarnessRunRecorder):
         self.workflow_events.append((event_type, dict(payload)))
 
 
-def tool_call(call_id: str, *, name: str = "record_weight") -> NormalizedToolCall:
+def tool_call(
+    call_id: str,
+    *,
+    name: str = "record_weight",
+    arguments: dict[str, Any] | None = None,
+) -> NormalizedToolCall:
     return NormalizedToolCall(
         id=call_id,
         name=name,
-        arguments={"weight_kg": 77.6},
+        arguments=arguments or {"weight_kg": 77.6},
     )
 
 
@@ -212,6 +217,8 @@ async def run_loop(
     trusted_evidence_item_ids: tuple[str, ...] = (),
     response_pipeline_hook: ResponsePipelineHook | None = None,
     recorder: NullHarnessRunRecorder | None = None,
+    request_model: ModelRequest | None = None,
+    authorization_override: ToolAuthorization | None = None,
 ):
     return await HarnessLoop(
         model=model,
@@ -220,13 +227,48 @@ async def run_loop(
         recorder=recorder,
         clock=clock,
     ).run(
-        request=request(),
+        request=request_model or request(),
         context=turn_context or context(),
-        authorization=authorization(),
+        authorization=authorization_override or authorization(),
         source_item_id="user-item-1",
         now=datetime.now(UTC),
         trusted_evidence_item_ids=trusted_evidence_item_ids,
         response_pipeline_hook=response_pipeline_hook,
+    )
+
+
+def meal_request() -> ModelRequest:
+    base = request()
+    return base.model_copy(
+        update={
+            "tools": (
+                ToolDefinition(
+                    name="record_meal",
+                    description="Record a confirmed meal.",
+                    parameters_json_schema={
+                        "type": "object",
+                        "properties": {
+                            "meal_type": {"type": "string"},
+                            "foods": {"type": "array"},
+                        },
+                        "required": ["meal_type", "foods"],
+                        "additionalProperties": False,
+                    },
+                    version="v1",
+                ),
+                ToolDefinition(
+                    name="consult_nutrition_specialist",
+                    description="Assess the confirmed meal.",
+                    parameters_json_schema={
+                        "type": "object",
+                        "properties": {"professional_question": {"type": "string"}},
+                        "required": ["professional_question"],
+                        "additionalProperties": False,
+                    },
+                    version="v1",
+                ),
+            )
+        }
     )
 
 
@@ -254,6 +296,55 @@ async def test_loop_executes_tool_and_returns_one_final_response() -> None:
     observation = json.loads(second_messages[-1].content or "")
     assert observation["status"] == "succeeded"
     assert observation["output"]["weight_kg"] == 77.6
+
+
+async def test_confirmed_meal_forces_nutrition_assessment_before_final_text() -> None:
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(
+                tool_call(
+                    "meal-call",
+                    name="record_meal",
+                    arguments={
+                        "meal_type": "dinner",
+                        "foods": [{"name": "煎三文鱼"}],
+                    },
+                )
+            ),
+            assistant_tool_calls(
+                tool_call(
+                    "assessment-call",
+                    name="consult_nutrition_specialist",
+                    arguments={"professional_question": "评价这顿已确认的晚餐"},
+                )
+            ),
+            assistant_text("已记录，并完成餐食评价。"),
+        )
+    )
+    tools = RecordingToolCallRunner()
+    result = await run_loop(
+        model,
+        tools,
+        request_model=meal_request(),
+        authorization_override=ToolAuthorization(
+            allowed_tool_names=frozenset(
+                {"record_meal", "consult_nutrition_specialist"}
+            ),
+            isolated_write_environment=True,
+        ),
+    )
+
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert [call.name for call in tools.calls] == [
+        "record_meal",
+        "consult_nutrition_specialist",
+    ]
+    forced_request = model.requests[1]
+    assert forced_request.tool_choice is ToolChoice.REQUIRED
+    assert [tool.name for tool in forced_request.tools] == [
+        "consult_nutrition_specialist"
+    ]
+    model.assert_exhausted()
 
 
 async def test_response_pipeline_replaces_core_draft_without_second_core_generation() -> None:

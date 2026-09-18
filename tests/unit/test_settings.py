@@ -336,7 +336,7 @@ def test_harness_runtime_mode_exposes_tool_enabled_manifest() -> None:
         "response_style",
     ]
     graph_nodes = dict(app.state.agent_graph_manifest.nodes)
-    assert graph_nodes["nutrition_expert"].prompt_version == "nutrition-assessment-v1"
+    assert graph_nodes["nutrition_expert"].prompt_version == "nutrition-assessment-v2"
     assert {node.max_total_tokens for node in graph_nodes.values()} == {32_000, 64_000}
     assert dict(app.state.agent_graph_manifest.nutrition_tool_versions) == {
         "calculate_bmi": "1",

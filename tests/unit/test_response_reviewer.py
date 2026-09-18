@@ -355,6 +355,34 @@ async def test_inconsistent_pass_reason_is_rejected() -> None:
     assert "pass_reason_present" in result.validation_report.issue_codes
 
 
+async def test_social_coach_pass_reason_is_allowed() -> None:
+    review_context = context().model_copy(
+        update={
+            "response_plan": ResponsePlan(
+                content_blocks=(
+                    ResponseContentBlock(
+                        block_id="coach-social",
+                        kind="social_act",
+                        text="行，先记上。",
+                    ),
+                ),
+            ),
+            "styled_response": StyledResponse(
+                text="行，先记上。",
+                used_block_ids=("coach-social",),
+                style_profile_version=SLIMGUARD_DEFAULT_V1.version,
+            ),
+            "assessment": None,
+            "available_evidence_ids": None,
+            "evidence_summaries": (),
+        }
+    )
+    gateway = ScriptedModelGateway([response('{"verdict":"pass","reason_summary":"表达自然"}')])
+    result = await agent(gateway).run(invocation=invocation(), context=review_context)
+    assert result.status is InvocationStatus.SUCCEEDED
+    assert result.verdict.verdict == "pass"
+
+
 def test_omitted_required_citation_and_risk_prevent_pass() -> None:
     review_context = context()
     assert review_context.assessment is not None

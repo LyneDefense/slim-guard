@@ -29,7 +29,7 @@ from slim_guard.runtime.invocation import (
     InvocationRunner,
 )
 
-RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v3"
+RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v4"
 RESPONSE_REVIEWER_PROMPT = (
     "You are SlimGuard's response fidelity reviewer. Judge only whether the styled "
     "response is faithful to the supplied ResponsePlan, assessment, evidence "
@@ -54,7 +54,8 @@ RESPONSE_REVIEWER_PROMPT = (
     "unsupported_professional_claim, or medical_overreach to nutrition_expert; route only "
     "missing_user_evidence to core. Use reject with no repair target when a safe "
     "repair direction cannot be established. Keep reason_summary short and suitable for "
-    "an administrator; never include chain-of-thought."
+    "an administrator; never include chain-of-thought. For a coach-only social_act plan, "
+    "a short pass reason is harmless, but do not invent factual or nutritional claims."
 )
 
 

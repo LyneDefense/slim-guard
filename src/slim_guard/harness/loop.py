@@ -154,6 +154,7 @@ class HarnessLoop:
         tool_outcomes: list[ToolCallOutcome] = []
         nonretryable_failures: dict[tuple[str, str], int] = {}
         force_text_response = False
+        force_meal_assessment = False
         active_assessment = safety_assessment or SafetyAssessment(
             level=HealthRiskLevel.NORMAL,
             code="none",
@@ -185,6 +186,28 @@ class HarnessLoop:
                 # capabilities after the same non-retryable failure happens twice.
                 # The final explanation still comes from the model.
                 request_update.update({"tools": (), "tool_choice": ToolChoice.NONE})
+            elif force_meal_assessment:
+                # A confirmed meal write is the boundary after which nutrition
+                # evidence may be retrieved. Restrict the next Core call to
+                # that read-only capability so the evaluation cannot be
+                # silently skipped by returning a generic acknowledgement.
+                assessment_tools = tuple(
+                    tool
+                    for tool in request.tools
+                    if tool.name == "consult_nutrition_specialist"
+                )
+                if assessment_tools:
+                    request_update.update(
+                        {
+                            "tools": assessment_tools,
+                            "tool_choice": ToolChoice.REQUIRED,
+                        }
+                    )
+                else:
+                    # Nutrition Agent is optional in development/test
+                    # environments. Do not block the record response when the
+                    # capability is not configured.
+                    force_meal_assessment = False
             current_request = request.model_copy(update=request_update)
             if self._total_tokens(model_responses) >= self._limits.max_total_tokens:
                 return await self._finish(
@@ -360,6 +383,16 @@ class HarnessLoop:
                 )
                 tool_completed_at = self._clock()
                 tool_outcomes.append(outcome)
+                if outcome.execution.result.status.value == "succeeded":
+                    if outcome.execution.tool_name == "record_meal":
+                        force_meal_assessment = not any(
+                            previous.execution.tool_name
+                            == "consult_nutrition_specialist"
+                            and previous.execution.result.status.value == "succeeded"
+                            for previous in tool_outcomes
+                        )
+                    elif outcome.execution.tool_name == "consult_nutrition_specialist":
+                        force_meal_assessment = False
                 await self._recorder.finish_tool_call(
                     trace=trace,
                     outcome=outcome,

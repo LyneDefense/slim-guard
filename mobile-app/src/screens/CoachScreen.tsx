@@ -168,14 +168,33 @@ function Bubble({ message }: { message: ChatMessage }) {
 function CardContent({ card }: { card: NonNullable<ChatMessage['card']> }) {
   const data = card.data || {};
   const title = card.card_type === 'meal_record' ? '已记录餐食' : '已完成记录';
+  const labels: Record<string, string> = {
+    meal_type: '餐次',
+    foods: '内容',
+    note: '备注',
+    weight_kg: '体重',
+    original_value: '记录值',
+    condition: '状态',
+    body_fat_percent: '体脂率',
+    activity_name: '运动',
+    duration_minutes: '时长（分钟）',
+    steps: '步数',
+    distance_meters: '距离（米）',
+    reported_energy_kcal: '消耗（千卡）',
+  };
+  const hiddenFields = new Set(['created', 'record_id', 'occurred_at', 'idempotency_key', 'source_ids', 'trusted_evidence_item_ids']);
   const details = Object.entries(data)
+    .filter(([key]) => !hiddenFields.has(key))
     .filter(([, value]) => value !== null && value !== undefined)
     .map(([key, value]) => {
-      const label = key === 'meal_type' ? '餐次' : key === 'foods' ? '内容' : key;
+      const label = labels[key] || key;
       const rendered = Array.isArray(value)
         ? value.map((item) => typeof item === 'object' && item !== null && 'name' in item ? (item as { name: string }).name : String(item)).join('、')
         : typeof value === 'object' ? JSON.stringify(value) : String(value);
-      return `${label}: ${rendered}`;
+      const normalized = key === 'meal_type'
+        ? ({ breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐', unspecified: '餐食' } as Record<string, string>)[String(value)] || rendered
+        : rendered;
+      return `${label}: ${normalized}`;
     })
     .join(' · ');
   return <View style={styles.card}><Text style={styles.cardTitle}>{title}</Text>{details ? <Text style={styles.cardText}>{details}</Text> : null}</View>;

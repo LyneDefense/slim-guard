@@ -43,6 +43,8 @@ class RecentImageReference:
     expires_at: datetime
     observation: str | None
     requires_user_confirmation: bool | None
+    dish_clarification: tuple[dict[str, object], ...] = ()
+    suggested_question: str | None = None
 
 
 class ConversationWindowRepository:
@@ -176,15 +178,22 @@ class ConversationWindowRepository:
                     .limit(50)
                 )
             )
-        observations: dict[str, tuple[str, bool | None]] = {}
+        observations: dict[
+            str, tuple[str, bool | None, tuple[dict[str, object], ...], str | None]
+        ] = {}
         wanted_ids = {asset.id for asset in assets}
         for row in result_rows:
             parsed = self._image_observation(row)
             if parsed is None:
                 continue
-            asset_id, observation, requires_confirmation = parsed
+            asset_id, observation, requires_confirmation, clarification, question = parsed
             if asset_id in wanted_ids and asset_id not in observations:
-                observations[asset_id] = (observation, requires_confirmation)
+                observations[asset_id] = (
+                    observation,
+                    requires_confirmation,
+                    clarification,
+                    question,
+                )
         return tuple(
             RecentImageReference(
                 asset_id=asset.id,
@@ -196,6 +205,12 @@ class ConversationWindowRepository:
                 ),
                 requires_user_confirmation=(
                     observations[asset.id][1] if asset.id in observations else None
+                ),
+                dish_clarification=(
+                    observations[asset.id][2] if asset.id in observations else ()
+                ),
+                suggested_question=(
+                    observations[asset.id][3] if asset.id in observations else None
                 ),
             )
             for asset in assets
@@ -274,7 +289,13 @@ class ConversationWindowRepository:
     @staticmethod
     def _image_observation(
         row: AgentItemRecord,
-    ) -> tuple[str, str, bool | None] | None:
+    ) -> tuple[
+        str,
+        str,
+        bool | None,
+        tuple[dict[str, object], ...],
+        str | None,
+    ] | None:
         try:
             payload = json.loads(row.payload_json)
             execution = payload.get("execution", {})
@@ -287,6 +308,7 @@ class ConversationWindowRepository:
             asset_id = output.get("asset_id")
             observation = output.get("description")
             requires_confirmation = output.get("requires_user_confirmation")
+            recognition = output.get("dish_recognition")
         except (AttributeError, TypeError, json.JSONDecodeError):
             return None
         if not isinstance(asset_id, str) or not isinstance(observation, str):
@@ -295,7 +317,54 @@ class ConversationWindowRepository:
             return None
         if not isinstance(requires_confirmation, bool):
             requires_confirmation = None
-        return asset_id, observation.strip(), requires_confirmation
+        clarification: list[dict[str, object]] = []
+        suggested_question: str | None = None
+        if isinstance(recognition, dict):
+            raw_dishes = recognition.get("dishes", ())
+            if isinstance(raw_dishes, list):
+                for raw_dish in raw_dishes:
+                    if not isinstance(raw_dish, dict):
+                        continue
+                    raw_candidates = raw_dish.get("candidates", ())
+                    if not isinstance(raw_candidates, list):
+                        continue
+                    candidates = tuple(
+                        candidate.get("label", "").strip()
+                        for candidate in raw_candidates
+                        if isinstance(candidate, dict)
+                        and isinstance(candidate.get("label"), str)
+                        and candidate.get("label", "").strip()
+                    )
+                    dish_ref = raw_dish.get("dish_ref")
+                    if not candidates or not isinstance(dish_ref, str) or not dish_ref:
+                        continue
+                    raw_reasons = raw_dish.get("uncertainty_reasons", ())
+                    reasons = (
+                        tuple(
+                            reason.strip()
+                            for reason in raw_reasons
+                            if isinstance(reason, str) and reason.strip()
+                        )
+                        if isinstance(raw_reasons, list)
+                        else ()
+                    )
+                    clarification.append(
+                        {
+                            "dish_ref": dish_ref,
+                            "candidates": list(candidates),
+                            "uncertainty_reasons": list(reasons),
+                        }
+                    )
+            raw_question = recognition.get("suggested_question")
+            if isinstance(raw_question, str) and raw_question.strip():
+                suggested_question = raw_question.strip()
+        return (
+            asset_id,
+            observation.strip(),
+            requires_confirmation,
+            tuple(clarification),
+            suggested_question,
+        )
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:

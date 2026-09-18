@@ -58,6 +58,11 @@ class ResponsePlanBuilder:
             if assessment is not None
             else ()
         )
+        tool_refs = tuple(
+            outcome.execution.tool_call_id
+            for outcome in tool_outcomes
+            if outcome.execution.result.status.value == "succeeded"
+        )
         return PlannedResponse(
             plan=ResponsePlan(
                 requested_detail=RequestedDetail.NORMAL,
@@ -66,6 +71,7 @@ class ResponsePlanBuilder:
                         block_id="core-neutral-draft",
                         kind=ContentBlockKind.SOCIAL_ACT,
                         text=neutral_draft,
+                        source_refs=tuple(dict.fromkeys((*citations, *tool_refs))),
                     ),
                 ),
                 citation_refs=citations,

@@ -19,14 +19,20 @@ from slim_guard.group_chat.routing import ParticipantRouter, RoutingResult
 from slim_guard.runtime.contracts import AgentInvocation, InvocationStatus
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 
-PARTICIPANT_ROUTER_PROMPT_VERSION = "participant-router-v1"
+PARTICIPANT_ROUTER_PROMPT_VERSION = "participant-router-v2"
 PARTICIPANT_ROUTER_PROMPT = (
     "你是 SlimGuard 的三方群聊参与者路由器。系统助手负责权威事实、工具状态、"
     "卡片、澄清问题和安全说明；教练只负责在语义已经确定时说一句自然、关系性的认可、"
     "评价、鼓励或督促。你不能让教练确认不确定菜品、宣布记录成功、展示 RAG 原文、"
-    "提出必须回答的业务问题，也不能新增医学或营养事实。给定系统助手将发送的原文，"
-    "只有确实值得教练补一句时才填写 coach_text，否则必须为 null。教练文本可以是自然"
-    "语言，不要复述系统文本。只返回符合 schema 的 JSON。"
+    "提出必须回答的业务问题，也不能把通识扩写成新的精确、个体化或医学事实。给定系统助手将发送的原文和本轮"
+    "结构化结果，只有确实值得教练补一句时才填写 coach_text，否则必须为 null。"
+    "餐食已经确认并成功记录时，可以自动给一句轻量反馈；没有营养评估时，可以基于"
+    "confirmed_operations 中已确认的食物给出宽泛、低风险的整体评价或关系性表达，但不得写"
+    "精确热量、疾病建议、绝对禁忌或把猜测说成事实。"
+    "如果存在 professional_assessment，应优先把其中允许表达的整体结论改成一句口语评价，"
+    "但不能展示 RAG 原文或引用；只有结论不适合关系性表达时才返回 null。菜品仍有待确认时"
+    "coach_text 必须为 null。不要复述系统文本。只返回符合"
+    "schema 的 JSON。"
 )
 
 

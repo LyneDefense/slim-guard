@@ -320,6 +320,57 @@ def test_validator_rejects_medical_claim_based_only_on_model_prior() -> None:
     assert NutritionValidationIssueCode.HIGH_RISK_MODEL_PRIOR_ONLY in report.issue_codes
 
 
+def test_validator_allows_low_risk_meal_observation_with_model_prior() -> None:
+    meal_observation = ProfessionalAssessment(
+        assessment_type="meal",
+        overall="这顿搭配整体比较均衡。",
+        findings=(
+            ProfessionalClaim(
+                claim_id="claim-meal-balance",
+                category="meal_balance",
+                statement="这顿搭配整体比较均衡。",
+                basis_types=("user_evidence", "model_prior"),
+                evidence_refs=("weight-1",),
+                confidence="medium",
+            ),
+        ),
+        uncertainty_note="这是基于通用营养常识的粗略判断，不替代个体化建议。",
+    )
+
+    report = NutritionAssessmentValidator().validate(
+        invocation_id="nutrition-invocation-1",
+        context=context(),
+        assessment=meal_observation,
+    )
+
+    assert report.is_valid
+
+
+def test_validator_rejects_medical_model_prior_mixed_with_user_evidence() -> None:
+    medical = ProfessionalAssessment(
+        assessment_type="general",
+        overall="未经专业依据的医学判断",
+        findings=(
+            ProfessionalClaim(
+                claim_id="claim-medical-mixed",
+                category="medical_diagnosis",
+                statement="这说明用户患有某种疾病。",
+                basis_types=("user_evidence", "model_prior"),
+                evidence_refs=("weight-1",),
+                confidence="low",
+            ),
+        ),
+    )
+
+    report = NutritionAssessmentValidator().validate(
+        invocation_id="nutrition-invocation-1",
+        context=context(),
+        assessment=medical,
+    )
+
+    assert NutritionValidationIssueCode.HIGH_RISK_MODEL_PRIOR_ONLY in report.issue_codes
+
+
 def test_validator_rejects_citations_when_corpus_is_empty() -> None:
     citation = KnowledgeCitation(
         citation_id="citation-forged",

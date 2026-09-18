@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sqlalchemy import select
+from sqlalchemy import desc, select
 
 from slim_guard.db.models import AgentItemRecord
 from slim_guard.domain.meal.contracts import MealFood, MealRecordCommand, MealRecordRef, MealType
@@ -150,18 +150,34 @@ class MealToolHandlers:
     ) -> ToolResult | None:
         """Enforce model-authored uncertainty without interpreting user language."""
         async with self._repository.database.session() as session:
+            # A clarification answer is normally sent in a new Turn.  The
+            # inspect_image result therefore cannot be limited to the current
+            # turn; use the latest completed observations in this thread and
+            # let the current user message resolve the structured candidates.
             result_items = tuple(
                 await session.scalars(
-                    select(AgentItemRecord).where(
-                        AgentItemRecord.turn_id == context.turn_id,
+                    select(AgentItemRecord)
+                    .where(
+                        AgentItemRecord.thread_id == context.thread_id,
                         AgentItemRecord.item_type == "tool_result",
                         AgentItemRecord.status == "completed",
                     )
+                    .order_by(desc(AgentItemRecord.created_at), desc(AgentItemRecord.sequence))
+                    .limit(50)
                 )
             )
-            requires_confirmation = any(
-                self._inspection_requires_confirmation(item) for item in result_items
+            latest_inspection = next(
+                (
+                    item
+                    for item in result_items
+                    if self._is_inspection_result(item)
+                ),
+                None,
             )
+            if latest_inspection is None:
+                return None
+            result_items = (latest_inspection,)
+            requires_confirmation = self._inspection_requires_confirmation(latest_inspection)
             if not requires_confirmation:
                 return None
             if arguments.visual_confirmation != "confirmed_by_current_user":
@@ -190,7 +206,25 @@ class MealToolHandlers:
                         "a current user message as evidence."
                     ),
                 )
+            unresolved = self._unresolved_dish_choices(result_items, source)
+            if unresolved:
+                return ToolResult.failed(
+                    code="visual_confirmation_required",
+                    message=(
+                        "请直接回答仍有歧义的菜名后再记录："
+                        + "；".join(unresolved)
+                    ),
+                )
         return None
+
+    @staticmethod
+    def _is_inspection_result(item: AgentItemRecord) -> bool:
+        try:
+            payload = json.loads(item.payload_json)
+            execution = payload.get("execution", {})
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            return False
+        return execution.get("tool_name") == "inspect_image"
 
     @staticmethod
     def _inspection_requires_confirmation(item: AgentItemRecord) -> bool:
@@ -206,6 +240,55 @@ class MealToolHandlers:
             and result.get("status") == "succeeded"
             and output.get("requires_user_confirmation") is True
         )
+
+    @staticmethod
+    def _unresolved_dish_choices(
+        items: tuple[AgentItemRecord, ...],
+        source: AgentItemRecord | None,
+    ) -> list[str]:
+        """Require the current user message to name each unresolved choice.
+
+        A generic acknowledgement such as “确认” cannot prove which side of a
+        visual choice the user selected. This deterministic guard prevents the
+        model from turning that acknowledgement into a false dish fact.
+        """
+
+        if source is None:
+            return []
+        try:
+            source_payload = json.loads(source.payload_json)
+            user_text = str(source_payload.get("text", "")).strip()
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            user_text = ""
+        unresolved: list[str] = []
+        for item in items:
+            try:
+                payload = json.loads(item.payload_json)
+                execution = payload.get("execution", {})
+                if execution.get("tool_name") != "inspect_image":
+                    continue
+                result = execution.get("result", {})
+                output = result.get("output", {})
+                recognition = output.get("dish_recognition", {})
+                dishes = recognition.get("dishes", [])
+            except (AttributeError, TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(dishes, list):
+                continue
+            for dish in dishes:
+                if not isinstance(dish, dict) or dish.get("requires_confirmation") is not True:
+                    continue
+                candidates = dish.get("candidates", [])
+                labels = [
+                    candidate.get("label", "").strip()
+                    for candidate in candidates
+                    if isinstance(candidate, dict)
+                    and isinstance(candidate.get("label"), str)
+                    and candidate.get("label", "").strip()
+                ]
+                if labels and not any(label in user_text for label in labels):
+                    unresolved.append(" / ".join(labels))
+        return list(dict.fromkeys(unresolved))
 
     @staticmethod
     def _parse_datetime(raw: str) -> datetime:
