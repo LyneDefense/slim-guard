@@ -1,5 +1,7 @@
 # 表达风格系统重构设计
 
+最新方案见 [风格训练器、Style Agent 与共享审查组件设计](STYLE_TRAINER_SHARED_REVIEW_DESIGN.md)，本地实现状态见 [操作手册](STYLE_MANAGEMENT.md)。本文保留早期系统设计背景；动态选例、旧构建与逐素材评审等流程不覆盖最新方案。[独立评测旧草案](STYLE_EVALUATION_ITERATION_DESIGN.md) 仅供历史参考，不作为本轮需求或验收依据。
+
 ## 1. 文档目的
 
 本文定义 SlimGuard 表达风格系统的重构方向。目标是把风格系统从“按场景分类后套用示例”改为“基于 Style Guide 和相似表达样例的纯表达转换”，同时支持多套可选风格、持续追加纠正素材和可审计的版本发布。
