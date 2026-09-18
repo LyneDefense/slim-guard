@@ -75,10 +75,11 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
                         "used_action_ids": [],
                         "preserved_risk_flags": [],
                         "preserved_citation_refs": [],
-                        "style_profile_version": "slimguard_default_v1",
+                        "style_profile_version": "doctor_builtin_v1",
                     }
                 )
             ),
+            text_response('{"passed":true,"issues":[]}'),
         ]
     )
     off_model = ScriptedModelGateway(
@@ -125,6 +126,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
         assert [request.purpose for request in on_model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.HARNESS_TURN,
+            ModelPurpose.RESPONSE_STYLE,
             ModelPurpose.RESPONSE_STYLE,
         ]
         on_model.assert_exhausted()

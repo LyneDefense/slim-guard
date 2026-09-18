@@ -24,17 +24,16 @@ AGENT_SPECIALIST_TIMEOUT_SECONDS=20
 MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
 STYLE_RENDER_ALL_NORMAL_REPLIES=true
 RESPONSE_REVIEWER_ENABLED=true
-DEFAULT_STYLE_PROFILE=doctor_strict_v3
 ```
 
-`DEFAULT_STYLE_PROFILE` 必须是数据库中已经发布并启用的精确版本。配置修改后需要重新部署或重启服务。
+风格版本在管理台“表达风格”中发布并启用，不再配置 `DEFAULT_STYLE_PROFILE`。首次新制迁移会重置旧风格数据，详见 [风格手册](STYLE_MANAGEMENT.md)。
 
 ## 建议启用顺序
 
 1. 保持 `MULTI_AGENT_MODE=off`，验证 Core 的记录、查询、图片观察和 Nutrition Agent Tool。
 2. 确认已发布的 Nutrition RAG Release 能返回可靠引用；需要 RAG 时启用
    `NUTRITION_AGENT_ENABLED=true` 与 `NUTRITION_RAG_ENABLED=true`。
-3. 在管理台完成医生 Style Profile 的 A/B 人评、发布和全量启用。
+3. 在管理台完成医生风格版本的简化评审、发布和全量启用。
 4. 用测试账户验证 Trace 中能看到中性稿、风格稿、Reviewer 判决和最终采用。
 5. 设置 `MULTI_AGENT_MODE=on` 并重新部署。
 

@@ -78,7 +78,6 @@ MULTI_AGENT_MODE=off
 MULTI_AGENT_GRAPH_VERSION=core-primary-v1
 AGENT_SPECIALIST_TIMEOUT_SECONDS=20
 MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
-DEFAULT_STYLE_PROFILE=slimguard_default_v1
 NUTRITION_AGENT_ENABLED=false
 NUTRITION_RAG_ENABLED=false
 NUTRITION_REQUIRE_RAG_CITATIONS=true
@@ -91,39 +90,11 @@ Style + Reviewer 管线；`on` 要求 `RESPONSE_REVIEWER_ENABLED=true`。风格�
 已经生成并通过确定性保护的 Core 中性稿，不会重新执行业务工具，也不会生成竞争 baseline。
 配置变更需重启服务，验证与回退步骤见 [Agent 主路径运行手册](MULTI_AGENT_ROLLOUT.md)。
 
-离线表达语料使用独立 SQLite 文件，不连接用户 Memory 或营养 RAG。通用准备工具已提供，但
-`doctor_strict_v1` 已完成真实语料授权、隐私处理、自动评估和首轮实名 A/B 人评；人工结果为接受 1、
-拒绝 11，因此该版本没有发布或激活，拒绝批注仅作为下一版本修订输入。
-导入支持 UTF-8 JSON 消息数组（`sender/text/conversation_id`）或 `sender<TAB>text` 文本，
-并非任意微信导出格式；必须用 JSON 显式映射所有 sender。模型只收到自动脱敏后的候选，
-但自动脱敏无法保证识别全部个人信息，调用模型前应先完成源文件隐私检查，并补充 `--private-terms`。
-真实微信 HTML 整理、医生风格草案、精确版本 A/B、人审发布和回滚流程见
-[STYLE_ASSET_RUNBOOK.md](STYLE_ASSET_RUNBOOK.md)。A/B 人评页会先展示与 Case 哈希绑定的合成场景、已知
-上下文和回复目标，再展示两侧输出；医生资产当前未通过人工验收，不默认启用。
-基于首轮批注修订的 `doctor_strict_v2` 已作为 12 条带具体场景的 A/B Case 导入管理台；第二轮实名
-人工评分接受 7、拒绝 5，因此仍未发布或启用。管理台“风格纠正”可继续追加已脱敏的真实测试场景、
-当前回复与期望回复，作为下一版本素材；它不是即时微调，不会修改当前 Profile。当前单人开发阶段，
-待评版本整套人评全部接受并发布后，按已批准策略直接切换 `DEFAULT_STYLE_PROFILE`；
-生产环境不继承该便利。自动评估通过不等于发布批准。
-`doctor_strict_v3` 已根据 v2 的全部评分生成并完成 12/12 自动评估，当前作为 12 条待评 Case 留在
-管理台，仍未发布或启用。后续每次版本迭代都先冻结上一版本的实名 A/B 结果和“风格纠正”记录，再生成
-新 Profile、回归场景和 A/B Case；具体命令与边界见风格资产运行手册。
-
-离线模型单独配置 `STYLE_CORPUS_API_KEY`、`STYLE_CORPUS_MODEL` 和可选 `STYLE_CORPUS_BASE_URL`。
-
-```bash
-uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite import --input ./export.json --format json --sender-mapping ./senders.json --private-terms ./private-terms.json
-uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite review
-uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite review --candidate-id CANDIDATE_ID --review ./human-review.json
-uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite eval --profile-id PROFILE_ID --version VERSION --display-name DISPLAY_NAME --cases ./style-eval-cases.json --actor REVIEWER
-uv run python -m slim_guard.tools.manage_style_corpus --database ./offline-style.sqlite export --profile-id PROFILE_ID --version VERSION --display-name DISPLAY_NAME
-```
-
-人工审核 JSON 包含 `actor`、`decision`（approve/reject）、`note`；批准时必须明确设置
-`privacy_confirmed=true` 和 `expression_only_confirmed=true`，可覆写 `example_text`、`tone_rules`。
-Eval 输入必须是实际 `response_plan` 与 `styled_response` 配对，并覆盖所有已批准示例的沟通行为。
-导出只产生 `draft`，要求当前精确版本的最新评估同时通过表达、忠实度和隐私检查；修改或撤销审核后
-旧评估失效。评审记录 append-only，离线数据库和导出文件应限权存放，不提交仓库或暴露给普通管理员。
+表达风格统一由管理台 [表达风格](https://enceladus.online/admin/styles) 管理。进入医生风格后有
+“构建版本 / 评审版本 / 追加纠正素材”三个子页；追加素材页同时提供完整分页示例库。
+版本包含 Style Guide 与表达样例，运行时使用当前启用版本和 0～3 条相似样例，不按意图或六类话术分组。
+Style Agent 内部完成语义校验和一次带原因的重试，失败返回 Core 中性稿。
+操作、配置及此次旧风格数据重置说明见 [表达风格实现手册](STYLE_MANAGEMENT.md)。
 
 Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。v2 资料必须先导入为 `draft`，完成内容、
 适用范围、版权三项审核，再加入不可变 Corpus Release；Release 通过离线评测、人工验收并全量启用后，

@@ -274,7 +274,7 @@ Increment 6 已扩展到真实 HTML 本地整理、医生风格规范草案、�
 因此 `doctor_strict_v1` 明确不发布。拒绝批注作为下一版本的修订输入保留，A/B Case 现会绑定并展示
 合成场景、已确认上下文和回复目标，避免脱离语境评分；基于批注形成的 `doctor_strict_v2` 已完成
 12 组真实生成和自动评估并导入管理台，正在等待带场景的第二轮人工评分；默认资产未改变
-（见 STYLE_ASSET_RUNBOOK.md）；
+（见 STYLE_MANAGEMENT.md）；
 Increment 7 的 Canary/on 运行时、运营指标、筛选和只读放量检查已实现；
 真实线上任务固定集、人评、真实失败样本复测及线上放量尚未执行，默认保持 off。
 
@@ -449,7 +449,7 @@ Increment 7 的 Canary/on 运行时、运营指标、筛选和只读放量检查
 `doctor_strict_v2` 已根据实名批注收紧为短句、直接、少铺垫的表达，并修正含糊的合成 ResponsePlan；
 最终 12 组真实 A/B 生成完整、自动评估 12/12 通过，已导入为 12 条待人工评分 Case。该自动结果
 不代表用户已批准 v2，发布和启用仍被阻断。
-执行步骤和真实数据状态见 `STYLE_ASSET_RUNBOOK.md`。
+执行步骤和真实数据状态见 `STYLE_MANAGEMENT.md`。
 
 #### 后端与数据
 
@@ -504,7 +504,6 @@ off → shadow → test1~test5 → 小比例真实用户 → 全量 on
 MULTI_AGENT_MODE=off|shadow|canary|on
 MULTI_AGENT_CANARY_USER_IDS=
 MULTI_AGENT_GRAPH_VERSION=typed-supervisor-v1
-DEFAULT_STYLE_PROFILE=slimguard_default_v1
 STYLE_RENDER_ALL_NORMAL_REPLIES=true
 NUTRITION_AGENT_ENABLED=false
 NUTRITION_RAG_ENABLED=false

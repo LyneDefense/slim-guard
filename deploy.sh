@@ -7,12 +7,24 @@ command="${1:-deploy}"
 
 case "$command" in
   deploy)
-    if [[ "${2:-}" != "--no-pull" ]]; then
+    pull=true
+    release_options=()
+    for option in "${@:2}"; do
+      case "$option" in
+        --no-pull) pull=false ;;
+        --maintenance) release_options+=("--maintenance") ;;
+        *) printf 'unknown deploy option: %s\n' "$option" >&2; exit 2 ;;
+      esac
+    done
+    if [[ "$pull" == true ]]; then
       [[ -z "$(git -C "$ROOT_DIR" status --porcelain)" ]] \
         || { printf 'working tree is not clean; refusing to deploy\n' >&2; exit 1; }
       git -C "$ROOT_DIR" pull --ff-only
     fi
-    exec "$ROOT_DIR/deploy/scripts/deploy-release.sh"
+    exec "$ROOT_DIR/deploy/scripts/deploy-release.sh" "${release_options[@]}"
+    ;;
+  --maintenance)
+    exec "$ROOT_DIR/deploy.sh" deploy --maintenance "${@:2}"
     ;;
   bootstrap)
     [[ "${2:-}" == "--cutover" ]] \
@@ -44,7 +56,7 @@ case "$command" in
     exec "$ROOT_DIR/deploy/scripts/rollback.sh"
     ;;
   *)
-    printf 'usage: ./deploy.sh [deploy [--no-pull]|bootstrap --cutover|build-mem0|cleanup-legacy --confirm|status|logs|backup|rollback]\n' >&2
+    printf 'usage: ./deploy.sh [deploy [--no-pull] [--maintenance]|--maintenance|bootstrap --cutover|build-mem0|cleanup-legacy --confirm|status|logs|backup|rollback]\n' >&2
     exit 2
     ;;
 esac
