@@ -298,7 +298,7 @@ async def test_loop_executes_tool_and_returns_one_final_response() -> None:
     assert observation["output"]["weight_kg"] == 77.6
 
 
-async def test_confirmed_meal_forces_nutrition_assessment_before_final_text() -> None:
+async def test_model_may_choose_nutrition_assessment_after_confirmed_meal() -> None:
     model = ScriptedModelGateway(
         (
             assistant_tool_calls(
@@ -339,10 +339,51 @@ async def test_confirmed_meal_forces_nutrition_assessment_before_final_text() ->
         "record_meal",
         "consult_nutrition_specialist",
     ]
-    forced_request = model.requests[1]
-    assert forced_request.tool_choice is ToolChoice.REQUIRED
-    assert [tool.name for tool in forced_request.tools] == [
-        "consult_nutrition_specialist"
+    follow_up_request = model.requests[1]
+    assert follow_up_request.tool_choice is ToolChoice.AUTO
+    assert [tool.name for tool in follow_up_request.tools] == [
+        "record_meal",
+        "consult_nutrition_specialist",
+    ]
+    model.assert_exhausted()
+
+
+async def test_model_may_finish_after_confirmed_meal_without_assessment() -> None:
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(
+                tool_call(
+                    "meal-call",
+                    name="record_meal",
+                    arguments={
+                        "meal_type": "dinner",
+                        "foods": [{"name": "煎三文鱼"}],
+                    },
+                )
+            ),
+            assistant_text("已记录这顿晚餐。"),
+        )
+    )
+    tools = RecordingToolCallRunner()
+    result = await run_loop(
+        model,
+        tools,
+        request_model=meal_request(),
+        authorization_override=ToolAuthorization(
+            allowed_tool_names=frozenset(
+                {"record_meal", "consult_nutrition_specialist"}
+            ),
+            isolated_write_environment=True,
+        ),
+    )
+
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert [call.name for call in tools.calls] == ["record_meal"]
+    assert len(model.requests) == 2
+    assert model.requests[1].tool_choice is ToolChoice.AUTO
+    assert [tool.name for tool in model.requests[1].tools] == [
+        "record_meal",
+        "consult_nutrition_specialist",
     ]
     model.assert_exhausted()
 

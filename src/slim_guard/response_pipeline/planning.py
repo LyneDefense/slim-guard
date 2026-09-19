@@ -11,7 +11,6 @@ from slim_guard.agents.contracts import (
     ResponseContentBlock,
     ResponsePlan,
 )
-from slim_guard.agents.nutrition.constants import CONSULT_NUTRITION_TOOL_NAME
 from slim_guard.harness.tool_calls import ToolCallOutcome
 
 
@@ -93,7 +92,7 @@ class ResponsePlanBuilder:
     ) -> tuple[ProfessionalAssessment | None, str | None]:
         for outcome in reversed(outcomes):
             execution = outcome.execution
-            if execution.tool_name != CONSULT_NUTRITION_TOOL_NAME:
+            if execution.result.status.value != "succeeded":
                 continue
             payload = execution.result.output
             raw = payload.get("assessment")

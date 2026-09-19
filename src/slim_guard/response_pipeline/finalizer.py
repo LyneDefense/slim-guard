@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 from slim_guard.agents.contracts import ContentBlockKind, RepairTarget, ReviewerVerdictStatus
 from slim_guard.agents.core import CoreResponseRepairAgent
@@ -12,7 +13,6 @@ from slim_guard.agents.participant_router import ParticipantRoutingAgent
 from slim_guard.agents.reviewer import ResponseReviewerAgent, ReviewerContextCompiler
 from slim_guard.agents.style import ResponseStyleAgent, StyleContextCompiler
 from slim_guard.group_chat.composer import compose_messages
-from slim_guard.group_chat.routing import CoachCandidate
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline.contracts import (
@@ -265,7 +265,7 @@ class AgentResponseFinalizer:
             block.kind in {ContentBlockKind.QUESTION, ContentBlockKind.UNCERTAINTY}
             for block in planned.plan.content_blocks
         )
-        confirmed_operations = self._coach_operation_summary(request.tool_outcomes)
+        successful_tool_results = self._successful_tool_results(request.tool_outcomes)
         routed = await self._stages.run_participant_routing(
             request=request,
             system_text=request.neutral_draft,
@@ -278,7 +278,7 @@ class AgentResponseFinalizer:
                     if planned.assessment is not None
                     else None
                 ),
-                "confirmed_operations": confirmed_operations,
+                "successful_tool_results": successful_tool_results,
             },
             allowed_source_refs=tuple(
                 dict.fromkeys(
@@ -297,17 +297,6 @@ class AgentResponseFinalizer:
         calls = routed.model_call_count
         tokens = routed.total_token_count
         coach = routed.routing.coach
-        meal_operations = tuple(
-            operation
-            for operation in confirmed_operations
-            if operation.get("tool_name") == "record_meal"
-        )
-        if coach is None and meal_operations and not pending:
-            # A successful meal write always gets a small coach presence even if
-            # the optional routing model conservatively returns null. This is
-            # relationship-only acknowledgement; any food evaluation still
-            # has to come from the routed assessment above.
-            coach = CoachCandidate(text="行，这顿记上了。")
         if coach is None:
             messages = compose_messages(
                 turn_id=request.turn_id,
@@ -338,7 +327,7 @@ class AgentResponseFinalizer:
             payload={
                 "text": coach.text,
                 "source_refs": coach.source_refs,
-                "fallback": not bool(routed.routing.coach),
+                "selected_by": "participant_router",
             },
             parents=(routed.artifact.artifact_id,),
         )
@@ -413,42 +402,58 @@ class AgentResponseFinalizer:
         )
 
     @staticmethod
-    def _coach_operation_summary(
+    def _successful_tool_results(
         outcomes: tuple[ToolCallOutcome, ...],
     ) -> tuple[dict[str, object], ...]:
-        """Expose verified operation facts without persistence internals."""
+        """Expose verified observations without making routing decisions.
+
+        The participant model receives successful tool observations as data.  It
+        decides whether any of them justify a coach message; this method does
+        not classify a fixed set of business tools as coach-worthy.
+        """
 
         summary: list[dict[str, object]] = []
         for outcome in outcomes:
             execution = outcome.execution
             if execution.result.status.value != "succeeded":
                 continue
-            if execution.tool_name not in {
-                "record_meal",
-                "record_weight",
-                "record_body_fat",
-                "record_exercise",
-            }:
-                continue
-            output = execution.result.output
-            item: dict[str, object] = {
-                "tool_name": execution.tool_name,
-                "source_ref": execution.tool_call_id,
-            }
-            if execution.tool_name == "record_meal":
-                meal_type = output.get("meal_type")
-                foods = output.get("foods")
-                if isinstance(meal_type, str):
-                    item["meal_type"] = meal_type
-                if isinstance(foods, list):
-                    item["foods"] = [
-                        food.get("name")
-                        for food in foods
-                        if isinstance(food, dict)
-                        and isinstance(food.get("name"), str)
-                    ]
-            summary.append(item)
+            summary.append(
+                {
+                    "tool_name": execution.tool_name,
+                    "source_ref": execution.tool_call_id,
+                    "result": AgentResponseFinalizer._model_visible_result(
+                        execution.result.output
+                    ),
+                }
+            )
         return tuple(summary)
+
+    @classmethod
+    def _model_visible_result(cls, value: Any) -> Any:
+        """Remove persistence plumbing before observations reach a model."""
+
+        if isinstance(value, dict):
+            return {
+                key: cls._model_visible_result(item)
+                for key, item in value.items()
+                if key not in {
+                    "id",
+                    "record_id",
+                    "artifact_id",
+                    "citation_id",
+                    "idempotency_key",
+                    "created_at",
+                    "updated_at",
+                    "occurred_at",
+                    "timestamp",
+                    "source_ids",
+                }
+            }
+        if isinstance(value, list):
+            return [cls._model_visible_result(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(cls._model_visible_result(item) for item in value)
+        return value
 
     async def _repair_style(
         self,

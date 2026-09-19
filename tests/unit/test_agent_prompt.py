@@ -2,7 +2,7 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 
 
 def test_default_reply_style_is_conversational_and_non_templated() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION.endswith("v27")
+    assert SLIM_GUARD_PROMPT_VERSION.endswith("v28")
     assert "真人教练一样说话" in SLIM_GUARD_HARNESS_PROMPT
     assert "普通打卡或资料更新通常回复一到三句" in SLIM_GUARD_HARNESS_PROMPT
     assert "不要逐字段报账" in SLIM_GUARD_HARNESS_PROMPT
@@ -17,8 +17,9 @@ def test_meal_images_default_to_today_and_only_ask_when_meal_type_stays_ambiguou
     assert "近期饮食不会默认出现在上下文中" in SLIM_GUARD_HARNESS_PROMPT
     assert "get_recent_meals" in SLIM_GUARD_HARNESS_PROMPT
     assert "你这是午餐还是晚餐" in SLIM_GUARD_HARNESS_PROMPT
-    assert "不机械复述刚提交的数值和“已记录”" in SLIM_GUARD_HARNESS_PROMPT
-    assert "record_meal 已经成功" in SLIM_GUARD_HARNESS_PROMPT
+    assert "回复长度、是否复述记录" in SLIM_GUARD_HARNESS_PROMPT
+    assert "record_meal 已经成功" not in SLIM_GUARD_HARNESS_PROMPT
+    assert "不自动强制调用任何" in SLIM_GUARD_HARNESS_PROMPT
     assert "RAG 无相关证据时，可以由专业 Agent 使用低风险通识" in SLIM_GUARD_HARNESS_PROMPT
 
 
