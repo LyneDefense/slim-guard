@@ -170,6 +170,7 @@ class ResponseStageExecutor:
             artifact_type="participant_routing",
             payload={
                 "system_text": system_text,
+                "routed_system_text": result.routing.system_text,
                 "coach_text": result.routing.coach.text if result.routing.coach else None,
                 "coach_source_refs": (
                     list(result.routing.coach.source_refs) if result.routing.coach else []

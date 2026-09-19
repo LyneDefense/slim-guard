@@ -69,7 +69,7 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
     }
     model = ScriptedModelGateway(
         (
-            response("已记录今天的数据。"),
+            response("今天这条处理好了。"),
             response(json.dumps(styled, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
         )
@@ -128,7 +128,7 @@ async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
         styled_artifact = next(
             item for item in artifacts if item.artifact_type == "styled_response"
         )
-        assert styled_artifact.payload["neutral_text"] == "已记录今天的数据。"
+        assert styled_artifact.payload["neutral_text"] == "今天这条处理好了。"
         assert styled_artifact.payload["text"] == styled["text"]
     finally:
         await database.close()
@@ -149,10 +149,14 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
     }
     model = ScriptedModelGateway(
         (
-            response("已记录今日晚餐。"),
+            response("今天这条晚餐处理好了。"),
             response(
                 json.dumps(
-                    {"schema_version": "1", "coach_text": "这顿搭配不错。"},
+                    {
+                        "schema_version": "1",
+                        "system_text": "今天这条晚餐处理好了。",
+                        "coach_text": "这顿搭配不错。",
+                    },
                     ensure_ascii=False,
                 )
             ),
@@ -188,8 +192,8 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
         assert result.messages[0].participant.value == "coach"
         assert result.messages[0].text == styled["text"]
         assert result.messages[1].participant.value == "system_assistant"
-        assert result.messages[1].text == "已记录今日晚餐。"
-        assert result.final_text == "行，这顿搭配挺好。\n已记录今日晚餐。"
+        assert result.messages[1].text == "今天这条晚餐处理好了。"
+        assert result.final_text == "行，这顿搭配挺好。\n今天这条晚餐处理好了。"
         assert [request.purpose.value for request in model.requests] == [
             "harness_turn",
             "participant_routing",

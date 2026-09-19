@@ -30,12 +30,13 @@ class ParticipantRouter:
         self,
         *,
         system_text: str,
+        routed_system_text: str | None = None,
         coach_text: str | None,
         coach_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
     ) -> RoutingResult:
-        system = system_text.strip()
+        system = (routed_system_text or system_text).strip()
         if not system:
             raise ValueError("The system assistant must have an authoritative response")
         candidate = (coach_text or "").strip()

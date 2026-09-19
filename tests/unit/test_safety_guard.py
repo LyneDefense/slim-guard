@@ -64,3 +64,15 @@ def test_output_guard_replaces_diagnosis_and_dangerous_advice() -> None:
     assert diagnosis.modified is True
     assert diagnosis.code == "prohibited_medical_advice"
     assert "不能提供疾病诊断" in diagnosis.text
+
+
+def test_output_guard_rejects_unverified_record_success() -> None:
+    result = SlimGuardOutputGuard().review(
+        text="记上了，午餐是米饭和鸡蛋。",
+        assessment=SafetyAssessment(HealthRiskLevel.NORMAL, "none", False),
+        tool_outcomes=(),
+    )
+
+    assert result.modified is True
+    assert result.code == "unverified_write_success_claim"
+    assert "没有确认记录成功" in result.text

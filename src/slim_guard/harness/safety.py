@@ -113,7 +113,11 @@ class SlimGuardOutputGuard:
         "通过绝食减肥",
         "停止进食来减肥",
     )
-    _SUCCESS_CLAIMS = ("已记录", "记录成功", "已保存", "保存成功")
+    _RECORD_SUCCESS_CLAIMS = (
+        "已记录",
+        "记录成功",
+        "记上了",
+    )
     _MEMORY_SUCCESS_CLAIMS = (
         "记住了",
         "已记住",
@@ -169,6 +173,11 @@ class SlimGuardOutputGuard:
                 "这次记录没有确认成功，请把刚才的数据再发一次，我会重新尝试保存。",
                 "failed_write_success_claim",
             )
+        if self._unverified_record_write_claimed_success(normalized, tool_outcomes):
+            return self._replacement(
+                "这次还没有确认记录成功，请把刚才的数据再发一次，我会重新尝试保存。",
+                "unverified_write_success_claim",
+            )
         if self._failed_memory_write_claimed_success(normalized, tool_outcomes):
             return self._replacement(
                 "这项记忆没有确认保存或撤销成功，请把你的要求再说一次，我会重新处理。",
@@ -197,7 +206,33 @@ class SlimGuardOutputGuard:
             for outcome in record_writes
         )
         return all_record_writes_failed and any(
-            claim in text for claim in cls._SUCCESS_CLAIMS
+            claim in text for claim in cls._RECORD_SUCCESS_CLAIMS
+        )
+
+    @classmethod
+    def _unverified_record_write_claimed_success(
+        cls,
+        text: str,
+        outcomes: tuple[ToolCallOutcome, ...],
+    ) -> bool:
+        """Do not let a model claim a write when Harness has no success receipt.
+
+        The earlier guard only handled the case where a write was attempted and
+        failed.  A model can also skip the tool entirely and still say “已记录”;
+        that is equally unsafe because the user-visible statement has no
+        authoritative execution behind it.
+        """
+
+        if not any(claim in text for claim in cls._RECORD_SUCCESS_CLAIMS):
+            return False
+        record_writes = tuple(
+            outcome
+            for outcome in outcomes
+            if outcome.execution.tool_name in cls._RECORD_WRITE_TOOLS
+        )
+        return not any(
+            outcome.execution.result.status is ToolResultStatus.SUCCEEDED
+            for outcome in record_writes
         )
 
     @classmethod

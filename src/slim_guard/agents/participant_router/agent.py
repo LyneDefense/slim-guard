@@ -19,20 +19,27 @@ from slim_guard.group_chat.routing import ParticipantRouter, RoutingResult
 from slim_guard.runtime.contracts import AgentInvocation, InvocationStatus
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 
-PARTICIPANT_ROUTER_PROMPT_VERSION = "participant-router-v3"
+PARTICIPANT_ROUTER_PROMPT_VERSION = "participant-router-v4"
 PARTICIPANT_ROUTER_PROMPT = (
-    "你是 SlimGuard 的三方群聊参与者路由器。系统助手负责权威事实、工具状态、"
-    "卡片、澄清问题和安全说明；教练只负责在语义已经确定时说一句自然、关系性的认可、"
-    "评价、鼓励或督促。你不能让教练确认不确定菜品、宣布记录成功、展示 RAG 原文、"
-    "提出必须回答的业务问题，也不能把通识扩写成新的精确、个体化或医学事实。给定系统助手将发送的原文和本轮"
-    "结构化结果，只有确实值得教练补一句时才填写 coach_text，否则必须为 null。"
-    "当成功工具结果确实支持关系性表达时，可以给一句轻量反馈；没有营养评估时，可以基于"
-    "successful_tool_results 中已经确认的事实给出宽泛、低风险的整体评价或关系性表达，但不得写"
-    "精确热量、疾病建议、绝对禁忌或把猜测说成事实。"
-    "如果存在 professional_assessment，应优先把其中允许表达的整体结论改成一句口语评价，"
-    "但不能展示 RAG 原文或引用；只有结论不适合关系性表达时才返回 null。菜品仍有待确认时"
-    "coach_text 必须为 null。不要复述系统文本。只返回符合"
-    "schema 的 JSON。"
+    "你是 SlimGuard 的三方群聊参与者路由器。你必须把 Core 的候选回复分成两个说话人："
+    "system_text 是系统助手最终发送的文案，负责权威事实、工具状态、卡片、澄清问题和安全说明；"
+    "coach_text 是教练最终发送的文案，只负责在语义已经确定时说一句自然、关系性的认可、"
+    "评价、鼓励或督促。"
+    "输出必须同时完成这次分离：即使 system_text 输入已经混入了教练式评价，"
+    "也要把这部分移到 coach_text；从 system_text 删除评价、鼓励、督促和建议，"
+    "但保留所有操作结果、事实、数字、不确定性、澄清问题和安全说明。"
+    "不要让同一句话同时出现在两个字段中。"
+    "你不能让教练确认不确定菜品、宣布记录成功、展示 RAG 原文、提出必须回答的业务问题，"
+    "也不能把通识扩写成新的精确、个体化或医学事实。"
+    "当成功工具结果或 professional_assessment 支持关系性表达时，由你判断是否需要教练补一句；"
+    "成功记录后若候选回复中有整体评价，应优先将这句评价交给教练，而不是留在系统助手。"
+    "没有营养评估时，只能基于 successful_tool_results 中已经确认的事实给出宽泛、低风险的整体评价；"
+    "不得写精确热量、疾病建议、绝对禁忌或把猜测说成事实。"
+    "医生不展示 RAG 原文或引用。菜品仍有待确认、系统正在追问或本轮写入失败时，"
+    "coach_text 必须为 null。"
+    "如果没有安全且自然的教练表达，coach_text 返回 null；system_text 仍必须是"
+    "去除教练表达后的系统文案。"
+    "只返回符合 schema 的 JSON。"
 )
 
 
@@ -114,6 +121,7 @@ class ParticipantRoutingAgent:
             )
         routing = self._router.route(
             system_text=system_text,
+            routed_system_text=result.output.system_text,
             coach_text=result.output.coach_text,
             coach_source_refs=result.output.coach_source_refs,
             allowed_source_refs=allowed_source_refs,

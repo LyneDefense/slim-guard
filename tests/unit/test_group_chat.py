@@ -19,6 +19,18 @@ def test_participant_router_defaults_to_system_when_clarification_is_pending() -
     assert result.suppressed_reason == "conflicts_with_pending_clarification"
 
 
+def test_participant_router_uses_model_partitioned_system_text() -> None:
+    result = ParticipantRouter().route(
+        system_text="记上了这顿饭。有荤有素，不错。",
+        routed_system_text="已记录这顿饭。",
+        coach_text="有荤有素，搭配不错。",
+    )
+
+    assert result.system_text == "已记录这顿饭。"
+    assert result.coach is not None
+    assert result.coach.text == "有荤有素，搭配不错。"
+
+
 def test_group_chat_composer_keeps_coach_and_system_as_distinct_messages() -> None:
     messages = compose_messages(
         turn_id="turn-1",
