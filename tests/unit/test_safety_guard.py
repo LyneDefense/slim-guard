@@ -76,3 +76,15 @@ def test_output_guard_rejects_unverified_record_success() -> None:
     assert result.modified is True
     assert result.code == "unverified_write_success_claim"
     assert "没有确认记录成功" in result.text
+
+
+def test_output_guard_replaces_raw_tool_call_markup() -> None:
+    result = SlimGuardOutputGuard().review(
+        text='<tool_call>record_meal({"meal_type":"lunch"})</tool_call>',
+        assessment=SafetyAssessment(HealthRiskLevel.NORMAL, "none", False),
+        tool_outcomes=(),
+    )
+
+    assert result.modified is True
+    assert result.code == "raw_tool_call_leak"
+    assert "操作还没有完成" in result.text

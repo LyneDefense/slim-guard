@@ -127,6 +127,7 @@ class SlimGuardOutputGuard:
         "已清空",
         "清空成功",
     )
+    _RAW_TOOL_CALL_MARKERS = ("<tool_call>", "</tool_call>", "tool_calls=")
     _RECORD_WRITE_TOOLS = {
         "record_weight",
         "record_body_fat",
@@ -167,6 +168,11 @@ class SlimGuardOutputGuard:
                 "我不能提供疾病诊断、处方或高风险减重指导。可以继续帮你客观记录体重、饮食"
                 "和运动；涉及症状或用药请咨询医生。",
                 "prohibited_medical_advice",
+            )
+        if any(marker in normalized for marker in self._RAW_TOOL_CALL_MARKERS):
+            return self._replacement(
+                "这次操作还没有完成，请根据提示补充信息后再试。",
+                "raw_tool_call_leak",
             )
         if self._failed_record_write_claimed_success(normalized, tool_outcomes):
             return self._replacement(

@@ -389,17 +389,20 @@ class HarnessLoop:
                     failure_key = (outcome.execution.tool_name, failure.code)
                     failure_count = nonretryable_failures.get(failure_key, 0) + 1
                     nonretryable_failures[failure_key] = failure_count
-                    if failure_count >= 2:
-                        force_text_response = True
-                        logger.warning(
-                            "slim_guard_tool_failure_circuit_opened",
-                            extra={
-                                "turn_id": context.turn_id,
-                                "tool_name": outcome.execution.tool_name,
-                                "failure_code": failure.code,
-                                "failure_count": failure_count,
-                            },
-                        )
+                    # A non-retryable tool failure is already a structured
+                    # decision from the tool. Give the model one text-only
+                    # turn to explain it, but never let it issue the same
+                    # write again with guessed arguments.
+                    force_text_response = True
+                    logger.warning(
+                        "slim_guard_tool_failure_circuit_opened",
+                        extra={
+                            "turn_id": context.turn_id,
+                            "tool_name": outcome.execution.tool_name,
+                            "failure_code": failure.code,
+                            "failure_count": failure_count,
+                        },
+                    )
                 waiting = self._waiting_termination(outcome)
                 if waiting is not None:
                     return await self._finish(
@@ -419,6 +422,8 @@ class HarnessLoop:
                         tool_outcomes=tool_outcomes,
                         before_finish_hook=before_finish_hook,
                     )
+                if failure is not None and not failure.retryable:
+                    break
 
     @staticmethod
     def _waiting_termination(outcome: ToolCallOutcome) -> HarnessTermination | None:

@@ -556,11 +556,10 @@ async def test_tool_failure_emits_structured_warning_without_arguments(caplog) -
     assert "77.6" not in record.getMessage()
 
 
-async def test_repeated_nonretryable_failure_forces_model_authored_text_response() -> None:
+async def test_nonretryable_failure_forces_text_without_repeating_tool_call() -> None:
     model = ScriptedModelGateway(
         (
             assistant_tool_calls(tool_call("call-1")),
-            assistant_tool_calls(tool_call("call-2")),
             assistant_text("这次没有保存成功，我不会继续重复尝试。"),
         )
     )
@@ -570,10 +569,10 @@ async def test_repeated_nonretryable_failure_forces_model_authored_text_response
 
     assert result.termination is HarnessTermination.FINAL_RESPONSE
     assert result.final_text == "这次没有保存成功，我不会继续重复尝试。"
-    assert result.model_call_count == 3
-    assert result.tool_call_count == 2
-    assert model.requests[2].tools == ()
-    assert model.requests[2].tool_choice is ToolChoice.NONE
+    assert result.model_call_count == 2
+    assert result.tool_call_count == 1
+    assert model.requests[1].tools == ()
+    assert model.requests[1].tool_choice is ToolChoice.NONE
 
 
 async def test_retryable_failures_do_not_remove_model_tools() -> None:
