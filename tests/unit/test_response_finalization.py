@@ -196,7 +196,7 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
         assert result.final_text == "行，这顿搭配挺好。\n今天这条晚餐处理好了。"
         assert [request.purpose.value for request in model.requests] == [
             "harness_turn",
-            "participant_routing",
+            "conversation",
             "response_style",
             "response_style",
             "response_reviewer",

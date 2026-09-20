@@ -33,6 +33,7 @@ class ResponsePlanBuilder:
         *,
         neutral_draft: str,
         tool_outcomes: tuple[ToolCallOutcome, ...],
+        extra_source_refs: tuple[str, ...] = (),
     ) -> PlannedResponse:
         assessment, assessment_artifact_id = self._nutrition_assessment(tool_outcomes)
         return self.build_with_assessment(
@@ -40,6 +41,7 @@ class ResponsePlanBuilder:
             assessment=assessment,
             assessment_artifact_id=assessment_artifact_id,
             tool_outcomes=tool_outcomes,
+            extra_source_refs=extra_source_refs,
         )
 
     def build_with_assessment(
@@ -49,6 +51,7 @@ class ResponsePlanBuilder:
         assessment: ProfessionalAssessment | None,
         assessment_artifact_id: str | None,
         tool_outcomes: tuple[ToolCallOutcome, ...],
+        extra_source_refs: tuple[str, ...] = (),
     ) -> PlannedResponse:
         """Build from an explicitly selected, immutable professional assessment."""
 
@@ -70,7 +73,9 @@ class ResponsePlanBuilder:
                         block_id="core-neutral-draft",
                         kind=ContentBlockKind.SOCIAL_ACT,
                         text=neutral_draft,
-                        source_refs=tuple(dict.fromkeys((*citations, *tool_refs))),
+                        source_refs=tuple(
+                            dict.fromkeys((*citations, *tool_refs, *extra_source_refs))
+                        ),
                     ),
                 ),
                 citation_refs=citations,

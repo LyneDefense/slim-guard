@@ -23,8 +23,13 @@ class RoutingResult:
     suppressed_reason: str | None = None
 
 
-class ParticipantRouter:
-    """Validate a proposed coach block without keyword-based scenario enums."""
+class ConversationRouter:
+    """Validate a conversation plan without keyword-based scenario enums.
+
+    The model decides whether a coach sentence is useful.  This validator only
+    enforces provenance and the structured execution state supplied by the
+    Harness.
+    """
 
     def route(
         self,
@@ -35,8 +40,14 @@ class ParticipantRouter:
         coach_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
+        tool_failed: bool = False,
     ) -> RoutingResult:
-        system = (routed_system_text or system_text).strip()
+        # The Core/Harness candidate is authoritative for the system assistant.
+        # Conversation Agent may suggest a nicer system sentence, but accepting
+        # it here would let the presentation model change tool state or facts.
+        # Keep the suggestion available to the caller's trace instead of making
+        # it user-visible.
+        system = system_text.strip()
         if not system:
             raise ValueError("The system assistant must have an authoritative response")
         candidate = (coach_text or "").strip()
@@ -47,6 +58,12 @@ class ParticipantRouter:
                 system_text=system,
                 coach=None,
                 suppressed_reason="conflicts_with_pending_clarification",
+            )
+        if tool_failed:
+            return RoutingResult(
+                system_text=system,
+                coach=None,
+                suppressed_reason="conflicts_with_failed_tool",
             )
         allowed = set(allowed_source_refs)
         refs = tuple(dict.fromkeys(item.strip() for item in coach_source_refs if item.strip()))
@@ -67,5 +84,4 @@ class ParticipantRouter:
             coach=CoachCandidate(text=candidate, source_refs=refs),
         )
 
-
-__all__ = ["CoachCandidate", "ParticipantRouter", "RoutingResult"]
+__all__ = ["CoachCandidate", "ConversationRouter", "RoutingResult"]

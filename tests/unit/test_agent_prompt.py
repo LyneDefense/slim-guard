@@ -1,35 +1,27 @@
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
 
 
-def test_default_reply_style_is_conversational_and_non_templated() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION.endswith("v29")
-    assert "真人教练一样说话" in SLIM_GUARD_HARNESS_PROMPT
-    assert "普通打卡或资料更新通常回复一到三句" in SLIM_GUARD_HARNESS_PROMPT
-    assert "不要逐字段报账" in SLIM_GUARD_HARNESS_PROMPT
-    assert "不为了显得完整而主动扩写" in SLIM_GUARD_HARNESS_PROMPT
-    assert "response_style" in SLIM_GUARD_HARNESS_PROMPT
-    assert "Core Agent 的最终文字只是系统助手候选文案" in SLIM_GUARD_HARNESS_PROMPT
-    assert "不能声称" in SLIM_GUARD_HARNESS_PROMPT
+def test_core_prompt_is_short_and_keeps_conversation_out_of_core() -> None:
+    assert SLIM_GUARD_PROMPT_VERSION.endswith("v30")
+    assert "Conversation Agent" in SLIM_GUARD_HARNESS_PROMPT
+    assert "CoachStyleRenderer" in SLIM_GUARD_HARNESS_PROMPT
+    assert "不声称工具成功" in SLIM_GUARD_HARNESS_PROMPT
+    assert "不输出原始工具调用文本" in SLIM_GUARD_HARNESS_PROMPT
+    assert "真人教练一样说话" not in SLIM_GUARD_HARNESS_PROMPT
+    assert len(SLIM_GUARD_HARNESS_PROMPT.splitlines()) < 40
 
 
-def test_meal_images_default_to_today_and_only_ask_when_meal_type_stays_ambiguous() -> None:
-    assert "否则默认属于当天，不要追问日期" in SLIM_GUARD_HARNESS_PROMPT
-    assert "10:30–14:30 通常是午餐" in SLIM_GUARD_HARNESS_PROMPT
-    assert "14:30–16:30 等边界时段不能仅凭时间硬猜" in SLIM_GUARD_HARNESS_PROMPT
-    assert "近期饮食不会默认出现在上下文中" in SLIM_GUARD_HARNESS_PROMPT
-    assert "get_recent_meals" in SLIM_GUARD_HARNESS_PROMPT
-    assert "你这是午餐还是晚餐" in SLIM_GUARD_HARNESS_PROMPT
-    assert "回复长度、是否复述记录" in SLIM_GUARD_HARNESS_PROMPT
-    assert "record_meal 已经成功" not in SLIM_GUARD_HARNESS_PROMPT
-    assert "不自动强制调用任何" in SLIM_GUARD_HARNESS_PROMPT
-    assert "RAG 无相关证据时，可以由专业 Agent 使用低风险通识" in SLIM_GUARD_HARNESS_PROMPT
+def test_core_prompt_delegates_domain_parameters_to_contracts() -> None:
+    assert "具体参数格式、可用值、权限和失败语义以本轮工具契约及工具返回为准" in (
+        SLIM_GUARD_HARNESS_PROMPT
+    )
+    assert "不要在回复中重复工具手册" in SLIM_GUARD_HARNESS_PROMPT
+    assert "工具参数必须来自用户原话" in SLIM_GUARD_HARNESS_PROMPT
 
 
-def test_memory_prompt_allows_verified_historical_user_evidence_without_repetition() -> None:
-    assert "role=user 且带 evidence_ref" in SLIM_GUARD_HARNESS_PROMPT
-    assert "不要要求用户重新复述数值或固定句式" in SLIM_GUARD_HARNESS_PROMPT
-    assert "助手消息、没有 evidence_ref 的摘要" in SLIM_GUARD_HARNESS_PROMPT
-    assert "最终回复持久化后由异步提取器处理" in SLIM_GUARD_HARNESS_PROMPT
-    assert "remember_long_term_memory" in SLIM_GUARD_HARNESS_PROMPT
-    assert "PostgreSQL 中的结构化 Profile" in SLIM_GUARD_HARNESS_PROMPT
-    assert "Mem0 语义召回" in SLIM_GUARD_HARNESS_PROMPT
+def test_core_prompt_separates_verified_context_from_unverified_summaries() -> None:
+    assert "已验证的工具结果或 Harness 提供的权威上下文" in SLIM_GUARD_HARNESS_PROMPT
+    assert "不把图片观察、模型常识、旧助手回复或记忆摘要当成用户已经确认的事实" in (
+        SLIM_GUARD_HARNESS_PROMPT
+    )
+    assert "工作记忆和待确认任务" in SLIM_GUARD_HARNESS_PROMPT

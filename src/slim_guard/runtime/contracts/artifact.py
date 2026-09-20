@@ -31,6 +31,8 @@ class ArtifactProducerRole(StrEnum):
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
     COORDINATOR = "coordinator"
+    CONVERSATION = "conversation"
+    # Kept only so historical artifacts remain readable after migration.
     PARTICIPANT_ROUTER = "participant_router"
 
 

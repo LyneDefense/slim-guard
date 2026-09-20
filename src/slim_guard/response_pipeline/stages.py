@@ -12,14 +12,14 @@ from slim_guard.agents.contracts import (
     ReviewerVerdict,
     StyledResponse,
 )
+from slim_guard.agents.conversation import (
+    CONVERSATION_PROMPT_VERSION,
+    ConversationAgent,
+)
 from slim_guard.agents.core import (
     CORE_REPAIR_PROMPT_VERSION,
     CoreRepairContext,
     CoreResponseRepairAgent,
-)
-from slim_guard.agents.participant_router import (
-    PARTICIPANT_ROUTER_PROMPT_VERSION,
-    ParticipantRoutingAgent,
 )
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT_VERSION,
@@ -29,7 +29,7 @@ from slim_guard.agents.reviewer import (
 from slim_guard.agents.style import (
     RESPONSE_STYLE_PROMPT_VERSION,
     STYLE_MAX_MODEL_CALLS,
-    ResponseStyleAgent,
+    CoachStyleRenderer,
     StyleContextCompiler,
 )
 from slim_guard.harness.events import ItemType
@@ -86,7 +86,7 @@ class CoreRepairStage:
 
 
 @dataclass(frozen=True, slots=True)
-class ParticipantStage:
+class ConversationStage:
     routing: object
     artifact: AgentArtifact
     model_call_count: int
@@ -102,7 +102,7 @@ class ResponseStageExecutor:
     def __init__(
         self,
         *,
-        style_agent: ResponseStyleAgent,
+        style_agent: CoachStyleRenderer,
         reviewer_agent: ResponseReviewerAgent | None,
         core_repair_agent: CoreResponseRepairAgent | None,
         persistence: InvocationStore,
@@ -113,7 +113,7 @@ class ResponseStageExecutor:
         style_compiler: StyleContextCompiler,
         reviewer_compiler: ReviewerContextCompiler,
         clock: Callable[[], datetime] | None = None,
-        participant_agent: ParticipantRoutingAgent | None = None,
+        conversation_agent: ConversationAgent | None = None,
     ) -> None:
         self._style_agent = style_agent
         self._reviewer_agent = reviewer_agent
@@ -126,13 +126,13 @@ class ResponseStageExecutor:
         self._style_compiler = style_compiler
         self._reviewer_compiler = reviewer_compiler
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._participant_agent = participant_agent
+        self._conversation_agent = conversation_agent
 
     @property
-    def participant_routing_enabled(self) -> bool:
-        return self._participant_agent is not None
+    def conversation_enabled(self) -> bool:
+        return self._conversation_agent is not None
 
-    async def run_participant_routing(
+    async def run_conversation(
         self,
         *,
         request: ResponseFinalizationRequest,
@@ -142,34 +142,37 @@ class ResponseStageExecutor:
         parent_invocation_id: str,
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
-    ) -> ParticipantStage:
-        if self._participant_agent is None:
-            raise RuntimeError("Participant routing is not configured")
+        tool_failed: bool = False,
+    ) -> ConversationStage:
+        if self._conversation_agent is None:
+            raise RuntimeError("Conversation Agent is not configured")
         invocation = self._invocation(
             request=request,
-            role=AgentRole.PARTICIPANT_ROUTER,
-            version=PARTICIPANT_ROUTER_PROMPT_VERSION,
-            input_schema="ParticipantRoutingDecision",
+            role=AgentRole.CONVERSATION,
+            version=CONVERSATION_PROMPT_VERSION,
+            input_schema="ConversationDecision",
             privacy_scopes=("response_plan", "tool_outcomes"),
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=(plan_artifact.artifact_id,),
             attempt=1,
         )
-        await self._start(invocation, "判断本轮是否需要由教练补充关系性表达")
-        result = await self._participant_agent.run(
+        await self._start(invocation, "生成系统助手和教练的群聊消息计划")
+        result = await self._conversation_agent.run(
             invocation=invocation,
             system_text=system_text,
             semantic_summary=semantic_summary,
             allowed_source_refs=allowed_source_refs,
             pending_clarification=pending_clarification,
+            tool_failed=tool_failed,
             grant=self._grant(invocation),
         )
         artifact = self.artifact(
             request,
-            producer=ArtifactProducerRole.PARTICIPANT_ROUTER,
-            artifact_type="participant_routing",
+            producer=ArtifactProducerRole.CONVERSATION,
+            artifact_type="conversation_plan",
             payload={
                 "system_text": system_text,
+                "model_system_text": result.model_system_text,
                 "routed_system_text": result.routing.system_text,
                 "coach_text": result.routing.coach.text if result.routing.coach else None,
                 "coach_source_refs": (
@@ -187,7 +190,7 @@ class ResponseStageExecutor:
             result=AgentResult(
                 invocation_id=invocation.invocation_id,
                 status=result.status,
-                output_schema="ParticipantRoutingDecision",
+                output_schema="ConversationDecision",
                 output_schema_version="1",
                 artifact_id=artifact.artifact_id,
                 model_call_count=result.model_call_count,
@@ -196,7 +199,7 @@ class ResponseStageExecutor:
                 failure_code=result.failure_code,
             ),
         )
-        return ParticipantStage(
+        return ConversationStage(
             routing=result.routing,
             artifact=artifact,
             model_call_count=result.model_call_count,

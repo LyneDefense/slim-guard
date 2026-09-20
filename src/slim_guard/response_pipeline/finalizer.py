@@ -6,10 +6,15 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from slim_guard.agents.contracts import ContentBlockKind, RepairTarget, ReviewerVerdictStatus
+from slim_guard.agents.contracts import (
+    ContentBlockKind,
+    ProfessionalAssessment,
+    RepairTarget,
+    ReviewerVerdictStatus,
+)
+from slim_guard.agents.conversation import ConversationAgent
 from slim_guard.agents.core import CoreResponseRepairAgent
 from slim_guard.agents.nutrition import NutritionSpecialist
-from slim_guard.agents.participant_router import ParticipantRoutingAgent
 from slim_guard.agents.reviewer import ResponseReviewerAgent, ReviewerContextCompiler
 from slim_guard.agents.style import ResponseStyleAgent, StyleContextCompiler
 from slim_guard.group_chat.composer import compose_messages
@@ -59,7 +64,7 @@ class AgentResponseFinalizer:
         core_repair_agent: CoreResponseRepairAgent | None = None,
         nutrition_specialist: NutritionSpecialist | None = None,
         clock: Callable[[], datetime] | None = None,
-        participant_agent: ParticipantRoutingAgent | None = None,
+        conversation_agent: ConversationAgent | None = None,
         group_chat_enabled: bool = False,
     ) -> None:
         self._profile_resolver = profile_resolver
@@ -79,7 +84,7 @@ class AgentResponseFinalizer:
             style_compiler=style_compiler or StyleContextCompiler(),
             reviewer_compiler=reviewer_compiler or ReviewerContextCompiler(),
             clock=clock,
-            participant_agent=participant_agent,
+            conversation_agent=conversation_agent,
         )
         self._owner_repairs = OwnerRepairCoordinator(
             stages=self._stages,
@@ -117,7 +122,7 @@ class AgentResponseFinalizer:
             invocation_id=request.core_invocation_id,
         )
 
-        if self._group_chat_enabled and self._stages.participant_routing_enabled:
+        if self._group_chat_enabled and self._stages.conversation_enabled:
             return await self._finalize_group_chat(
                 request=request,
                 planned=planned,
@@ -266,7 +271,8 @@ class AgentResponseFinalizer:
             for block in planned.plan.content_blocks
         )
         successful_tool_results = self._successful_tool_results(request.tool_outcomes)
-        routed = await self._stages.run_participant_routing(
+        tool_failed = self._has_failed_tool(request.tool_outcomes)
+        routed = await self._stages.run_conversation(
             request=request,
             system_text=request.neutral_draft,
             plan_artifact=plan_artifact,
@@ -274,7 +280,7 @@ class AgentResponseFinalizer:
             semantic_summary={
                 "response_plan": planned.plan.model_dump(mode="json"),
                 "professional_assessment": (
-                    planned.assessment.model_dump(mode="json")
+                    self._approved_assessment_summary(planned.assessment)
                     if planned.assessment is not None
                     else None
                 ),
@@ -289,10 +295,16 @@ class AgentResponseFinalizer:
                             for block in planned.plan.content_blocks
                             for reference in block.source_refs
                         ),
+                        *(
+                            outcome.execution.tool_call_id
+                            for outcome in request.tool_outcomes
+                            if outcome.execution.result.status.value == "succeeded"
+                        ),
                     )
                 )
             ),
             pending_clarification=pending,
+            tool_failed=tool_failed,
         )
         calls = routed.model_call_count
         tokens = routed.total_token_count
@@ -301,6 +313,7 @@ class AgentResponseFinalizer:
             messages = compose_messages(
                 turn_id=request.turn_id,
                 system_text=routed.routing.system_text,
+                system_source_refs=self._system_source_refs(planned),
                 coach_text=None,
                 tool_outcomes=request.tool_outcomes,
             )
@@ -319,15 +332,16 @@ class AgentResponseFinalizer:
         coach_planned = self._plan_builder.build(
             neutral_draft=coach.text,
             tool_outcomes=(),
+            extra_source_refs=coach.source_refs,
         )
         coach_neutral_artifact = self._stages.artifact(
             request,
-            producer=ArtifactProducerRole.PARTICIPANT_ROUTER,
+            producer=ArtifactProducerRole.CONVERSATION,
             artifact_type="coach_neutral_response",
             payload={
                 "text": coach.text,
                 "source_refs": coach.source_refs,
-                "selected_by": "participant_router",
+                "selected_by": "conversation_agent",
             },
             parents=(routed.artifact.artifact_id,),
         )
@@ -365,6 +379,7 @@ class AgentResponseFinalizer:
                 messages = compose_messages(
                     turn_id=request.turn_id,
                     system_text=routed.routing.system_text,
+                    system_source_refs=self._system_source_refs(planned),
                     coach_text=None,
                     tool_outcomes=request.tool_outcomes,
                 )
@@ -383,6 +398,7 @@ class AgentResponseFinalizer:
         messages = compose_messages(
             turn_id=request.turn_id,
             system_text=routed.routing.system_text,
+            system_source_refs=self._system_source_refs(planned),
             coach_text=style.response.text,
             coach_source_refs=coach.source_refs,
             style_profile_version=selection.snapshot.profile.version,
@@ -427,6 +443,64 @@ class AgentResponseFinalizer:
                 }
             )
         return tuple(summary)
+
+    @staticmethod
+    def _has_failed_tool(outcomes: tuple[ToolCallOutcome, ...]) -> bool:
+        """Expose failed tool state to conversation routing as a fact.
+
+        The Conversation Agent may still explain the failure, but it must not
+        produce a coach acknowledgement that could be mistaken for success.
+        This is derived from tool receipts rather than message text.
+        """
+
+        return any(
+            outcome.execution.result.status.value != "succeeded"
+            for outcome in outcomes
+        )
+
+    @staticmethod
+    def _system_source_refs(planned: PlannedResponse) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                (
+                    *planned.plan.citation_refs,
+                    *(
+                        reference
+                        for block in planned.plan.content_blocks
+                        for reference in block.source_refs
+                    ),
+                )
+            )
+        )
+
+    @staticmethod
+    def _approved_assessment_summary(
+        assessment: ProfessionalAssessment,
+    ) -> dict[str, object]:
+        """Expose only approved semantic conclusions to Conversation Agent.
+
+        Citation objects and retrieval metadata stay in Trace and the nutrition
+        artifact. The conversation model receives the conclusions it may express,
+        never the source text or raw RAG record.
+        """
+
+        return {
+            "assessment_type": assessment.assessment_type.value,
+            "overall": assessment.overall,
+            "findings": tuple(
+                {
+                    "category": finding.category,
+                    "statement": finding.statement,
+                    "confidence": finding.confidence.value,
+                }
+                for finding in assessment.findings
+            ),
+            "priority_problem": assessment.priority_problem,
+            "actions": tuple(action.statement for action in assessment.actions),
+            "questions": assessment.questions,
+            "risk_flags": assessment.risk_flags,
+            "uncertainty_note": assessment.uncertainty_note,
+        }
 
     @classmethod
     def _model_visible_result(cls, value: Any) -> Any:

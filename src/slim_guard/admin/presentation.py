@@ -92,8 +92,9 @@ AGENT_ROLE_LABELS = {
     "nutrition_expert": "营养专业 Agent",
     "nutrition_tool": "营养只读工具",
     "style_resolver": "风格配置模块",
-    "participant_router": "群聊角色路由",
-    "response_style": "表达风格 Agent",
+    "conversation": "群聊对话 Agent",
+    "participant_router": "旧版群聊角色路由",
+    "response_style": "教练表达渲染器",
     "response_reviewer": "回复审查 Agent",
     "coordinator": "工作流协调器",
 }
@@ -113,6 +114,7 @@ ARTIFACT_TYPE_LABELS = {
     "knowledge_citation": "专业资料引用",
     "styled_response": "风格化回复",
     "reviewer_verdict": "回复审查结论",
+    "conversation_plan": "群聊消息计划",
 }
 
 WORKFLOW_NODE_LABELS = {
@@ -124,6 +126,7 @@ WORKFLOW_NODE_LABELS = {
     "context_ready": "上下文准备完成",
     "core": "主教练处理任务",
     "core_running": "主教练处理任务",
+    "conversation": "群聊消息计划",
     "orchestrator": "对话编排",
     "orchestrator_running": "对话编排",
     "dish_recognition_running": "菜品识别",

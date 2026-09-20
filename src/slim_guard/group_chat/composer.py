@@ -37,6 +37,7 @@ def compose_messages(
     *,
     turn_id: str,
     system_text: str,
+    system_source_refs: tuple[str, ...] = (),
     coach_text: str | None,
     coach_source_refs: tuple[str, ...] = (),
     style_profile_version: str | None = None,
@@ -67,6 +68,7 @@ def compose_messages(
             participant=ParticipantRole.SYSTEM_ASSISTANT,
             kind=RenderKind.TEXT,
             text=system_text.strip(),
+            source_refs=system_source_refs,
             created_at=now,
         )
     )
@@ -79,6 +81,7 @@ def compose_messages(
                 participant=ParticipantRole.SYSTEM_ASSISTANT,
                 kind=RenderKind.CARD,
                 card=card,
+                source_refs=(card.source_execution_id,) if card.source_execution_id else (),
                 created_at=now,
             )
         )

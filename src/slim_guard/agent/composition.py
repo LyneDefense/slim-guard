@@ -10,6 +10,11 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
+from slim_guard.agents.conversation import (
+    CONVERSATION_PROMPT,
+    CONVERSATION_PROMPT_VERSION,
+    ConversationAgent,
+)
 from slim_guard.agents.core import CoreResponseRepairAgent
 from slim_guard.agents.nutrition import (
     DEFAULT_NUTRITION_PROMPT_VERSION,
@@ -21,11 +26,6 @@ from slim_guard.agents.nutrition import (
     nutrition_agent_tool_executors,
 )
 from slim_guard.agents.nutrition.tools import NutritionToolRegistry
-from slim_guard.agents.participant_router import (
-    PARTICIPANT_ROUTER_PROMPT,
-    PARTICIPANT_ROUTER_PROMPT_VERSION,
-    ParticipantRoutingAgent,
-)
 from slim_guard.agents.reviewer import (
     RESPONSE_REVIEWER_PROMPT,
     RESPONSE_REVIEWER_PROMPT_VERSION,
@@ -35,7 +35,7 @@ from slim_guard.agents.style import (
     RESPONSE_STYLE_PROMPT,
     RESPONSE_STYLE_PROMPT_VERSION,
     STYLE_MAX_MODEL_CALLS,
-    ResponseStyleAgent,
+    CoachStyleRenderer,
 )
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
@@ -355,7 +355,7 @@ def build_agent_runtime(
     structured_runner = InvocationRunner(model=model, clock=clock)
     response_finalizer = (
         AgentResponseFinalizer(
-            style_agent=ResponseStyleAgent(
+            style_agent=CoachStyleRenderer(
                 runner=structured_runner,
                 model=definition.text_model,
             ),
@@ -379,8 +379,8 @@ def build_agent_runtime(
             graph_version=definition.multi_agent_graph_version,
             max_invocation_tokens=definition.multi_agent_invocation_max_total_tokens,
             clock=clock,
-            participant_agent=(
-                ParticipantRoutingAgent(
+            conversation_agent=(
+                ConversationAgent(
                     runner=structured_runner,
                     model=definition.text_model,
                 )
@@ -472,12 +472,12 @@ def build_agent_graph_manifest(definition: AgentRuntimeDefinition) -> AgentGraph
         ),
         **(
             {
-                "participant_router": AgentGraphNodeManifest.build(
-                    role="participant_router",
+                "conversation": AgentGraphNodeManifest.build(
+                    role="conversation",
                     model=definition.text_model,
-                    prompt_version=PARTICIPANT_ROUTER_PROMPT_VERSION,
-                    prompt=PARTICIPANT_ROUTER_PROMPT,
-                    output_schema="ParticipantRoutingDecision",
+                    prompt_version=CONVERSATION_PROMPT_VERSION,
+                    prompt=CONVERSATION_PROMPT,
+                    output_schema="ConversationDecision",
                     privacy_scopes=("response_plan", "tool_outcomes"),
                     max_model_calls=2,
                     max_tool_calls=0,
