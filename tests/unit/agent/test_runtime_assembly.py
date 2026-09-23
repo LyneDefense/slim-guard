@@ -44,6 +44,13 @@ async def test_runtime_assembly_shares_registry_context_and_confirmation_state()
                 composition, "ContextCompiler", wraps=composition.ContextCompiler
             ) as compiler,
             patch.object(composition, "TurnHarness", wraps=composition.TurnHarness) as harness,
+            patch.object(composition, "CoreAgent", wraps=composition.CoreAgent) as core_agent,
+            patch.object(
+                composition, "CoreInvocationRunner", wraps=composition.CoreInvocationRunner
+            ) as core_execution,
+            patch.object(
+                composition, "ResponseProcessor", wraps=composition.ResponseProcessor
+            ) as processor,
             patch.object(
                 nutrition,
                 "NutritionSpecialist",
@@ -73,10 +80,10 @@ async def test_runtime_assembly_shares_registry_context_and_confirmation_state()
         assert context.call_args.kwargs["pending_actions"] is pending
         assert resume.call_args.kwargs["pending_actions"] is pending
         assert resume.call_args.kwargs["turn_state"] is calls.call_args.kwargs["turn_state"]
-        assert resume.call_args.kwargs["tool_calls"] is harness.call_args.kwargs["tool_calls"]
+        assert resume.call_args.kwargs["tool_calls"] is core_agent.call_args.kwargs["tool_calls"]
         assert calls.call_args.kwargs["confirmation_ttl"] == timedelta(seconds=42)
         assert calls.call_args.kwargs["review_ttl"] == timedelta(seconds=84)
-        assert harness.call_args.kwargs["graph_version"] == "core-primary-v1"
+        assert core_execution.call_args.kwargs["graph_version"] == "core-primary-v1"
         assert specialist.call_args.kwargs["graph_version"] == "core-primary-v1"
 
         assert context.call_args.kwargs["memory_limit"] == 17
@@ -84,7 +91,15 @@ async def test_runtime_assembly_shares_registry_context_and_confirmation_state()
         assert context.call_args.kwargs["dialogue_char_limit"] == 2300
         assert context.call_args.kwargs["preload_domain_history"] is False
         assert finalizer.call_count == 1
-        assert harness.call_args.kwargs["response_finalizer"] is not None
+        assert processor.call_args.kwargs["finalizer"] is not None
+        assert set(harness.call_args.kwargs) == {
+            "initializer",
+            "preparation",
+            "core",
+            "responses",
+            "recorder",
+            "clock",
+        }
         assert finalizer.call_args.kwargs["graph_version"] == "core-primary-v1"
         assert finalizer.call_args.kwargs["style_agent"] is not None
         assert finalizer.call_args.kwargs["reviewer_agent"] is not None

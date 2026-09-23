@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from slim_guard.agent_models.errors import ModelGatewayError
@@ -15,14 +15,8 @@ from slim_guard.agent_models.gateway import (
     ToolChoice,
 )
 from slim_guard.group_chat.contracts import ChatMessage
-from slim_guard.harness.events import ItemType, TurnStatus
+from slim_guard.harness.events import TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
-from slim_guard.harness.safety import (
-    HealthRiskLevel,
-    OutputGuard,
-    PermissiveOutputGuard,
-    SafetyAssessment,
-)
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
@@ -31,22 +25,6 @@ from slim_guard.tools.policy import ToolAuthorization
 from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class ResponsePipelineResult:
-    text: str
-    model_call_count: int = 0
-    total_token_count: int = 0
-    core_output_artifact_id: str | None = None
-    final_output_artifact_id: str | None = None
-    messages: tuple[ChatMessage, ...] = ()
-
-
-ResponsePipelineHook = Callable[
-    [str, tuple[ModelMessage, ...], tuple[ToolCallOutcome, ...], tuple[ModelResponse, ...]],
-    Awaitable[ResponsePipelineResult],
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +91,27 @@ class HarnessLoopResult:
         )
 
 
-BeforeFinishHook = Callable[[HarnessLoopResult], Awaitable[None]]
+@dataclass(slots=True)
+class LoopProgress:
+    """Per-execution progress retained if an exception or cancellation interrupts Core."""
+
+    messages: list[ModelMessage] = field(default_factory=list)
+    model_responses: list[ModelResponse] = field(default_factory=list)
+    tool_outcomes: list[ToolCallOutcome] = field(default_factory=list)
+
+    def interrupted(self, error: BaseException, *, cancelled: bool = False) -> HarnessLoopResult:
+        return HarnessLoopResult(
+            termination=HarnessTermination.FATAL_ERROR,
+            final_text=None,
+            messages=tuple(self.messages),
+            model_responses=tuple(self.model_responses),
+            tool_outcomes=tuple(self.tool_outcomes),
+            failure=HarnessFailure(
+                code="execution_cancelled" if cancelled else "core_execution_failed",
+                error_type=type(error).__name__,
+                retryable=cancelled,
+            ),
+        )
 
 
 class HarnessLoop:
@@ -125,13 +123,11 @@ class HarnessLoop:
         model: ModelGateway,
         tool_calls: ToolCallRunner,
         recorder: HarnessRunRecorder | None = None,
-        output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._model = model
         self._tool_calls = tool_calls
         self._recorder = recorder or NullHarnessRunRecorder()
-        self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
 
     @usage_operation("core", source="context", kind="agent", agent="core")
@@ -144,30 +140,23 @@ class HarnessLoop:
         source_item_id: str | None,
         now: datetime,
         trusted_evidence_item_ids: tuple[str, ...] = (),
-        safety_assessment: SafetyAssessment | None = None,
-        response_pipeline_hook: ResponsePipelineHook | None = None,
-        before_finish_hook: BeforeFinishHook | None = None,
+        progress: LoopProgress | None = None,
     ) -> HarnessLoopResult:
-        messages = list(request.messages)
-        model_responses: list[ModelResponse] = []
-        tool_outcomes: list[ToolCallOutcome] = []
+        state = progress if progress is not None else LoopProgress()
+        state.messages.extend(request.messages)
+        messages = state.messages
+        model_responses = state.model_responses
+        tool_outcomes = state.tool_outcomes
         nonretryable_failures: dict[tuple[str, str], int] = {}
         force_text_response = False
-        active_assessment = safety_assessment or SafetyAssessment(
-            level=HealthRiskLevel.NORMAL,
-            code="none",
-            blocks_tools=False,
-        )
 
         while True:
             if self._deadline_exceeded(context):
-                return await self._finish(
-                    context=context,
+                return self._result(
                     termination=HarnessTermination.DEADLINE_EXCEEDED,
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
-                    before_finish_hook=before_finish_hook,
                 )
             request_update: dict[str, object] = {"messages": tuple(messages)}
             if force_text_response:
@@ -181,14 +170,12 @@ class HarnessLoop:
                 response = await self._model.complete(current_request)
                 model_completed_at = self._clock()
             except ModelGatewayError as exc:
-                return await self._finish(
-                    context=context,
+                return self._result(
                     termination=HarnessTermination.FATAL_ERROR,
                     failure=model_gateway_failure(exc),
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
-                    before_finish_hook=before_finish_hook,
                 )
             model_responses.append(response)
             messages.append(response.message)
@@ -201,13 +188,11 @@ class HarnessLoop:
                 completed_at=model_completed_at,
             )
             if self._deadline_exceeded(context):
-                return await self._finish(
-                    context=context,
+                return self._result(
                     termination=HarnessTermination.DEADLINE_EXCEEDED,
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
-                    before_finish_hook=before_finish_hook,
                 )
 
             calls = response.message.tool_calls
@@ -215,93 +200,21 @@ class HarnessLoop:
                 text = response.message.content
                 if text is None or not text.strip():
                     raise ValueError("Model returned neither tool calls nor final text")
-                guarded = self._output_guard.review(
-                    text=text,
-                    assessment=active_assessment,
-                    tool_outcomes=tuple(tool_outcomes),
-                )
-                if guarded.modified:
-                    await self._recorder.record_output_guard(
-                        turn_id=context.turn_id,
-                        code=guarded.code,
-                    )
-                final_text = guarded.text
-                pipeline_calls = 0
-                pipeline_tokens = 0
-                core_output_artifact_id = None
-                final_output_artifact_id = None
-                outgoing_messages: tuple[ChatMessage, ...] = ()
-                if response_pipeline_hook is not None and not guarded.modified:
-                    try:
-                        proposed = await response_pipeline_hook(
-                            final_text,
-                            tuple(messages),
-                            tuple(tool_outcomes),
-                            tuple(model_responses),
-                        )
-                        pipeline_calls = proposed.model_call_count
-                        pipeline_tokens = proposed.total_token_count
-                        core_output_artifact_id = proposed.core_output_artifact_id
-                        final_output_artifact_id = proposed.final_output_artifact_id
-                        outgoing_messages = proposed.messages
-                        checked = self._output_guard.review(
-                            text=proposed.text,
-                            assessment=active_assessment,
-                            tool_outcomes=tuple(tool_outcomes),
-                        )
-                        if not checked.modified:
-                            final_text = checked.text
-                        else:
-                            await self._recorder.record_workflow_event(
-                                turn_id=context.turn_id,
-                                event_type=ItemType.RESPONSE_DEGRADED,
-                                payload={
-                                    "artifact_id": proposed.final_output_artifact_id,
-                                    "reason_code": "response_pipeline_output_guard_modified",
-                                    "fallback_type": "core_response",
-                                },
-                            )
-                    except Exception as error:
-                        logger.warning(
-                            "final_response_workflow_failed",
-                            extra={
-                                "failure_type": type(error).__name__,
-                            },
-                            exc_info=error,
-                        )
-                        await self._recorder.record_workflow_event(
-                            turn_id=context.turn_id,
-                            event_type=ItemType.RESPONSE_DEGRADED,
-                            payload={
-                                "artifact_id": None,
-                                "reason_code": "response_pipeline_failed",
-                                "fallback_type": "core_response",
-                            },
-                        )
-                return await self._finish(
-                    context=context,
+                return self._result(
                     termination=HarnessTermination.FINAL_RESPONSE,
-                    final_text=final_text,
+                    final_text=text,
                     messages=messages,
                     model_responses=model_responses,
                     tool_outcomes=tool_outcomes,
-                    pipeline_model_call_count=pipeline_calls,
-                    pipeline_total_token_count=pipeline_tokens,
-                    core_output_artifact_id=core_output_artifact_id,
-                    final_output_artifact_id=final_output_artifact_id,
-                    outgoing_messages=outgoing_messages,
-                    before_finish_hook=before_finish_hook,
                 )
 
             for call in calls:
                 if self._deadline_exceeded(context):
-                    return await self._finish(
-                        context=context,
+                    return self._result(
                         termination=HarnessTermination.DEADLINE_EXCEEDED,
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
-                        before_finish_hook=before_finish_hook,
                     )
                 trace = await self._recorder.start_tool_call(
                     turn_id=context.turn_id,
@@ -367,22 +280,18 @@ class HarnessLoop:
                     )
                 waiting = self._waiting_termination(outcome)
                 if waiting is not None:
-                    return await self._finish(
-                        context=context,
+                    return self._result(
                         termination=waiting,
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
-                        before_finish_hook=before_finish_hook,
                     )
                 if self._deadline_exceeded(context):
-                    return await self._finish(
-                        context=context,
+                    return self._result(
                         termination=HarnessTermination.DEADLINE_EXCEEDED,
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
-                        before_finish_hook=before_finish_hook,
                     )
                 if failure is not None and not failure.retryable:
                     break
@@ -395,49 +304,25 @@ class HarnessLoop:
             return HarnessTermination.WAITING_HUMAN_REVIEW
         return None
 
-    async def _finish(
-        self,
+    @staticmethod
+    def _result(
         *,
-        context: HarnessTurnContext,
         termination: HarnessTermination,
         messages: list[ModelMessage],
         model_responses: list[ModelResponse],
         tool_outcomes: list[ToolCallOutcome],
         final_text: str | None = None,
         failure: HarnessFailure | None = None,
-        pipeline_model_call_count: int = 0,
-        pipeline_total_token_count: int = 0,
-        core_output_artifact_id: str | None = None,
-        final_output_artifact_id: str | None = None,
-        outgoing_messages: tuple[ChatMessage, ...] = (),
-        before_finish_hook: BeforeFinishHook | None = None,
     ) -> HarnessLoopResult:
-        result = HarnessLoopResult(
+        # Only the outer TurnHarness can persist the final Turn status/messages.
+        return HarnessLoopResult(
             termination=termination,
             final_text=final_text,
             messages=tuple(messages),
             model_responses=tuple(model_responses),
             tool_outcomes=tuple(tool_outcomes),
             failure=failure,
-            pipeline_model_call_count=pipeline_model_call_count,
-            pipeline_total_token_count=pipeline_total_token_count,
-            core_output_artifact_id=core_output_artifact_id,
-            final_output_artifact_id=final_output_artifact_id,
-            outgoing_messages=outgoing_messages,
         )
-        if before_finish_hook is not None:
-            await before_finish_hook(result)
-        await self._recorder.finish_run(
-            turn_id=context.turn_id,
-            termination=termination,
-            final_text=final_text,
-            model_call_count=len(model_responses) + pipeline_model_call_count,
-            tool_call_count=len(tool_outcomes),
-            total_token_count=self._total_tokens(model_responses) + pipeline_total_token_count,
-            failure=failure,
-            outgoing_messages=outgoing_messages,
-        )
-        return result
 
     def _deadline_exceeded(self, context: HarnessTurnContext) -> bool:
         if context.deadline_at is None:
@@ -446,10 +331,6 @@ class HarnessLoop:
         if now.utcoffset() is None:
             raise ValueError("Harness clock must return a timezone-aware datetime")
         return now >= context.deadline_at
-
-    @staticmethod
-    def _total_tokens(model_responses: list[ModelResponse]) -> int:
-        return sum(response.usage.total_tokens for response in model_responses)
 
     @staticmethod
     def _utc_now() -> datetime:

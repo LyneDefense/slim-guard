@@ -1,8 +1,7 @@
 """Core Agent implementation.
 
 The Core Agent owns task understanding and the model/tool loop.  Turn-level
-persistence, safety gates, final adoption, and delivery remain the
-responsibility of the outer Turn Harness.
+persistence, final reply processing, and delivery belong to their outer layers.
 """
 
 from __future__ import annotations
@@ -12,13 +11,11 @@ from datetime import datetime
 
 from slim_guard.agent_models.gateway import ModelGateway, ModelRequest
 from slim_guard.harness.loop import (
-    BeforeFinishHook,
     HarnessLoop,
     HarnessLoopResult,
     HarnessTurnContext,
-    ResponsePipelineHook,
+    LoopProgress,
 )
-from slim_guard.harness.safety import OutputGuard, SafetyAssessment
 from slim_guard.harness.tool_calls import ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.tools.policy import ToolAuthorization
@@ -27,9 +24,8 @@ from slim_guard.tools.policy import ToolAuthorization
 class CoreAgent:
     """Run the primary user-facing reasoning and tool-use loop for one Turn.
 
-    This boundary is intentionally behavior-preserving while the old dual-path
-    workflow is removed in later phases.  It gives the main coach a stable owner
-    without making the Turn Harness itself a business Agent.
+    Business decisions belong to the model; this Agent does not finalize the
+    Turn, render group-chat replies, or deliver user messages.
     """
 
     def __init__(
@@ -38,14 +34,12 @@ class CoreAgent:
         model: ModelGateway,
         tool_calls: ToolCallRunner,
         recorder: HarnessRunRecorder,
-        output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._loop = HarnessLoop(
             model=model,
             tool_calls=tool_calls,
             recorder=recorder,
-            output_guard=output_guard,
             clock=clock,
         )
 
@@ -58,9 +52,7 @@ class CoreAgent:
         source_item_id: str | None,
         now: datetime,
         trusted_evidence_item_ids: tuple[str, ...] = (),
-        safety_assessment: SafetyAssessment | None = None,
-        response_pipeline_hook: ResponsePipelineHook | None = None,
-        before_finish_hook: BeforeFinishHook | None = None,
+        progress: LoopProgress | None = None,
     ) -> HarnessLoopResult:
         """Execute one bounded Core Agent invocation."""
 
@@ -71,7 +63,5 @@ class CoreAgent:
             source_item_id=source_item_id,
             now=now,
             trusted_evidence_item_ids=trusted_evidence_item_ids,
-            safety_assessment=safety_assessment,
-            response_pipeline_hook=response_pipeline_hook,
-            before_finish_hook=before_finish_hook,
+            progress=progress,
         )

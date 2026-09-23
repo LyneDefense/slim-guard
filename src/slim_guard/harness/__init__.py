@@ -23,8 +23,8 @@ from slim_guard.harness.pending_resume import (
     PendingActionResumeCoordinator,
     PendingResumeOutcome,
 )
+from slim_guard.harness.preparation import TurnGrants
 from slim_guard.harness.runner import (
-    TurnGrants,
     TurnHarness,
     TurnRunResult,
 )

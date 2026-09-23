@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,12 +18,10 @@ from slim_guard.agent_models.gateway import (
     ToolChoice,
     ToolDefinition,
 )
-from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, TurnTrigger
+from slim_guard.harness.events import TurnStatus, TurnTrigger
 from slim_guard.harness.loop import (
     HarnessLoop,
     HarnessTurnContext,
-    ResponsePipelineHook,
-    ResponsePipelineResult,
 )
 from slim_guard.harness.state_repository import TurnRef
 from slim_guard.harness.termination import HarnessTermination
@@ -110,27 +108,6 @@ class RecordingToolCallRunner:
         )
 
 
-class RecordingRunRecorder(NullHarnessRunRecorder):
-    def __init__(self) -> None:
-        self.workflow_events: list[tuple[ItemType | str, dict[str, Any]]] = []
-
-    async def record_workflow_event(
-        self,
-        *,
-        turn_id: str,
-        event_type: ItemType | str,
-        payload: Mapping[str, Any],
-        status: ItemStatus | str = ItemStatus.COMPLETED,
-    ) -> None:
-        await super().record_workflow_event(
-            turn_id=turn_id,
-            event_type=event_type,
-            payload=payload,
-            status=status,
-        )
-        self.workflow_events.append((event_type, dict(payload)))
-
-
 def tool_call(
     call_id: str,
     *,
@@ -213,7 +190,6 @@ async def run_loop(
     turn_context: HarnessTurnContext | None = None,
     clock: Callable[[], datetime] | None = None,
     trusted_evidence_item_ids: tuple[str, ...] = (),
-    response_pipeline_hook: ResponsePipelineHook | None = None,
     recorder: NullHarnessRunRecorder | None = None,
     request_model: ModelRequest | None = None,
     authorization_override: ToolAuthorization | None = None,
@@ -230,7 +206,6 @@ async def run_loop(
         source_item_id="user-item-1",
         now=datetime.now(UTC),
         trusted_evidence_item_ids=trusted_evidence_item_ids,
-        response_pipeline_hook=response_pipeline_hook,
     )
 
 
@@ -377,74 +352,6 @@ async def test_model_may_finish_after_confirmed_meal_without_assessment() -> Non
     assert [tool.name for tool in model.requests[1].tools] == [
         "record_meal",
         "consult_nutrition_specialist",
-    ]
-    model.assert_exhausted()
-
-
-async def test_response_pipeline_replaces_core_draft_without_second_core_generation() -> None:
-    model = ScriptedModelGateway((assistant_text("中性草稿。"),))
-    tools = RecordingToolCallRunner()
-    received: list[str] = []
-
-    async def finalize(
-        neutral_draft: str,
-        _messages: tuple[ModelMessage, ...],
-        _outcomes: tuple[ToolCallOutcome, ...],
-        _responses: tuple[ModelResponse, ...],
-    ) -> ResponsePipelineResult:
-        received.append(neutral_draft)
-        return ResponsePipelineResult(
-            text="医生风格回复。",
-            model_call_count=2,
-            total_token_count=30,
-            core_output_artifact_id="artifact-core",
-            final_output_artifact_id="artifact-final",
-        )
-
-    result = await run_loop(model, tools, response_pipeline_hook=finalize)
-
-    assert received == ["中性草稿。"]
-    assert result.final_text == "医生风格回复。"
-    assert len(model.requests) == 1
-    assert result.model_call_count == 3
-    assert result.total_token_count == 30
-    assert result.core_output_artifact_id == "artifact-core"
-    assert result.final_output_artifact_id == "artifact-final"
-    model.assert_exhausted()
-
-
-async def test_response_pipeline_failure_keeps_existing_core_draft() -> None:
-    model = ScriptedModelGateway((assistant_text("已生成的安全草稿。"),))
-    tools = RecordingToolCallRunner()
-    recorder = RecordingRunRecorder()
-
-    async def fail_pipeline(
-        _neutral_draft: str,
-        _messages: tuple[ModelMessage, ...],
-        _outcomes: tuple[ToolCallOutcome, ...],
-        _responses: tuple[ModelResponse, ...],
-    ) -> ResponsePipelineResult:
-        raise RuntimeError("style service unavailable")
-
-    result = await run_loop(
-        model,
-        tools,
-        response_pipeline_hook=fail_pipeline,
-        recorder=recorder,
-    )
-
-    assert result.final_text == "已生成的安全草稿。"
-    assert len(model.requests) == 1
-    assert result.model_call_count == 1
-    assert recorder.workflow_events == [
-        (
-            ItemType.RESPONSE_DEGRADED,
-            {
-                "artifact_id": None,
-                "reason_code": "response_pipeline_failed",
-                "fallback_type": "core_response",
-            },
-        )
     ]
     model.assert_exhausted()
 

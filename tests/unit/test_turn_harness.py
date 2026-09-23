@@ -9,18 +9,22 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     NormalizedToolCall,
 )
+from slim_guard.agents.core import CoreAgent
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.initialization import TurnInitializationRequest, TurnInitializer, TurnInput
 from slim_guard.harness.manifest import AgentManifest
+from slim_guard.harness.preparation import TurnContextPreparer
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository, TurnRef
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
+from slim_guard.response_pipeline.processor import ResponseProcessor
+from slim_guard.runtime.invocation.core import CoreInvocationRunner
 from slim_guard.runtime.turn import TurnGrants, TurnHarness
 from slim_guard.tools.contracts import (
     ToolArguments,
@@ -188,13 +192,23 @@ def build_runner(
     tool_calls,
     current_time: datetime,
 ) -> TurnHarness:
+    recorder = PersistentHarnessRunRecorder(repository)
     return TurnHarness(
         initializer=TurnInitializer(repository),
-        compiler=ContextCompiler(manifest=manifest, system_prompt=SYSTEM_PROMPT, tools=registry),
-        model=model,
-        tool_calls=tool_calls,
-        recorder=PersistentHarnessRunRecorder(repository),
-        output_guard=SlimGuardOutputGuard(),
+        preparation=TurnContextPreparer(
+            compiler=ContextCompiler(
+                manifest=manifest, system_prompt=SYSTEM_PROMPT, tools=registry
+            ),
+            recorder=recorder,
+        ),
+        core=CoreInvocationRunner(
+            agent=CoreAgent(
+                model=model, tool_calls=tool_calls, recorder=recorder, clock=lambda: current_time
+            ),
+            clock=lambda: current_time,
+        ),
+        responses=ResponseProcessor(recorder=recorder, output_guard=SlimGuardOutputGuard()),
+        recorder=recorder,
         clock=lambda: current_time,
     )
 

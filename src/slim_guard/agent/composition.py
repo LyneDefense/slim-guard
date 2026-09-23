@@ -17,6 +17,7 @@ from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent.tool_catalog import build_core_tool_registry
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
+from slim_guard.agents.core import CoreAgent
 from slim_guard.agents.nutrition.tools import (
     NutritionKnowledgeRepository as NutritionKnowledgePort,
 )
@@ -24,12 +25,15 @@ from slim_guard.db.session import Database
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.initialization import TurnInitializer
 from slim_guard.harness.manifest import AgentManifest
+from slim_guard.harness.preparation import TurnContextPreparer
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.response_pipeline.processor import ResponseProcessor
+from slim_guard.runtime.invocation.core import CoreInvocationRunner
 from slim_guard.runtime.turn import TurnHarness
 from slim_guard.usage.gateway import MeasuredModelGateway, MeasuredVisionGateway
 from slim_guard.usage.repository import UsageRepository
@@ -131,20 +135,28 @@ def build_agent_runtime(
     )
     runner = TurnHarness(
         initializer=TurnInitializer(state),
-        compiler=ContextCompiler(
-            manifest=active_manifest,
-            system_prompt=SLIM_GUARD_HARNESS_PROMPT,
-            tools=registry,
+        preparation=TurnContextPreparer(
+            compiler=ContextCompiler(
+                manifest=active_manifest,
+                system_prompt=SLIM_GUARD_HARNESS_PROMPT,
+                tools=registry,
+            ),
+            recorder=recorder,
+            context_data=business.context,
+            memory_recaller=memory.recaller,
         ),
-        model=model,
-        tool_calls=tool_calls,
+        core=CoreInvocationRunner(
+            agent=CoreAgent(model=model, tool_calls=tool_calls, recorder=recorder, clock=clock),
+            store=invocation_store,
+            graph_version=_CORE_PRIMARY_GRAPH_VERSION,
+            clock=clock,
+        ),
+        responses=ResponseProcessor(
+            recorder=recorder,
+            output_guard=SlimGuardOutputGuard(),
+            finalizer=response_finalizer,
+        ),
         recorder=recorder,
-        context_data=business.context,
-        memory_recaller=memory.recaller,
-        output_guard=SlimGuardOutputGuard(),
-        response_finalizer=response_finalizer,
-        invocation_store=invocation_store,
-        graph_version=_CORE_PRIMARY_GRAPH_VERSION,
         clock=clock,
     )
     return AgentRuntime(
