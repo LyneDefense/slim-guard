@@ -1,21 +1,30 @@
-"""Bounded reviewer repair routing to the Agent that owns the problem."""
+"""Bounded content repair; presentation is rebuilt by Conversation Agent."""
 
-from __future__ import annotations
+from dataclasses import dataclass
 
-from slim_guard.agents.contracts import RepairTarget, ReviewerVerdict, ReviewerVerdictStatus
+from slim_guard.agents.contracts import RepairTarget
 from slim_guard.agents.nutrition import NutritionRepairRequest, NutritionSpecialist
-from slim_guard.response_pipeline.contracts import (
-    ResponseFinalizationRequest,
-    ResponseFinalizationResult,
-)
+from slim_guard.response_pipeline.contracts import ResponseFinalizationRequest
 from slim_guard.response_pipeline.planning import PlannedResponse
-from slim_guard.response_pipeline.profiles import ResolvedStyleProfile
-from slim_guard.response_pipeline.stages import ResponseStageExecutor
-from slim_guard.runtime.contracts import AgentArtifact, InvocationStatus
+from slim_guard.response_pipeline.stages import (
+    CoreRepairFailure,
+    CoreRepairStage,
+    ResponseStageExecutor,
+    ReviewStage,
+)
+from slim_guard.runtime.contracts import AgentArtifact
+
+
+@dataclass(frozen=True, slots=True)
+class ContentRepairResult:
+    core: CoreRepairStage | CoreRepairFailure
+    model_call_count: int
+    total_token_count: int
+    nutrition_repaired: bool = False
 
 
 class OwnerRepairCoordinator:
-    """Route one repair and one re-review without giving Reviewer write access."""
+    """Honor the reviewer's repair target without re-executing business tools."""
 
     def __init__(
         self,
@@ -31,32 +40,18 @@ class OwnerRepairCoordinator:
         *,
         request: ResponseFinalizationRequest,
         planned: PlannedResponse,
-        selection: ResolvedStyleProfile,
-        original_plan_artifact: AgentArtifact,
-        prior_styled_artifact: AgentArtifact,
-        resolution_artifact: AgentArtifact,
-        verdict: ReviewerVerdict,
-        verdict_artifact: AgentArtifact,
-        reviewer_invocation_id: str,
-        calls: int,
-        tokens: int,
-    ) -> ResponseFinalizationResult:
-        feedback = self._stages.review_feedback(verdict)
+        plan_artifact: AgentArtifact,
+        review: ReviewStage,
+    ) -> ContentRepairResult:
+        calls = tokens = 0
         assessment = planned.assessment
-        assessment_artifact_id = planned.assessment_artifact_id
-        parent_invocation_id = reviewer_invocation_id
+        assessment_id = planned.assessment_artifact_id
+        parent = review.invocation_id
         nutrition_repaired = False
-
-        if verdict.repair_target is RepairTarget.NUTRITION_EXPERT:
-            if self._nutrition_specialist is None or assessment_artifact_id is None:
-                return await self._stages.safe_fallback(
-                    request=request,
-                    selection=selection,
-                    plan_artifact=original_plan_artifact,
-                    verdict_artifact=verdict_artifact,
-                    calls=calls,
-                    tokens=tokens,
-                    failure_code="nutrition_repair_boundary_unavailable",
+        if review.verdict.repair_target is RepairTarget.NUTRITION_EXPERT:
+            if self._nutrition_specialist is None or assessment_id is None:
+                return ContentRepairResult(
+                    CoreRepairFailure("nutrition_repair_boundary_unavailable"), 0, 0
                 )
             try:
                 nutrition = await self._nutrition_specialist.repair(
@@ -64,108 +59,34 @@ class OwnerRepairCoordinator:
                         trace_id=request.trace_id,
                         thread_id=request.thread_id,
                         turn_id=request.turn_id,
-                        parent_invocation_id=reviewer_invocation_id,
-                        assessment_artifact_id=assessment_artifact_id,
-                        verdict_artifact_id=verdict_artifact.artifact_id,
-                        review_feedback=feedback,
+                        parent_invocation_id=parent,
+                        assessment_artifact_id=assessment_id,
+                        verdict_artifact_id=review.artifact.artifact_id,
                         deadline_at=request.deadline_at,
                     )
                 )
             except (RuntimeError, ValueError):
-                return await self._stages.safe_fallback(
-                    request=request,
-                    selection=selection,
-                    plan_artifact=original_plan_artifact,
-                    verdict_artifact=verdict_artifact,
-                    calls=calls,
-                    tokens=tokens,
-                    failure_code="nutrition_repair_failed",
-                )
+                return ContentRepairResult(CoreRepairFailure("nutrition_repair_failed"), 0, 0)
             calls += nutrition.model_call_count
             tokens += nutrition.total_token_count
             assessment = nutrition.assessment
-            assessment_artifact_id = nutrition.artifact.artifact_id
-            parent_invocation_id = nutrition.invocation.invocation_id
+            assessment_id = nutrition.artifact.artifact_id
+            parent = nutrition.invocation.invocation_id
             nutrition_repaired = True
 
-        core_stage = await self._stages.run_core_repair(
+        core = await self._stages.run_core_repair(
             request=request,
             planned=planned,
-            original_plan_artifact=original_plan_artifact,
+            original_plan_artifact=plan_artifact,
             assessment=assessment,
-            assessment_artifact_id=assessment_artifact_id,
-            verdict=verdict,
-            verdict_artifact=verdict_artifact,
-            parent_invocation_id=parent_invocation_id,
-        )
-        if core_stage is None:
-            return await self._stages.safe_fallback(
-                request=request,
-                selection=selection,
-                plan_artifact=original_plan_artifact,
-                verdict_artifact=verdict_artifact,
-                calls=calls,
-                tokens=tokens,
-                failure_code="core_repair_failed",
-                nutrition_repaired=nutrition_repaired,
-            )
-        calls += core_stage.model_call_count
-        tokens += core_stage.total_token_count
-        style = await self._stages.run_style(
-            request=request,
-            planned=core_stage.planned,
-            selection=selection,
-            plan_artifact=core_stage.plan_artifact,
-            neutral_artifact=core_stage.neutral_artifact,
-            resolution_artifact=resolution_artifact,
-            parent_invocation_id=core_stage.invocation_id,
-            attempt=2,
-            prior_artifact_id=prior_styled_artifact.artifact_id,
-            verdict_artifact_id=verdict_artifact.artifact_id,
-        )
-        calls += style.model_call_count
-        tokens += style.total_token_count
-        review = await self._stages.run_review(
-            request=request,
-            planned=core_stage.planned,
-            selection=selection,
-            styled=style.response,
-            styled_artifact=style.artifact,
-            plan_artifact=core_stage.plan_artifact,
-            parent_invocation_id=style.invocation_id,
-            attempt=2,
-            prior_verdict_artifact_id=verdict_artifact.artifact_id,
-        )
-        calls += review.model_call_count
-        tokens += review.total_token_count
-        if review.status is InvocationStatus.SUCCEEDED and (
-            review.verdict.verdict is ReviewerVerdictStatus.PASS
-        ):
-            return ResponseFinalizationResult(
-                text=style.response.text,
-                status=style.status,
-                core_output_artifact_id=core_stage.plan_artifact.artifact_id,
-                final_output_artifact_id=style.artifact.artifact_id,
-                style_profile_version=selection.snapshot.profile.version,
-                model_call_count=calls,
-                total_token_count=tokens,
-                reviewer_ran=True,
-                nutrition_repaired=nutrition_repaired,
-                core_repaired=True,
-                used_neutral_fallback=style.status is InvocationStatus.DEGRADED,
-                failure_code=style.failure_code,
-            )
-        return await self._stages.safe_fallback(
-            request=request,
-            selection=selection,
-            plan_artifact=core_stage.plan_artifact,
+            assessment_artifact_id=assessment_id,
+            verdict=review.verdict,
             verdict_artifact=review.artifact,
-            calls=calls,
-            tokens=tokens,
-            failure_code=review.failure_code or "review_rejected_after_owner_repair",
-            nutrition_repaired=nutrition_repaired,
-            core_repaired=True,
+            parent_invocation_id=parent,
         )
-
-
-__all__ = ["OwnerRepairCoordinator"]
+        return ContentRepairResult(
+            core=core,
+            model_call_count=calls + core.model_call_count,
+            total_token_count=tokens + core.total_token_count,
+            nutrition_repaired=nutrition_repaired,
+        )

@@ -164,11 +164,7 @@ class TurnInitializer:
             ),
         )
         source_item = next(
-            (
-                item
-                for item in started.items
-                if item.item_type is ItemType.USER_MESSAGE
-            ),
+            (item for item in started.items if item.item_type is ItemType.USER_MESSAGE),
             started.items[0] if started.items else None,
         )
         context = HarnessTurnContext(

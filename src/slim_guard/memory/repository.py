@@ -41,7 +41,7 @@ from slim_guard.memory.errors import (
 )
 from slim_guard.memory.registry import CanonicalMemory, MemorySchemaRegistry
 
-MEMORY_POLICY_VERSION = "profile-goal-constraint-handoff-receipt-privacy-v9"
+MEMORY_POLICY_VERSION = "profile-goal-constraint-receipt-privacy-v10"
 
 
 class MemoryRepository:

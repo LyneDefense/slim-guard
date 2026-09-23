@@ -24,7 +24,7 @@ export function ValidationDiagnostics({
       <p>
         {value.status === "repaired" ? "已修复，失败记录仍保留" : "尚未修复"}
         。单次执行最多尝试 {value.max_attempts_per_execution} 次（含首次请求）；
-        手动恢复仍沿用原任务剩余预算和上次错误。
+        手动恢复仍沿用原任务快照、累计执行时间和上次错误。
       </p>
       {value.failures.map((failure) => (
         <article className="style-material" key={failure.number}>

@@ -245,10 +245,12 @@ class ImageAssetRecord(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_message_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observation_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MealRecord(Base):
@@ -351,6 +353,9 @@ class PendingActionRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversation_tasks.id", ondelete="SET NULL"), nullable=True
+    )
     thread_id: Mapped[str] = mapped_column(
         ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
     )
@@ -1066,45 +1071,43 @@ class MemoryBulkOperationRecord(Base):
     )
 
 
-class MemoryHandoffRecord(Base):
-    __tablename__ = "memory_handoffs"
+class ConversationTaskRecord(Base):
+    __tablename__ = "conversation_tasks"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('active','resolved','expired')",
-            name="ck_memory_handoff_status",
+            "status IN ('open','resolved','cancelled','expired')",
+            name="ck_conversation_task_status",
         ),
-        Index("ix_memory_handoff_user_status", "user_id", "status"),
-        Index("ix_memory_handoff_expiry", "status", "expires_at"),
-        Index(
-            "uq_memory_handoff_active_user",
-            "user_id",
-            unique=True,
-            sqlite_where=text("status = 'active'"),
-            postgresql_where=text("status = 'active'"),
-        ),
+        Index("ix_conversation_task_user_status", "user_id", "status"),
+        Index("ix_conversation_task_expiry", "status", "expires_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    thread_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
-    )
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    thread_id: Mapped[str] = mapped_column(ForeignKey("agent_threads.id", ondelete="CASCADE"))
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     objective: Mapped[str] = mapped_column(String(300), nullable=False)
     unresolved_json: Mapped[str] = mapped_column(Text, nullable=False)
-    source_turn_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_turns.id", ondelete="RESTRICT"), nullable=False
-    )
-    source_item_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_items.id", ondelete="RESTRICT"), nullable=False
-    )
-    source_tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
-    operation_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now
-    )
+    evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_item_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    attachment_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_turn_id: Mapped[str] = mapped_column(ForeignKey("agent_turns.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ConversationTaskOperationRecord(Base):
+    __tablename__ = "conversation_task_operations"
+
+    operation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("conversation_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    command_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class UserRoutinePreference(Base):
@@ -1351,8 +1354,6 @@ class TraceSpanRecord(Base):
         DateTime(timezone=True), nullable=False, default=utc_now
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
 
 
 class NutritionKnowledgeImportBatchRecord(Base):
@@ -2324,7 +2325,7 @@ class AgentInvocationRecord(Base):
     """A Harness-issued, bounded agent invocation and its terminal result.
 
     The input payload is retained for deterministic recovery, but is deliberately not
-    exposed by the admin query layer. Harness-owned limits and grants live in
+    exposed by the admin query layer. Harness-owned deadlines and grants live in
     first-class columns so they cannot be confused with model-generated output.
     """
 
@@ -2348,9 +2349,6 @@ class AgentInvocationRecord(Base):
             "status IN ('started','succeeded','degraded','failed')",
             name="ck_agent_invocation_status",
         ),
-        CheckConstraint("max_model_calls >= 1", name="ck_agent_invocation_model_budget"),
-        CheckConstraint("max_tool_calls >= 0", name="ck_agent_invocation_tool_budget"),
-        CheckConstraint("max_total_tokens >= 1", name="ck_agent_invocation_token_budget"),
         Index("ix_agent_invocation_trace_started", "trace_id", "started_at"),
         Index("ix_agent_invocation_turn_started", "turn_id", "started_at"),
         Index("ix_agent_invocation_role_status", "agent_role", "status"),
@@ -2376,9 +2374,6 @@ class AgentInvocationRecord(Base):
     allowed_tools_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     privacy_scopes_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    max_model_calls: Mapped[int] = mapped_column(Integer, nullable=False)
-    max_tool_calls: Mapped[int] = mapped_column(Integer, nullable=False)
-    max_total_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     reason_summary: Mapped[str | None] = mapped_column(String(280), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="started")

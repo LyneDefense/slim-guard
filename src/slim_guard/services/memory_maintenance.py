@@ -9,6 +9,7 @@ from slim_guard.memory.lifecycle import (
     MemoryLifecycleResult,
     TranscriptScrubResult,
 )
+from slim_guard.tasks.ports import TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class MemoryMaintenanceService:
         self,
         *,
         lifecycle: MemoryLifecycleRepository,
+        tasks: TaskStore,
         transcript_retention: timedelta = timedelta(days=30),
         revoked_value_retention: timedelta = timedelta(days=30),
         interval_seconds: int = 21_600,
@@ -37,6 +39,7 @@ class MemoryMaintenanceService:
         if not 1 <= max_batches_per_run <= 100:
             raise ValueError("Memory maintenance max batches must be between 1 and 100")
         self._lifecycle = lifecycle
+        self._tasks = tasks
         self._transcript_retention = transcript_retention
         self._revoked_value_retention = revoked_value_retention
         self._interval_seconds = interval_seconds
@@ -77,9 +80,10 @@ class MemoryMaintenanceService:
         revoked_count = await self._lifecycle.purge_revoked_values(
             before=reference_time - self._revoked_value_retention,
         )
-        expired_facts, expired_long_term, expired_handoffs = await self._lifecycle.expire_due(
+        expired_facts, expired_long_term = await self._lifecycle.expire_due(
             at=reference_time
         )
+        expired_tasks = await self._tasks.expire_due(at=reference_time)
         result = MemoryLifecycleResult(
             transcript=TranscriptScrubResult(
                 item_count=item_count,
@@ -91,7 +95,7 @@ class MemoryMaintenanceService:
             revoked_value_count=revoked_count,
             expired_fact_count=expired_facts,
             expired_long_term_memory_count=expired_long_term,
-            expired_handoff_count=expired_handoffs,
+            expired_task_count=expired_tasks,
         )
         if any(
             (
@@ -103,7 +107,7 @@ class MemoryMaintenanceService:
                 revoked_count,
                 expired_facts,
                 expired_long_term,
-                expired_handoffs,
+                expired_tasks,
             )
         ):
             logger.info(
@@ -117,7 +121,7 @@ class MemoryMaintenanceService:
                     "revoked_value_count": revoked_count,
                     "expired_fact_count": expired_facts,
                     "expired_long_term_memory_count": expired_long_term,
-                    "expired_handoff_count": expired_handoffs,
+                    "expired_task_count": expired_tasks,
                 },
             )
         return result

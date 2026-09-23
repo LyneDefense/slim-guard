@@ -28,15 +28,14 @@ from slim_guard.agents.reviewer import (
 )
 from slim_guard.agents.style import (
     RESPONSE_STYLE_PROMPT_VERSION,
-    STYLE_MAX_MODEL_CALLS,
     CoachStyleRenderer,
     StyleContextCompiler,
 )
+from slim_guard.group_chat.routing import RoutingResult
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
-    ResponseFinalizationResult,
 )
 from slim_guard.response_pipeline.planning import PlannedResponse, ResponsePlanBuilder
 from slim_guard.response_pipeline.profiles import ResolvedStyleProfile
@@ -49,8 +48,6 @@ from slim_guard.runtime.contracts import (
     InvocationStatus,
 )
 from slim_guard.runtime.invocation import InvocationGrant, InvocationStore
-
-SAFE_REVIEW_FALLBACK = "这条回复还需要进一步核对，我先不下结论。"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,8 +83,15 @@ class CoreRepairStage:
 
 
 @dataclass(frozen=True, slots=True)
+class CoreRepairFailure:
+    failure_code: str
+    model_call_count: int = 0
+    total_token_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationStage:
-    routing: object
+    routing: RoutingResult
     artifact: AgentArtifact
     model_call_count: int
     total_token_count: int
@@ -103,34 +107,30 @@ class ResponseStageExecutor:
         self,
         *,
         style_agent: CoachStyleRenderer,
-        reviewer_agent: ResponseReviewerAgent | None,
+        reviewer_agent: ResponseReviewerAgent,
         core_repair_agent: CoreResponseRepairAgent | None,
         persistence: InvocationStore,
         recorder: HarnessRunRecorder,
         graph_version: str,
-        max_invocation_tokens: int,
         plan_builder: ResponsePlanBuilder,
         style_compiler: StyleContextCompiler,
         reviewer_compiler: ReviewerContextCompiler,
         clock: Callable[[], datetime] | None = None,
-        conversation_agent: ConversationAgent | None = None,
+        conversation_agent: ConversationAgent,
     ) -> None:
+        if reviewer_agent is None:
+            raise ValueError("Response Reviewer is required")
         self._style_agent = style_agent
         self._reviewer_agent = reviewer_agent
         self._core_repair_agent = core_repair_agent
         self._persistence = persistence
         self._recorder = recorder
         self._graph_version = graph_version
-        self._max_invocation_tokens = max_invocation_tokens
         self._plan_builder = plan_builder
         self._style_compiler = style_compiler
         self._reviewer_compiler = reviewer_compiler
         self._clock = clock or (lambda: datetime.now(UTC))
         self._conversation_agent = conversation_agent
-
-    @property
-    def conversation_enabled(self) -> bool:
-        return self._conversation_agent is not None
 
     async def run_conversation(
         self,
@@ -143,9 +143,8 @@ class ResponseStageExecutor:
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
         tool_failed: bool = False,
+        attempt: int = 1,
     ) -> ConversationStage:
-        if self._conversation_agent is None:
-            raise RuntimeError("Conversation Agent is not configured")
         invocation = self._invocation(
             request=request,
             role=AgentRole.CONVERSATION,
@@ -154,7 +153,7 @@ class ResponseStageExecutor:
             privacy_scopes=("response_plan", "tool_outcomes"),
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=(plan_artifact.artifact_id,),
-            attempt=1,
+            attempt=attempt,
         )
         await self._start(invocation, "生成系统助手和教练的群聊消息计划")
         result = await self._conversation_agent.run(
@@ -181,6 +180,7 @@ class ResponseStageExecutor:
                 "suppressed_reason": result.routing.suppressed_reason,
                 "status": result.status.value,
                 "failure_code": result.failure_code,
+                "attempt": attempt,
             },
             parents=(plan_artifact.artifact_id,),
         )
@@ -220,7 +220,7 @@ class ResponseStageExecutor:
         resolution_artifact: AgentArtifact,
         parent_invocation_id: str,
         attempt: int,
-        review_feedback: tuple[str, ...] = (),
+        review_feedback: ReviewerVerdict | None = None,
         prior_artifact_id: str | None = None,
         verdict_artifact_id: str | None = None,
     ) -> StyleStage:
@@ -320,8 +320,6 @@ class ResponseStageExecutor:
         attempt: int,
         prior_verdict_artifact_id: str | None = None,
     ) -> ReviewStage:
-        if self._reviewer_agent is None:
-            raise RuntimeError("Response review stage is not configured")
         parents = self.unique_ids(
             plan_artifact.artifact_id,
             styled_artifact.artifact_id,
@@ -348,6 +346,7 @@ class ResponseStageExecutor:
             response_plan=planned.plan,
             styled_response=styled,
             assessment=planned.assessment,
+            supporting_assessment=planned.supporting_assessment,
             style_profile=selection.snapshot.profile,
         )
         result = await self._reviewer_agent.run(
@@ -407,9 +406,9 @@ class ResponseStageExecutor:
         verdict: ReviewerVerdict,
         verdict_artifact: AgentArtifact,
         parent_invocation_id: str,
-    ) -> CoreRepairStage | None:
+    ) -> CoreRepairStage | CoreRepairFailure:
         if self._core_repair_agent is None:
-            return None
+            return CoreRepairFailure("core_repair_unavailable")
         invocation = self._invocation(
             request=request,
             role=AgentRole.CORE,
@@ -453,7 +452,11 @@ class ResponseStageExecutor:
                     failure_code=result.failure_code or "core_repair_failed",
                 ),
             )
-            return None
+            return CoreRepairFailure(
+                failure_code=result.failure_code or "core_repair_failed",
+                model_call_count=result.model_call_count,
+                total_token_count=result.total_token_count,
+            )
         repaired = self._plan_builder.build_with_assessment(
             neutral_draft=result.draft.neutral_draft,
             assessment=assessment,
@@ -505,44 +508,6 @@ class ResponseStageExecutor:
             invocation_id=invocation.invocation_id,
             model_call_count=result.model_call_count,
             total_token_count=result.total_token_count,
-        )
-
-    async def safe_fallback(
-        self,
-        *,
-        request: ResponseFinalizationRequest,
-        selection: ResolvedStyleProfile,
-        plan_artifact: AgentArtifact,
-        verdict_artifact: AgentArtifact,
-        calls: int,
-        tokens: int,
-        failure_code: str,
-        style_repaired: bool = False,
-        nutrition_repaired: bool = False,
-        core_repaired: bool = False,
-    ) -> ResponseFinalizationResult:
-        fallback = self.artifact(
-            request,
-            producer=ArtifactProducerRole.RESPONSE_REVIEWER,
-            artifact_type="safe_review_fallback",
-            payload={"text": SAFE_REVIEW_FALLBACK, "reason_code": failure_code},
-            parents=(plan_artifact.artifact_id, verdict_artifact.artifact_id),
-        )
-        await self.persist(fallback)
-        return ResponseFinalizationResult(
-            text=SAFE_REVIEW_FALLBACK,
-            status=InvocationStatus.DEGRADED,
-            core_output_artifact_id=plan_artifact.artifact_id,
-            final_output_artifact_id=fallback.artifact_id,
-            style_profile_version=selection.snapshot.profile.version,
-            model_call_count=calls,
-            total_token_count=tokens,
-            reviewer_ran=True,
-            style_repaired=style_repaired,
-            nutrition_repaired=nutrition_repaired,
-            core_repaired=core_repaired,
-            used_neutral_fallback=True,
-            failure_code=failure_code,
         )
 
     def artifact(
@@ -626,9 +591,6 @@ class ResponseStageExecutor:
             input_schema=input_schema,
             privacy_scopes=privacy_scopes,
             deadline_at=request.deadline_at,
-            max_model_calls=STYLE_MAX_MODEL_CALLS if role is AgentRole.RESPONSE_STYLE else 2,
-            max_tool_calls=0,
-            max_total_tokens=self._max_invocation_tokens,
         )
 
     @staticmethod
@@ -637,9 +599,6 @@ class ResponseStageExecutor:
             agent_role=invocation.agent_role,
             allowed_tools=frozenset(),
             privacy_scopes=frozenset(invocation.privacy_scopes),
-            max_model_calls=invocation.max_model_calls,
-            max_tool_calls=0,
-            max_total_tokens=invocation.max_total_tokens,
         )
 
     async def _start(self, invocation: AgentInvocation, reason: str) -> None:
@@ -694,7 +653,6 @@ class ResponseStageExecutor:
 __all__ = [
     "CoreRepairStage",
     "ReviewStage",
-    "SAFE_REVIEW_FALLBACK",
     "ResponseStageExecutor",
     "StyleStage",
 ]

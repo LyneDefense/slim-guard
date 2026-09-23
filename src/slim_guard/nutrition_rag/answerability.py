@@ -19,6 +19,7 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.nutrition_rag.gateways import NutritionModelGatewayError
 from slim_guard.nutrition_rag.profiles import ANSWERABILITY_MODE, ANSWERABILITY_MODE_V1
+from slim_guard.usage.context import usage_operation
 
 ANSWERABILITY_PROMPT_VERSION_V1 = "nutrition-direct-support-v1"
 ANSWERABILITY_PROMPT_VERSION = "nutrition-direct-support-v2"
@@ -138,6 +139,7 @@ class ModelAnswerabilityGateway:
         self.gateway = gateway
         self.model = model
 
+    @usage_operation("rag_answerability", kind="tool")
     async def assess(
         self,
         *,

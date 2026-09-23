@@ -5,8 +5,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_runtime
+from slim_guard.agent.composition import build_agent_runtime
+from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.runtime import AgentRuntimeRequest
+from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -23,6 +25,7 @@ from slim_guard.memory.extraction import (
 )
 from slim_guard.memory.long_term import LongTermMemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
+from tests.conversation_script import SystemConversationScript
 
 NOW = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
 
@@ -85,12 +88,14 @@ async def test_completed_reply_queues_then_asynchronously_extracts_text_memory(
     extraction = ExtractionGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=conversation,
+        model=SystemConversationScript(conversation),
         memory_extraction_model=extraction,
         definition=AgentRuntimeDefinition(
-            model_provider="test",
-            text_model="test",
-            vision_model="test",
+            models=ModelRuntimeConfig(
+                provider="test",
+                text_model="test",
+                vision_model="test",
+            ),
             code_revision="post-turn-memory-test",
         ),
         clock=lambda: NOW,

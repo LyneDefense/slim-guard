@@ -11,6 +11,7 @@ from slim_guard.expression_style.review.contracts import ReplyCheck, RewriteRevi
 from slim_guard.expression_style.review.integrity import StyleResponseValidator
 from slim_guard.expression_style.review.policy import REVIEW_PROMPT, review_signature
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
+from slim_guard.usage.context import usage_operation
 
 if TYPE_CHECKING:
     from slim_guard.expression_style.contracts import StyleContext
@@ -28,6 +29,7 @@ class StyleReviewService:
         self.validator = validator or StyleResponseValidator()
         self.signature = review_signature(model)
 
+    @usage_operation("style_internal_review")
     async def review(
         self,
         *,
@@ -35,7 +37,6 @@ class StyleReviewService:
         context: StyleContext,
         response: StyledResponse,
         source_text: str,
-        remaining_tokens: int,
         grant: InvocationGrant | None = None,
     ) -> RewriteReviewResult:
         integrity = self.validator.validate(context, response)
@@ -49,18 +50,6 @@ class StyleReviewService:
                 signature=self.signature,
                 checks=(
                     {"name": "integrity", "status": "failed"},
-                    {"name": "fidelity", "status": "not_run"},
-                    {"name": "expression", "status": "not_run"},
-                ),
-            )
-        if remaining_tokens <= 0:
-            return RewriteReviewResult(
-                False,
-                ("review_budget_exhausted",),
-                "review_unavailable",
-                signature=self.signature,
-                checks=(
-                    {"name": "integrity", "status": "passed"},
                     {"name": "fidelity", "status": "not_run"},
                     {"name": "expression", "status": "not_run"},
                 ),
@@ -94,13 +83,12 @@ class StyleReviewService:
             tool_choice="none",
             response_format="json_object",
             output_schema_name="ReplyCheck",
-            max_output_tokens=min(2048, remaining_tokens),
+            max_output_tokens=2048,
             temperature=0,
         )
         check = await self.runner.run(
-            invocation=invocation.model_copy(
-                update={"max_model_calls": 1, "max_total_tokens": remaining_tokens}
-            ),
+            invocation=invocation,
+            repair_schema=False,
             request=request,
             output_type=ReplyCheck,
             grant=grant,

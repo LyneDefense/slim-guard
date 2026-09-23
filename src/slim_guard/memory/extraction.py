@@ -38,6 +38,7 @@ from slim_guard.memory.long_term import (
     LongTermMemoryRepository,
     LongTermMemoryWriteAction,
 )
+from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
 
@@ -374,6 +375,7 @@ class MemoryExtractionService:
             except TimeoutError:
                 continue
 
+    @usage_operation("memory_extraction", source="job", category="background")
     async def _process(self, job: MemoryExtractionJob) -> int:
         payload = await self._jobs.payload(job)
         active = await self._memories.active(job.user_id, limit=100)

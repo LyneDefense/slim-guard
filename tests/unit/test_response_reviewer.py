@@ -48,9 +48,6 @@ def invocation(**updates: object) -> AgentInvocation:
             "agent_role": "response_reviewer",
             "agent_version": "review-v1",
             "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
-            "max_model_calls": 2,
-            "max_tool_calls": 0,
-            "max_total_tokens": 4096,
             **updates,
         }
     )
@@ -197,22 +194,18 @@ async def test_invalid_schema_gets_one_repair_with_original_context() -> None:
     assert "ReviewerVerdict" in (gateway.requests[1].messages[-1].content or "")
 
 
-@pytest.mark.parametrize("max_calls,expected_calls", [(1, 1), (2, 2), (10, 2)])
-async def test_failed_schema_repair_rejects_with_a_hard_two_call_cap(
-    max_calls: int,
-    expected_calls: int,
-) -> None:
+async def test_failed_schema_repair_is_finite() -> None:
     gateway = ScriptedModelGateway([response("invalid")] * 3)
     result = await agent(gateway).run(
-        invocation=invocation(max_model_calls=max_calls), context=context()
+        invocation=invocation(), context=context()
     )
     assert result.status is InvocationStatus.DEGRADED
     assert result.verdict.verdict == "reject"
     assert result.verdict.repair_target is None
     assert result.used_fallback
     assert result.failure_code == "structured_output_invalid"
-    assert result.model_call_count == expected_calls
-    assert len(gateway.requests) == expected_calls
+    assert result.model_call_count == 2
+    assert len(gateway.requests) == 2
 
 
 async def test_model_failure_conservatively_rejects() -> None:
@@ -229,7 +222,6 @@ async def test_model_failure_conservatively_rejects() -> None:
         ({"agent_role": "nutrition_expert"}, "reviewer_invocation_role_mismatch"),
         ({"turn_id": "wrong-turn"}, "reviewer_context_turn_mismatch"),
         ({"allowed_tools": ("read_memory",)}, "reviewer_tools_not_allowed"),
-        ({"max_tool_calls": 1}, "reviewer_tools_not_allowed"),
     ],
 )
 async def test_invalid_invocation_never_calls_the_model(
@@ -248,7 +240,7 @@ async def test_invocation_cannot_escalate_privacy_grant() -> None:
     result = await agent(gateway).run(
         invocation=invocation(privacy_scopes=("raw_database",)),
         context=context(),
-        grant=InvocationGrant(agent_role=AgentRole.RESPONSE_REVIEWER, max_tool_calls=0),
+        grant=InvocationGrant(agent_role=AgentRole.RESPONSE_REVIEWER),
     )
     assert result.failure_code == "reviewer_invocation_unauthorized"
     assert result.verdict.verdict == "reject"
@@ -474,10 +466,10 @@ async def test_expired_invocation_rejects_before_model_call() -> None:
     assert gateway.requests == []
 
 
-async def test_exhausted_tokens_cannot_accept_a_pass() -> None:
+async def test_token_usage_does_not_override_a_pass() -> None:
     gateway = ScriptedModelGateway([response('{"verdict":"pass"}')])
-    result = await agent(gateway).run(invocation=invocation(max_total_tokens=20), context=context())
-    assert result.verdict.verdict == "reject"
-    assert result.failure_code == "token_budget_exhausted"
+    result = await agent(gateway).run(invocation=invocation(), context=context())
+    assert result.verdict.verdict == "pass"
+    assert result.failure_code is None
     assert result.total_token_count == 30
     assert len(gateway.requests) == 1

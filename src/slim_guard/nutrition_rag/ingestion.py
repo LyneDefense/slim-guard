@@ -42,6 +42,7 @@ from slim_guard.nutrition_rag.storage import (
     NutritionObjectStore,
     NutritionObjectStoreError,
 )
+from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,7 @@ class NutritionKnowledgeIngestionService:
         self.analyzer = analyzer or ChineseNutritionLexicalAnalyzer()
         self.remote_fetcher = remote_fetcher
 
+    @usage_operation("nutrition_ingestion", source="job", category="knowledge_job")
     async def execute_ingest(
         self, job: NutritionJob, *, worker_id: str, lease_seconds: int
     ) -> None:

@@ -18,13 +18,14 @@ from slim_guard.db.models import (
     AgentTurnRecord,
     BodyFatRecord,
     ChannelIdentity,
+    ConversationTaskOperationRecord,
+    ConversationTaskRecord,
     ExerciseRecord,
     ImageAssetRecord,
     InboundMessage,
     InteractionTraceRecord,
     MealRecord,
     MemoryBulkOperationRecord,
-    MemoryHandoffRecord,
     MemoryIndexOutboxRecord,
     MobileAgentRequestRecord,
     MobileAuthIdentityRecord,
@@ -52,6 +53,7 @@ from slim_guard.mobile.contracts import (
     DeviceView,
     WeComBindingView,
 )
+from slim_guard.usage.repository import UsageRepository
 
 _BINDING_PATTERN = re.compile(r"^SG-([A-HJ-NP-Z2-9]{8})$", re.IGNORECASE)
 _BINDING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -266,6 +268,7 @@ class MobilePlatformService:
                         source.nickname = target.nickname
                     await session.flush()
                     if target is not None:
+                        await UsageRepository.reassign_user(session, target_id, source_id)
                         await session.delete(target)
             else:
                 binding.target_user_id = target_id
@@ -377,11 +380,20 @@ class MobilePlatformService:
             await session.execute(
                 delete(UserMemoryEventRecord).where(UserMemoryEventRecord.user_id == user_id)
             )
+            await session.execute(
+                delete(ConversationTaskOperationRecord).where(
+                    ConversationTaskOperationRecord.task_id.in_(
+                        select(ConversationTaskRecord.id).where(
+                            ConversationTaskRecord.user_id == user_id
+                        )
+                    )
+                )
+            )
             for user_data_model in (
                 MobileCoachProfileRecord,
                 MemoryIndexOutboxRecord,
                 MemoryBulkOperationRecord,
-                MemoryHandoffRecord,
+                ConversationTaskRecord,
                 UserMemoryFactRecord,
                 WeightRecord,
                 BodyFatRecord,
@@ -446,6 +458,7 @@ class MobilePlatformService:
                 await session.execute(
                     delete(ChannelIdentity).where(ChannelIdentity.user_id == user_id)
                 )
+            await UsageRepository.delete_user(session, user_id)
             await session.execute(delete(SlimGuardUser).where(SlimGuardUser.id == user_id))
 
     async def _move_mobile_account(
@@ -460,6 +473,7 @@ class MobilePlatformService:
             raise MobilePlatformError("user_not_found", "User was not found")
         if target.nickname is None:
             target.nickname = source.nickname
+        await UsageRepository.reassign_user(session, source_id, target_id)
         for model in (
             MobileAuthIdentityRecord,
             MobileSessionRecord,

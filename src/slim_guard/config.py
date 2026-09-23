@@ -32,8 +32,6 @@ class Settings(DatabaseSettings):
     wecom_callback_aes_key: str = ""
     agent_runtime_mode: Literal["harness"] = "harness"
     agent_code_revision: str = "development"
-    multi_agent_mode: Literal["off", "on"] = "off"
-    multi_agent_graph_version: str = "core-primary-v1"
     agent_specialist_timeout_seconds: float = Field(
         default=20.0,
         gt=0,
@@ -44,15 +42,6 @@ class Settings(DatabaseSettings):
             "agent_specialist_timeout_seconds",
         ),
     )
-    multi_agent_invocation_max_total_tokens: int = Field(
-        default=32_000,
-        ge=1024,
-        le=10_000_000,
-    )
-    style_render_all_normal_replies: bool = True
-    nutrition_agent_enabled: bool = False
-    nutrition_rag_enabled: bool = False
-    nutrition_require_rag_citations: bool = True
     nutrition_rag_engine: Literal["v1", "v2"] = "v2"
     nutrition_knowledge_worker_enabled: bool = False
     nutrition_knowledge_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
@@ -81,13 +70,9 @@ class Settings(DatabaseSettings):
     nutrition_embedding_dimensions: int = Field(default=1024, ge=1024, le=1024)
     nutrition_rerank_provider: Literal["zhipu"] = "zhipu"
     nutrition_rerank_model: str = Field(default="rerank", min_length=1, max_length=128)
-    response_reviewer_enabled: bool = False
-    group_chat_enabled: bool = True
     style_iteration_worker_enabled: bool = True
     style_iteration_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
     style_training_max_rounds: int = Field(default=2, ge=1, le=4)
-    style_training_max_calls: int = Field(default=350, ge=20, le=2000)
-    style_training_max_tokens: int = Field(default=1_000_000, ge=10000, le=10_000_000)
     style_training_max_seconds: int = Field(default=3600, ge=120, le=7200)
     agent_fallback_reply_text: str = "抱歉，我刚才没有成功分析这条记录，请稍后再发一次。"
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
@@ -127,18 +112,12 @@ class Settings(DatabaseSettings):
     zhipu_http_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
     zhipu_max_output_tokens: int = Field(default=1024, ge=64, le=32_768)
     agent_reply_max_chars: int = Field(default=1500, ge=100, le=4000)
-    agent_image_retention_seconds: int = Field(
-        default=604_800,
-        ge=3600,
-        le=2_592_000,
-    )
     asset_maintenance_interval_seconds: int = Field(default=21_600, ge=60, le=86_400)
     memory_preload_max_facts: int = Field(default=30, ge=1, le=100)
     memory_health_review_days: int = Field(default=180, ge=30, le=730)
     memory_recent_turn_count: int = Field(default=3, ge=1, le=10)
     memory_recent_dialogue_max_chars: int = Field(default=1500, ge=100, le=10_000)
-    memory_recent_image_count: int = Field(default=3, ge=1, le=10)
-    memory_handoff_ttl_days: int = Field(default=14, ge=1, le=90)
+    task_clarification_ttl_days: int = Field(default=14, ge=1, le=90)
     memory_extraction_enabled: bool = Field(
         default=True,
         validation_alias=AliasChoices(

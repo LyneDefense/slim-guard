@@ -1,7 +1,7 @@
 """Core Agent implementation.
 
 The Core Agent owns task understanding and the model/tool loop.  Turn-level
-persistence, safety gates, budgets, final adoption, and delivery remain the
+persistence, safety gates, final adoption, and delivery remain the
 responsibility of the outer Turn Harness.
 """
 
@@ -11,7 +11,6 @@ from collections.abc import Callable
 from datetime import datetime
 
 from slim_guard.agent_models.gateway import ModelGateway, ModelRequest
-from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.loop import (
     BeforeFinishHook,
     HarnessLoop,
@@ -38,7 +37,6 @@ class CoreAgent:
         *,
         model: ModelGateway,
         tool_calls: ToolCallRunner,
-        limits: HarnessLimits,
         recorder: HarnessRunRecorder,
         output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -47,7 +45,6 @@ class CoreAgent:
             model=model,
             tool_calls=tool_calls,
             recorder=recorder,
-            limits=limits,
             output_guard=output_guard,
             clock=clock,
         )

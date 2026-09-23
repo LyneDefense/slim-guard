@@ -24,9 +24,7 @@ from slim_guard.harness.errors import (
 )
 from slim_guard.harness.events import ItemStatus, ItemType, ThreadStatus, TurnStatus, TurnTrigger
 
-_TERMINAL_TURN_STATUSES = frozenset(
-    {TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.SUSPENDED}
-)
+_TERMINAL_TURN_STATUSES = frozenset({TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.SUSPENDED})
 _ALLOWED_TURN_TRANSITIONS: dict[TurnStatus, frozenset[TurnStatus]] = {
     TurnStatus.RUNNING: frozenset(
         {
@@ -245,9 +243,7 @@ class HarnessStateRepository:
                     f"Cannot append an item to turn {turn_id} in state {turn_status.value}"
                 )
             last_sequence = await session.scalar(
-                select(func.max(AgentItemRecord.sequence)).where(
-                    AgentItemRecord.turn_id == turn_id
-                )
+                select(func.max(AgentItemRecord.sequence)).where(AgentItemRecord.turn_id == turn_id)
             )
             row = AgentItemRecord(
                 thread_id=turn.thread_id,
@@ -343,9 +339,7 @@ class HarnessStateRepository:
                     status=target.value,
                     **({"step_count": step_count} if step_count is not None else {}),
                     updated_at=transitioned_at,
-                    completed_at=(
-                        transitioned_at if target in _TERMINAL_TURN_STATUSES else None
-                    ),
+                    completed_at=(transitioned_at if target in _TERMINAL_TURN_STATUSES else None),
                 )
             )
             if cast(CursorResult[Any], result).rowcount != 1:

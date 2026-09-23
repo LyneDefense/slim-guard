@@ -27,6 +27,7 @@ from slim_guard.integrations.wecom_kf.client import WeComMedia
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.integrations.wecom_kf.schemas import SyncMessage, SyncPage
 from slim_guard.main import create_app
+from tests.conversation_script import SystemConversationScript
 from tests.fakes import FakeReplyAgent, FakeWeComClient
 
 
@@ -43,7 +44,7 @@ class ImageHarnessModel:
             return _tool_response(
                 "call-inspect",
                 "inspect_image",
-                {"asset_id": image_input["asset_id"], "focus": "weight_scale"},
+                {"asset_id": image_input["asset_id"], "question": "读取体重秤的数值和单位"},
             )
         if step == 2:
             return _tool_response(
@@ -417,7 +418,7 @@ async def test_image_callback_runs_vision_then_records_weight(
     app = create_app(
         harness_settings,
         client=fake,
-        model_gateway=model,
+        model_gateway=SystemConversationScript(model),
         vision_gateway=vision,
     )
     crypto = WeComCallbackCrypto(

@@ -19,7 +19,7 @@ def build_summary(row: BuildRun) -> dict[str, Any]:
     data["unused_count"] = row.snapshot.get("unused_count", 0)
     data["analyzed_count"] = len(row.checkpoints.get("materials", []))
     data["round_count"] = len(row.checkpoints.get("rounds", []))
-    data["max_rounds"] = row.snapshot.get("budget", {}).get("max_rounds", 0)
+    data["max_rounds"] = row.snapshot.get("execution", {}).get("max_rounds", 0)
     data["baseline_version"] = row.snapshot.get("baseline", {}).get("version_id")
     data["last_event_sequence"] = len(row.events)
     return data

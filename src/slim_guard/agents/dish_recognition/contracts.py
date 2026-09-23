@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from slim_guard.agent_models.gateway import ModelUsage
-from slim_guard.agents.contracts import ContractModel, InvocationStatus
+from slim_guard.agents.contracts import ContractModel
 
 
 class DishImageKind(StrEnum):
@@ -184,16 +182,6 @@ class DishRecognitionCorrection(ContractModel):
         return self
 
 
-@dataclass(frozen=True, slots=True)
-class DishRecognitionAgentResult:
-    status: InvocationStatus
-    recognition: DishRecognitionResult | None
-    model_call_count: int
-    total_token_count: int
-    usage: ModelUsage = ModelUsage()
-    failure_code: str | None = None
-
-
 __all__ = [
     "ConfirmedDish",
     "ConfirmedDishSet",
@@ -202,7 +190,6 @@ __all__ = [
     "DishImageKind",
     "DishRecognitionCorrection",
     "DishRecognitionCorrectionItem",
-    "DishRecognitionAgentResult",
     "DishRecognitionResult",
     "RecognizedDish",
 ]

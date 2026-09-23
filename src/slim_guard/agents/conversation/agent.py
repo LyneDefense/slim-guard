@@ -94,7 +94,7 @@ class ConversationAgent:
             tool_choice=ToolChoice.NONE,
             response_format=ResponseFormat.JSON_OBJECT,
             output_schema_name=ConversationDecision.__name__,
-            max_output_tokens=min(512, invocation.max_total_tokens),
+            max_output_tokens=512,
             temperature=0,
             metadata={
                 "invocation_id": invocation.invocation_id,

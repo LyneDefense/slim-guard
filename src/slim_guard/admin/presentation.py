@@ -22,14 +22,16 @@ TOOL_LABELS = {
     "record_user_constraint": "保存用户限制条件",
     "record_weight": "记录体重",
     "select_relevant_memories": "选择相关记忆",
-    "resolve_conversation_handoff": "完成跨轮待办",
+    "get_conversation_task": "读取跨轮待办",
+    "list_conversation_tasks": "查询跨轮待办",
+    "link_task_authorization": "关联待办授权",
     "resolve_pending_user_action": "处理待确认操作",
     "set_behavior_goal": "设置行为目标",
     "set_body_fat_goal": "设置目标体脂",
     "set_body_profile": "保存身高档案",
     "set_coaching_profile": "更新陪伴偏好",
     "set_exercise_profile": "保存运动习惯",
-    "set_conversation_handoff": "保存跨轮待办",
+    "save_conversation_task": "更新跨轮待办",
     "set_weight_goal": "设置目标体重",
     "update_record_status": "修改健康记录状态",
     "upsert_exercise_preference": "更新运动偏好",
@@ -46,7 +48,7 @@ FIELD_LABELS = {
     "food_name": "食物",
     "foods": "食物",
     "goal": "目标",
-    "handoff_id": "跨轮待办",
+    "task_id": "跨轮待办",
     "memory_id": "记忆记录",
     "note": "备注",
     "objective": "下轮目标",
@@ -1026,24 +1028,33 @@ def _working_source_items(working: Mapping[str, Any]) -> list[dict[str, str]]:
                     "detail": "对话原文，不是长期记忆",
                 }
             )
-    handoff = working.get("active_handoff")
-    if isinstance(handoff, dict):
-        items.append(
-            {
-                "label": "跨轮待办",
-                "value": str(handoff.get("objective") or ""),
-                "detail": "完成或过期后失效",
-            }
-        )
-    images = working.get("recent_images")
-    if isinstance(images, list):
-        items.append(
-            {
-                "label": "近期图片",
-                "value": f"{len(images)} 张",
-                "detail": "短期图片引用",
-            }
-        )
+            attachments = message.get("attachments")
+            for attachment in attachments if isinstance(attachments, list) else []:
+                if not isinstance(attachment, dict):
+                    continue
+                annotation = attachment.get("annotation")
+                description = (
+                    str(annotation.get("description") or "尚未解析")
+                    if isinstance(annotation, dict)
+                    else "尚未解析"
+                )
+                items.append(
+                    {
+                        "label": f"近期对话 {turn_number} · 图片附件",
+                        "value": description,
+                        "detail": "模型生成的附件注释，不是用户原话或当前待办状态",
+                    }
+                )
+    tasks = working.get("conversation_tasks")
+    for task in tasks if isinstance(tasks, list) else []:
+        if isinstance(task, dict):
+            items.append(
+                {
+                    "label": "跨轮待办",
+                    "value": str(task.get("objective") or ""),
+                    "detail": f"状态：{task.get('status')}；待解决：{task.get('unresolved', [])}",
+                }
+            )
     pending = working.get("pending_user_confirmations")
     if isinstance(pending, list):
         items.append(

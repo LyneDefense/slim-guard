@@ -23,6 +23,7 @@ from slim_guard.agent_models.gateway import (
     ResponseFormat,
     ToolChoice,
 )
+from slim_guard.usage.gateway import capture_provider_usage
 
 
 class ZhipuModelGateway:
@@ -66,6 +67,7 @@ class ZhipuModelGateway:
             body = response.json()
         except ValueError:
             raise InvalidModelResponse("Zhipu response was not JSON") from None
+        capture_provider_usage(body)
         return self._model_response(body)
 
     def _request_payload(self, request: ModelRequest) -> dict[str, Any]:

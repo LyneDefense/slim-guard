@@ -19,7 +19,6 @@ from slim_guard.agent_models.gateway import (
     ToolDefinition,
 )
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, TurnTrigger
-from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.loop import (
     HarnessLoop,
     HarnessTurnContext,
@@ -211,7 +210,6 @@ async def run_loop(
     model: ScriptedModelGateway,
     tools: RecordingToolCallRunner,
     *,
-    limits: HarnessLimits | None = None,
     turn_context: HarnessTurnContext | None = None,
     clock: Callable[[], datetime] | None = None,
     trusted_evidence_item_ids: tuple[str, ...] = (),
@@ -223,7 +221,6 @@ async def run_loop(
     return await HarnessLoop(
         model=model,
         tool_calls=tools,
-        limits=limits or HarnessLimits(),
         recorder=recorder,
         clock=clock,
     ).run(
@@ -327,9 +324,7 @@ async def test_model_may_choose_nutrition_assessment_after_confirmed_meal() -> N
         tools,
         request_model=meal_request(),
         authorization_override=ToolAuthorization(
-            allowed_tool_names=frozenset(
-                {"record_meal", "consult_nutrition_specialist"}
-            ),
+            allowed_tool_names=frozenset({"record_meal", "consult_nutrition_specialist"}),
             isolated_write_environment=True,
         ),
     )
@@ -370,9 +365,7 @@ async def test_model_may_finish_after_confirmed_meal_without_assessment() -> Non
         tools,
         request_model=meal_request(),
         authorization_override=ToolAuthorization(
-            allowed_tool_names=frozenset(
-                {"record_meal", "consult_nutrition_specialist"}
-            ),
+            allowed_tool_names=frozenset({"record_meal", "consult_nutrition_specialist"}),
             isolated_write_environment=True,
         ),
     )
@@ -471,9 +464,7 @@ async def test_loop_passes_only_compiled_historical_evidence_to_tools() -> None:
         trusted_evidence_item_ids=("historical-user-item",),
     )
 
-    assert tools.contexts[0].trusted_evidence_item_ids == (
-        "historical-user-item",
-    )
+    assert tools.contexts[0].trusted_evidence_item_ids == ("historical-user-item",)
 
 
 async def test_loop_executes_multiple_tool_calls_before_next_model_call() -> None:
@@ -502,9 +493,7 @@ async def test_loop_executes_multiple_tool_calls_before_next_model_call() -> Non
 
 async def test_loop_pauses_immediately_when_tool_requires_confirmation() -> None:
     model = ScriptedModelGateway((assistant_tool_calls(tool_call("call-1")),))
-    tools = RecordingToolCallRunner(
-        turn_status=TurnStatus.WAITING_USER_CONFIRMATION
-    )
+    tools = RecordingToolCallRunner(turn_status=TurnStatus.WAITING_USER_CONFIRMATION)
 
     result = await run_loop(model, tools)
 
@@ -546,9 +535,7 @@ async def test_tool_failure_emits_structured_warning_without_arguments(caplog) -
     await run_loop(model, tools)
 
     record = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "slim_guard_tool_call_failed"
+        record for record in caplog.records if record.getMessage() == "slim_guard_tool_call_failed"
     )
     assert record.tool_name == "record_weight"
     assert record.failure_code == "database_unavailable"
@@ -595,11 +582,11 @@ async def test_retryable_failures_do_not_remove_model_tools() -> None:
     assert model.requests[2].tool_choice is ToolChoice.AUTO
 
 
-async def test_model_call_limit_stops_an_infinite_tool_loop() -> None:
+async def test_model_loop_continues_past_former_call_limits() -> None:
     model = ScriptedModelGateway(
         (
-            assistant_tool_calls(tool_call("call-1")),
-            assistant_tool_calls(tool_call("call-2")),
+            *(assistant_tool_calls(tool_call(f"call-{i}")) for i in range(40)),
+            assistant_text("完成"),
         )
     )
     tools = RecordingToolCallRunner()
@@ -607,16 +594,15 @@ async def test_model_call_limit_stops_an_infinite_tool_loop() -> None:
     result = await run_loop(
         model,
         tools,
-        limits=HarnessLimits(max_model_calls=1, max_tool_calls=8),
     )
 
-    assert result.termination is HarnessTermination.MAX_MODEL_CALLS
-    assert result.model_call_count == 1
-    assert result.tool_call_count == 1
-    assert model.remaining_steps == 1
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert result.model_call_count == 41
+    assert result.tool_call_count == 40
+    assert model.remaining_steps == 0
 
 
-async def test_tool_call_limit_rejects_the_whole_oversized_batch() -> None:
+async def test_tool_batch_is_not_rejected_by_former_budget() -> None:
     model = ScriptedModelGateway(
         (
             assistant_tool_calls(
@@ -630,35 +616,26 @@ async def test_tool_call_limit_rejects_the_whole_oversized_batch() -> None:
     result = await run_loop(
         model,
         tools,
-        limits=HarnessLimits(max_model_calls=2, max_tool_calls=1),
     )
 
-    assert result.termination is HarnessTermination.MAX_TOOL_CALLS
-    assert result.model_call_count == 1
-    assert result.tool_call_count == 0
-    assert tools.calls == []
+    assert result.tool_call_count == 2
+    assert len(tools.calls) == 2
 
 
-async def test_total_token_limit_stops_before_executing_returned_tools() -> None:
+async def test_high_token_usage_does_not_prevent_tool_execution() -> None:
     model = ScriptedModelGateway(
-        (assistant_tool_calls(tool_call("call-1"), total_tokens=11),)
+        (assistant_tool_calls(tool_call("call-1"), total_tokens=1_000_001), assistant_text("完成"))
     )
     tools = RecordingToolCallRunner()
 
     result = await run_loop(
         model,
         tools,
-        limits=HarnessLimits(
-            max_model_calls=2,
-            max_tool_calls=2,
-            max_total_tokens=10,
-        ),
     )
 
-    assert result.termination is HarnessTermination.MAX_TOTAL_TOKENS
-    assert result.total_token_count == 11
-    assert result.tool_call_count == 0
-    assert tools.calls == []
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert result.total_token_count >= 1_000_001
+    assert result.tool_call_count == 1
 
 
 async def test_expired_deadline_stops_before_first_model_call() -> None:

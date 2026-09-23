@@ -159,7 +159,7 @@ class CoreResponseRepairAgent:
             tool_choice=ToolChoice.NONE,
             response_format=ResponseFormat.JSON_OBJECT,
             output_schema_name=CoreRepairDraft.__name__,
-            max_output_tokens=min(2_048, invocation.max_total_tokens),
+            max_output_tokens=2_048,
             temperature=0,
             metadata={
                 "invocation_id": invocation.invocation_id,
@@ -177,7 +177,7 @@ class CoreResponseRepairAgent:
             return "core_repair_invocation_role_mismatch"
         if invocation.turn_id != context.turn_id:
             return "core_repair_context_turn_mismatch"
-        if invocation.allowed_tools or invocation.max_tool_calls != 0:
+        if invocation.allowed_tools:
             return "core_repair_tools_not_allowed"
         return None
 

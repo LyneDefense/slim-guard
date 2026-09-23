@@ -27,9 +27,6 @@ def test_invocation_contract_supports_core_role_and_rejects_extra_fields() -> No
         "agent_role": "core",
         "agent_version": "core-v1",
         "deadline_at": datetime(2026, 9, 17, tzinfo=UTC),
-        "max_model_calls": 4,
-        "max_tool_calls": 8,
-        "max_total_tokens": 16_000,
     }
 
     invocation = AgentInvocation.model_validate(payload)

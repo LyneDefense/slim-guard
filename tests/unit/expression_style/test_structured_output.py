@@ -13,7 +13,7 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.expression_style.package import content_hash
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
-from slim_guard.expression_style.trainer.contracts import BuildBudget, Comparison
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig, Comparison
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
 from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
 
@@ -38,11 +38,9 @@ class MemoryPort:
     async def event(self, stage, message, **details):
         self.events.append({"stage": stage, "message": message, **details})
 
-    async def reserve_call(self, *, max_calls, max_tokens):
+    async def record_call(self):
         if self.interrupted:
             raise BuildInterrupted("cancelled")
-        if self.calls >= max_calls or self.tokens >= max_tokens:
-            raise ValueError("budget exhausted")
         self.calls += 1
         return {"calls": self.calls, "tokens": self.tokens}
 
@@ -61,7 +59,7 @@ def response(raw):
 def client_for(steps, port=None):
     port = port or MemoryPort()
     model = ScriptedModelGateway(steps)
-    client = TrainingClient(TrainingGateway(model, port, BuildBudget()), "test-model")
+    client = TrainingClient(TrainingGateway(model, port, BuildExecutionConfig()), "test-model")
     return client, model, port
 
 
@@ -123,14 +121,13 @@ async def test_invalid_output_stops_at_three_and_resume_keeps_history_and_budget
     assert diagnostic(port)["status"] == "repaired"
 
 
-async def test_retry_cannot_bypass_existing_call_budget():
+async def test_retry_continues_past_former_call_budget():
     port = MemoryPort()
     port.calls = 349
     client, model, port = client_for([response("{}"), response(json.dumps(VALID))], port)
-    with pytest.raises(ValueError, match="budget exhausted"):
-        await ask(client)
-    assert len(model.requests) == 1 and port.calls == 350
-    assert diagnostic(port)["status"] == "unresolved"
+    await ask(client)
+    assert len(model.requests) == 2 and port.calls == 351
+    assert diagnostic(port)["status"] == "repaired"
 
 
 async def test_retry_cannot_bypass_cancellation():
@@ -198,14 +195,13 @@ async def test_unexpected_tool_call_is_preserved_never_executed_and_repaired():
     )
 
 
-async def test_token_budget_is_not_reset_by_retry():
+async def test_retry_continues_past_former_token_budget():
     port = MemoryPort()
     port.tokens = 999_990
     client, model, port = client_for([response("{}"), response(json.dumps(VALID))], port)
-    with pytest.raises(ValueError, match="budget exhausted"):
-        await ask(client)
-    assert port.tokens == 1_000_000 and len(model.requests) == 1
-    assert diagnostic(port)["status"] == "unresolved"
+    await ask(client)
+    assert port.tokens == 1_000_010 and len(model.requests) == 2
+    assert diagnostic(port)["status"] == "repaired"
 
 
 async def test_cached_success_repairs_stale_diagnostic_after_interrupted_save():

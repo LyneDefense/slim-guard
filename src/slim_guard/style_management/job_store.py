@@ -66,7 +66,7 @@ class JobStore:
                 raise BuildInterrupted("任务已取消或被接管")
             self.add_event(row, stage, message, **details)
 
-    async def reserve_call(self, *, max_calls: int, max_tokens: int) -> dict[str, int]:
+    async def record_call(self) -> dict[str, int]:
         async with self.db.session() as s, s.begin():
             row = await s.scalar(self.owned())
             if row is None:
@@ -75,8 +75,6 @@ class JobStore:
                 "calls": int(row.usage.get("calls", 0)),
                 "tokens": int(row.usage.get("tokens", 0)),
             }
-            if usage["calls"] >= max_calls or usage["tokens"] >= max_tokens:
-                raise ValueError("构建预算耗尽，请调整预算后新建任务；恢复不会重置预算")
             usage["calls"] += 1
             row.usage = {**row.usage, **usage}
             return usage

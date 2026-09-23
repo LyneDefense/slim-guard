@@ -45,6 +45,10 @@ class ReviewerContext(ContractModel):
     styled_response: StyledResponse
     style_profile: StyleProfile
     assessment: ProfessionalAssessment | None = None
+    supporting_assessment: ProfessionalAssessment | None = Field(
+        default=None,
+        description="Approved evidence for a participant block, not mandatory reply content.",
+    )
     available_evidence_ids: tuple[str, ...] | None = Field(default=None, max_length=128)
     evidence_summaries: tuple[ReviewerEvidenceSummary, ...] = Field(default=(), max_length=128)
 

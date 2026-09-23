@@ -10,6 +10,8 @@ from slim_guard.harness.state_repository import ItemRef
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.tools.contracts import ToolResultStatus
 
+SAFETY_POLICY_VERSION = "health-output-guard-v2"
+
 
 class HealthRiskLevel(StrEnum):
     NORMAL = "normal"
@@ -208,8 +210,7 @@ class SlimGuardOutputGuard:
             if outcome.execution.tool_name in cls._RECORD_WRITE_TOOLS
         )
         all_record_writes_failed = bool(record_writes) and all(
-            outcome.execution.result.status is ToolResultStatus.FAILED
-            for outcome in record_writes
+            outcome.execution.result.status is ToolResultStatus.FAILED for outcome in record_writes
         )
         return all_record_writes_failed and any(
             claim in text for claim in cls._RECORD_SUCCESS_CLAIMS
@@ -262,16 +263,15 @@ class SlimGuardOutputGuard:
                 "set_behavior_goal",
                 "record_user_constraint",
                 "forget_user_memory",
-                "set_conversation_handoff",
-                "resolve_conversation_handoff",
+                "save_conversation_task",
+                "link_task_authorization",
                 "clear_user_memories",
                 "clear_long_term_memories",
                 "resolve_pending_user_action",
             }
         )
         all_memory_writes_failed = bool(memory_writes) and all(
-            outcome.execution.result.status is ToolResultStatus.FAILED
-            for outcome in memory_writes
+            outcome.execution.result.status is ToolResultStatus.FAILED for outcome in memory_writes
         )
         return all_memory_writes_failed and any(
             claim in text for claim in cls._MEMORY_SUCCESS_CLAIMS

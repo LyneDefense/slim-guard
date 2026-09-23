@@ -14,7 +14,6 @@ from slim_guard.db.session import Database
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.initialization import TurnInitializationRequest, TurnInitializer, TurnInput
-from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.safety import SlimGuardOutputGuard
@@ -195,7 +194,6 @@ def build_runner(
         model=model,
         tool_calls=tool_calls,
         recorder=PersistentHarnessRunRecorder(repository),
-        limits=HarnessLimits(),
         output_guard=SlimGuardOutputGuard(),
         clock=lambda: current_time,
     )

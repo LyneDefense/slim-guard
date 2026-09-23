@@ -97,6 +97,43 @@ async def test_evidence_builder_filters_by_source_ref_and_enforces_capacity() ->
         packet.require_refs(("not-present",))
 
 
+async def test_historical_attachment_observation_does_not_claim_current_task_status() -> None:
+    packet = await EvidenceBuilder().build(
+        turn_id="turn-next",
+        user_request="已经补充了菜名",
+        professional_question="结合已有资料评价",
+        current_items=(),
+        authoritative_context={
+            "working_memory": {
+                "recent_dialogue": [
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "这是午餐",
+                                "attachments": [
+                                    {
+                                        "asset_id": "asset-1",
+                                        "annotation": {
+                                            "author": "vision_model",
+                                            "description": "有一盘菌菇，具体品种不确定。",
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+    )
+    visual = next(i for i in packet.items if i.source_type is EvidenceSourceType.VISION_OBSERVATION)
+    assert visual.source_ref == "asset-1"
+    assert visual.authority is EvidenceAuthority.OBSERVATION
+    assert "不确定" in visual.content["observation"]
+    assert "requires_user_confirmation" not in visual.content
+
+
 def test_evidence_packet_rejects_visual_fact_without_uncertainty() -> None:
     with pytest.raises(ValueError, match="requires confidence"):
         EvidencePacket.model_validate(

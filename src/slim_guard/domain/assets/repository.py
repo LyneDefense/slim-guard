@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from slim_guard.db.models import ImageAssetRecord
-from slim_guard.db.session import Database
 from slim_guard.domain.assets.contracts import (
     ImageAsset,
     ImageAssetCreation,
@@ -18,9 +18,12 @@ from slim_guard.domain.assets.contracts import (
 )
 from slim_guard.domain.assets.errors import ImageAssetCollision
 
+if TYPE_CHECKING:
+    from slim_guard.db.session import Database
+
 
 class ImageAssetRepository:
-    """Short-lived, user-scoped storage for model-inspectable image bytes."""
+    """User-owned attachments; expiry is opt-in storage policy, never an Agent limit."""
 
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -35,7 +38,8 @@ class ImageAssetRepository:
             size_bytes=len(command.content),
             channel_id=command.channel_id,
             source_message_id=command.source_message_id,
-            expires_at=command.expires_at.astimezone(UTC),
+            source_text=command.source_text,
+            expires_at=command.expires_at.astimezone(UTC) if command.expires_at else None,
         )
         async with self.database.session() as session:
             session.add(row)
@@ -71,19 +75,59 @@ class ImageAssetRepository:
                 select(ImageAssetRecord).where(
                     ImageAssetRecord.id == asset_id,
                     ImageAssetRecord.user_id == user_id,
-                    ImageAssetRecord.expires_at > at.astimezone(UTC),
+                    or_(
+                        ImageAssetRecord.expires_at.is_(None),
+                        ImageAssetRecord.expires_at > at.astimezone(UTC),
+                    ),
                 )
             )
             return ImageAsset(ref=self._ref(row), content=row.content) if row else None
+
+    async def save_observation(
+        self, *, asset_id: str, user_id: str, description: str, turn_id: str, tool_call_id: str
+    ) -> None:
+        """Backfill model commentary on the attachment, never overwrite user text."""
+        payload = {
+            "author": "vision_model",
+            "description": description,
+            "turn_id": turn_id,
+            "tool_call_id": tool_call_id,
+        }
+        async with self.database.session() as session, session.begin():
+            await session.execute(
+                update(ImageAssetRecord)
+                .where(ImageAssetRecord.id == asset_id, ImageAssetRecord.user_id == user_id)
+                .values(observation_json=json.dumps(payload, ensure_ascii=False))
+            )
+
+    async def annotations(
+        self, *, user_id: str, asset_ids: tuple[str, ...]
+    ) -> dict[str, dict[str, Any]]:
+        if not asset_ids:
+            return {}
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(ImageAssetRecord).where(
+                    ImageAssetRecord.user_id == user_id, ImageAssetRecord.id.in_(asset_ids)
+                )
+            )
+            return {
+                row.id: {
+                    "asset_id": row.id,
+                    "mime_type": row.mime_type,
+                    "annotation": json.loads(row.observation_json)
+                    if row.observation_json
+                    else None,
+                }
+                for row in rows
+            }
 
     async def purge_expired(self, *, at: datetime) -> int:
         if at.utcoffset() is None:
             raise ValueError("Image asset purge time must be timezone-aware")
         async with self.database.session() as session, session.begin():
             result = await session.execute(
-                delete(ImageAssetRecord).where(
-                    ImageAssetRecord.expires_at <= at.astimezone(UTC)
-                )
+                delete(ImageAssetRecord).where(ImageAssetRecord.expires_at <= at.astimezone(UTC))
             )
             return int(cast(CursorResult[Any], result).rowcount or 0)
 
@@ -101,7 +145,7 @@ class ImageAssetRepository:
             len(command.content),
             command.channel_id,
             command.source_message_id,
-            command.expires_at.astimezone(UTC),
+            command.expires_at.astimezone(UTC) if command.expires_at else None,
         )
         actual = (
             row.user_id,
@@ -110,12 +154,11 @@ class ImageAssetRepository:
             row.size_bytes,
             row.channel_id,
             row.source_message_id,
-            cls._as_utc(row.expires_at),
+            cls._as_utc(row.expires_at) if row.expires_at else None,
         )
         if actual != expected:
             raise ImageAssetCollision(
-                f"Image source identity collision: {command.channel_id}/"
-                f"{command.source_message_id}"
+                f"Image source identity collision: {command.channel_id}/{command.source_message_id}"
             )
 
     @classmethod
@@ -129,7 +172,8 @@ class ImageAssetRepository:
             channel_id=row.channel_id,
             source_message_id=row.source_message_id,
             created_at=cls._as_utc(row.created_at),
-            expires_at=cls._as_utc(row.expires_at),
+            expires_at=cls._as_utc(row.expires_at) if row.expires_at else None,
+            source_text=row.source_text,
         )
 
     @staticmethod

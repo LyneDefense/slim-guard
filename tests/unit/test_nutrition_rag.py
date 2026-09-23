@@ -110,9 +110,6 @@ def invocation() -> AgentInvocation:
         agent_role="nutrition_expert",
         agent_version="nutrition-assessment-v1",
         deadline_at=datetime.now(UTC) + timedelta(seconds=30),
-        max_model_calls=2,
-        max_tool_calls=0,
-        max_total_tokens=4096,
     )
 
 

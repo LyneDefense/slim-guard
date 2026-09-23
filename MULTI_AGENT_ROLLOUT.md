@@ -1,77 +1,32 @@
-# Core Agent 主路径启用与回退手册
+# Core Agent 主路径验收与发布回退
 
-> 适用于 `core-primary-v1`。旧版 shadow/canary 双轨工作流已经删除。
+当前只有一套 Core / 专家工具 / Conversation / 教练风格与审查路径，不保留 off、shadow、canary 或旧整段回复分支。
+架构标签只服务 Trace；代码版本记录在 AgentManifest，不驱动模型业务路由。
 
-## 运行边界
-
-`AGENT_RUNTIME_MODE` 固定为 `harness`。Core Agent 始终是唯一主业务路径，可调用普通业务工具和
-Nutrition Agent Tool；系统不会预先生成 Legacy baseline，也不会并行生成候选回复。
-
-`MULTI_AGENT_MODE` 目前只控制最终回复管线：
-
-| 模式 | Core 与业务/专业工具 | Style + Reviewer | 最终回复 |
-| --- | --- | --- | --- |
-| `off` | 正常运行 | 关闭 | Core 的安全中性稿 |
-| `on` | 正常运行 | 开启 | 通过医生风格和必要审查的最终稿 |
-
-启用 `on` 时必须同时配置：
+## 运行配置
 
 ```dotenv
 AGENT_RUNTIME_MODE=harness
-MULTI_AGENT_MODE=on
-MULTI_AGENT_GRAPH_VERSION=core-primary-v1
 AGENT_SPECIALIST_TIMEOUT_SECONDS=20
-MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
-STYLE_RENDER_ALL_NORMAL_REPLIES=true
-RESPONSE_REVIEWER_ENABLED=true
 ```
 
-风格版本在管理台“表达风格”中发布并启用，不再配置 `DEFAULT_STYLE_PROFILE`。首次新制迁移会重置旧风格数据，详见 [风格手册](STYLE_MANAGEMENT.md)。
+营养咨询、RAG、群聊与审查是固定能力，不再通过功能开关装配。模型决定本轮需要哪些专业工具以及哪个角色发言。
+RAG v2 需要数据库、Provider 和已审核启用的资料；v2 缺少 Provider 时返回知识不可用，不静默读取 v1 资料；只有显式选择 v1 引擎才使用词法服务。
+无证据不能伪造引用；低风险通识判断按现有来源契约处理。
 
-## 建议启用顺序
+## 验收
 
-1. 保持 `MULTI_AGENT_MODE=off`，验证 Core 的记录、查询、图片观察和 Nutrition Agent Tool。
-2. 确认已发布的 Nutrition RAG Release 能返回可靠引用；需要 RAG 时启用
-   `NUTRITION_AGENT_ENABLED=true` 与 `NUTRITION_RAG_ENABLED=true`。
-3. 在管理台完成医生风格版本的简化评审、发布和全量启用。
-4. 用测试账户验证 Trace 中能看到中性稿、风格稿、Reviewer 判决和最终采用。
-5. 设置 `MULTI_AGENT_MODE=on` 并重新部署。
+1. 测试账户验证记录、查询、图片描述及跨轮补充信息；确认业务写入不会因回复返工重复执行。
+2. 验证知识引用绑定实际检索和冻结的 Release；缺少证据时正确降级。
+3. 在后台完成风格版本评审和启用，验证只有教练消息进入风格改写。
+4. 验证 Style / Core / Nutrition 返工携带完整反馈，第二次未通过时停止返工并保留系统必要消息。
+5. 验证 Trace 中的角色、最终文案、附件描述和工具状态，并测试共享预算耗尽与服务重启后的记录读取。
 
-系统仍处于开发阶段，不保留复杂的名单灰度或影子候选机制。需要降低风险时，应在测试账户上验收后直接
-启用；出现问题时关闭最终管线即可，Core、用户 Thread、RAG Release 和已经写入的健康记录不受影响。
+本地脚本模型测试不能替代真实模型与测试账户的端到端验收。
 
-## 验收重点
+## 发布与回退
 
-- 一条用户消息只产生一条主业务生成链；
-- 业务写工具只执行一次；
-- Nutrition Agent 的每次检索绑定当前 Invocation 和冻结的 RAG Release；
-- 专业 Claim 有可追溯 Citation，资料不足时不生成肯定结论；
-- 风格前后数字、事实、风险、不确定性和引用保持一致；
-- Reviewer 只判决，不直接改文案；返工交回 Style、Nutrition 或 Core；
-- 风格/审查管线失败时使用已生成的 Core 中性稿，不再次调用 Core；
-- Trace 首屏能读出用户输入、实际路线、工具、记忆、RAG、风格变化和最终回复。
-
-建议验证命令：
-
-```bash
-uv run ruff check src tests
-uv run mypy src
-uv run pytest -q tests/unit/test_agent_runtime.py \
-  tests/unit/test_nutrition_agent_tool.py \
-  tests/unit/test_response_finalization.py \
-  tests/unit/test_harness_loop.py
-npm --prefix frontend test
-npm --prefix frontend run build
-```
-
-这些自动化测试验证代码契约，不替代真实模型、真实资料和测试账户的人工验收。
-
-## 回退步骤
-
-1. 在 `deploy/.env.server` 设置 `MULTI_AGENT_MODE=off`。
-2. 保持 `AGENT_RUNTIME_MODE=harness`，不要切回已删除的 legacy/shadow 路径。
-3. 通过 `ssh me` 登录服务器，在项目目录执行 `./deploy.sh`。
-4. 打开 `https://enceladus.online/admin/`，确认新 Turn 仍由 Core 执行，最终输出使用中性稿。
-5. 保存失败 Trace、Graph/Profile/RAG Release 版本和错误码，修复后用测试账户重新验收再开启。
-
-回退只影响重启后的新 Turn；已经进入 Outbox 或已经发送的消息不会自动撤回。
+发布仍需用户明确授权，通过 `ssh me` 操作；入口为 [SlimGuard](https://enceladus.online/)。
+不能再使用已删除的功能开关回退。发布失败应按现有部署脚本恢复已知可用 release，并检查数据库迁移兼容性。
+聊天附件迁移保留现有图片并取消原 Agent 默认 TTL；已经物理清理的图片无法恢复。
+不得为了回退删除已写入的健康记录或重复执行用户工具；已经发送的消息不会自动撤回。

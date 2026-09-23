@@ -8,8 +8,8 @@ from sqlalchemy import select
 
 from slim_guard.db.models import (
     AgentItemRedactionRecord,
+    ConversationTaskRecord,
     LongTermMemoryIndexOutboxRecord,
-    MemoryHandoffRecord,
     SlimGuardUser,
     ToolExecutionRecord,
     UserLongTermMemoryRecord,
@@ -32,7 +32,6 @@ from slim_guard.memory.contracts import (
     MemoryRevokeCommand,
     MemoryWriteCommand,
 )
-from slim_guard.memory.handoff import HandoffRepository, HandoffUpsertCommand
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
 from slim_guard.memory.long_term import (
     LongTermMemoryCandidate,
@@ -42,6 +41,8 @@ from slim_guard.memory.long_term import (
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
 from slim_guard.services.memory_maintenance import MemoryMaintenanceService
+from slim_guard.tasks.contracts import TaskWrite
+from slim_guard.tasks.repository import ConversationTaskRepository
 from slim_guard.tools.contracts import ToolResult
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 
@@ -223,12 +224,12 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
             source_tool_call_id="call-weight",
         )
     )
-    handoff = await HandoffRepository(
+    handoff = await ConversationTaskRepository(
         database,
         ttl=timedelta(days=14),
         clock=lambda: recorded_at,
-    ).upsert(
-        HandoffUpsertCommand(
+    ).write(
+        TaskWrite(
             user_id="user-1",
             thread_id=started.thread.id,
             objective="继续计划",
@@ -237,7 +238,7 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
             operation_id="handoff-operation",
             source_turn_id=started.turn.id,
             source_item_id=source_item.id,
-            source_tool_call_id="call-handoff",
+            interpretation="下次继续计划",
         )
     )
     executions = ToolExecutionRepository(database)
@@ -264,6 +265,7 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
     )
     service = MemoryMaintenanceService(
         lifecycle=MemoryLifecycleRepository(database),
+        tasks=ConversationTaskRepository(database),
         transcript_retention=timedelta(days=30),
         revoked_value_retention=timedelta(days=30),
         interval_seconds=60,
@@ -290,7 +292,7 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
         assert result.transcript.tool_execution_count == 1
         assert result.revoked_value_count == 2
         assert result.expired_long_term_memory_count == 1
-        assert result.expired_handoff_count == 1
+        assert result.expired_task_count == 1
         assert all(item.payload.get("redacted") is True for item in items)
         assert all(
             "阿杰" not in str(item.payload) and "77.6" not in str(item.payload) for item in items
@@ -318,7 +320,7 @@ async def test_memory_maintenance_scrubs_bodies_and_preserves_audit_and_domain_d
                 UserLongTermMemoryRecord,
                 long_term_written[1].memory.id,
             )
-            handoff_row = await session.get(MemoryHandoffRecord, handoff.id)
+            handoff_row = await session.get(ConversationTaskRecord, handoff.id)
             redactions = tuple(await session.scalars(select(AgentItemRedactionRecord)))
             execution = await session.get(ToolExecutionRecord, "tool-operation")
             long_term_outbox = tuple(await session.scalars(select(LongTermMemoryIndexOutboxRecord)))

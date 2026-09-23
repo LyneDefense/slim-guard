@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Generic, TypeVar
@@ -25,34 +23,9 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.runtime.contracts import AgentInvocation, InvocationStatus
 from slim_guard.runtime.invocation.grants import InvocationGrant, validate_invocation_grant
+from slim_guard.usage.context import usage_operation
 
 InvocationOutput = TypeVar("InvocationOutput", bound=BaseModel)
-
-
-@dataclass(slots=True)
-class InvocationCallBudget:
-    """Task-local aggregate budget shared by invocations and repair calls."""
-
-    max_model_calls: int
-    max_total_tokens: int
-    model_calls: int = 0
-    total_tokens: int = 0
-
-
-_INVOCATION_BUDGET: ContextVar[InvocationCallBudget | None] = ContextVar(
-    "invocation_call_budget", default=None
-)
-
-
-@contextmanager
-def invocation_call_budget(budget: InvocationCallBudget) -> Iterator[InvocationCallBudget]:
-    """Install the aggregate budget for Agent invocations in the current task."""
-
-    token = _INVOCATION_BUDGET.set(budget)
-    try:
-        yield budget
-    finally:
-        _INVOCATION_BUDGET.reset(token)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +50,7 @@ class InvocationRunner:
         self._model = model
         self._clock = clock or (lambda: datetime.now(UTC))
 
+    @usage_operation("agent_generation", source="invocation", kind="agent")
     async def run(
         self,
         *,
@@ -84,6 +58,7 @@ class InvocationRunner:
         request: ModelRequest,
         output_type: type[InvocationOutput],
         grant: InvocationGrant | None = None,
+        repair_schema: bool = True,
     ) -> InvocationRunResult[InvocationOutput]:
         if grant is not None:
             validate_invocation_grant(invocation, grant)
@@ -97,27 +72,10 @@ class InvocationRunner:
         responses: list[ModelResponse] = []
         last_failure = "structured_output_invalid"
         current_request = request
-        for call_index in range(1, min(invocation.max_model_calls, 2) + 1):
+        for call_index in range(1, (2 if repair_schema else 1) + 1):
             timeout_seconds = (invocation.deadline_at - self._clock()).total_seconds()
             if timeout_seconds <= 0:
                 return self._failure(responses, "deadline_exceeded")
-            budget = _INVOCATION_BUDGET.get()
-            if budget is not None:
-                if budget.model_calls >= budget.max_model_calls:
-                    return self._failure(responses, "turn_model_budget_exhausted")
-                remaining_tokens = budget.max_total_tokens - budget.total_tokens
-                if remaining_tokens <= 0:
-                    return self._failure(responses, "turn_token_budget_exhausted")
-                current_request = current_request.model_copy(
-                    update={
-                        "max_output_tokens": min(
-                            current_request.max_output_tokens or remaining_tokens,
-                            remaining_tokens,
-                        )
-                    }
-                )
-                # Provider failures consume call budget too.
-                budget.model_calls += 1
             try:
                 async with asyncio.timeout(timeout_seconds):
                     response = await self._model.complete(current_request)
@@ -127,13 +85,7 @@ class InvocationRunner:
                 return self._failure(responses, "model_gateway_error")
 
             responses.append(response)
-            if budget is not None:
-                budget.total_tokens += response.usage.total_tokens
-                if budget.total_tokens > budget.max_total_tokens:
-                    return self._failure(responses, "turn_token_budget_exhausted")
             total_tokens = sum(item.usage.total_tokens for item in responses)
-            if total_tokens > invocation.max_total_tokens:
-                return self._failure(responses, "token_budget_exhausted")
             if response.message.tool_calls:
                 return self._failure(responses, "unexpected_tool_call")
             content = response.message.content
@@ -155,7 +107,7 @@ class InvocationRunner:
                         model_call_count=len(responses),
                         total_token_count=total_tokens,
                     )
-            if call_index >= min(invocation.max_model_calls, 2):
+            if not repair_schema or call_index == 2:
                 break
             current_request = self._repair_request(
                 request=request,

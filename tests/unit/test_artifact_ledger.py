@@ -42,9 +42,6 @@ def invocation(*artifact_ids: str, turn_id: str = "turn-1") -> AgentInvocation:
         agent_version="style-v1",
         input_artifact_ids=artifact_ids,
         deadline_at=datetime.now(UTC) + timedelta(seconds=30),
-        max_model_calls=1,
-        max_tool_calls=0,
-        max_total_tokens=2000,
     )
 
 

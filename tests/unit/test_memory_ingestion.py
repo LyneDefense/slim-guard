@@ -5,8 +5,10 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_runtime
+from slim_guard.agent.composition import build_agent_runtime
+from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.runtime import AgentRuntimeRequest
+from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import MessageRole, ModelMessage, ModelResponse
 from slim_guard.db.models import MemoryExtractionJobRecord, SlimGuardUser
@@ -17,6 +19,7 @@ from slim_guard.harness.state_repository import HarnessStateRepository, NewTurnI
 from slim_guard.memory.contracts import MemoryKey
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
+from tests.conversation_script import SystemConversationScript
 
 NOW = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
 
@@ -38,9 +41,11 @@ async def prepare_database(tmp_path: Path, name: str) -> Database:
 
 def definition(code_revision: str) -> AgentRuntimeDefinition:
     return AgentRuntimeDefinition(
-        model_provider="zhipu",
-        text_model="glm-5.2",
-        vision_model="glm-5v-turbo",
+        models=ModelRuntimeConfig(
+            provider="zhipu",
+            text_model="glm-5.2",
+            vision_model="glm-5v-turbo",
+        ),
         code_revision=code_revision,
     )
 
@@ -63,7 +68,7 @@ async def test_ordinary_ingestion_is_queued_after_reply_and_does_not_write_profi
     extractor = ScriptedModelGateway(())
     runtime = build_agent_runtime(
         database=database,
-        model=conversation,
+        model=SystemConversationScript(conversation),
         memory_extraction_model=extractor,
         definition=definition("test-post-turn-memory"),
         clock=lambda: NOW,
@@ -94,7 +99,7 @@ async def test_post_turn_extraction_does_not_backfill_unrelated_historical_messa
     extractor = ScriptedModelGateway(())
     runtime = build_agent_runtime(
         database=database,
-        model=conversation,
+        model=SystemConversationScript(conversation),
         memory_extraction_model=extractor,
         definition=definition("test-no-memory-backfill"),
         clock=lambda: NOW,

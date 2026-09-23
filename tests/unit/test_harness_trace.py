@@ -332,13 +332,13 @@ async def test_tool_result_reserved_before_wait_can_finish_after_pause(tmp_path)
         await database.close()
 
 
-async def test_budget_termination_is_audited_and_suspends_turn(tmp_path) -> None:
+async def test_deadline_termination_is_audited_and_suspends_turn(tmp_path) -> None:
     database, repository, turn = await prepare_turn(tmp_path)
     recorder = PersistentHarnessRunRecorder(repository)
     try:
         await recorder.finish_run(
             turn_id=turn.id,
-            termination=HarnessTermination.MAX_MODEL_CALLS,
+            termination=HarnessTermination.DEADLINE_EXCEEDED,
             final_text=None,
             model_call_count=6,
             tool_call_count=5,
@@ -353,7 +353,7 @@ async def test_budget_termination_is_audited_and_suspends_turn(tmp_path) -> None
         assert items[0].item_type is ItemType.ERROR
         assert items[0].status is ItemStatus.FAILED
         assert items[0].payload == {
-            "code": "max_model_calls",
+            "code": "deadline_exceeded",
             "model_call_count": 6,
             "tool_call_count": 5,
             "total_token_count": 900,

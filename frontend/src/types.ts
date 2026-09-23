@@ -1,3 +1,5 @@
+import type { ConversationTaskSummary } from "./features/tasks/types";
+
 export interface Page<T> {
   items: T[];
   total: number;
@@ -34,12 +36,7 @@ export interface UserDetail {
     profile_synced_at: string | null;
   }>;
   counts: Record<string, number>;
-  active_handoff: {
-    id: string;
-    objective: string;
-    unresolved: unknown;
-    expires_at: string;
-  } | null;
+  conversation_tasks: ConversationTaskSummary[];
   routine: Record<string, string | null> | null;
 }
 

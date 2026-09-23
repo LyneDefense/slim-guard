@@ -25,6 +25,7 @@ from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine, MemoryEngineError, SemanticMemory
 from slim_guard.memory.long_term import LongTermMemoryRef, LongTermMemoryRepository
+from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class LongTermMemoryRecaller:
         self._max_selected = max_selected
         self._max_output_tokens = max_output_tokens
 
+    @usage_operation("memory_recall")
     async def recall(
         self,
         *,

@@ -20,6 +20,7 @@ from slim_guard.agents.contracts import (
     Confidence,
     InvocationStatus,
     ProfessionalAssessment,
+    ReviewerVerdict,
 )
 from slim_guard.agents.nutrition.contracts import (
     EvidenceAuthority,
@@ -216,7 +217,7 @@ class NutritionAgent:
         invocation: AgentInvocation,
         context: NutritionContext,
         grant: InvocationGrant | None = None,
-        review_feedback: tuple[str, ...] = (),
+        review_feedback: ReviewerVerdict | None = None,
     ) -> NutritionAgentResult:
         boundary_failure = self._boundary_failure(invocation, context)
         if boundary_failure is not None:
@@ -238,7 +239,6 @@ class NutritionAgent:
                 invocation=invocation,
                 request=request,
                 grant=grant,
-                remaining_tokens=invocation.max_total_tokens,
             )
             responses.extend(first.responses)
             total_tokens += first.total_token_count
@@ -268,16 +268,6 @@ class NutritionAgent:
                     validation_report=last_report,
                 )
 
-            remaining_calls = invocation.max_model_calls - len(responses)
-            remaining_tokens = invocation.max_total_tokens - total_tokens
-            if remaining_calls <= 0 or remaining_tokens <= 0:
-                return self._degraded(
-                    context=context,
-                    failure_code=last_failure,
-                    responses=responses,
-                    total_tokens=total_tokens,
-                    validation_report=last_report,
-                )
 
             repair_attempted = True
             repaired = await self._single_call(
@@ -288,7 +278,6 @@ class NutritionAgent:
                     validation_report=last_report,
                 ),
                 grant=grant,
-                remaining_tokens=remaining_tokens,
             )
             responses.extend(repaired.responses)
             total_tokens += repaired.total_token_count
@@ -326,16 +315,11 @@ class NutritionAgent:
         invocation: AgentInvocation,
         request: ModelRequest,
         grant: InvocationGrant | None,
-        remaining_tokens: int,
     ) -> InvocationRunResult[ProfessionalAssessment]:
-        single_call_invocation = invocation.model_copy(
-            update={"max_model_calls": 1, "max_total_tokens": remaining_tokens}
-        )
         return await self._runner.run(
-            invocation=single_call_invocation,
-            request=request.model_copy(
-                update={"max_output_tokens": min(request.max_output_tokens, remaining_tokens)}
-            ),
+            invocation=invocation,
+            request=request,
+            repair_schema=False,
             output_type=ProfessionalAssessment,
             grant=grant,
         )
@@ -345,7 +329,7 @@ class NutritionAgent:
         *,
         invocation: AgentInvocation,
         context: NutritionContext,
-        review_feedback: tuple[str, ...] = (),
+        review_feedback: ReviewerVerdict | None = None,
     ) -> ModelRequest:
         system = ModelMessage(
             role=MessageRole.SYSTEM,
@@ -368,7 +352,7 @@ class NutritionAgent:
             tool_choice=ToolChoice.NONE,
             response_format=ResponseFormat.JSON_OBJECT,
             output_schema_name=ProfessionalAssessment.__name__,
-            max_output_tokens=min(3072, invocation.max_total_tokens),
+            max_output_tokens=3072,
             temperature=0,
             metadata={
                 "invocation_id": invocation.invocation_id,
@@ -381,7 +365,7 @@ class NutritionAgent:
     def _model_context_json(
         context: NutritionContext,
         *,
-        review_feedback: tuple[str, ...] = (),
+        review_feedback: ReviewerVerdict | None = None,
     ) -> str:
         """Do not expose rejected draft, inactive, or inapplicable candidate text."""
 
@@ -398,7 +382,7 @@ class NutritionAgent:
         if review_feedback:
             payload = {
                 "nutrition_context": payload,
-                "review_feedback_issue_types": list(review_feedback),
+                "review_feedback": review_feedback.model_dump(mode="json"),
             }
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -432,10 +416,7 @@ class NutritionAgent:
             return "nutrition_invocation_role_mismatch"
         if invocation.turn_id != context.turn_id:
             return "nutrition_context_turn_mismatch"
-        if (
-            invocation.allowed_tools != NUTRITION_AGENT_ALLOWED_TOOLS
-            or invocation.max_tool_calls != 0
-        ):
+        if invocation.allowed_tools != NUTRITION_AGENT_ALLOWED_TOOLS:
             return "nutrition_tools_not_allowed"
         return None
 

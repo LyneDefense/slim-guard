@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from slim_guard.agent_models.errors import ModelTimeoutError
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import MessageRole, ModelMessage, ModelResponse, ModelUsage
@@ -111,9 +114,6 @@ def invocation(**updates: object) -> AgentInvocation:
         "agent_role": "nutrition_expert",
         "agent_version": "nutrition-v1",
         "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
-        "max_model_calls": 2,
-        "max_tool_calls": 0,
-        "max_total_tokens": 4096,
     }
     values.update(updates)
     return AgentInvocation.model_validate(values)
@@ -369,6 +369,35 @@ def test_validator_rejects_medical_model_prior_mixed_with_user_evidence() -> Non
     )
 
     assert NutritionValidationIssueCode.HIGH_RISK_MODEL_PRIOR_ONLY in report.issue_codes
+
+
+@pytest.mark.parametrize(
+    ("references", "error"),
+    [
+        ([], "A rag_evidence claim requires knowledge_refs"),
+        (["citation-missing"], "Claims reference unknown knowledge citations"),
+    ],
+)
+def test_assessment_contract_rejects_rag_claim_without_citation(
+    references: list[str], error: str,
+) -> None:
+    with pytest.raises(ValidationError, match=error):
+        ProfessionalAssessment.model_validate(
+            {
+                "assessment_type": "general",
+                "overall": "缺少引用的资料结论",
+                "findings": [
+                    {
+                        "claim_id": "claim-rag-uncovered",
+                        "category": "knowledge",
+                        "statement": "这是资料支持的结论",
+                        "basis_types": ["rag_evidence"],
+                        "knowledge_refs": references,
+                        "confidence": "medium",
+                    },
+                ],
+            },
+        )
 
 
 def test_validator_rejects_citations_when_corpus_is_empty() -> None:
@@ -696,7 +725,7 @@ async def test_nutrition_agent_rejects_write_permissions_before_model_call() -> 
     )
 
     result = await agent.run(
-        invocation=invocation(allowed_tools=("record_weight",), max_tool_calls=1),
+        invocation=invocation(allowed_tools=("record_weight",)),
         context=context(),
     )
 

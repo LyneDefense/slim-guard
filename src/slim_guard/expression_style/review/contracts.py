@@ -70,6 +70,5 @@ class StyleReviewPort(Protocol):
         context: StyleContext,
         response: StyledResponse,
         source_text: str,
-        remaining_tokens: int,
         grant: InvocationGrant | None = None,
     ) -> RewriteReviewResult: ...

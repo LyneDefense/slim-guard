@@ -3,7 +3,7 @@ import json
 import pytest
 
 from slim_guard.agent_models.gateway import ModelMessage
-from slim_guard.expression_style.trainer.contracts import BuildBudget
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 from slim_guard.style_management.builds import BuildRepository
 from slim_guard.style_management.contracts import ExampleInput
 from slim_guard.style_management.corpus import CorpusRepository
@@ -46,7 +46,7 @@ async def test_structurally_invalid_generated_artifact_is_repaired_with_reason(s
     )
     builds = BuildRepository(style_db)
     run = await builds.build(
-        "doctor", "admin", model="test-model", budget=BuildBudget(max_rounds=1)
+        "doctor", "admin", model="test-model", config=BuildExecutionConfig(max_rounds=1)
     )
     gateway = RepairGateway(schema)
     await StyleWorker(style_db, gateway, "test-model").run_once()
@@ -65,7 +65,7 @@ async def test_negative_only_material_can_build_guide_without_positive_examples(
     )
     builds = BuildRepository(style_db)
     run = await builds.build(
-        "doctor", "admin", model="test-model", budget=BuildBudget(max_rounds=1)
+        "doctor", "admin", model="test-model", config=BuildExecutionConfig(max_rounds=1)
     )
     await StyleWorker(style_db, TrainerGateway(), "test-model").run_once()
     detail = await builds.detail("doctor", run["id"])
@@ -100,7 +100,7 @@ async def test_comparison_schema_failure_resume_reuses_completed_steps(style_db)
     )
     builds = BuildRepository(style_db)
     run = await builds.build(
-        "doctor", "admin", model="test-model", budget=BuildBudget(max_rounds=1)
+        "doctor", "admin", model="test-model", config=BuildExecutionConfig(max_rounds=1)
     )
     gateway = BrokenComparisonGateway()
     worker = StyleWorker(style_db, gateway, "test-model")

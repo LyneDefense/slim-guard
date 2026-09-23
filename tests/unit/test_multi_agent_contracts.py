@@ -141,9 +141,6 @@ def test_invocation_accepts_legacy_envelope_aliases_but_keeps_trusted_fields() -
         allowed_tool_names=("calculate_bmi",),
         privacy_scopes=("health_summary",),
         deadline_at=datetime.now(UTC),
-        max_model_calls=2,
-        max_tool_calls=3,
-        max_total_tokens=8000,
     )
 
     assert invocation.agent_role.value == "nutrition_expert"

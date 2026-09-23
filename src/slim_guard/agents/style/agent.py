@@ -19,6 +19,7 @@ from slim_guard.agents.contracts import (
     AgentRole,
     ContentBlockKind,
     InvocationStatus,
+    ReviewerVerdict,
     StyledResponse,
 )
 from slim_guard.agents.style.renderer import NeutralRenderer
@@ -33,7 +34,6 @@ from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner, Inv
 
 RESPONSE_STYLE_PROMPT_VERSION = "response-style-v8-fixed"
 STYLE_MAX_ATTEMPTS = 2
-STYLE_MAX_MODEL_CALLS = 2 * STYLE_MAX_ATTEMPTS
 _STYLED_RESPONSE_SCHEMA = json.dumps(
     StyledResponse.model_json_schema(),
     ensure_ascii=False,
@@ -114,7 +114,7 @@ class ResponseStyleAgent:
         invocation: AgentInvocation,
         context: StyleContext,
         grant: InvocationGrant | None = None,
-        review_feedback: tuple[str, ...] = (),
+        review_feedback: ReviewerVerdict | None = None,
     ) -> StyleAgentResult:
         """Two expression attempts, each independently checked inside this Agent."""
         boundary_failure = self._boundary_failure(invocation, context)
@@ -132,11 +132,6 @@ class ResponseStyleAgent:
         previous_output = ""
         last_failure = "style_generation_failed"
         for attempt in range(STYLE_MAX_ATTEMPTS):
-            # Reserve one call for semantic checking. Never return unchecked text.
-            if invocation.max_model_calls - len(responses) < 2:
-                break
-            if total_tokens >= invocation.max_total_tokens:
-                break
             attempted += 1
             try:
                 if attempt:
@@ -159,7 +154,6 @@ class ResponseStyleAgent:
                     invocation=invocation,
                     request=request,
                     grant=grant,
-                    remaining_tokens=invocation.max_total_tokens - total_tokens,
                 )
                 responses.extend(generated.responses)
                 total_tokens += generated.total_token_count
@@ -173,14 +167,12 @@ class ResponseStyleAgent:
                     }:
                         break
                     continue
-                remaining = invocation.max_total_tokens - total_tokens
                 previous_output = generated.output.text
                 check = await self._reviewer.review(
                     invocation=invocation,
                     context=context,
                     response=generated.output,
                     source_text=self._neutral_renderer.render(context).text,
-                    remaining_tokens=remaining,
                     grant=grant,
                 )
                 last_report = check.integrity
@@ -230,16 +222,11 @@ class ResponseStyleAgent:
         invocation: AgentInvocation,
         request: ModelRequest,
         grant: InvocationGrant | None,
-        remaining_tokens: int,
     ) -> InvocationRunResult[StyledResponse]:
-        single_call_invocation = invocation.model_copy(
-            update={"max_model_calls": 1, "max_total_tokens": remaining_tokens}
-        )
         return await self._runner.run(
-            invocation=single_call_invocation,
-            request=request.model_copy(
-                update={"max_output_tokens": min(request.max_output_tokens, remaining_tokens)}
-            ),
+            invocation=invocation,
+            request=request,
+            repair_schema=False,
             output_type=StyledResponse,
             grant=grant,
         )
@@ -249,7 +236,7 @@ class ResponseStyleAgent:
         *,
         invocation: AgentInvocation,
         context: StyleContext,
-        review_feedback: tuple[str, ...] = (),
+        review_feedback: ReviewerVerdict | None = None,
     ) -> ModelRequest:
         system = ModelMessage(
             role=MessageRole.SYSTEM,
@@ -265,8 +252,8 @@ class ResponseStyleAgent:
             payload["style_context"] = context.model_dump(
                 mode="json", exclude={"compiled_prompt", "profile", "examples"}
             )
-        if review_feedback:
-            payload["review_feedback_issue_types"] = list(review_feedback)
+        if review_feedback is not None:
+            payload["review_feedback"] = review_feedback.model_dump(mode="json")
         user = ModelMessage(
             role=MessageRole.USER,
             content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
@@ -279,7 +266,7 @@ class ResponseStyleAgent:
             tool_choice=ToolChoice.NONE,
             response_format=ResponseFormat.JSON_OBJECT,
             output_schema_name=StyledResponse.__name__,
-            max_output_tokens=min(2048, invocation.max_total_tokens),
+            max_output_tokens=2048,
             temperature=0,
             metadata={
                 "invocation_id": invocation.invocation_id,
@@ -333,7 +320,7 @@ class ResponseStyleAgent:
             return "style_invocation_role_mismatch"
         if invocation.turn_id != context.turn_id:
             return "style_context_turn_mismatch"
-        if invocation.allowed_tools or invocation.max_tool_calls != 0:
+        if invocation.allowed_tools:
             return "style_tools_not_allowed"
         return None
 

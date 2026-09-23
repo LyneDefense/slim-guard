@@ -131,9 +131,10 @@ async def test_recent_dialogue_is_user_isolated_visible_and_bounded(
         ]
         contents = [message.content for turn in recent for message in turn.messages]
         assert contents == ["中间的问题", "中间的回答", "刚才的问题", "刚才的回答"]
-        assert [
-            message.evidence_ref for turn in recent for message in turn.messages
-        ][1::2] == [None, None]
+        assert [message.evidence_ref for turn in recent for message in turn.messages][1::2] == [
+            None,
+            None,
+        ]
         assert all(
             message.evidence_ref
             for turn in recent
@@ -235,49 +236,30 @@ async def test_recent_user_evidence_is_user_only_ordered_and_bounded(
         await database.close()
 
 
-async def test_recent_images_are_user_scoped_unexpired_and_include_observation(
-    tmp_path: Path,
-) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'recent-images.sqlite3'}")
+async def test_attachment_annotation_belongs_to_original_message(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'attachments.sqlite'}")
     await database.create_schema()
     async with database.session() as session, session.begin():
         session.add_all(
-            (
+            [
                 SlimGuardUser(id="user-1", first_seen_at=NOW, last_seen_at=NOW),
                 SlimGuardUser(id="user-2", first_seen_at=NOW, last_seen_at=NOW),
-            )
+            ]
         )
     active_manifest = manifest()
     await AgentVersionRepository(database).register(active_manifest)
     assets = ImageAssetRepository(database)
-    active = await assets.save(
+    image = await assets.save(
         SaveImageAssetCommand(
             user_id="user-1",
-            content=b"\x89PNG\r\n\x1a\nactive",
-            declared_mime_type="image/png",
-            channel_id="default",
-            source_message_id="image-active",
-            expires_at=NOW.replace(hour=9),
+            content=b"\x89PNG\r\n\x1a\nimage",
+            source_text="这是我的午餐",
         )
     )
-    await assets.save(
-        SaveImageAssetCommand(
-            user_id="user-1",
-            content=b"\x89PNG\r\n\x1a\nexpired",
-            declared_mime_type="image/png",
-            channel_id="default",
-            source_message_id="image-expired",
-            expires_at=NOW.replace(hour=7),
-        )
-    )
-    await assets.save(
+    foreign = await assets.save(
         SaveImageAssetCommand(
             user_id="user-2",
-            content=b"\x89PNG\r\n\x1a\nother-user",
-            declared_mime_type="image/png",
-            channel_id="default",
-            source_message_id="image-other-user",
-            expires_at=NOW.replace(hour=9),
+            content=b"\x89PNG\r\n\x1a\nother",
         )
     )
     state = HarnessStateRepository(database)
@@ -287,68 +269,55 @@ async def test_recent_images_are_user_scoped_unexpired_and_include_observation(
         trigger=TurnTrigger.USER_MESSAGE,
         items=(
             NewTurnItem(
-                item_type=ItemType.IMAGE_ATTACHMENT,
+                item_type=ItemType.USER_MESSAGE,
                 status=ItemStatus.COMPLETED,
-                payload={"asset_id": active.asset.id, "mime_type": "image/png"},
+                payload={"text": "这是我的午餐"},
             ),
             NewTurnItem(
-                item_type=ItemType.TOOL_RESULT,
+                item_type=ItemType.IMAGE_ATTACHMENT,
                 status=ItemStatus.COMPLETED,
-                payload={
-                    "tool_name": "inspect_image",
-                    "execution": {
-                        "tool_name": "inspect_image",
-                        "result": {
-                            "status": "succeeded",
-                            "output": {
-                                "asset_id": active.asset.id,
-                                "description": "一盘白米饭和蔬菜，部分食材不确定。",
-                                "requires_user_confirmation": True,
-                                "dish_recognition": {
-                                    "dishes": [
-                                        {
-                                            "dish_ref": "dish-egg",
-                                            "candidates": [
-                                                {"label": "火腿", "confidence": 0.6},
-                                                {"label": "肉末", "confidence": 0.4},
-                                            ],
-                                            "uncertainty_reasons": ["配料被遮挡"],
-                                            "requires_confirmation": True,
-                                        }
-                                    ],
-                                    "suggested_question": "炒鸡蛋里是火腿还是肉末？",
-                                },
-                            },
-                        },
-                    },
-                },
+                payload={"asset_id": image.asset.id},
+            ),
+            NewTurnItem(
+                item_type=ItemType.IMAGE_ATTACHMENT,
+                status=ItemStatus.COMPLETED,
+                payload={"asset_id": foreign.asset.id},
             ),
         ),
     )
-    await state.transition_turn(
+    await assets.save_observation(
+        asset_id=image.asset.id,
+        user_id="user-1",
+        description="用户分享午餐，图中有米饭和蔬菜；菌菇种类看不清。",
         turn_id=started.turn.id,
-        target=TurnStatus.SUSPENDED,
-        expected=TurnStatus.RUNNING,
+        tool_call_id="inspect",
+    )
+    await state.transition_turn(
+        turn_id=started.turn.id, target=TurnStatus.COMPLETED, expected=TurnStatus.RUNNING
     )
     try:
-        recent = await ConversationWindowRepository(database).recent_images(
-            "user-1",
-            at=NOW,
-            limit=3,
+        window = ConversationWindowRepository(database)
+        recent = await window.recent("user-1")
+        message = recent[0].messages[0]
+        assert message.content == "这是我的午餐"
+        assert len(message.attachments) == 1
+        attachment = message.attachments[0]
+        assert attachment["asset_id"] == image.asset.id
+        assert attachment["annotation"]["author"] == "vision_model"
+        assert "菌菇" in attachment["annotation"]["description"]
+        evidence = await window.recent_user_evidence("user-1", exclude_turn_id="next")
+        assert [item.content for item in evidence] == ["这是我的午餐"]
+        await add_completed_turn(
+            state,
+            user_id="user-1",
+            agent_version_id=active_manifest.version_id,
+            user_text="香菇",
+            assistant_text="已补充。",
         )
-
-        assert len(recent) == 1
-        assert recent[0].asset_id == active.asset.id
-        assert recent[0].mime_type == "image/png"
-        assert recent[0].observation == "一盘白米饭和蔬菜，部分食材不确定。"
-        assert recent[0].requires_user_confirmation is True
-        assert recent[0].dish_clarification == (
-            {
-                "dish_ref": "dish-egg",
-                "candidates": ["火腿", "肉末"],
-                "uncertainty_reasons": ["配料被遮挡"],
-            },
-        )
-        assert recent[0].suggested_question == "炒鸡蛋里是火腿还是肉末？"
+        newest = await window.recent("user-1", turn_limit=1)
+        assert all(not m.attachments for t in newest for m in t.messages)
+        assert (
+            await assets.get_for_user(image.asset.id, user_id="user-1", at=NOW.replace(year=2030))
+        ) is not None
     finally:
         await database.close()

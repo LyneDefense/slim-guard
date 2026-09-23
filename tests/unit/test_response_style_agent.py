@@ -137,9 +137,6 @@ def invocation(**updates: object) -> AgentInvocation:
         "agent_role": "response_style",
         "agent_version": "response-style-v1",
         "deadline_at": datetime.now(UTC) + timedelta(seconds=30),
-        "max_model_calls": 4,
-        "max_tool_calls": 0,
-        "max_total_tokens": 4096,
     }
     values.update(updates)
     return AgentInvocation.model_validate(values)
@@ -352,7 +349,7 @@ async def test_style_agent_rejects_tool_permissions_before_calling_model() -> No
     )
 
     result = await agent.run(
-        invocation=invocation(allowed_tools=("record_weight",), max_tool_calls=1),
+        invocation=invocation(allowed_tools=("record_weight",)),
         context=style_context(),
     )
 

@@ -16,6 +16,8 @@ from typing import Any, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from slim_guard.tasks.context import task_user_quotes
+
 
 class EvidenceTurnItem(Protocol):
     """Structural current-item input; avoids importing the Harness runtime graph."""
@@ -257,6 +259,27 @@ class EvidenceBuilder:
             missing=missing,
         )
 
+        working = authoritative_context.get("working_memory")
+        if isinstance(working, Mapping):
+            known = {item.source_ref for item in candidates}
+            quotes_by_ref: dict[str, list[str]] = {}
+            for ref, quote in task_user_quotes(working):
+                if ref not in known:
+                    quotes = quotes_by_ref.setdefault(ref, [])
+                    if quote not in quotes:
+                        quotes.append(quote)
+            for ref, quotes in quotes_by_ref.items():
+                candidates.append(
+                    self._make_item(
+                        turn_id=turn_id,
+                        source_type=EvidenceSourceType.USER_MESSAGE,
+                        authority=EvidenceAuthority.USER_REPORTED,
+                        content={"text": quotes[0]} if len(quotes) == 1 else {"excerpts": quotes},
+                        source_ref=ref,
+                        confidence=EvidenceConfidence.HIGH,
+                    )
+                )
+
         if allowed_evidence_refs is not None:
             allowed = {ref for ref in allowed_evidence_refs if ref}
             matched: set[str] = set()
@@ -461,28 +484,38 @@ class EvidenceBuilder:
         working = context.get("working_memory")
         if not isinstance(working, Mapping):
             return
-        images = working.get("recent_images", ())
-        if not isinstance(images, Sequence) or isinstance(images, (str, bytes)):
-            return
+        dialogue = working.get("recent_dialogue", ())
+        images = (
+            [
+                attachment
+                for turn in dialogue
+                if isinstance(turn, Mapping)
+                for message in turn.get("messages", ())
+                if isinstance(message, Mapping)
+                for attachment in message.get("attachments", ())
+                if isinstance(attachment, Mapping)
+            ]
+            if isinstance(dialogue, (list, tuple))
+            else []
+        )
         known_refs = {item.source_ref for item in candidates if item.source_ref}
         for index, raw in enumerate(images):
             if not isinstance(raw, Mapping):
                 continue
-            source_ref = self._source_ref(raw, fallback=f"recent_image:{index}")
+            source_ref = self._source_ref(raw, fallback=f"attachment:{index}")
             if source_ref in known_refs:
                 continue
-            observation = raw.get("observation")
+            annotation = raw.get("annotation")
+            observation = annotation.get("description") if isinstance(annotation, Mapping) else None
             if not isinstance(observation, (str, Mapping)) or not observation:
                 missing.append(f"visual_observation_missing:{source_ref}")
                 continue
-            requires_confirmation = raw.get("requires_user_confirmation", True) is not False
+            # Historical uncertainty is not an unresolved task. The model sees
+            # later user messages and the active task state separately. Omitting
+            # task status also avoids claiming the old observation was confirmed.
             uncertainty = raw.get("uncertainty")
             if not isinstance(uncertainty, str) or not uncertainty.strip():
-                uncertainty = (
-                    "Visual interpretation requires user confirmation"
-                    if requires_confirmation
-                    else "Visual interpretation may omit or misclassify details"
-                )
+                uncertainty = "Historical visual interpretation may omit or misclassify details"
             candidates.append(
                 self._make_item(
                     turn_id=turn_id,
@@ -491,7 +524,6 @@ class EvidenceBuilder:
                     content={
                         "asset_id": raw.get("asset_id") or source_ref,
                         "observation": observation,
-                        "requires_user_confirmation": requires_confirmation,
                     },
                     source_ref=source_ref,
                     occurred_at=self._timestamp(raw),

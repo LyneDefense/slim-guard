@@ -19,7 +19,6 @@ from slim_guard.harness.initialization import (
     TurnInitializationRequest,
     TurnInitializer,
 )
-from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.loop import HarnessLoopResult, ResponsePipelineResult
 from slim_guard.harness.safety import (
     DefaultInputSafetyPolicy,
@@ -47,6 +46,7 @@ from slim_guard.runtime.contracts import (
 )
 from slim_guard.runtime.invocation import InvocationStore
 from slim_guard.tools.policy import ToolAuthorization
+from slim_guard.usage.context import usage_scope
 
 
 class TurnGrants(BaseModel):
@@ -84,7 +84,6 @@ class TurnHarness:
         model: ModelGateway,
         tool_calls: ToolCallRunner,
         recorder: HarnessRunRecorder,
-        limits: HarnessLimits,
         context_data: ContextDataProvider | None = None,
         memory_recaller: MemoryRecaller | None = None,
         input_safety: InputSafetyPolicy | None = None,
@@ -103,14 +102,12 @@ class TurnHarness:
         self._response_finalizer = response_finalizer
         self._invocation_store = invocation_store
         self._graph_version = graph_version
-        self._limits = limits
         self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
         self._core_agent = CoreAgent(
             model=model,
             tool_calls=tool_calls,
             recorder=recorder,
-            limits=limits,
             output_guard=output_guard,
             clock=self._clock,
         )
@@ -121,10 +118,31 @@ class TurnHarness:
         request: TurnInitializationRequest,
         grants: TurnGrants | None = None,
     ) -> TurnRunResult:
+        return await self._run(request=request, grants=grants)
+
+    async def _run(
+        self,
+        *,
+        request: TurnInitializationRequest,
+        grants: TurnGrants | None = None,
+    ) -> TurnRunResult:
         current_time = self._clock()
         if current_time.utcoffset() is None:
             raise ValueError("Harness Turn Runner clock must be timezone-aware")
         initialized = await self._initializer.initialize(request)
+        with usage_scope(
+            user_id=initialized.context.user_id,
+            turn_id=initialized.turn.id,
+            thread_id=initialized.thread.id,
+        ):
+            return await self._run_initialized(initialized, grants, current_time)
+
+    async def _run_initialized(
+        self,
+        initialized: InitializedTurn,
+        grants: TurnGrants | None,
+        current_time: datetime,
+    ) -> TurnRunResult:
         active_grants = grants or TurnGrants()
         safety_assessment = self._input_safety.assess(initialized.input_items)
         recall_result: MemoryRecallResult | None = None
@@ -284,9 +302,6 @@ class TurnHarness:
             allowed_tools=tuple(compiled.allowed_tool_names),
             privacy_scopes=("current_user_input", "working_memory", "profile"),
             deadline_at=(initialized.turn.deadline_at or current_time + timedelta(seconds=120)),
-            max_model_calls=self._limits.max_model_calls,
-            max_tool_calls=self._limits.max_tool_calls,
-            max_total_tokens=self._limits.max_total_tokens,
             payload={
                 "input_item_ids": list(compiled.input_item_ids),
                 "context_evidence_ids": list(compiled.evidence_item_ids),
@@ -374,9 +389,6 @@ class TurnHarness:
             in {
                 HarnessTermination.FATAL_ERROR,
                 HarnessTermination.DEADLINE_EXCEEDED,
-                HarnessTermination.MAX_MODEL_CALLS,
-                HarnessTermination.MAX_TOOL_CALLS,
-                HarnessTermination.MAX_TOTAL_TOKENS,
             }
             else InvocationStatus.DEGRADED
         )

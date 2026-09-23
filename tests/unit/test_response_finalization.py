@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_runtime
+from slim_guard.agent.composition import build_agent_runtime
+from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.runtime import AgentRuntimeRequest
+from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -54,84 +56,46 @@ def nutrition_tool_call() -> ModelResponse:
     )
 
 
-async def test_on_mode_uses_core_plan_then_one_style_path_without_orchestrator(
-    tmp_path,
-) -> None:
+async def test_system_response_does_not_enter_style_or_review(tmp_path) -> None:
     database = await prepare_database(tmp_path)
-    styled = {
-        "text": "收到，今天这条我已经记下来了。",
-        "used_block_ids": ["core-neutral-draft"],
-        "used_claim_ids": [],
-        "used_action_ids": [],
-        "preserved_risk_flags": [],
-        "preserved_citation_refs": [],
-        "style_profile_version": "doctor_builtin_v1",
-    }
     model = ScriptedModelGateway(
         (
-            response("今天这条处理好了。"),
-            response(json.dumps(styled, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response("已收到。"),
+            conversation("已收到。", coach=None),
         )
     )
     runtime = build_agent_runtime(
         database=database,
         model=model,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
-            code_revision="core-primary-finalization-test",
-            multi_agent_mode="on",
-            response_reviewer_enabled=True,
+            models=ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision"),
+            code_revision="single-path-test",
         ),
         clock=lambda: NOW,
     )
     try:
-        result = await runtime.run_user_message(
-            AgentRuntimeRequest(
-                user_id="user-1",
-                text="今天先这样。",
-                execution_mode=ToolExecutionMode.EVALUATION,
-                isolated_write_environment=True,
-            )
-        )
-
-        repository = OrchestrationRepository(database)
-        invocations = await repository.list_turn_invocations(result.turn_id)
-        artifacts = await repository.list_artifacts(result.turn_id)
-
-        assert result.final_text == styled["text"]
-        assert [request.purpose for request in model.requests] == [
+        result = await runtime.run_user_message(AgentRuntimeRequest(user_id="user-1", text="你好"))
+        assert result.final_text == "已收到。"
+        assert [r.purpose for r in model.requests] == [
             ModelPurpose.HARNESS_TURN,
-            ModelPurpose.RESPONSE_STYLE,
-            ModelPurpose.RESPONSE_STYLE,
+            ModelPurpose.CONVERSATION,
         ]
-        assert {item.agent_role for item in invocations} == {
-            AgentRole.CORE.value,
-            AgentRole.RESPONSE_STYLE.value,
-        }
-        core = next(item for item in invocations if item.agent_role == AgentRole.CORE.value)
-        style = next(
-            item for item in invocations if item.agent_role == AgentRole.RESPONSE_STYLE.value
-        )
-        assert core.output_schema == "ResponsePlan"
-        assert style.parent_invocation_id == core.invocation_id
-        assert style.output_schema == "StyledResponse"
-        assert not any(item.agent_role == "orchestrator" for item in invocations)
-        assert {item.artifact_type for item in artifacts} >= {
-            "response_plan",
-            "neutral_response",
-            "style_resolution",
-            "styled_response",
-        }
-        styled_artifact = next(
-            item for item in artifacts if item.artifact_type == "styled_response"
-        )
-        assert styled_artifact.payload["neutral_text"] == "今天这条处理好了。"
-        assert styled_artifact.payload["text"] == styled["text"]
+        model.assert_exhausted()
     finally:
         await database.close()
+
+
+def conversation(system: str | None, *, coach: str | None) -> ModelResponse:
+    return response(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "system_text": system or "已收到。",
+                "coach_text": coach,
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
@@ -169,13 +133,12 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
         database=database,
         model=model,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="group-chat-test",
-            multi_agent_mode="on",
-            response_reviewer_enabled=True,
-            group_chat_enabled=True,
         ),
         clock=lambda: NOW,
     )
@@ -201,6 +164,33 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
             "response_style",
             "response_reviewer",
         ]
+        repository = OrchestrationRepository(database)
+        invocations = await repository.list_turn_invocations(result.turn_id)
+        artifacts = await repository.list_artifacts(result.turn_id)
+        resolutions = [item for item in artifacts if item.artifact_type == "style_resolution"]
+        assert len(resolutions) == 1
+        plans = [item for item in artifacts if item.artifact_type == "response_plan"]
+        assert len(plans) == 1
+        assert resolutions[0].parent_artifact_ids == (plans[0].artifact_id,)
+        coach_neutral = next(
+            item for item in artifacts if item.artifact_type == "coach_neutral_response"
+        )
+        assert coach_neutral.payload["text"] == "这顿搭配不错。"
+        conversation = next(
+            item for item in invocations if item.agent_role == AgentRole.CONVERSATION.value
+        )
+        style = next(
+            item for item in invocations if item.agent_role == AgentRole.RESPONSE_STYLE.value
+        )
+        review = next(
+            item for item in invocations if item.agent_role == AgentRole.RESPONSE_REVIEWER.value
+        )
+        assert style.parent_invocation_id == conversation.invocation_id
+        assert review.parent_invocation_id == style.invocation_id
+        assert {resolutions[0].artifact_id, coach_neutral.artifact_id}.issubset(
+            style.input_artifact_ids
+        )
+        model.assert_exhausted()
     finally:
         await database.close()
 
@@ -228,6 +218,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
             nutrition_tool_call(),
             response(json.dumps(assessment, ensure_ascii=False)),
             response("目前信息还不够，请告诉我晚餐具体吃什么和大概份量。"),
+            conversation(None, coach=str(styled["text"])),
             response(json.dumps(styled, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
@@ -237,13 +228,12 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
         database=database,
         model=model,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="professional-finalization-test",
-            multi_agent_mode="on",
-            nutrition_agent_enabled=True,
-            response_reviewer_enabled=True,
         ),
         clock=lambda: NOW,
     )
@@ -262,17 +252,19 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
         artifacts = await repository.list_artifacts(result.turn_id)
         by_role = {item.agent_role: item for item in invocations}
 
-        assert result.final_text == styled["text"]
+        assert result.messages[0].text == styled["text"]
         assert [request.purpose for request in model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.NUTRITION,
             ModelPurpose.HARNESS_TURN,
+            ModelPurpose.CONVERSATION,
             ModelPurpose.RESPONSE_STYLE,
             ModelPurpose.RESPONSE_STYLE,
             ModelPurpose.RESPONSE_REVIEWER,
         ]
         assert set(by_role) == {
             AgentRole.CORE.value,
+            AgentRole.CONVERSATION.value,
             AgentRole.NUTRITION_EXPERT.value,
             AgentRole.RESPONSE_STYLE.value,
             AgentRole.RESPONSE_REVIEWER.value,
@@ -282,10 +274,13 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
         style = by_role[AgentRole.RESPONSE_STYLE.value]
         reviewer = by_role[AgentRole.RESPONSE_REVIEWER.value]
         assert nutrition.parent_invocation_id == core.invocation_id
-        assert style.parent_invocation_id == core.invocation_id
+        assert style.parent_invocation_id == by_role[AgentRole.CONVERSATION.value].invocation_id
         assert reviewer.parent_invocation_id == style.invocation_id
         verdict = next(item for item in artifacts if item.artifact_type == "reviewer_verdict")
         assert verdict.payload["verdict"] == "pass"
+        review_payload = json.loads(model.requests[-1].messages[-1].content or "{}")
+        assert review_payload["supporting_assessment"]["overall"] == assessment["overall"]
+        assert review_payload["assessment"] is None
         assert not any(item.agent_role == "orchestrator" for item in invocations)
     finally:
         await database.close()
@@ -318,6 +313,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
             nutrition_tool_call(),
             response(json.dumps(assessment, ensure_ascii=False)),
             response("请先告诉我今晚准备吃什么和大概份量。"),
+            conversation(None, coach=str(first_style["text"])),
             response(json.dumps(first_style, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response(
@@ -340,13 +336,12 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
         database=database,
         model=model,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="style-repair-finalization-test",
-            multi_agent_mode="on",
-            nutrition_agent_enabled=True,
-            response_reviewer_enabled=True,
         ),
         clock=lambda: NOW,
     )
@@ -372,7 +367,7 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
             key=lambda item: item.attempt,
         )
 
-        assert result.final_text == repaired_style["text"]
+        assert result.messages[0].text == repaired_style["text"]
         assert [item.attempt for item in styles] == [1, 2]
         assert styles[0].agent_version == styles[1].agent_version
         assert styles[1].parent_invocation_id == reviewers[0].invocation_id
@@ -416,7 +411,8 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
         (
             nutrition_tool_call(),
             response(json.dumps(assessment, ensure_ascii=False)),
-            response("晚餐这样搭配就行。"),
+            response("当前内容稿认为晚餐这样搭配就行。"),
+            conversation(None, coach=str(first_style["text"])),
             response(json.dumps(first_style, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response(
@@ -436,6 +432,7 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
                     ensure_ascii=False,
                 )
             ),
+            conversation(None, coach=str(repaired_style["text"])),
             response(json.dumps(repaired_style, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
@@ -445,13 +442,12 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
         database=database,
         model=model,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="core-owner-repair-test",
-            multi_agent_mode="on",
-            nutrition_agent_enabled=True,
-            response_reviewer_enabled=True,
         ),
         clock=lambda: NOW,
     )
@@ -479,10 +475,16 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             key=lambda item: item.attempt,
         )
 
-        assert result.final_text == repaired_style["text"]
+        assert result.messages[0].text == repaired_style["text"]
         assert [item.attempt for item in cores] == [1, 2]
         assert cores[1].parent_invocation_id == reviewers[0].invocation_id
-        assert styles[1].parent_invocation_id == cores[1].invocation_id
+        routed = next(
+            i
+            for i in invocations
+            if i.agent_role == AgentRole.CONVERSATION.value and i.attempt == 2
+        )
+        assert routed.parent_invocation_id == cores[1].invocation_id
+        assert styles[1].parent_invocation_id == routed.invocation_id
         assert reviewers[1].parent_invocation_id == styles[1].invocation_id
     finally:
         await database.close()
@@ -518,7 +520,8 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
         (
             nutrition_tool_call(),
             response(json.dumps(initial_assessment, ensure_ascii=False)),
-            response("照旧吃就可以。"),
+            response("当前内容稿认为照旧吃就可以。"),
+            conversation(None, coach=str(first_style["text"])),
             response(json.dumps(first_style, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response(
@@ -539,6 +542,7 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
                     ensure_ascii=False,
                 )
             ),
+            conversation(None, coach=str(repaired_style["text"])),
             response(json.dumps(repaired_style, ensure_ascii=False)),
             response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
             response('{"verdict":"pass"}'),
@@ -548,13 +552,12 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
         database=database,
         model=model,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="nutrition-owner-repair-test",
-            multi_agent_mode="on",
-            nutrition_agent_enabled=True,
-            response_reviewer_enabled=True,
         ),
         clock=lambda: NOW,
     )
@@ -582,10 +585,17 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             key=lambda item: item.attempt,
         )
 
-        assert result.final_text == repaired_style["text"]
+        assert result.messages[0].text == repaired_style["text"]
         assert [item.attempt for item in nutrition] == [1, 2]
         assert nutrition[1].parent_invocation_id == reviewers[0].invocation_id
         assert cores[1].parent_invocation_id == nutrition[1].invocation_id
         assert reviewers[1].attempt == 2
+        nutrition_requests = [r for r in model.requests if r.purpose is ModelPurpose.NUTRITION]
+        repair_payload = json.loads(nutrition_requests[1].messages[-1].content or "{}")
+        assert repair_payload["review_feedback"]["reason_summary"] == "专业结论缺少当前证据支持。"
+        assert repair_payload["review_feedback"]["repair_target"] == "nutrition_expert"
+        review_requests = [r for r in model.requests if r.purpose is ModelPurpose.RESPONSE_REVIEWER]
+        last_review = json.loads(review_requests[-1].messages[-1].content or "{}")
+        assert last_review["supporting_assessment"]["overall"] == repaired_assessment["overall"]
     finally:
         await database.close()

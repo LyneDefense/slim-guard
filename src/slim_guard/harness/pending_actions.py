@@ -20,6 +20,7 @@ from slim_guard.harness.errors import (
     PendingActionStateConflict,
 )
 from slim_guard.harness.events import PendingActionStatus, PendingActionType
+from slim_guard.tasks.contracts import TaskRef
 from slim_guard.tools.contracts import ToolExecutionMode
 
 _RESOLUTIONS = frozenset(
@@ -52,6 +53,7 @@ class PendingActionRef:
     created_at: datetime
     resolved_at: datetime | None
     consumed_at: datetime | None
+    task_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +180,54 @@ class PendingActionRepository:
         async with self.database.session() as session:
             row = await session.get(PendingActionRecord, action_id)
             return self._ref(row) if row is not None else None
+
+    async def attach_task(self, *, action_id: str, task: TaskRef) -> PendingActionRef:
+        """Link a validated task without granting or consuming any authorization."""
+        async with self.database.session() as session, session.begin():
+            row = await session.scalar(
+                select(PendingActionRecord)
+                .join(
+                    AgentThreadRecord,
+                    AgentThreadRecord.id == PendingActionRecord.thread_id,
+                )
+                .where(
+                    PendingActionRecord.id == action_id,
+                    PendingActionRecord.thread_id == task.thread_id,
+                    AgentThreadRecord.user_id == task.user_id,
+                )
+            )
+            if row is None:
+                raise LookupError("Action is not visible in this task's conversation")
+            result = await session.execute(
+                update(PendingActionRecord)
+                .where(
+                    PendingActionRecord.id == action_id,
+                    PendingActionRecord.task_id.is_(None)
+                    | (PendingActionRecord.task_id == task.id),
+                )
+                .values(task_id=task.id)
+            )
+            if cast(CursorResult[Any], result).rowcount != 1:
+                raise PendingActionStateConflict("Action already belongs to another task")
+            await session.refresh(row)
+            return self._ref(row)
+
+    async def list_for_task(self, task: TaskRef) -> list[PendingActionRef]:
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(PendingActionRecord)
+                .join(
+                    AgentThreadRecord,
+                    AgentThreadRecord.id == PendingActionRecord.thread_id,
+                )
+                .where(
+                    PendingActionRecord.task_id == task.id,
+                    PendingActionRecord.thread_id == task.thread_id,
+                    AgentThreadRecord.user_id == task.user_id,
+                )
+                .order_by(PendingActionRecord.created_at, PendingActionRecord.id)
+            )
+            return [self._ref(row) for row in rows]
 
     async def list_for_execution(self, execution_key: str) -> list[PendingActionRef]:
         async with self.database.session() as session:
@@ -441,6 +491,7 @@ class PendingActionRepository:
             raise ValueError(f"Pending action arguments are not an object: {row.id}")
         return PendingActionRef(
             id=row.id,
+            task_id=row.task_id,
             thread_id=row.thread_id,
             turn_id=row.turn_id,
             source_item_id=row.source_item_id,

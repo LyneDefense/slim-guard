@@ -1,4 +1,4 @@
-"""Budgeted model gateway and durable step cache shared by every training call."""
+"""Timed model gateway and durable step cache shared by every training call."""
 
 import asyncio
 from datetime import UTC, datetime
@@ -8,8 +8,9 @@ from pydantic import BaseModel
 
 from slim_guard.agent_models.gateway import ModelGateway, ModelMessage, ModelRequest, ModelResponse
 from slim_guard.expression_style.package import canonical, content_hash
+from slim_guard.usage.context import usage_scope
 
-from .contracts import BuildBudget
+from .contracts import BuildExecutionConfig
 from .ports import BuildPort
 from .structured_output import complete_structured
 
@@ -17,8 +18,10 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class TrainingGateway:
-    def __init__(self, gateway: ModelGateway, port: BuildPort, budget: BuildBudget) -> None:
-        self.gateway, self.port, self.budget = gateway, port, budget
+    def __init__(
+        self, gateway: ModelGateway, port: BuildPort, config: BuildExecutionConfig
+    ) -> None:
+        self.gateway, self.port, self.config = gateway, port, config
         self.stage = "materials"
 
     async def close(self) -> None:
@@ -28,12 +31,10 @@ class TrainingGateway:
         if request.tools or request.tool_choice.value != "none":
             raise ValueError("训练模型不能调用业务工具")
         if len(canonical([m.model_dump(mode="json") for m in request.messages]).encode()) > (
-            self.budget.max_request_bytes
+            self.config.max_request_bytes
         ):
-            raise ValueError("单次训练输入超过预算，请减少重复素材或提高构建预算")
-        usage = await self.port.reserve_call(
-            max_calls=self.budget.max_calls, max_tokens=self.budget.max_tokens
-        )
+            raise ValueError("单次训练输入超过请求体大小限制，请减少重复素材或调整请求体大小配置")
+        await self.port.record_call()
         await self.port.event(
             self.stage,
             "等待模型返回",
@@ -41,27 +42,18 @@ class TrainingGateway:
             model=request.model,
             purpose=request.output_schema_name or request.purpose.value,
             request_started_at=datetime.now(UTC).isoformat(),
-            timeout_seconds=self.budget.request_seconds,
+            timeout_seconds=self.config.request_seconds,
         )
         try:
-            async with asyncio.timeout(self.budget.request_seconds):
-                result = await self.gateway.complete(
-                    request.model_copy(
-                        update={
-                            "max_output_tokens": min(
-                                request.max_output_tokens, self.budget.max_tokens - usage["tokens"]
-                            ),
-                        }
-                    )
-                )
+            async with asyncio.timeout(self.config.request_seconds):
+                with usage_scope(component=f"style_training.{self.stage}"):
+                    result = await self.gateway.complete(request)
         except Exception as exc:
             await self.port.event(
                 self.stage, "模型调用未完成", state="call_failed", error_type=type(exc).__name__
             )
             raise
         await self.port.record_tokens(result.usage.total_tokens)
-        if usage["tokens"] + result.usage.total_tokens > self.budget.max_tokens:
-            raise ValueError("训练 Token 预算已耗尽；不会把未完成评测当成提升")
         await self.port.event(
             self.stage, "模型已返回", state="running", tokens=result.usage.total_tokens
         )

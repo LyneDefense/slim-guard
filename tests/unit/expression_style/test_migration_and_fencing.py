@@ -57,7 +57,7 @@ async def test_stale_worker_cannot_write_after_cancellation_or_takeover(style_db
     with pytest.raises(BuildInterrupted):
         await store.save("materials", [{"fabricated": True}], stage="materials", message="过期")
     with pytest.raises(BuildInterrupted):
-        await store.reserve_call(max_calls=10, max_tokens=1000)
+        await store.record_call()
     assert (await builds.artifact("doctor", run["id"], "materials"))["items"] == []
 
 

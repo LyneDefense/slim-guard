@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -22,6 +22,7 @@ from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.extraction import MemoryExtractionScheduler
 from slim_guard.runtime.turn import TurnGrants, TurnHarness
 from slim_guard.tools.contracts import ToolExecutionMode
+from slim_guard.usage.context import CURRENT, usage_scope
 
 logger = logging.getLogger(__name__)
 
@@ -115,21 +116,32 @@ class AgentRuntime:
         versions: AgentVersionRepository,
         runner: TurnHarness,
         assets: ImageAssetRepository,
-        image_retention: timedelta,
         memory_extraction_scheduler: MemoryExtractionScheduler | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        if image_retention <= timedelta(0):
-            raise ValueError("Image retention must be positive")
         self.manifest = manifest
         self._versions = versions
         self._runner = runner
         self._assets = assets
-        self._image_retention = image_retention
         self._memory_extraction_scheduler = memory_extraction_scheduler
         self._clock = clock or self._utc_now
 
-    async def run_user_message(
+    async def run_user_message(self, request: AgentRuntimeRequest) -> AgentRuntimeResult:
+        with usage_scope(
+            user_id=request.user_id,
+            request_id=CURRENT.get().request_id or request.source_message_id,
+            category="online",
+            turn_id=None,
+            thread_id=None,
+            agent_role=None,
+            invocation_id=None,
+            parent_invocation_id=None,
+            tool_call_id=None,
+            job_id=None,
+        ):
+            return await self._run_user_message(request)
+
+    async def _run_user_message(
         self,
         request: AgentRuntimeRequest,
     ) -> AgentRuntimeResult:
@@ -153,9 +165,9 @@ class AgentRuntime:
                     user_id=request.user_id,
                     content=request.image_bytes,
                     declared_mime_type=request.image_mime_type,
+                    source_text=request.text,
                     channel_id=request.channel_id,
                     source_message_id=request.source_message_id,
-                    expires_at=now + self._image_retention,
                 )
             )
             inputs.append(
@@ -206,7 +218,22 @@ class AgentRuntime:
             messages=run.loop.outgoing_messages,
         )
 
-    async def run_scheduled(
+    async def run_scheduled(self, request: AgentScheduledRequest) -> AgentRuntimeResult:
+        with usage_scope(
+            user_id=request.user_id,
+            request_id=None,
+            category="proactive",
+            turn_id=None,
+            thread_id=None,
+            agent_role=None,
+            invocation_id=None,
+            parent_invocation_id=None,
+            tool_call_id=None,
+            job_id=None,
+        ):
+            return await self._run_scheduled(request)
+
+    async def _run_scheduled(
         self,
         request: AgentScheduledRequest,
     ) -> AgentRuntimeResult:

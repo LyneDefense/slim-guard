@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import Field, ValidationError, model_validator
 
@@ -22,12 +22,6 @@ from slim_guard.memory.errors import (
     MemorySourceMismatch,
     MemoryStaleEvidence,
 )
-from slim_guard.memory.handoff import (
-    HandoffRef,
-    HandoffRepository,
-    HandoffResolveCommand,
-    HandoffUpsertCommand,
-)
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
 from slim_guard.tools.gateway import ToolExecutor
@@ -44,8 +38,6 @@ SET_WEIGHT_GOAL_TOOL_NAME = "set_weight_goal"
 SET_BODY_FAT_GOAL_TOOL_NAME = "set_body_fat_goal"
 SET_BEHAVIOR_GOAL_TOOL_NAME = "set_behavior_goal"
 RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
-SET_CONVERSATION_HANDOFF_TOOL_NAME = "set_conversation_handoff"
-RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME = "resolve_conversation_handoff"
 CLEAR_USER_MEMORIES_TOOL_NAME = "clear_user_memories"
 MEMORY_TOOL_VERSION = "v8"
 
@@ -195,19 +187,6 @@ class RecordUserConstraintArguments(MemoryEvidenceArguments):
     statement: str = Field(min_length=1, max_length=500)
 
 
-class SetConversationHandoffArguments(ToolArguments):
-    objective: str = Field(min_length=1, max_length=300)
-    unresolved: list[Annotated[str, Field(min_length=1, max_length=300)]] = Field(
-        min_length=1,
-        max_length=5,
-    )
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
-
-
-class ResolveConversationHandoffArguments(ToolArguments):
-    handoff_id: str = Field(min_length=1, max_length=128)
-
-
 class ClearUserMemoriesArguments(ToolArguments):
     scope: Literal["profile_goal_constraint"]
     evidence_excerpt: str = Field(min_length=1, max_length=512)
@@ -217,10 +196,8 @@ class MemoryToolHandlers:
     def __init__(
         self,
         repository: MemoryRepository,
-        handoffs: HandoffRepository | None = None,
     ) -> None:
         self._repository = repository
-        self._handoffs = handoffs
 
     async def set_coaching_profile(
         self,
@@ -504,94 +481,6 @@ class MemoryToolHandlers:
             source_ids=(result.fact.id,),
         )
 
-    async def set_conversation_handoff(
-        self,
-        context: ToolContext,
-        arguments: SetConversationHandoffArguments,
-    ) -> ToolResult:
-        if self._handoffs is None:
-            return self._handoff_unavailable()
-        if context.execution_idempotency_key is None or context.source_item_id is None:
-            return ToolResult.failed(
-                code="missing_handoff_execution_identity",
-                message="Saving a handoff requires a trusted current user message.",
-            )
-        try:
-            handoff = await self._handoffs.upsert(
-                HandoffUpsertCommand(
-                    user_id=context.user_id,
-                    thread_id=context.thread_id,
-                    objective=arguments.objective,
-                    unresolved=tuple(arguments.unresolved),
-                    evidence_excerpt=arguments.evidence_excerpt,
-                    operation_id=context.execution_idempotency_key,
-                    source_turn_id=context.turn_id,
-                    source_item_id=context.source_item_id,
-                    source_tool_call_id=context.tool_call_id,
-                )
-            )
-        except MemoryEvidenceMismatch:
-            return ToolResult.failed(
-                code="handoff_evidence_mismatch",
-                message="The handoff must be grounded in this user message.",
-            )
-        except MemorySourceMismatch:
-            return ToolResult.failed(
-                code="handoff_source_mismatch",
-                message="The handoff source could not be verified.",
-            )
-        except MemoryCollision:
-            return ToolResult.failed(
-                code="handoff_collision",
-                message="The handoff conflicted with another persisted update.",
-                retryable=True,
-            )
-        except ValidationError:
-            return ToolResult.failed(
-                code="invalid_handoff_value",
-                message="The handoff summary is outside its supported schema.",
-            )
-        return ToolResult.success(
-            output={"handoff": self._handoff_output(handoff)},
-            source_ids=(handoff.id,),
-        )
-
-    async def resolve_conversation_handoff(
-        self,
-        context: ToolContext,
-        arguments: ResolveConversationHandoffArguments,
-    ) -> ToolResult:
-        if self._handoffs is None:
-            return self._handoff_unavailable()
-        if context.source_item_id is None:
-            return ToolResult.failed(
-                code="missing_handoff_execution_identity",
-                message="Resolving a handoff requires a trusted current user message.",
-            )
-        try:
-            handoff, changed = await self._handoffs.resolve(
-                HandoffResolveCommand(
-                    user_id=context.user_id,
-                    handoff_id=arguments.handoff_id,
-                    source_turn_id=context.turn_id,
-                    source_item_id=context.source_item_id,
-                )
-            )
-        except MemoryNotFound:
-            return ToolResult.failed(
-                code="handoff_not_found",
-                message="That handoff is not visible to the current user.",
-            )
-        except MemorySourceMismatch:
-            return ToolResult.failed(
-                code="handoff_source_mismatch",
-                message="The handoff source could not be verified.",
-            )
-        return ToolResult.success(
-            output={"handoff": self._handoff_output(handoff), "changed": changed},
-            source_ids=(handoff.id,),
-        )
-
     async def clear_user_memories(
         self,
         context: ToolContext,
@@ -730,23 +619,6 @@ class MemoryToolHandlers:
             "status": fact.status.value,
             "assertion": fact.assertion.value,
         }
-
-    @staticmethod
-    def _handoff_output(handoff: HandoffRef) -> dict[str, Any]:
-        return {
-            "handoff_id": handoff.id,
-            "status": handoff.status,
-            "objective": handoff.objective,
-            "unresolved": list(handoff.unresolved),
-            "expires_at": handoff.expires_at.isoformat(),
-        }
-
-    @staticmethod
-    def _handoff_unavailable() -> ToolResult:
-        return ToolResult.failed(
-            code="handoff_repository_unavailable",
-            message="Conversation handoff storage is unavailable.",
-        )
 
     @staticmethod
     def _value_not_in_evidence() -> ToolResult:
@@ -919,35 +791,6 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             timeout_seconds=3,
         ),
         RegisteredTool(
-            name=SET_CONVERSATION_HANDOFF_TOOL_NAME,
-            description=(
-                "Save one unfinished conversation handoff only when the current user "
-                "explicitly asks to continue it in a later turn. objective and unresolved "
-                "are concise summaries, while evidence_excerpt must be copied exactly from "
-                "the current user message. Do not store domain facts here."
-            ),
-            version=MEMORY_TOOL_VERSION,
-            arguments_model=SetConversationHandoffArguments,
-            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
-            idempotent=True,
-            requires_confirmation=False,
-            timeout_seconds=3,
-        ),
-        RegisteredTool(
-            name=RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME,
-            description=(
-                "Resolve the exact active conversation handoff after its work is completed "
-                "or when the current user cancels it. Use only the handoff_id supplied in "
-                "trusted working_memory context; never guess an ID."
-            ),
-            version=MEMORY_TOOL_VERSION,
-            arguments_model=ResolveConversationHandoffArguments,
-            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
-            idempotent=True,
-            requires_confirmation=False,
-            timeout_seconds=3,
-        ),
-        RegisteredTool(
             name=CLEAR_USER_MEMORIES_TOOL_NAME,
             description=(
                 "Clear all active profile, goal, and constraint memories for the current "
@@ -968,9 +811,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
 
 def memory_tool_executors(
     repository: MemoryRepository,
-    handoffs: HandoffRepository,
 ) -> Mapping[str, ToolExecutor[Any]]:
-    handlers = MemoryToolHandlers(repository, handoffs)
+    handlers = MemoryToolHandlers(repository)
     return {
         SET_COACHING_PROFILE_TOOL_NAME: ToolExecutor(
             arguments_model=SetCoachingProfileArguments,
@@ -1015,14 +857,6 @@ def memory_tool_executors(
         FORGET_USER_MEMORY_TOOL_NAME: ToolExecutor(
             arguments_model=ForgetUserMemoryArguments,
             handler=handlers.forget_user_memory,
-        ),
-        SET_CONVERSATION_HANDOFF_TOOL_NAME: ToolExecutor(
-            arguments_model=SetConversationHandoffArguments,
-            handler=handlers.set_conversation_handoff,
-        ),
-        RESOLVE_CONVERSATION_HANDOFF_TOOL_NAME: ToolExecutor(
-            arguments_model=ResolveConversationHandoffArguments,
-            handler=handlers.resolve_conversation_handoff,
         ),
         CLEAR_USER_MEMORIES_TOOL_NAME: ToolExecutor(
             arguments_model=ClearUserMemoriesArguments,

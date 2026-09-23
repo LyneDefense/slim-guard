@@ -8,7 +8,7 @@ from slim_guard.db.models import new_uuid, utc_now
 from slim_guard.db.session import Database
 from slim_guard.expression_style.package import content_hash
 from slim_guard.expression_style.review.policy import review_signature
-from slim_guard.expression_style.trainer.contracts import BuildBudget, Material
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig, Material
 
 from .models import BuildRun, Example, ReviewCase, Style, Version
 from .views import build_summary
@@ -25,7 +25,7 @@ class BuildRepository:
         *,
         model: str,
         request_key: str | None = None,
-        budget: BuildBudget | None = None,
+        config: BuildExecutionConfig | None = None,
     ) -> dict[str, Any]:
         key = content_hash({"style_id": style_id, "request_key": request_key or new_uuid()})
         async with self.db.session() as s, s.begin():
@@ -100,7 +100,7 @@ class BuildRepository:
                 "baseline": baseline.package if baseline else {},
                 "model": model,
                 "review_signature": review_signature(model),
-                "budget": (budget or BuildBudget()).model_dump(mode="json"),
+                "execution": (config or BuildExecutionConfig()).model_dump(mode="json"),
             }
             row = BuildRun(
                 id=run_id,

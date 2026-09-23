@@ -98,7 +98,7 @@ async def test_adapter_maps_wecom_image_to_runtime_request() -> None:
 async def test_adapter_does_not_deliver_non_final_harness_result() -> None:
     runtime = FakeAgentRuntime(
         runtime_result(
-            termination=HarnessTermination.MAX_MODEL_CALLS,
+            termination=HarnessTermination.DEADLINE_EXCEEDED,
             final_text=None,
         )
     )
@@ -108,7 +108,7 @@ async def test_adapter_does_not_deliver_non_final_harness_result() -> None:
         clock=lambda: FIXED_NOW,
     )
 
-    with pytest.raises(HarnessReplyError, match="max_model_calls"):
+    with pytest.raises(HarnessReplyError, match="deadline_exceeded"):
         await adapter.generate_reply(
             ReplyRequest(
                 user_id="internal-user-1",

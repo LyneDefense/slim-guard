@@ -3,7 +3,6 @@
 from slim_guard.agents.style.agent import (
     RESPONSE_STYLE_PROMPT,
     RESPONSE_STYLE_PROMPT_VERSION,
-    STYLE_MAX_MODEL_CALLS,
     ResponseStyleAgent,
     StyleAgentResult,
 )
@@ -34,7 +33,6 @@ __all__ = [
     "CoachStyleRenderer",
     "RESPONSE_STYLE_PROMPT",
     "RESPONSE_STYLE_PROMPT_VERSION",
-    "STYLE_MAX_MODEL_CALLS",
     "ResponseStyleAgent",
     "SLIMGUARD_DEFAULT_V1",
     "StyleAgentResult",

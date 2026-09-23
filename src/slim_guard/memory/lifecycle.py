@@ -15,7 +15,6 @@ from slim_guard.db.models import (
     AgentTurnRecord,
     LongTermMemoryEventRecord,
     LongTermMemoryIndexOutboxRecord,
-    MemoryHandoffRecord,
     OutboundMessage,
     PendingActionRecord,
     ProactiveMessageRecord,
@@ -57,7 +56,7 @@ class MemoryLifecycleResult:
     revoked_value_count: int
     expired_fact_count: int
     expired_long_term_memory_count: int
-    expired_handoff_count: int
+    expired_task_count: int
 
 
 class MemoryLifecycleRepository:
@@ -209,7 +208,7 @@ class MemoryLifecycleRepository:
                 + cast(CursorResult[Any], long_term_result).rowcount
             )
 
-    async def expire_due(self, *, at: datetime) -> tuple[int, int, int]:
+    async def expire_due(self, *, at: datetime) -> tuple[int, int]:
         now = self._aware(at)
         async with self._database.session() as session, session.begin():
             fact_result = await session.execute(
@@ -220,14 +219,6 @@ class MemoryLifecycleRepository:
                     UserMemoryFactRecord.expires_at <= now,
                 )
                 .values(status="expired", ended_at=now)
-            )
-            handoff_result = await session.execute(
-                update(MemoryHandoffRecord)
-                .where(
-                    MemoryHandoffRecord.status == "active",
-                    MemoryHandoffRecord.expires_at <= now,
-                )
-                .values(status="expired", resolved_at=now)
             )
             long_term_rows = tuple(
                 await session.scalars(
@@ -268,7 +259,6 @@ class MemoryLifecycleRepository:
             return (
                 cast(CursorResult[Any], fact_result).rowcount,
                 len(long_term_rows),
-                cast(CursorResult[Any], handoff_result).rowcount,
             )
 
     @classmethod

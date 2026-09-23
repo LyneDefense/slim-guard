@@ -3,10 +3,15 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
+
+from slim_guard.usage.context import usage_operation
+from slim_guard.usage.gateway import ModelCall, capture_provider_usage
+from slim_guard.usage.ports import UsageStore
 
 
 class EmbeddingError(RuntimeError):
@@ -38,12 +43,14 @@ class ZhipuEmbeddingGateway:
         dimensions: int = 1024,
         timeout_seconds: float = 45.0,
         client: httpx.AsyncClient | None = None,
+        usage_store: UsageStore | None = None,
     ) -> None:
         if not api_key:
             raise ValueError("Zhipu API key is required")
         if dimensions not in {256, 512, 1024, 2048}:
             raise ValueError("Unsupported embedding dimensions")
         self._model = model
+        self._usage_store = usage_store
         self._dimensions = dimensions
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
@@ -52,12 +59,21 @@ class ZhipuEmbeddingGateway:
             headers={"Authorization": f"Bearer {api_key}"},
         )
 
+    @usage_operation("embedding", kind="tool")
     async def embed(self, texts: Sequence[str]) -> EmbeddingBatch:
         normalized = tuple(text.strip() for text in texts)
         if not normalized or len(normalized) > 64:
             raise ValueError("Embedding requests require 1 to 64 texts")
         if any(not text or len(text) > 12_000 for text in normalized):
             raise ValueError("Embedding texts must be nonblank and bounded")
+        async with (
+            ModelCall(self._usage_store, "zhipu", self._model, "embedding")
+            if self._usage_store
+            else nullcontext()
+        ):
+            return await self._embed(normalized)
+
+    async def _embed(self, normalized: tuple[str, ...]) -> EmbeddingBatch:
         started = time.monotonic()
         try:
             response = await self._client.post(
@@ -70,6 +86,7 @@ class ZhipuEmbeddingGateway:
             )
             response.raise_for_status()
             payload = response.json()
+            capture_provider_usage(payload)
         except (httpx.HTTPError, ValueError) as error:
             raise EmbeddingError("embedding_provider_error") from error
         data = payload.get("data") if isinstance(payload, dict) else None

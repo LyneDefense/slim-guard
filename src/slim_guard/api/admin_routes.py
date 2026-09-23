@@ -22,6 +22,7 @@ from slim_guard.config import Settings
 from slim_guard.db.session import Database
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.runtime.contracts import AgentArtifact, ArtifactProducerRole
+from slim_guard.tasks.repository import ConversationTaskRepository
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -75,7 +76,8 @@ def _authenticate(request: Request) -> AdminPrincipal:
 
 
 def _repository(request: Request) -> AdminQueryRepository:
-    return AdminQueryRepository(cast(Database, request.app.state.database))
+    database = cast(Database, request.app.state.database)
+    return AdminQueryRepository(database, tasks=ConversationTaskRepository(database))
 
 
 def _require_csrf(request: Request) -> None:

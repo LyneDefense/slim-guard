@@ -14,10 +14,11 @@ from slim_guard.db.models import new_uuid, utc_now
 from slim_guard.db.session import Database
 from slim_guard.expression_style.review.policy import review_signature
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
-from slim_guard.expression_style.trainer.contracts import BuildBudget
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
 from slim_guard.expression_style.trainer.service import StyleTrainer
 from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
+from slim_guard.usage.context import usage_scope
 
 from .job_store import JobStore
 from .models import BuildRun
@@ -66,18 +67,30 @@ class StyleWorker:
                 self.model
             ):
                 raise ValueError("执行模型或审查版本已变，请新建构建；旧任务不会悄悄切换配置")
-            budget = BuildBudget.model_validate(snapshot["budget"])
-            remaining = budget.max_seconds - elapsed_before
+            config = BuildExecutionConfig.model_validate(snapshot["execution"])
+            remaining = config.max_seconds - elapsed_before
             if remaining <= 0:
-                raise ValueError("构建运行时限已耗尽；恢复不会重置预算")
-            client = TrainingClient(TrainingGateway(self.gateway, store, budget), self.model)
+                raise ValueError("构建运行时限已耗尽；恢复不会重置累计执行时间")
+            client = TrainingClient(TrainingGateway(self.gateway, store, config), self.model)
 
             async def heartbeat() -> None:
                 while True:
                     await store.heartbeat(elapsed_before + monotonic() - started)
                     await asyncio.sleep(15)
 
-            work = asyncio.create_task(StyleTrainer(client).run(snapshot, run_id))
+            with usage_scope(
+                user_id=None,
+                request_id=None,
+                turn_id=None,
+                thread_id=None,
+                agent_role=None,
+                invocation_id=None,
+                parent_invocation_id=None,
+                tool_call_id=None,
+                job_id=run_id,
+                category="training",
+            ):
+                work = asyncio.create_task(StyleTrainer(client).run(snapshot, run_id))
             pulse = asyncio.create_task(heartbeat())
             try:
                 async with asyncio.timeout(remaining):

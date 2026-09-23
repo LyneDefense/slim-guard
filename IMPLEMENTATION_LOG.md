@@ -479,3 +479,17 @@ curl -i https://enceladus.online/health/ready
 - `db/models.py`、`db/migrations.py`、`mobile/platform.py` → 持久化生命周期 → 使用整数毫米、克和基点无损保存，部署迁移自动建表；账号删除清除档案，微信身份绑定时安全迁移且不覆盖目标账号已有档案。
 - `harness/context_data.py`、`agent/prompt.py` → Agent 权威上下文 → 注入用户填写的完整档案，并明确更新的实际测量优先；未采集过敏、疾病、医嘱和孕哺信息不等于不存在，只能按普通人群给一般建议并保留专业升级边界。
 - 验证 → 后端 Ruff、严格 Mypy（207 个源码文件）、11 项相关 Pytest、移动端 TypeScript 和 iOS Expo 生产导出通过。
+
+### `fix: pin React DOM to the Expo SDK React version`
+
+- `mobile-app/package.json`、`package-lock.json` → 可复现依赖安装 → 显式固定 `react-dom@19.2.3`，与 Expo SDK 57 的 `react@19.2.3` 保持一致，避免 `@expo/ui` 的间接 peer 自动选择 `react-dom@19.3.0` 导致标准 `npm ci` 失败；未使用强制安装或忽略 peer 检查。
+- `mobile-app/README.md` → 依赖验证约定 → 说明原生 App 也需对齐 React DOM，并要求依赖修改后验证干净安装。
+- 验证 → 标准 `npm ci` 成功安装 527 个包，`npm ls react react-dom --all` 无依赖冲突，TypeScript 和 iOS Expo 生产导出通过；此次未运行无关的后端全量测试。
+
+### `fix: present iOS profile dates in a separate modal`
+
+- `mobile-app/src/components/DateField.tsx` → 平台分离 → 修正把 Android-only `presentation="dialog"` 当作 iOS 弹窗的用法；iOS 使用独立底部弹窗和明确宽高的原生日期滚轮，不再在表单下方挂载错位的 compact 控件，Android 保留原生对话框。
+- 日期交互 → 先编辑后确认 → iOS 滚动只改变临时选择，点“确定”才回填，取消或点击遮罩不修改字段；没有滚动也能确认初始日期，每次打开按最新字段值重置临时选择并关闭键盘。
+- `mobile-app/src/lib/dates.ts` → 日期边界 → 复用原有本地日期序列化与中午时间约定，选择器初始值和确认值限制在测量/目标日期允许范围内，保留原表单和后端校验。
+- `mobile-app/tests/date-field-regression.mjs` → 定向回归 → 15 项原生视图/Hook 替身测试覆盖弹窗结构、确认/取消/重开、Android 回调、范围和跨时区日期序列化；不能代替 UIKit 实际布局验收。
+- 验证 → 15 项移动端回归、TypeScript 和 iOS Expo 生产导出通过；未运行后端全量测试，未改动云服务器，iOS/Android 真机视觉验收仍需复测。

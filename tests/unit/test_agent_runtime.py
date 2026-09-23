@@ -5,9 +5,11 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_runtime
+from slim_guard.agent.composition import build_agent_runtime
+from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT
 from slim_guard.agent.runtime import AgentRuntimeRequest, AgentScheduledRequest
+from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -27,7 +29,7 @@ from slim_guard.db.session import Database
 from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.weight.repository import WeightRepository
-from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
+from slim_guard.harness.events import WORKFLOW_TRACE_ITEM_TYPES, ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
@@ -41,7 +43,6 @@ from slim_guard.tools.memory import (
     SET_BODY_FAT_GOAL_TOOL_NAME,
     SET_BODY_PROFILE_TOOL_NAME,
     SET_COACHING_PROFILE_TOOL_NAME,
-    SET_CONVERSATION_HANDOFF_TOOL_NAME,
     SET_EXERCISE_PROFILE_TOOL_NAME,
     SET_WEIGHT_GOAL_TOOL_NAME,
 )
@@ -50,6 +51,8 @@ from slim_guard.tools.weight import (
     GET_RECENT_WEIGHT_TREND_TOOL_NAME,
     RECORD_WEIGHT_TOOL_NAME,
 )
+from slim_guard.usage.repository import UsageRepository
+from tests.conversation_script import SystemConversationScript
 
 FIXED_NOW = datetime(2026, 8, 27, 7, 30, tzinfo=UTC)
 
@@ -187,7 +190,7 @@ class MealImageFollowupModelGateway:
             return tool_call(
                 "call-inspect-first",
                 "inspect_image",
-                {"asset_id": self.asset_id, "focus": "meal"},
+                {"asset_id": self.asset_id},
             )
         if step == 2:
             return final_reply("图片里有几样食物不确定，请告诉我具体是什么。")
@@ -199,11 +202,11 @@ class MealImageFollowupModelGateway:
                 if "近期对话工作记忆" in (message.content or "")
             )
             assert self.asset_id in working
-            assert '"requires_user_confirmation":true' in working
+            assert '"author":"vision_model"' in working
             return tool_call(
                 "call-inspect-recent",
                 "inspect_image",
-                {"asset_id": self.asset_id, "focus": "meal"},
+                {"asset_id": self.asset_id},
             )
         if step == 4:
             return final_reply("明白是午餐；请确认方形块、红色条状物和黑色食物。")
@@ -221,7 +224,6 @@ class MealImageFollowupModelGateway:
                         {"name": "油豆腐"},
                         {"name": "木耳"},
                     ],
-                    "visual_confirmation": "confirmed_by_current_user",
                 },
             )
         if step == 6:
@@ -289,12 +291,14 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
-            model_parameters={"max_output_tokens": 512, "temperature": 0},
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+                parameters={"max_output_tokens": 512, "temperature": 0},
+            ),
             code_revision="test-revision",
         ),
         clock=lambda: FIXED_NOW,
@@ -325,7 +329,10 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         assert len(trend.records) == 1
         assert trend.records[0].weight_grams == 77_600
         assert trend.records[0].source_item_id == items[0].id
-        assert [item.item_type for item in items] == [
+        assert any(item.item_type is ItemType.RESPONSE_ADOPTED for item in items)
+        assert [
+            item.item_type for item in items if item.item_type not in WORKFLOW_TRACE_ITEM_TYPES
+        ] == [
             ItemType.USER_MESSAGE,
             ItemType.CONTEXT_SNAPSHOT,
             ItemType.MODEL_MESSAGE,
@@ -336,7 +343,10 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             ItemType.TOOL_RESULT,
             ItemType.MODEL_MESSAGE,
             ItemType.AGENT_MESSAGE,
+            ItemType.AGENT_MESSAGE,
         ]
+        messages = [item.payload for item in items if item.item_type is ItemType.AGENT_MESSAGE]
+        assert [message["kind"] for message in messages] == ["text", "card"]
         assert items[0].payload == {
             "channel_id": "wecom-kf",
             "occurred_at": FIXED_NOW.isoformat(),
@@ -371,14 +381,17 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "record_user_constraint",
             "list_user_memories",
             "forget_user_memory",
-            "set_conversation_handoff",
-            "resolve_conversation_handoff",
             "clear_user_memories",
+            "save_conversation_task",
+            "get_conversation_task",
+            "list_conversation_tasks",
+            "link_task_authorization",
             "remember_long_term_memory",
             "list_long_term_memories",
             "forget_long_term_memory",
             "clear_long_term_memories",
             "resolve_pending_user_action",
+            "consult_nutrition_specialist",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")
@@ -386,6 +399,18 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         assert first_observation["output"]["weight_kg"] == "77.6"
         assert second_observation["status"] == "succeeded"
         assert second_observation["output"]["direction"] == "unknown"
+        usage = await UsageRepository(database).detail(
+            user_id="user-1", request_id=result.turn_id, limit=20, offset=0
+        )
+        assert usage["summary"]["calls"] == 4
+        assert {row["agent_role"]: row["calls"] for row in usage["agents"]} == {
+            "core": 3,
+            "conversation": 1,
+        }
+        core_calls = [row for row in usage["items"] if row["agent_role"] == "core"]
+        (conversation,) = [row for row in usage["items"] if row["agent_role"] == "conversation"]
+        assert conversation["parent_invocation_id"] == core_calls[0]["invocation_id"]
+        assert {row["request_id"] for row in usage["items"]} == {"wecom-message-1"}
         model.assert_exhausted()
     finally:
         await model.close()
@@ -413,12 +438,14 @@ async def test_runtime_persists_and_recalls_profile_memory_across_turns(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
-            model_parameters={"max_output_tokens": 512},
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+                parameters={"max_output_tokens": 512},
+            ),
             code_revision="test-memory",
         ),
         clock=lambda: FIXED_NOW,
@@ -464,11 +491,13 @@ async def test_runtime_saves_unambiguous_historical_height_without_asking_again(
     model = HistoricalHeightModelGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-historical-height",
         ),
         clock=lambda: FIXED_NOW,
@@ -530,11 +559,13 @@ async def test_runtime_saves_height_as_profile_memory_not_weight_record(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-height-memory",
         ),
         clock=lambda: FIXED_NOW,
@@ -642,11 +673,13 @@ async def test_runtime_handles_onboarding_measurements_goals_and_habits(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-onboarding-facts",
         ),
         clock=lambda: FIXED_NOW,
@@ -712,11 +745,13 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-partial-memory-result",
         ),
         clock=lambda: FIXED_NOW,
@@ -756,11 +791,13 @@ async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Pa
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-memory-guard",
         ),
         clock=lambda: FIXED_NOW,
@@ -807,11 +844,13 @@ async def test_runtime_recalls_weight_goal_without_creating_measurement(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-weight-goal",
         ),
         clock=lambda: FIXED_NOW,
@@ -861,11 +900,13 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-working-memory",
         ),
         clock=lambda: FIXED_NOW,
@@ -909,12 +950,14 @@ async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
     vision = UncertainMealVisionGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         vision=vision,
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-recent-image-meal",
         ),
         clock=lambda: FIXED_NOW,
@@ -975,17 +1018,18 @@ async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
         await database.close()
 
 
-async def test_runtime_persists_explicit_handoff_for_a_later_turn(
+async def test_runtime_persists_explicit_task_for_a_later_turn(
     tmp_path: Path,
 ) -> None:
     database = await prepare_database(tmp_path)
     model = ScriptedModelGateway(
         (
             tool_call(
-                "call-handoff",
-                SET_CONVERSATION_HANDOFF_TOOL_NAME,
+                "call-task",
+                "save_conversation_task",
                 {
                     "objective": "制定一周饮食计划",
+                    "interpretation": "用户希望下次继续制定计划",
                     "unresolved": ["确认工作日午餐安排"],
                     "evidence_excerpt": "下次接着制定饮食计划",
                 },
@@ -996,11 +1040,13 @@ async def test_runtime_persists_explicit_handoff_for_a_later_turn(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-handoff",
         ),
         clock=lambda: FIXED_NOW,
@@ -1029,7 +1075,7 @@ async def test_runtime_persists_explicit_handoff_for_a_later_turn(
 
         assert '"objective":"制定一周饮食计划"' in working_context
         assert '"unresolved":["确认工作日午餐安排"]' in working_context
-        assert '"handoff_id":' in working_context
+        assert '"task_id":' in working_context
         model.assert_exhausted()
     finally:
         await model.close()
@@ -1043,11 +1089,13 @@ async def test_runtime_requires_and_applies_bulk_memory_clear_confirmation(
     model = MemoryClearModelGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-memory-clear",
         ),
         clock=lambda: FIXED_NOW,
@@ -1094,12 +1142,14 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
     model = ScriptedModelGateway((final_reply("早上好，记得空腹称一下体重哦。"),))
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
-            model_parameters={"max_output_tokens": 512},
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+                parameters={"max_output_tokens": 512},
+            ),
             code_revision="test-scheduled",
         ),
         clock=lambda: FIXED_NOW,
@@ -1115,7 +1165,10 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
 
         items = await HarnessStateRepository(database).list_items(result.turn_id)
         assert result.final_text == "早上好，记得空腹称一下体重哦。"
-        assert [item.item_type for item in items] == [
+        assert any(item.item_type is ItemType.RESPONSE_ADOPTED for item in items)
+        assert [
+            item.item_type for item in items if item.item_type not in WORKFLOW_TRACE_ITEM_TYPES
+        ] == [
             ItemType.CONTEXT_SNAPSHOT,
             ItemType.MODEL_MESSAGE,
             ItemType.AGENT_MESSAGE,
@@ -1134,11 +1187,13 @@ async def test_runtime_blocks_tools_and_replaces_emergency_model_output(
     model = ScriptedModelGateway((final_reply("没关系，继续运动观察一下。"),))
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=SystemConversationScript(model),
         definition=AgentRuntimeDefinition(
-            model_provider="zhipu",
-            text_model="glm-5.2",
-            vision_model="glm-5v-turbo",
+            models=ModelRuntimeConfig(
+                provider="zhipu",
+                text_model="glm-5.2",
+                vision_model="glm-5v-turbo",
+            ),
             code_revision="test-safety",
         ),
         clock=lambda: FIXED_NOW,

@@ -41,6 +41,7 @@ from slim_guard.runtime.contracts import (
     InvocationStatus,
 )
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner, InvocationStore
+from slim_guard.usage.context import usage_operation
 
 
 class NutritionConsultationRequest(ContractModel):
@@ -90,21 +91,17 @@ class NutritionSpecialist:
         graph_version: str,
         nutrition_tools: NutritionToolRegistry,
         invocation_store: InvocationStore | None = None,
-        max_total_tokens: int = 32_000,
         evidence_builder: EvidenceBuilder | None = None,
         context_compiler: NutritionContextCompiler | None = None,
         citation_policy: CitationValidationPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        if max_total_tokens < 1:
-            raise ValueError("Nutrition invocation token budget must be positive")
         self._clock = clock or (lambda: datetime.now(UTC))
         runner = InvocationRunner(model=model, clock=self._clock)
         self._agent = NutritionAgent(runner=runner, model=model_name)
         self._graph_version = graph_version
         self._nutrition_tools = nutrition_tools
         self._invocation_store = invocation_store
-        self._max_total_tokens = max_total_tokens
         self._evidence_builder = evidence_builder or EvidenceBuilder()
         self._context_compiler = context_compiler or NutritionContextCompiler()
         self._binder = KnowledgeCandidateBinder()
@@ -114,7 +111,6 @@ class NutritionSpecialist:
                 agent=self._agent,
                 store=invocation_store,
                 graph_version=graph_version,
-                max_total_tokens=max_total_tokens,
                 context_compiler=self._context_compiler,
                 clock=self._clock,
             )
@@ -180,9 +176,6 @@ class NutritionSpecialist:
             allowed_tools=self._nutrition_tools.names,
             privacy_scopes=("evidence_packet", "nutrition_observations"),
             deadline_at=request.deadline_at,
-            max_model_calls=2,
-            max_tool_calls=8,
-            max_total_tokens=self._max_total_tokens,
             payload={
                 "evidence_count": len(packet.items),
                 "calculation_count": len(observations),
@@ -210,7 +203,7 @@ class NutritionSpecialist:
         # Nutrition Agent receives only the resulting evidence context and has no
         # executable tools of its own, which prevents a model from bypassing the
         # deterministic retrieval/calculation path.
-        model_invocation = invocation.model_copy(update={"allowed_tools": (), "max_tool_calls": 0})
+        model_invocation = invocation.model_copy(update={"allowed_tools": ()})
         result = await self._agent.run(
             invocation=model_invocation,
             context=context,
@@ -218,9 +211,6 @@ class NutritionSpecialist:
                 agent_role=AgentRole.NUTRITION_EXPERT,
                 allowed_tools=frozenset(),
                 privacy_scopes=frozenset(invocation.privacy_scopes),
-                max_model_calls=invocation.max_model_calls,
-                max_tool_calls=0,
-                max_total_tokens=invocation.max_total_tokens,
             ),
         )
         artifact = self._artifact(
@@ -279,6 +269,7 @@ class NutritionSpecialist:
         await self._invocation_store.append_artifact(evidence)
         await self._invocation_store.append_artifact(inputs)
 
+    @usage_operation("nutrition_retrieval", agent="nutrition_expert", kind="tool")
     async def _nutrition_inputs(
         self,
         packet: EvidencePacket,

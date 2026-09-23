@@ -58,6 +58,7 @@ from slim_guard.mobile.contracts import (
 )
 from slim_guard.observability.tracing import InteractionTraceRepository, bind_trace
 from slim_guard.tools.contracts import ToolExecutionMode
+from slim_guard.usage.context import usage_scope
 
 
 class MobileServiceError(RuntimeError):
@@ -236,7 +237,7 @@ class MobileApplicationService:
         )
         await self._attach_trace(claim.id, trace_id)
         try:
-            with bind_trace(trace_id):
+            with bind_trace(trace_id), usage_scope(user_id=user_id, request_id=claim.id):
                 result = await self._runtime.run_user_message(
                     AgentRuntimeRequest(
                         user_id=user_id,

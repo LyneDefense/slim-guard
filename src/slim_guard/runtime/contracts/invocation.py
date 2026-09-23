@@ -54,9 +54,6 @@ class AgentInvocation(ContractModel):
     )
     privacy_scopes: tuple[str, ...] = Field(default=(), max_length=64)
     deadline_at: datetime
-    max_model_calls: int = Field(ge=1, le=32, strict=True)
-    max_tool_calls: int = Field(ge=0, le=64, strict=True)
-    max_total_tokens: int = Field(ge=1, le=10_000_000, strict=True)
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("deadline_at")
@@ -97,10 +94,10 @@ class AgentResult(ContractModel):
     output_schema: str = Field(min_length=1, max_length=128)
     output_schema_version: str = Field(min_length=1, max_length=32)
     artifact_id: str | None = Field(default=None, min_length=1, max_length=128)
-    tool_receipt_ids: tuple[str, ...] = Field(default=(), max_length=64)
-    model_call_count: int = Field(ge=0, le=32, strict=True)
-    tool_call_count: int = Field(ge=0, le=64, strict=True)
-    token_usage: int = Field(ge=0, le=10_000_000, strict=True)
+    tool_receipt_ids: tuple[str, ...] = ()
+    model_call_count: int = Field(ge=0, strict=True)
+    tool_call_count: int = Field(ge=0, strict=True)
+    token_usage: int = Field(ge=0, strict=True)
     failure_code: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")

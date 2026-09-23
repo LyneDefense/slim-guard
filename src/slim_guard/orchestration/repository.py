@@ -29,7 +29,6 @@ from slim_guard.runtime.contracts import (
     AgentArtifact,
     AgentInvocation,
     AgentResult,
-    InvocationStatus,
 )
 
 
@@ -53,13 +52,8 @@ class InvocationStateConflict(InvocationStoreError):
     pass
 
 
-class InvocationBudgetExceeded(InvocationStoreError):
-    pass
 
 
-_OBSERVABLE_TOKEN_OVERRUN_FAILURES = frozenset(
-    {"token_budget_exhausted", "turn_token_budget_exhausted"}
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +73,6 @@ class StoredInvocation:
     allowed_tools: tuple[str, ...]
     privacy_scopes: tuple[str, ...]
     deadline_at: datetime
-    max_model_calls: int
-    max_tool_calls: int
-    max_total_tokens: int
     reason_summary: str | None
     status: str
     output_schema: str | None
@@ -127,9 +118,6 @@ class OrchestrationRepository:
             allowed_tools_json=self._json_array(invocation.allowed_tools),
             privacy_scopes_json=self._json_array(invocation.privacy_scopes),
             deadline_at=invocation.deadline_at,
-            max_model_calls=invocation.max_model_calls,
-            max_tool_calls=invocation.max_tool_calls,
-            max_total_tokens=invocation.max_total_tokens,
             input_payload_json=self._json_object(invocation.payload),
             reason_summary=self._reason_summary(reason_summary),
             status="started",
@@ -181,7 +169,6 @@ class OrchestrationRepository:
             row = await session.get(AgentInvocationRecord, result.invocation_id)
             if row is None:
                 raise InvocationNotFound(f"Invocation {result.invocation_id} does not exist")
-            self._validate_result_budgets(row, result)
             await self._validate_output_artifact(session, row, result)
             if row.status != "started":
                 if self._result_matches(row, result):
@@ -450,26 +437,6 @@ class OrchestrationRepository:
             )
         await self._artifact_from_row(session, artifact)
 
-    @staticmethod
-    def _validate_result_budgets(
-        invocation: AgentInvocationRecord,
-        result: AgentResult,
-    ) -> None:
-        exceeded: list[str] = []
-        if result.model_call_count > invocation.max_model_calls:
-            exceeded.append("model calls")
-        if result.tool_call_count > invocation.max_tool_calls:
-            exceeded.append("tool calls")
-        observable_token_overrun = (
-            result.status is InvocationStatus.FAILED
-            and result.failure_code in _OBSERVABLE_TOKEN_OVERRUN_FAILURES
-        )
-        if result.token_usage > invocation.max_total_tokens and not observable_token_overrun:
-            exceeded.append("tokens")
-        if exceeded:
-            raise InvocationBudgetExceeded(
-                "Invocation result exceeded its " + ", ".join(exceeded) + " budget"
-            )
 
     @classmethod
     async def _artifact_from_row(
@@ -526,9 +493,6 @@ class OrchestrationRepository:
             allowed_tools=cls._tuple(cls._json_load(row.allowed_tools_json)),
             privacy_scopes=cls._tuple(cls._json_load(row.privacy_scopes_json)),
             deadline_at=cls._aware(row.deadline_at),
-            max_model_calls=row.max_model_calls,
-            max_tool_calls=row.max_tool_calls,
-            max_total_tokens=row.max_total_tokens,
             reason_summary=row.reason_summary,
             status=row.status,
             output_schema=row.output_schema,
@@ -653,7 +617,6 @@ class OrchestrationRepository:
 
 __all__ = [
     "InvocationAlreadyExists",
-    "InvocationBudgetExceeded",
     "InvocationNotFound",
     "InvocationReferenceError",
     "InvocationStateConflict",

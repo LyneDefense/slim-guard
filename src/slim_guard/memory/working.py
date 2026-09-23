@@ -10,9 +10,11 @@ from slim_guard.db.models import (
     AgentItemRecord,
     AgentThreadRecord,
     AgentTurnRecord,
-    ImageAssetRecord,
 )
 from slim_guard.db.session import Database
+from slim_guard.domain.assets import ImageAssetRepository
+
+COMPACTION_POLICY_VERSION = "bounded-dialogue-attachments-redaction-v5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,7 @@ class DialogueMessage:
     role: str
     content: str
     evidence_ref: str | None = None
+    attachments: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,18 +36,6 @@ class UserMessageEvidence:
     evidence_ref: str
     content: str
     created_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class RecentImageReference:
-    asset_id: str
-    mime_type: str
-    created_at: datetime
-    expires_at: datetime
-    observation: str | None
-    requires_user_confirmation: bool | None
-    dish_clarification: tuple[dict[str, object], ...] = ()
-    suggested_question: str | None = None
 
 
 class ConversationWindowRepository:
@@ -78,7 +69,7 @@ class ConversationWindowRepository:
                         exists().where(
                             AgentItemRecord.turn_id == AgentTurnRecord.id,
                             AgentItemRecord.item_type.in_(
-                                ("user_message", "agent_message")
+                                ("user_message", "agent_message", "image_attachment")
                             ),
                             AgentItemRecord.status == "completed",
                         ),
@@ -94,127 +85,82 @@ class ConversationWindowRepository:
                     select(AgentItemRecord)
                     .where(
                         AgentItemRecord.turn_id.in_(turn_ids),
-                        AgentItemRecord.item_type.in_(("user_message", "agent_message")),
+                        AgentItemRecord.item_type.in_(
+                            ("user_message", "agent_message", "image_attachment")
+                        ),
                         AgentItemRecord.status == "completed",
                     )
                     .order_by(AgentItemRecord.turn_id, AgentItemRecord.sequence)
                 )
             )
+        attachment_ids = tuple(
+            str(json.loads(row.payload_json).get("asset_id", ""))
+            for row in rows
+            if row.item_type == "image_attachment"
+        )
+        annotations = await ImageAssetRepository(self._database).annotations(
+            user_id=user_id, asset_ids=attachment_ids
+        )
         by_turn: dict[str, list[DialogueMessage]] = {turn_id: [] for turn_id in turn_ids}
         for row in rows:
+            messages = by_turn[row.turn_id]
+            if row.item_type == "image_attachment":
+                asset_id = json.loads(row.payload_json).get("asset_id")
+                attachment = annotations.get(asset_id)
+                if attachment is None:
+                    continue
+                # An attachment belongs to its inbound message/Turn, not a second
+                # independently selected window of recent images.
+                if messages and messages[-1].role == "user":
+                    prior = messages[-1]
+                    messages[-1] = DialogueMessage(
+                        role=prior.role,
+                        content=prior.content,
+                        evidence_ref=prior.evidence_ref,
+                        attachments=(*prior.attachments, attachment),
+                    )
+                else:
+                    messages.append(
+                        DialogueMessage(
+                            role="user",
+                            content="[图片附件]",
+                            attachments=(attachment,),
+                        )
+                    )
+                continue
             message = self._message(row)
             if message is not None:
-                by_turn[row.turn_id].append(message)
+                messages.append(message)
         remaining = char_limit
         newest: list[DialogueTurn] = []
         for turn_id in turn_ids:
-            messages: list[DialogueMessage] = []
+            messages = []
             for message in reversed(by_turn[turn_id]):
                 if remaining <= 0:
                     break
-                content = message.content[-remaining:]
+                attachments = message.attachments
+                attachment_cost = (
+                    len(json.dumps(attachments, ensure_ascii=False)) if attachments else 0
+                )
+                if attachment_cost >= remaining:
+                    attachments = ()
+                    attachment_cost = 0
+                content = message.content[-(remaining - attachment_cost) :]
                 if content:
                     messages.append(
                         DialogueMessage(
                             role=message.role,
                             content=content,
                             evidence_ref=message.evidence_ref,
+                            attachments=attachments,
                         )
                     )
-                    remaining -= len(content)
+                    remaining -= len(content) + attachment_cost
             if messages:
-                newest.append(
-                    DialogueTurn(turn_id=turn_id, messages=tuple(reversed(messages)))
-                )
+                newest.append(DialogueTurn(turn_id=turn_id, messages=tuple(reversed(messages))))
             if len(newest) >= turn_limit or remaining <= 0:
                 break
         return tuple(reversed(newest))
-
-    async def recent_images(
-        self,
-        user_id: str,
-        *,
-        at: datetime,
-        limit: int = 3,
-    ) -> tuple[RecentImageReference, ...]:
-        """Return recent user-owned image capabilities plus model observations.
-
-        The asset row is the authority for ownership and expiry. Observations remain
-        explicitly non-authoritative working memory and can be refreshed by calling
-        ``inspect_image`` with the provided ID.
-        """
-        if at.utcoffset() is None:
-            raise ValueError("Recent image lookup time must be timezone-aware")
-        if not 1 <= limit <= 10:
-            raise ValueError("Recent image limit must be between 1 and 10")
-        reference_time = at.astimezone(UTC)
-        async with self._database.session() as session:
-            assets = tuple(
-                await session.scalars(
-                    select(ImageAssetRecord)
-                    .where(
-                        ImageAssetRecord.user_id == user_id,
-                        ImageAssetRecord.expires_at > reference_time,
-                    )
-                    .order_by(ImageAssetRecord.created_at.desc(), ImageAssetRecord.id.desc())
-                    .limit(limit)
-                )
-            )
-            if not assets:
-                return ()
-            result_rows = tuple(
-                await session.scalars(
-                    select(AgentItemRecord)
-                    .join(
-                        AgentThreadRecord,
-                        AgentThreadRecord.id == AgentItemRecord.thread_id,
-                    )
-                    .where(
-                        AgentThreadRecord.user_id == user_id,
-                        AgentItemRecord.item_type == "tool_result",
-                        AgentItemRecord.status == "completed",
-                    )
-                    .order_by(AgentItemRecord.created_at.desc())
-                    .limit(50)
-                )
-            )
-        observations: dict[
-            str, tuple[str, bool | None, tuple[dict[str, object], ...], str | None]
-        ] = {}
-        wanted_ids = {asset.id for asset in assets}
-        for row in result_rows:
-            parsed = self._image_observation(row)
-            if parsed is None:
-                continue
-            asset_id, observation, requires_confirmation, clarification, question = parsed
-            if asset_id in wanted_ids and asset_id not in observations:
-                observations[asset_id] = (
-                    observation,
-                    requires_confirmation,
-                    clarification,
-                    question,
-                )
-        return tuple(
-            RecentImageReference(
-                asset_id=asset.id,
-                mime_type=asset.mime_type,
-                created_at=self._as_utc(asset.created_at),
-                expires_at=self._as_utc(asset.expires_at),
-                observation=(
-                    observations[asset.id][0] if asset.id in observations else None
-                ),
-                requires_user_confirmation=(
-                    observations[asset.id][1] if asset.id in observations else None
-                ),
-                dish_clarification=(
-                    observations[asset.id][2] if asset.id in observations else ()
-                ),
-                suggested_question=(
-                    observations[asset.id][3] if asset.id in observations else None
-                ),
-            )
-            for asset in assets
-        )
 
     async def recent_user_evidence(
         self,
@@ -284,86 +230,6 @@ class ConversationWindowRepository:
             role=role,
             content=text.strip(),
             evidence_ref=row.id if role == "user" else None,
-        )
-
-    @staticmethod
-    def _image_observation(
-        row: AgentItemRecord,
-    ) -> tuple[
-        str,
-        str,
-        bool | None,
-        tuple[dict[str, object], ...],
-        str | None,
-    ] | None:
-        try:
-            payload = json.loads(row.payload_json)
-            execution = payload.get("execution", {})
-            if execution.get("tool_name") != "inspect_image":
-                return None
-            result = execution.get("result", {})
-            if result.get("status") != "succeeded":
-                return None
-            output = result.get("output", {})
-            asset_id = output.get("asset_id")
-            observation = output.get("description")
-            requires_confirmation = output.get("requires_user_confirmation")
-            recognition = output.get("dish_recognition")
-        except (AttributeError, TypeError, json.JSONDecodeError):
-            return None
-        if not isinstance(asset_id, str) or not isinstance(observation, str):
-            return None
-        if not asset_id or not observation.strip():
-            return None
-        if not isinstance(requires_confirmation, bool):
-            requires_confirmation = None
-        clarification: list[dict[str, object]] = []
-        suggested_question: str | None = None
-        if isinstance(recognition, dict):
-            raw_dishes = recognition.get("dishes", ())
-            if isinstance(raw_dishes, list):
-                for raw_dish in raw_dishes:
-                    if not isinstance(raw_dish, dict):
-                        continue
-                    raw_candidates = raw_dish.get("candidates", ())
-                    if not isinstance(raw_candidates, list):
-                        continue
-                    candidates = tuple(
-                        candidate.get("label", "").strip()
-                        for candidate in raw_candidates
-                        if isinstance(candidate, dict)
-                        and isinstance(candidate.get("label"), str)
-                        and candidate.get("label", "").strip()
-                    )
-                    dish_ref = raw_dish.get("dish_ref")
-                    if not candidates or not isinstance(dish_ref, str) or not dish_ref:
-                        continue
-                    raw_reasons = raw_dish.get("uncertainty_reasons", ())
-                    reasons = (
-                        tuple(
-                            reason.strip()
-                            for reason in raw_reasons
-                            if isinstance(reason, str) and reason.strip()
-                        )
-                        if isinstance(raw_reasons, list)
-                        else ()
-                    )
-                    clarification.append(
-                        {
-                            "dish_ref": dish_ref,
-                            "candidates": list(candidates),
-                            "uncertainty_reasons": list(reasons),
-                        }
-                    )
-            raw_question = recognition.get("suggested_question")
-            if isinstance(raw_question, str) and raw_question.strip():
-                suggested_question = raw_question.strip()
-        return (
-            asset_id,
-            observation.strip(),
-            requires_confirmation,
-            tuple(clarification),
-            suggested_question,
         )
 
     @staticmethod

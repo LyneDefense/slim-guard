@@ -21,6 +21,7 @@ from slim_guard.db.models import (
     SchemaMigrationRecord,
     new_uuid,
 )
+from slim_guard.domain.assets.migration import retain_chat_attachments
 from slim_guard.nutrition_rag.profiles import (
     ANSWERABILITY_V1_QUERY_PLAN_VERSION,
     ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID,
@@ -39,6 +40,8 @@ from slim_guard.nutrition_rag.profiles import (
 )
 from slim_guard.style_management.migration import reset_style_schema
 from slim_guard.style_management.trainer_migration import migrate_trainer_schema
+from slim_guard.tasks.migration import migrate_conversation_tasks
+from slim_guard.usage.migration import migrate_usage
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,6 +536,9 @@ MIGRATIONS = (
     SchemaMigration("20260918_01_unified_style_examples", _create_application_tables),
     SchemaMigration("20260918_02_reset_expression_styles", reset_style_schema),
     SchemaMigration("20260918_03_style_trainer", migrate_trainer_schema),
+    SchemaMigration("20260920_01_chat_attachment_retention", retain_chat_attachments),
+    SchemaMigration("20260923_01_conversation_tasks", migrate_conversation_tasks),
+    SchemaMigration("20260923_02_model_usage", migrate_usage),
 )
 
 

@@ -1,6 +1,6 @@
-"""Synthetic model script; real runtime, tools and SQLite verify rollback durability.
+"""Synthetic model script; real runtime, tools and SQLite verify restart durability.
 
-This exercises rollout mechanics, not real-model semantics or a production rollback.
+This exercises restart persistence, not real-model semantics or a production deployment.
 """
 
 from __future__ import annotations
@@ -11,8 +11,10 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
-from slim_guard.agent.composition import AgentRuntimeDefinition, build_agent_runtime
+from slim_guard.agent.composition import build_agent_runtime
+from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.runtime import AgentRuntimeRequest
+from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
     MessageRole,
@@ -50,61 +52,48 @@ def tool_response(call_id: str, tool: str, arguments: dict[str, object]) -> Mode
     )
 
 
-async def test_on_to_off_after_restart_preserves_thread_records_and_harness_reply(
+async def test_after_restart_preserves_thread_records_and_harness_reply(
     tmp_path: Path,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'test-real-rollback.sqlite'}"
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'test-real-restart.sqlite'}"
     database = Database(database_url)
     await database.create_schema()
     async with database.session() as session, session.begin():
-        session.add(SlimGuardUser(id="test-rollback-user", first_seen_at=NOW, last_seen_at=NOW))
+        session.add(SlimGuardUser(id="test-restart-user", first_seen_at=NOW, last_seen_at=NOW))
 
     core_draft = "已记录今天的体重77.6kg。"
-    styled_text = "已记录今天的体重77.6kg！"
-    core_after_pipeline_disabled = "之前的77.6kg记录还在，这次没有新增记录。"
-    on_model = ScriptedModelGateway(
+    reply_after_restart = "之前的77.6kg记录还在，这次没有新增记录。"
+    first_model = ScriptedModelGateway(
         [
             tool_response("test-write-once", "record_weight", {"value": 77.6, "unit": "kg"}),
             text_response(core_draft),
-            text_response(
-                json.dumps(
-                    {
-                        "text": styled_text,
-                        "used_block_ids": ["core-neutral-draft"],
-                        "used_claim_ids": [],
-                        "used_action_ids": [],
-                        "preserved_risk_flags": [],
-                        "preserved_citation_refs": [],
-                        "style_profile_version": "doctor_builtin_v1",
-                    }
-                )
-            ),
-            text_response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            text_response(json.dumps({"system_text": core_draft, "coach_text": None})),
         ]
     )
-    off_model = ScriptedModelGateway(
+    second_model = ScriptedModelGateway(
         [
             tool_response("test-read-existing", "get_recent_weight_trend", {"limit": 7}),
-            text_response(core_after_pipeline_disabled),
+            text_response(reply_after_restart),
+            text_response(json.dumps({"system_text": reply_after_restart, "coach_text": None})),
         ]
     )
     definition = AgentRuntimeDefinition(
-        model_provider="test-provider",
-        text_model="test-scripted-text",
-        vision_model="test-scripted-vision",
-        code_revision="test-rollback",
-        multi_agent_mode="on",
-        response_reviewer_enabled=True,
+        models=ModelRuntimeConfig(
+            provider="test-provider",
+            text_model="test-scripted-text",
+            vision_model="test-scripted-vision",
+        ),
+        code_revision="test-restart",
     )
     try:
-        on_runtime = build_agent_runtime(
-            database=database, model=on_model, definition=definition, clock=lambda: NOW
+        first_runtime = build_agent_runtime(
+            database=database, model=first_model, definition=definition, clock=lambda: NOW
         )
-        first = await on_runtime.run_user_message(
+        first = await first_runtime.run_user_message(
             AgentRuntimeRequest(
-                user_id="test-rollback-user",
+                user_id="test-restart-user",
                 text="测试：今天体重77.6kg",
-                source_message_id="test-message-before-rollback",
+                source_message_id="test-message-before-restart",
                 occurred_at=NOW,
                 deadline_at=NOW + timedelta(seconds=30),
                 execution_mode=ToolExecutionMode.EVALUATION,
@@ -112,8 +101,8 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
             )
         )
         assert first.termination is HarnessTermination.FINAL_RESPONSE
-        assert first.final_text == styled_text
-        before = await WeightRepository(database).recent_trend("test-rollback-user")
+        assert first.final_text == core_draft
+        before = await WeightRepository(database).recent_trend("test-restart-user")
         assert len(before.records) == 1
         record = before.records[0]
         assert record.weight_grams == 77_600
@@ -123,53 +112,49 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
             item.item_type is ItemType.RESPONSE_ADOPTED and item.payload.get("final")
             for item in first_items
         )
-        assert [request.purpose for request in on_model.requests] == [
+        assert [request.purpose for request in first_model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.HARNESS_TURN,
-            ModelPurpose.RESPONSE_STYLE,
-            ModelPurpose.RESPONSE_STYLE,
+            ModelPurpose.CONVERSATION,
         ]
-        on_model.assert_exhausted()
+        first_model.assert_exhausted()
 
-        # Simulate restarting the process with the rollout flag reverted to off.
+        # Rebuild the same architecture against the persisted database.
         await database.close()
         database = Database(database_url)
-        off_runtime = build_agent_runtime(
+        second_runtime = build_agent_runtime(
             database=database,
-            model=off_model,
-            definition=definition.model_copy(
-                update={
-                    "multi_agent_mode": "off",
-                    "response_reviewer_enabled": False,
-                }
-            ),
+            model=second_model,
+            definition=definition,
             clock=lambda: NOW + timedelta(minutes=1),
         )
-        second = await off_runtime.run_user_message(
+        second = await second_runtime.run_user_message(
             AgentRuntimeRequest(
-                user_id="test-rollback-user",
+                user_id="test-restart-user",
                 text="测试：刚才那条体重记录还在吗？不要新增。",
-                source_message_id="test-message-after-rollback",
+                source_message_id="test-message-after-restart",
                 execution_mode=ToolExecutionMode.EVALUATION,
                 isolated_write_environment=True,
             )
         )
         assert second.termination is HarnessTermination.FINAL_RESPONSE
-        assert second.final_text == core_after_pipeline_disabled
+        assert second.final_text == reply_after_restart
         assert second.thread_id == first.thread_id
         assert second.turn_id != first.turn_id
-        after = await WeightRepository(database).recent_trend("test-rollback-user")
+        after = await WeightRepository(database).recent_trend("test-restart-user")
         assert after.records == before.records
-        read_receipt = json.loads(off_model.requests[1].messages[-1].content or "{}")
+        read_receipt = json.loads(second_model.requests[1].messages[-1].content or "{}")
         assert read_receipt["status"] == "succeeded"
         assert read_receipt["output"]["current_record_id"] == record.id
         assert read_receipt["output"]["records"][0]["weight_kg"] == "77.6"
-        assert all(request.purpose is ModelPurpose.HARNESS_TURN for request in off_model.requests)
-        off_model.assert_exhausted()
+        assert [r.purpose for r in second_model.requests] == [
+            ModelPurpose.HARNESS_TURN, ModelPurpose.HARNESS_TURN, ModelPurpose.CONVERSATION,
+        ]
+        second_model.assert_exhausted()
 
         store = HarnessStateRepository(database)
         second_items = await store.list_items(second.turn_id)
-        assert not any(item.item_type is ItemType.RESPONSE_ADOPTED for item in second_items)
+        assert any(item.item_type is ItemType.RESPONSE_ADOPTED for item in second_items)
         assert [
             item.payload["tool_name"]
             for item in second_items
@@ -177,7 +162,7 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
         ] == ["get_recent_weight_trend"]
         finals = [item for item in second_items if item.item_type is ItemType.AGENT_MESSAGE]
         assert len(finals) == 1
-        assert finals[0].payload["text"] == core_after_pipeline_disabled
+        assert finals[0].payload["text"] == reply_after_restart
         for turn_id in (first.turn_id, second.turn_id):
             stored_turn = await store.get_turn(turn_id)
             assert stored_turn is not None and stored_turn.status is TurnStatus.COMPLETED
@@ -190,9 +175,9 @@ async def test_on_to_off_after_restart_preserves_thread_records_and_harness_repl
                     .select_from(AgentInvocationRecord)
                     .where(AgentInvocationRecord.turn_id == second.turn_id)
                 )
-                == 1
+                == 2
             )
     finally:
-        await on_model.close()
-        await off_model.close()
+        await first_model.close()
+        await second_model.close()
         await database.close()

@@ -40,9 +40,6 @@ def invocation(calls=4):
         graph_version="test",
         agent_role="response_style",
         agent_version="v",
-        max_model_calls=calls,
-        max_tool_calls=0,
-        max_total_tokens=32000,
         deadline_at=datetime.now(UTC) + timedelta(seconds=30),
     )
 
@@ -84,7 +81,6 @@ async def test_shared_review_can_run_without_trainer_or_agent():
         context=context(),
         response=styled("叫我 SlimGuard 就行。"),
         source_text="叫我 SlimGuard。",
-        remaining_tokens=5000,
     )
     assert result.passed and result.verdict == "passed"
     assert {c["name"] for c in result.checks} == {"integrity", "fidelity", "expression"}
@@ -135,7 +131,6 @@ async def test_invented_review_evidence_cannot_pass():
         context=context(),
         response=styled("不错，要保持。"),
         source_text="叫我 SlimGuard。",
-        remaining_tokens=5000,
     )
     assert not result.passed and result.verdict == "inconclusive"
     assert result.checks[-1]["status"] == "error"
@@ -148,34 +143,36 @@ async def test_integrity_failure_marks_other_checks_not_run():
         context=context("体重 78kg。"),
         response=styled("体重 70kg。"),
         source_text="体重 78kg。",
-        remaining_tokens=5000,
     )
     assert result.verdict == "needs_repair" and not gateway.requests
     assert result.checks[1]["status"] == "not_run"
 
 
-async def test_review_budget_unavailability_is_not_success():
-    gateway = ScriptedModelGateway([])
+async def test_review_runs_without_a_token_budget():
+    gateway = ScriptedModelGateway([response(decision())])
     result = await StyleReviewService(InvocationRunner(model=gateway), "test").review(
         invocation=invocation(),
         context=context(),
         response=styled("叫我 SlimGuard。"),
         source_text="叫我 SlimGuard。",
-        remaining_tokens=0,
     )
-    assert not result.passed and result.verdict == "inconclusive"
-    assert result.checks[-1]["status"] == "not_run"
+    assert result.passed and len(gateway.requests) == 1
 
 
-async def test_no_unchecked_reply_when_second_attempt_has_no_budget():
+async def test_second_attempt_is_still_reviewed_without_budget_gate():
     gateway = ScriptedModelGateway(
-        [response(styled("不错，要保持。").model_dump()), response(decision(passed=False))]
+        [
+            response(styled("不错，要保持。").model_dump()),
+            response(decision(passed=False)),
+            response(styled("叫我 SlimGuard。").model_dump()),
+            response(decision()),
+        ]
     )
     result = await ResponseStyleAgent(runner=InvocationRunner(model=gateway), model="test").run(
         invocation=invocation(calls=2), context=context()
     )
-    assert result.used_fallback and result.response.text == "叫我 SlimGuard。"
-    assert len(gateway.requests) == 2
+    assert not result.used_fallback and result.response.text == "叫我 SlimGuard。"
+    assert len(gateway.requests) == 4
 
 
 @pytest.mark.parametrize(
@@ -198,7 +195,6 @@ async def test_unsupported_additions_are_rejected_by_shared_semantic_review(sour
         context=context(source),
         response=styled(rewritten),
         source_text=source,
-        remaining_tokens=5000,
     )
     assert not result.passed and result.verdict == "needs_repair"
     assert result.checks[0]["status"] == "passed"
@@ -220,7 +216,6 @@ async def test_equivalent_numbers_and_shortening_reach_semantic_review(source, r
         context=context(source),
         response=styled(rewritten),
         source_text=source,
-        remaining_tokens=5000,
     )
     assert result.passed and len(gateway.requests) == 1
 

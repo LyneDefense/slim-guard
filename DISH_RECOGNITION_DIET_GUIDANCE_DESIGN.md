@@ -1,5 +1,7 @@
 # SlimGuard 菜品识别与饮食适宜性多 Agent 编排设计
 
+> 历史设计参考：当前图片入口已改为通用附件理解，不再使用本文的食物前置分类、置信度强制确认策略或多模式开关。当前执行与迁移说明见 review/review_composition_py_result.md 和 MULTI_AGENT_ROLLOUT.md；本文不是部署操作指南。
+
 > 版本：v0.1  
 > 日期：2026-09-10  
 > 状态：框架已实现；权威资料、菜品覆盖和冻结评测集待补齐
@@ -840,8 +842,6 @@ DIET_GUIDANCE_ENABLED
 正式采用时还必须满足：
 
 ```text
-RESPONSE_REVIEWER_ENABLED=true
-STYLE_RENDER_ALL_NORMAL_REPLIES=true
 NUTRITION_RAG_ENABLED=true
 ```
 

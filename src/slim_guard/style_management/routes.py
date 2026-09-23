@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import IntegrityError
 
 from slim_guard.api.admin_routes import AdminPrincipal, _authenticate
-from slim_guard.expression_style.trainer.contracts import BuildBudget
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 
 from .builds import BuildRepository
 from .contracts import ExampleInput, ReviewInput, StyleInput
@@ -120,10 +120,8 @@ async def build(
             principal.username,
             model=settings.zhipu_text_model,
             request_key=key,
-            budget=BuildBudget(
+            config=BuildExecutionConfig(
                 max_rounds=settings.style_training_max_rounds,
-                max_calls=settings.style_training_max_calls,
-                max_tokens=settings.style_training_max_tokens,
                 max_seconds=settings.style_training_max_seconds,
             ),
         )

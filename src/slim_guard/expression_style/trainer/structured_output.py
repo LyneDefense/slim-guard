@@ -1,4 +1,4 @@
-"""Persist invalid model output and repair it within the existing build budget."""
+"""Persist invalid model output and retry with bounded schema-repair attempts."""
 
 from datetime import UTC, datetime
 from typing import Any, TypeVar
@@ -11,7 +11,7 @@ from slim_guard.expression_style.package import canonical
 from .ports import BuildPort
 
 T = TypeVar("T", bound=BaseModel)
-MAX_ATTEMPTS = 3  # Per execution; an explicit resume still shares the build's total budget.
+MAX_ATTEMPTS = 3  # Per execution; explicit resume retains diagnostics and elapsed time.
 
 
 class StructuredOutputError(ValueError):

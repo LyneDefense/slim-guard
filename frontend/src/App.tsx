@@ -15,6 +15,8 @@ import {
 } from "react-router-dom";
 
 import { api, UnauthorizedError } from "./api";
+import { TaskCards } from "./features/tasks/TaskCards";
+import { UsagePage, UsageDetailPage } from "./features/usage/UsagePage";
 import { StyleProfilePage } from "./components/style/StyleProfilePage";
 import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
 import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
@@ -189,6 +191,7 @@ function Shell({ username }: { username: string }) {
           <span><strong>SlimGuard</strong><small>Trace Console</small></span>
         </Link>
         <nav>
+          <NavLink to="/usage" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}><span>◷</span> 模型用量</NavLink>
           <NavLink to="/users" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>◎</span> 用户中心
           </NavLink>
@@ -275,6 +278,7 @@ function UserLayout() {
         <NavLink to={`/users/${userId}/memories`}>记忆</NavLink>
         <NavLink to={`/users/${userId}/records`}>健康记录</NavLink>
         <NavLink to={`/users/${userId}/routines`}>提醒日程</NavLink>
+        <NavLink to={`/users/${userId}/usage`}>问答用量</NavLink>
       </nav>
       <Outlet context={{ user }} />
     </div>
@@ -307,15 +311,9 @@ function TraceList() {
         <Metric label="饮食记录" value={user.counts.meal_count ?? 0} />
         <Metric label="当前记忆" value={user.counts.memory_count ?? 0} />
       </div>
-      {(user.active_handoff || user.routine) && (
+      {(user.conversation_tasks.length > 0 || user.routine) && (
         <div className="context-strip">
-          {user.active_handoff && (
-            <article>
-              <span className="eyebrow">ACTIVE HANDOFF</span>
-              <strong>{user.active_handoff.objective}</strong>
-              <small>有效至 {formatDate(user.active_handoff.expires_at)}</small>
-            </article>
-          )}
+          <TaskCards tasks={user.conversation_tasks} />
           {user.routine && (
             <article>
               <span className="eyebrow">ROUTINE</span>
@@ -642,6 +640,9 @@ export function App() {
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/users" replace />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="usage" element={<UsagePage />} />
+        <Route path="usage/jobs" element={<UsagePage jobs />} />
+        <Route path="usage/jobs/:jobId" element={<UsageDetailPage />} />
         <Route path="styles" element={<StyleProfilePage />} />
         <Route path="styles/:styleId/:tab" element={<StyleProfilePage />} />
         <Route path="nutrition-knowledge" element={<NutritionKnowledgePage />} />
@@ -651,6 +652,8 @@ export function App() {
           <Route path="memories" element={<MemoriesPage />} />
           <Route path="records" element={<RecordsPage />} />
           <Route path="routines" element={<RoutinesPage />} />
+          <Route path="usage" element={<UsagePage />} />
+          <Route path="usage/:requestId" element={<UsageDetailPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/users" replace />} />
       </Route>

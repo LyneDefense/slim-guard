@@ -493,7 +493,6 @@ Review、Job Event 和 Activation Event 通过数据库 Trigger 阻止 UPDATE/DE
 ```dotenv
 # RAG 运行时和 Worker
 NUTRITION_RAG_ENGINE=v2
-NUTRITION_RAG_ENABLED=true
 NUTRITION_KNOWLEDGE_WORKER_ENABLED=true
 NUTRITION_KNOWLEDGE_POLL_SECONDS=2
 NUTRITION_KNOWLEDGE_JOB_LEASE_SECONDS=300
@@ -516,19 +515,14 @@ TENCENT_COS_SESSION_TOKEN=
 
 # Agent 编排
 AGENT_RUNTIME_MODE=harness
-MULTI_AGENT_MODE=on
-MULTI_AGENT_GRAPH_VERSION=core-primary-v1
 AGENT_SPECIALIST_TIMEOUT_SECONDS=20
-MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
-NUTRITION_AGENT_ENABLED=true
-RESPONSE_REVIEWER_ENABLED=true
 ```
 
 直接证据支持性关卡复用 `ZHIPU_TEXT_MODEL`，目前不需要新增密钥或模型配置。
 
 配置分为两层：
 
-- `NUTRITION_RAG_ENABLED` 决定 Agent 是否能调用知识库；
+- 营养检索能力固定提供，由模型按需调用；可用证据取决于已启用资料和 Provider；
 - Active Corpus Release 决定实际能检索哪一版资料。
 
 即使开关为 true，只要尚未启用 Release，Agent 仍只能得到空知识库状态。

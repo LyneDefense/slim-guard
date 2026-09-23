@@ -48,10 +48,7 @@ async def rewrite_case(
             agent_role="response_style",
             agent_version=RESPONSE_STYLE_PROMPT_VERSION,
             deadline_at=datetime.now(UTC)
-            + timedelta(seconds=client.gateway.budget.request_seconds),
-            max_model_calls=4,
-            max_tool_calls=0,
-            max_total_tokens=32_000,
+            + timedelta(seconds=client.gateway.config.request_seconds),
         ),
         context=StyleContext(
             turn_id=turn,

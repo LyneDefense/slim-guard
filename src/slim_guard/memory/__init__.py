@@ -30,12 +30,6 @@ from slim_guard.memory.extraction import (
     MemoryExtractionJobRepository,
     MemoryExtractionService,
 )
-from slim_guard.memory.handoff import (
-    HandoffRef,
-    HandoffRepository,
-    HandoffResolveCommand,
-    HandoffUpsertCommand,
-)
 from slim_guard.memory.lifecycle import (
     TRANSCRIPT_REDACTION_POLICY_VERSION,
     MemoryLifecycleRepository,
@@ -67,10 +61,6 @@ __all__ = [
     "ConversationWindowRepository",
     "DialogueMessage",
     "DialogueTurn",
-    "HandoffRef",
-    "HandoffRepository",
-    "HandoffResolveCommand",
-    "HandoffUpsertCommand",
     "MemoryAssertion",
     "MemoryBulkRevokeCommand",
     "MemoryBulkRevokeResult",

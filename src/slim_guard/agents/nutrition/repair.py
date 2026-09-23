@@ -10,7 +10,12 @@ from uuid import uuid4
 
 from pydantic import Field, field_validator
 
-from slim_guard.agents.contracts import ProfessionalAssessment
+from slim_guard.agents.contracts import (
+    ProfessionalAssessment,
+    RepairTarget,
+    ReviewerVerdict,
+    ReviewerVerdictStatus,
+)
 from slim_guard.agents.nutrition.agent import DEFAULT_NUTRITION_PROMPT_VERSION, NutritionAgent
 from slim_guard.agents.nutrition.context import NutritionContextCompiler
 from slim_guard.agents.nutrition.contracts import CalculationObservation, KnowledgeRetrieval
@@ -40,7 +45,6 @@ class NutritionRepairRequest(ContractModel):
     parent_invocation_id: str = Field(min_length=1, max_length=128)
     assessment_artifact_id: str = Field(min_length=1, max_length=128)
     verdict_artifact_id: str = Field(min_length=1, max_length=128)
-    review_feedback: tuple[str, ...] = Field(min_length=1, max_length=16)
     deadline_at: datetime
 
     @field_validator("deadline_at")
@@ -49,16 +53,6 @@ class NutritionRepairRequest(ContractModel):
         if value.utcoffset() is None:
             raise ValueError("Nutrition repair deadline must be timezone-aware")
         return value
-
-    @field_validator("review_feedback")
-    @classmethod
-    def validate_feedback(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(item.strip() for item in value)
-        if any(not item for item in normalized):
-            raise ValueError("Nutrition repair feedback cannot be blank")
-        if len(normalized) != len(set(normalized)):
-            raise ValueError("Nutrition repair feedback must be unique")
-        return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,14 +75,12 @@ class NutritionRepairService:
         agent: NutritionAgent,
         store: InvocationStore,
         graph_version: str,
-        max_total_tokens: int,
         context_compiler: NutritionContextCompiler,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._agent = agent
         self._store = store
         self._graph_version = graph_version
-        self._max_total_tokens = max_total_tokens
         self._context_compiler = context_compiler
         self._binder = KnowledgeCandidateBinder()
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -108,6 +100,18 @@ class NutritionRepairService:
             or verdict.producer_role is not ArtifactProducerRole.RESPONSE_REVIEWER
         ):
             raise ValueError("Nutrition repair verdict artifact is invalid")
+        feedback = ReviewerVerdict.model_validate(
+            {
+                key: value
+                for key, value in verdict.payload.items()
+                if key in ReviewerVerdict.model_fields
+            }
+        )
+        if (
+            feedback.verdict is not ReviewerVerdictStatus.REPAIR
+            or feedback.repair_target is not RepairTarget.NUTRITION_EXPERT
+        ):
+            raise ValueError("Nutrition repair requires a nutrition-directed verdict")
         evidence_artifact, inputs_artifact = await self._input_artifacts(prior)
         packet = EvidencePacket.model_validate(evidence_artifact.payload)
         invocation_id = f"inv-{uuid4()}"
@@ -148,11 +152,8 @@ class NutritionRepairService:
             input_schema="NutritionContext",
             privacy_scopes=("evidence_packet", "nutrition_observations"),
             deadline_at=request.deadline_at,
-            max_model_calls=2,
-            max_tool_calls=0,
-            max_total_tokens=self._max_total_tokens,
             payload={
-                "repair_feedback": list(request.review_feedback),
+                "repair_feedback": feedback.model_dump(mode="json"),
                 "frozen_candidate_count": len(knowledge.candidates),
                 "frozen_citation_count": len(knowledge.citations),
                 "knowledge_snapshot": knowledge_snapshot,
@@ -175,18 +176,15 @@ class NutritionRepairService:
                 agent_role=AgentRole.NUTRITION_EXPERT,
                 allowed_tools=frozenset(),
                 privacy_scopes=frozenset(invocation.privacy_scopes),
-                max_model_calls=invocation.max_model_calls,
-                max_tool_calls=0,
-                max_total_tokens=invocation.max_total_tokens,
             ),
-            review_feedback=request.review_feedback,
+            review_feedback=feedback,
         )
         artifact = self._artifact(
             turn_id=request.turn_id,
             payload={
                 **result.assessment.model_dump(mode="json"),
                 "attempt": 2,
-                "repair_feedback": list(request.review_feedback),
+                "repair_feedback": feedback.model_dump(mode="json"),
             },
             parents=invocation.input_artifact_ids,
             conservative=result.used_fallback,

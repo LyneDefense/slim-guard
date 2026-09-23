@@ -14,10 +14,10 @@ from slim_guard.agent_models.errors import (
 )
 from slim_guard.agent_models.gateway import ModelUsage
 from slim_guard.agent_models.vision import (
-    DishVisionResponse,
     VisionInspectionRequest,
     VisionInspectionResponse,
 )
+from slim_guard.usage.gateway import capture_provider_usage
 
 
 class ZhipuVisionModelGateway:
@@ -44,24 +44,11 @@ class ZhipuVisionModelGateway:
 
     async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse:
         body = await self._request(request)
+        capture_provider_usage(body)
         try:
             return self._parse_response(body)
         except (TypeError, ValueError, KeyError):
             raise InvalidModelResponse("Zhipu vision response is invalid") from None
-
-    async def recognize_dishes(
-        self, request: VisionInspectionRequest
-    ) -> DishVisionResponse:
-        body = await self._request(request)
-        try:
-            structured, usage, request_id = self._response_parts(body)
-            return DishVisionResponse(
-                **structured,
-                usage=usage,
-                provider_request_id=request_id,
-            )
-        except (TypeError, ValueError, KeyError):
-            raise InvalidModelResponse("Zhipu dish recognition response is invalid") from None
 
     async def _request(self, request: VisionInspectionRequest) -> Any:
         encoded = base64.b64encode(request.image_bytes).decode("ascii")

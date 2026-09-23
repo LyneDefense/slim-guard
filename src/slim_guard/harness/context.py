@@ -19,6 +19,7 @@ from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.state_repository import ItemRef
+from slim_guard.tasks.context import task_user_quotes
 from slim_guard.tools.registry import ToolRegistry
 
 _CONTEXT_POLICY_INSTRUCTIONS = "\n".join(
@@ -91,9 +92,7 @@ class ContextCompiler:
         trusted_context = authoritative_context or {}
         working_memory = trusted_context.get("working_memory")
         authoritative_facts = {
-            key: value
-            for key, value in trusted_context.items()
-            if key != "working_memory"
+            key: value for key, value in trusted_context.items() if key != "working_memory"
         }
         if authoritative_facts:
             messages.append(self._authoritative_context_message(authoritative_facts))
@@ -112,9 +111,7 @@ class ContextCompiler:
             metadata={
                 "agent_version_id": self._manifest.version_id,
                 "context_policy_version": self._manifest.context_policy_version,
-                "user_id": hashlib.sha256(
-                    initialized.context.user_id.encode("utf-8")
-                ).hexdigest(),
+                "user_id": hashlib.sha256(initialized.context.user_id.encode("utf-8")).hexdigest(),
             },
         )
         return CompiledContext(
@@ -130,8 +127,8 @@ class ContextCompiler:
             return ()
         dialogue = working_memory.get("recent_dialogue")
         if not isinstance(dialogue, list):
-            return ()
-        result: list[str] = []
+            dialogue = []
+        result: list[str] = list(dict.fromkeys(ref for ref, _ in task_user_quotes(working_memory)))
         for turn in dialogue:
             if not isinstance(turn, Mapping):
                 continue
@@ -158,9 +155,7 @@ class ContextCompiler:
                 sort_keys=True,
             )
         except (TypeError, ValueError) as exc:
-            raise ContextCompilationError(
-                "Authoritative context is not JSON serializable"
-            ) from exc
+            raise ContextCompilationError("Authoritative context is not JSON serializable") from exc
         return ModelMessage(
             role=MessageRole.SYSTEM,
             content="权威用户事实（只读，可能为空；不得把缺失字段当作否定事实）：" + payload,
@@ -180,8 +175,8 @@ class ContextCompiler:
         return ModelMessage(
             role=MessageRole.SYSTEM,
             content=(
-                "近期对话工作记忆（非权威摘要，只用于承接指代；当前消息优先，"
-                "有歧义时必须询问）：" + payload
+                "近期对话工作记忆（包含可核对的用户原话、模型附件注释和任务状态；"
+                "模型解释不是用户陈述，是否需要补充信息由当前任务决定）：" + payload
             ),
         )
 
@@ -205,18 +200,11 @@ class ContextCompiler:
             raise ContextCompilationError("Input Items are not in unique persisted order")
         for item in initialized.input_items:
             if item.turn_id != initialized.turn.id:
-                raise ContextCompilationError(
-                    f"Input Item belongs to another Turn: {item.id}"
-                )
+                raise ContextCompilationError(f"Input Item belongs to another Turn: {item.id}")
             if item.status is not ItemStatus.COMPLETED:
-                raise ContextCompilationError(
-                    f"Input Item is not completed: {item.id}"
-                )
+                raise ContextCompilationError(f"Input Item is not completed: {item.id}")
         item_ids = {item.id for item in initialized.input_items}
-        if (
-            initialized.source_item_id is not None
-            and initialized.source_item_id not in item_ids
-        ):
+        if initialized.source_item_id is not None and initialized.source_item_id not in item_ids:
             raise ContextCompilationError("Source Item is not part of the initialized Turn")
 
     def _validate_tool_versions(self) -> None:
@@ -225,9 +213,7 @@ class ContextCompiler:
         for name, expected_version in expected_versions.items():
             actual_version = registered_versions.get(name)
             if actual_version is None:
-                raise ContextCompilationError(
-                    f"Frozen Agent tool is not registered: {name}"
-                )
+                raise ContextCompilationError(f"Frozen Agent tool is not registered: {name}")
             if actual_version != expected_version:
                 raise ContextCompilationError(
                     f"Tool version mismatch for {name}: "
@@ -284,9 +270,7 @@ class ContextCompiler:
         if item.item_type is ItemType.USER_MESSAGE:
             text = item.payload.get("text")
             if not isinstance(text, str) or not text.strip():
-                raise ContextCompilationError(
-                    f"User message Item has invalid text: {item.id}"
-                )
+                raise ContextCompilationError(f"User message Item has invalid text: {item.id}")
             return ModelMessage(role=MessageRole.USER, content=text)
         if item.item_type is ItemType.IMAGE_ATTACHMENT:
             asset_id = item.payload.get("asset_id")
@@ -337,10 +321,6 @@ class ContextCompiler:
         value = parameters.get("temperature")
         if value is None:
             return None
-        if (
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not 0 <= value <= 2
-        ):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
             raise ContextCompilationError("temperature must be between 0 and 2")
         return float(value)

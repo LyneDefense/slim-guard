@@ -20,7 +20,6 @@ from slim_guard.orchestration.artifacts import (
     ArtifactReferenceError,
 )
 from slim_guard.orchestration.repository import (
-    InvocationBudgetExceeded,
     OrchestrationRepository,
 )
 
@@ -109,9 +108,6 @@ def invocation(*artifact_ids: str, turn_id: str = "turn-1") -> AgentInvocation:
         agent_version="core-v1",
         input_artifact_ids=artifact_ids,
         deadline_at=datetime.now(UTC) + timedelta(seconds=30),
-        max_model_calls=1,
-        max_tool_calls=0,
-        max_total_tokens=2000,
     )
 
 
@@ -181,19 +177,18 @@ async def test_repository_preserves_observable_token_budget_failure(
         assert completed.failure_code == "token_budget_exhausted"
 
         second = await repository.start_invocation(invocation(turn_id="turn-2"))
-        with pytest.raises(InvocationBudgetExceeded, match="tokens budget"):
-            await repository.complete_invocation(
-                AgentResult(
-                    invocation_id=second.invocation_id,
-                    status="failed",
-                    output_schema="ResponsePlan",
-                    output_schema_version="1",
-                    model_call_count=1,
-                    tool_call_count=0,
-                    token_usage=2500,
-                    failure_code="model_gateway_error",
-                )
+        await repository.complete_invocation(
+            AgentResult(
+                invocation_id=second.invocation_id,
+                status="failed",
+                output_schema="ResponsePlan",
+                output_schema_version="1",
+                model_call_count=1,
+                tool_call_count=0,
+                token_usage=2500,
+                failure_code="model_gateway_error",
             )
+        )
     finally:
         await database.close()
 

@@ -16,9 +16,7 @@ from slim_guard.harness.tool_calls import ToolCallCoordinator, ToolCallOutcome
 from slim_guard.tools.contracts import ToolContext, ToolPolicyDecision
 from slim_guard.tools.policy import ToolAuthorization
 
-_GRANT_STATUSES = frozenset(
-    {PendingActionStatus.APPROVED, PendingActionStatus.CONSUMED}
-)
+_GRANT_STATUSES = frozenset({PendingActionStatus.APPROVED, PendingActionStatus.CONSUMED})
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,10 +59,7 @@ class PendingActionResumeCoordinator:
             raise PendingActionConfigurationError(
                 "Pending action thread does not match its persisted turn"
             )
-        if (
-            action.status is PendingActionStatus.PENDING
-            and turn.status is not expected_waiting
-        ):
+        if action.status is PendingActionStatus.PENDING and turn.status is not expected_waiting:
             raise TurnNotWritable(
                 f"Cannot resolve action {action.id} while turn is {turn.status.value}"
             )
@@ -90,9 +85,7 @@ class PendingActionResumeCoordinator:
             )
 
         if turn.status not in {expected_waiting, TurnStatus.RUNNING}:
-            related_actions = await self._pending_actions.list_for_execution(
-                resolved.execution_key
-            )
+            related_actions = await self._pending_actions.list_for_execution(resolved.execution_key)
             if self._has_pending_gate_for_turn(related_actions, turn.status):
                 return PendingResumeOutcome(
                     action=resolved,
@@ -107,9 +100,7 @@ class PendingActionResumeCoordinator:
         thread = await self._turn_state.get_thread(turn.thread_id)
         if thread is None:
             raise LookupError(f"Agent thread not found: {turn.thread_id}")
-        related_actions = await self._pending_actions.list_for_execution(
-            resolved.execution_key
-        )
+        related_actions = await self._pending_actions.list_for_execution(resolved.execution_key)
         authorization = self._authorization(resolved, related_actions)
         tool_outcome = await self._tool_calls.execute(
             call=NormalizedToolCall(
@@ -154,9 +145,7 @@ class PendingActionResumeCoordinator:
         if turn.status is TurnStatus.RUNNING:
             return turn
         if turn.status is not expected_waiting:
-            raise TurnNotWritable(
-                f"Cannot resume turn {turn.id} from {turn.status.value}"
-            )
+            raise TurnNotWritable(f"Cannot resume turn {turn.id} from {turn.status.value}")
         return await self._turn_state.transition_turn(
             turn_id=turn.id,
             target=TurnStatus.RUNNING,
@@ -189,8 +178,7 @@ class PendingActionResumeCoordinator:
         reviewed = frozenset(
             item.execution_key
             for item in related_actions
-            if item.action_type is PendingActionType.HUMAN_REVIEW
-            and item.status in _GRANT_STATUSES
+            if item.action_type is PendingActionType.HUMAN_REVIEW and item.status in _GRANT_STATUSES
         )
         return ToolAuthorization(
             allowed_tool_names=frozenset({action.tool_name}),

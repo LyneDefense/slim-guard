@@ -21,7 +21,6 @@ from slim_guard.db.models import (
     ExerciseRecord,
     InteractionTraceRecord,
     MealRecord,
-    MemoryHandoffRecord,
     MemoryIndexOutboxRecord,
     MobileAgentRequestRecord,
     OutboundMessage,
@@ -36,13 +35,16 @@ from slim_guard.db.models import (
 )
 from slim_guard.db.session import Database
 from slim_guard.runtime.contracts import payload_sha256
+from slim_guard.tasks.ports import TaskStore
+from slim_guard.tasks.presentation import task_summary
 
 
 class AdminQueryRepository:
     """Builds privacy-aware user and trace views for the admin SPA."""
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, tasks: TaskStore | None = None) -> None:
         self._database = database
+        self._tasks = tasks
 
     async def list_users(
         self,
@@ -175,12 +177,6 @@ class AdminQueryRepository:
                 if model is UserMemoryFactRecord:
                     count_query = count_query.where(UserMemoryFactRecord.status == "active")
                 counts[key] = int(await session.scalar(count_query) or 0)
-            active_handoff = await session.scalar(
-                select(MemoryHandoffRecord).where(
-                    MemoryHandoffRecord.user_id == user_id,
-                    MemoryHandoffRecord.status == "active",
-                )
-            )
             routine = await session.get(UserRoutinePreference, user_id)
             return {
                 "id": user.id,
@@ -199,16 +195,14 @@ class AdminQueryRepository:
                     for identity in identities
                 ],
                 "counts": counts,
-                "active_handoff": (
-                    {
-                        "id": active_handoff.id,
-                        "objective": active_handoff.objective,
-                        "unresolved": self._json_load(active_handoff.unresolved_json),
-                        "expires_at": active_handoff.expires_at,
-                    }
-                    if active_handoff is not None
-                    else None
-                ),
+                "conversation_tasks": [
+                    task_summary(task)
+                    for task in (
+                        await self._tasks.list_for_user(user_id, at=datetime.now(UTC))
+                        if self._tasks is not None
+                        else ()
+                    )
+                ],
                 "routine": (
                     {
                         "timezone": routine.timezone,
@@ -1654,9 +1648,7 @@ class AdminQueryRepository:
             reason_summary = started_event["details"].get("reason_summary")
         input_payload = cls._json_load(row.input_payload_json)
         workflow_mode = input_payload.get("mode") if isinstance(input_payload, dict) else None
-        workflow_mode = (
-            workflow_mode if workflow_mode in {"off", "on", "core_primary"} else None
-        )
+        workflow_mode = workflow_mode if workflow_mode in {"off", "on", "core_primary"} else None
         return {
             "invocation_id": row.id,
             "graph_version": row.graph_version,

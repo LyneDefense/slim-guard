@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from slim_guard.agent_models.gateway import NormalizedToolCall
-from slim_guard.db.models import AgentItemRecord, SlimGuardUser
+from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.harness.events import ItemStatus, ItemType, TurnTrigger
@@ -169,7 +168,7 @@ async def test_record_meal_accepts_real_json_array_through_gateway(
         await database.close()
 
 
-async def test_uncertain_visual_meal_requires_model_grounded_user_confirmation(
+async def test_old_visual_uncertainty_does_not_block_an_unrelated_supported_record(
     tmp_path: Path,
 ) -> None:
     database, repository, context = await prepare(tmp_path)
@@ -195,13 +194,6 @@ async def test_uncertain_visual_meal_requires_model_grounded_user_confirmation(
     )
     handlers = MealToolHandlers(repository, clock=lambda: NOW)
     try:
-        blocked = await handlers.record_meal(
-            context,
-            RecordMealArguments(
-                meal_type="lunch",
-                foods=[MealFoodArguments(name="蒸蛋或豆腐")],
-            ),
-        )
         confirmed = await handlers.record_meal(
             context.model_copy(
                 update={
@@ -211,74 +203,11 @@ async def test_uncertain_visual_meal_requires_model_grounded_user_confirmation(
             ),
             RecordMealArguments(
                 meal_type="lunch",
-                foods=[MealFoodArguments(name="蒸蛋")],
-                visual_confirmation="confirmed_by_current_user",
+                foods=[MealFoodArguments(name="鸡胸肉")],
             ),
         )
 
-        assert blocked.status is ToolResultStatus.FAILED
-        assert blocked.failure is not None
-        assert blocked.failure.code == "visual_confirmation_required"
         assert confirmed.status is ToolResultStatus.SUCCEEDED
-        assert confirmed.output["foods"] == [{"name": "蒸蛋", "portion": None}]
+        assert confirmed.output["foods"] == [{"name": "鸡胸肉", "portion": None}]
     finally:
         await database.close()
-
-
-def test_visual_choice_confirmation_requires_each_candidate_name() -> None:
-    source = AgentItemRecord(
-        id="source-user",
-        thread_id="thread-1",
-        turn_id="turn-2",
-        sequence=1,
-        item_type="user_message",
-        status="completed",
-        payload_json=json.dumps({"text": "确认"}),
-    )
-    inspection = AgentItemRecord(
-        id="inspection-result",
-        thread_id="thread-1",
-        turn_id="turn-1",
-        sequence=2,
-        item_type="tool_result",
-        status="completed",
-        payload_json=json.dumps(
-            {
-                "execution": {
-                    "tool_name": "inspect_image",
-                    "result": {
-                        "status": "succeeded",
-                        "output": {
-                            "requires_user_confirmation": True,
-                            "dish_recognition": {
-                                "dishes": [
-                                    {
-                                        "requires_confirmation": True,
-                                        "candidates": [
-                                            {"label": "火腿"},
-                                            {"label": "虾仁"},
-                                        ],
-                                    },
-                                    {
-                                        "requires_confirmation": True,
-                                        "candidates": [
-                                            {"label": "猪肉"},
-                                            {"label": "牛肉"},
-                                        ],
-                                    },
-                                ]
-                            },
-                        },
-                    },
-                }
-            }
-        ),
-    )
-
-    assert MealToolHandlers._unresolved_dish_choices((inspection,), source) == [
-        "火腿 / 虾仁",
-        "猪肉 / 牛肉",
-    ]
-
-    source.payload_json = json.dumps({"text": "火腿，猪肉"})
-    assert MealToolHandlers._unresolved_dish_choices((inspection,), source) == []

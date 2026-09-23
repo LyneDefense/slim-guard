@@ -1,4 +1,4 @@
-"""Single-path response planning, styling, review, and fallback."""
+"""Response preparation, participant output, style, review and bounded repair."""
 
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,

@@ -33,13 +33,14 @@ class SaveImageAssetCommand(BaseModel):
     declared_mime_type: str | None = Field(default=None, max_length=128)
     channel_id: str | None = Field(default=None, min_length=1, max_length=64)
     source_message_id: str | None = Field(default=None, min_length=1, max_length=256)
-    expires_at: datetime
+    source_text: str | None = Field(default=None, max_length=20_000)
+    expires_at: datetime | None = None
 
     @model_validator(mode="after")
     def validate_source_and_expiry(self) -> Self:
         if (self.channel_id is None) != (self.source_message_id is None):
             raise ValueError("Image source channel and message ID must be supplied together")
-        if self.expires_at.utcoffset() is None:
+        if self.expires_at is not None and self.expires_at.utcoffset() is None:
             raise ValueError("Image asset expiry must be timezone-aware")
         detect_image_mime_type(self.content, self.declared_mime_type)
         return self
@@ -59,7 +60,8 @@ class ImageAssetRef:
     channel_id: str | None
     source_message_id: str | None
     created_at: datetime
-    expires_at: datetime
+    expires_at: datetime | None
+    source_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

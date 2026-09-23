@@ -97,7 +97,7 @@ class StyleTrainer:
         best_score: tuple[int, int, int] | None = None
         failures: list[dict[str, Any]] = []
         rounds: list[dict[str, Any]] = []
-        for round_number in range(1, client.gateway.budget.max_rounds + 1):
+        for round_number in range(1, client.gateway.config.max_rounds + 1):
             package, explanation = await construct(
                 client,
                 materials,
@@ -220,7 +220,7 @@ class StyleTrainer:
             "execution": {
                 "model": snapshot["model"],
                 "review_signature": snapshot["review_signature"],
-                "budget": snapshot["budget"],
+                "execution": snapshot["execution"],
                 "judge_independent_model": False,
             },
             "baseline_version": baseline.version_id,

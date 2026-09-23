@@ -17,7 +17,6 @@ from slim_guard.agent_models.gateway import (
 from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import ItemType, TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
-from slim_guard.harness.limits import HarnessLimits
 from slim_guard.harness.safety import (
     HealthRiskLevel,
     OutputGuard,
@@ -29,6 +28,7 @@ from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode
 from slim_guard.tools.policy import ToolAuthorization
+from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
 
@@ -124,18 +124,17 @@ class HarnessLoop:
         *,
         model: ModelGateway,
         tool_calls: ToolCallRunner,
-        limits: HarnessLimits,
         recorder: HarnessRunRecorder | None = None,
         output_guard: OutputGuard | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._model = model
         self._tool_calls = tool_calls
-        self._limits = limits
         self._recorder = recorder or NullHarnessRunRecorder()
         self._output_guard = output_guard or PermissiveOutputGuard()
         self._clock = clock or self._utc_now
 
+    @usage_operation("core", source="context", kind="agent", agent="core")
     async def run(
         self,
         *,
@@ -170,15 +169,6 @@ class HarnessLoop:
                     tool_outcomes=tool_outcomes,
                     before_finish_hook=before_finish_hook,
                 )
-            if len(model_responses) >= self._limits.max_model_calls:
-                return await self._finish(
-                    context=context,
-                    termination=HarnessTermination.MAX_MODEL_CALLS,
-                    messages=messages,
-                    model_responses=model_responses,
-                    tool_outcomes=tool_outcomes,
-                    before_finish_hook=before_finish_hook,
-                )
             request_update: dict[str, object] = {"messages": tuple(messages)}
             if force_text_response:
                 # Give the model one correction attempt, then remove executable
@@ -186,15 +176,6 @@ class HarnessLoop:
                 # The final explanation still comes from the model.
                 request_update.update({"tools": (), "tool_choice": ToolChoice.NONE})
             current_request = request.model_copy(update=request_update)
-            if self._total_tokens(model_responses) >= self._limits.max_total_tokens:
-                return await self._finish(
-                    context=context,
-                    termination=HarnessTermination.MAX_TOTAL_TOKENS,
-                    messages=messages,
-                    model_responses=model_responses,
-                    tool_outcomes=tool_outcomes,
-                    before_finish_hook=before_finish_hook,
-                )
             try:
                 model_started_at = self._clock()
                 response = await self._model.complete(current_request)
@@ -219,15 +200,6 @@ class HarnessLoop:
                 started_at=model_started_at,
                 completed_at=model_completed_at,
             )
-            if self._total_tokens(model_responses) > self._limits.max_total_tokens:
-                return await self._finish(
-                    context=context,
-                    termination=HarnessTermination.MAX_TOTAL_TOKENS,
-                    messages=messages,
-                    model_responses=model_responses,
-                    tool_outcomes=tool_outcomes,
-                    before_finish_hook=before_finish_hook,
-                )
             if self._deadline_exceeded(context):
                 return await self._finish(
                     context=context,
@@ -318,16 +290,6 @@ class HarnessLoop:
                     core_output_artifact_id=core_output_artifact_id,
                     final_output_artifact_id=final_output_artifact_id,
                     outgoing_messages=outgoing_messages,
-                    before_finish_hook=before_finish_hook,
-                )
-
-            if len(tool_outcomes) + len(calls) > self._limits.max_tool_calls:
-                return await self._finish(
-                    context=context,
-                    termination=HarnessTermination.MAX_TOOL_CALLS,
-                    messages=messages,
-                    model_responses=model_responses,
-                    tool_outcomes=tool_outcomes,
                     before_finish_hook=before_finish_hook,
                 )
 

@@ -62,42 +62,34 @@ ZHIPU_API_KEY=智谱 API Key
 ```
 
 Agent Runtime 只使用 `harness`：企业微信文字和图片消息会进入 Turn Harness 与 Core Agent，并可调用
-图片检查、体重、体脂、饮食、运动、纠错和提醒日程工具。图片作为用户隔离的短期资产默认保留
-7 天，可通过 `AGENT_IMAGE_RETENTION_SECONDS` 调整；后台默认每 6 小时物理清理过期图片。
-Core Agent 是唯一主业务路径；不会再先生成 Legacy baseline，再运行一套候选流程。
-`MULTI_AGENT_MODE=on` 启用最终 Style + Safety/Fidelity Reviewer 管线。所有正常沟通会经过当前
-启用的 Style Profile。Style Agent 只能调整
-表达，required 内容块、数字、记录状态、专业结论、风险与引用均由代码校验；模型或校验失败时使用
-中性渲染器，安全与操作模板明确绕过普通风格层。
+图片检查、体重、体脂、饮食、运动、纠错和提醒日程工具。原始图片属于聊天记录附件，不再由 Agent
+设置默认有效期；历史尚未清理的附件迁移为长期保存。显式设置了过期时间的临时资产仍可清理。
+Core 是唯一主业务路径，聊天 Agent 决定系统助手与教练的表达；只有教练文本进入风格及审查。
+不再保留旧整段风格路径或用于切换这些路径的开关。
 
 ```dotenv
 AGENT_RUNTIME_MODE=harness
 # 部署流水线可以写入 Git commit；未设置时为 development
 AGENT_CODE_REVISION=development
-MULTI_AGENT_MODE=off
-MULTI_AGENT_GRAPH_VERSION=core-primary-v1
 AGENT_SPECIALIST_TIMEOUT_SECONDS=20
-MULTI_AGENT_INVOCATION_MAX_TOTAL_TOKENS=32000
-NUTRITION_AGENT_ENABLED=false
-NUTRITION_RAG_ENABLED=false
-NUTRITION_REQUIRE_RAG_CITATIONS=true
-RESPONSE_REVIEWER_ENABLED=false
 ASSET_MAINTENANCE_INTERVAL_SECONDS=21600
 ```
 
-`MULTI_AGENT_MODE` 只支持 `off|on`。`off` 仍使用 Core Agent 与全部业务/专业工具，只关闭最终的
-Style + Reviewer 管线；`on` 要求 `RESPONSE_REVIEWER_ENABLED=true`。风格或审查失败时保留同一轮
-已经生成并通过确定性保护的 Core 中性稿，不会重新执行业务工具，也不会生成竞争 baseline。
+Invocation/Trace 中的 `graph_version` 仅是代码提供的架构标识，不提供环境变量配置，也不选择旧编排方案；
+执行代码版本仍由运行清单中的 `code_revision` 记录。
 
-移动端群聊输出由 `GROUP_CHAT_ENABLED` 控制。开启后，用户、教练和系统助手分别作为消息参与者；
-系统助手负责状态、澄清和卡片，只有教练候选会进入 Style Agent。该开关仅在
-`MULTI_AGENT_MODE=on` 时生效，无法安全路由时自动只发送系统助手消息。
-配置变更需重启服务，验证与回退步骤见 [Agent 主路径运行手册](MULTI_AGENT_ROLLOUT.md)。
+累计模型调用、工具调用、Token 预算已移除；单请求输出长度、超时、权限和有限纠错仍保留。
+后台「模型用量」按用户查看，用户详情「问答用量」可下钻 Agent 与实际模型请求。
+统计口径与覆盖边界见 [用量统计说明](review/usage_accounting_changes.md)。
+
+用户、教练和系统助手分别作为群聊参与者；系统助手负责状态、澄清和卡片，无法安全路由时保留系统消息。
+风格版本仍在后台管理；代码版本回退使用发布回退机制，不再通过关闭回复处理切换旧架构。
+验证说明见 [Agent 主路径运行手册](MULTI_AGENT_ROLLOUT.md)。
 
 表达风格统一由管理台 [表达风格](https://enceladus.online/admin/styles) 管理。进入医生风格后有
 “构建版本 / 评审版本 / 追加纠正素材”三个子页；追加素材页同时提供完整分页示例库。
 版本包含 Style Guide 与表达样例，运行时使用当前启用版本和 0～3 条相似样例，不按意图或六类话术分组。
-Style Agent 内部完成语义校验和一次带原因的重试，失败返回 Core 中性稿。
+Style Agent 内部完成语义校验和有限重试，失败不影响系统助手的必要消息。
 操作、配置及此次旧风格数据重置说明见 [表达风格实现手册](STYLE_MANAGEMENT.md)。
 
 Nutrition RAG 使用与用户 Memory 完全分离的数据库命名空间。v2 资料必须先导入为 `draft`，完成内容、
@@ -165,16 +157,14 @@ uv run python -m slim_guard.tools.migrate_nutrition_manifest_v2 \
 Content Review；Applicability Review 和 Rights Review 必须在管理台重新确认。随后在网页创建候选
 Release、运行不少于 100 条的冻结评测集、人工验收并启用。
 
-完成资料审核后，才在 Core 主路径打开 `NUTRITION_AGENT_ENABLED=true` 和
-`NUTRITION_RAG_ENABLED=true`。RAG 打开时不能关闭 `NUTRITION_REQUIRE_RAG_CITATIONS`；每条知识性
-Claim 都必须保留当前 Nutrition invocation 的 Citation，并完整通过 Style 渲染。
+营养咨询及知识检索能力固定提供，是否调用由模型判断，不会每轮自动调用；资料仍需审核并启用。
+引用校验是运行时固定契约，不提供关闭开关：声明依据 RAG 的
+Claim 必须携带当前 Nutrition invocation 内有效的 Citation；允许使用模型通识的低风险结论仍按既有
+来源与风险规则校验，不要求伪造 RAG 引用。
 
-餐食图片会输出逐道菜候选；置信度不足、
-候选接近或图片质量有问题时只问必要的确认问题，不会先给饮食结论。用户下一轮明确更正后，Core Agent
-通过近期对话与保留的图片上下文继续处理；仍有多个合理候选时会再次询问。确认后的菜名先查版本化菜品库，
-再查已发布的 Nutrition RAG；资料不足时明确返回 `insufficient_information`，不会猜热量、克重或营养素。
-管理台 Trace 会分开展示识别、确认、检索和建议；“人工更正菜名”只追加审核 Artifact，原识别结果保持
-不变，也不会未经审核自动修改 Prompt 或菜品库。生产资料准备步骤见 `DISH_GUIDANCE_DATA_RUNBOOK.md`。
+图片先按用户原话进行通用理解，不要求预先指定食物类别。解析描述作为模型注释关联回原消息；
+后续上下文随对话读取附件，不再单独加载最近 N 张图片。图片中的不确定性是观察，不自动成为强制追问。
+专业建议仍必须遵循来源和风险约束；RAG 原始证据不直接作为教练消息输出。
 
 菜品库导入清单可以是 JSON 数组，也可以是包含 `dishes` 数组的对象。每项至少包含 `entity_key`、
 `version`、`canonical_name`、`source_refs`；别名、菜品特征和规则均需逐项填写 `source_ref`。规则只支持
@@ -190,15 +180,11 @@ uv run python -m slim_guard.tools.manage_dish_knowledge retire ENTITY_ID --revie
 uv run python -m slim_guard.tools.manage_dish_knowledge show ENTITY_ID
 ```
 
-建议先用 `MULTI_AGENT_MODE=off`、`NUTRITION_AGENT_ENABLED=true` 验证 Core 调用专业 Agent、
-图片不确定性和空资料降级。资料完成审核并启用后打开 `NUTRITION_RAG_ENABLED=true`；确认医生风格与
-Reviewer 回归样本后，再设置 `MULTI_AGENT_MODE=on`。缺少可靠资料时 Nutrition Agent 会保守退出，
-不会绕过 RAG 生成肯定的专业结论。
-
-`RESPONSE_REVIEWER_ENABLED=true` 开启最终回复的安全与事实保真审查，要求同时开启 Style 渲染。
-审查将语义漂移返回 Style、无依据专业结论返回 Nutrition、缺少用户信息返回 Core 处理。
-每个目标最多修复一次，全 Turn 最多两次返回；每次专业修复都重新渲染并审查。
-拒绝、预算耗尽或审查失败会使用安全降级输出。
+使用测试账户验证记录、查询、通用图片理解、空资料降级与教练输出，之后再做真实模型验收。
+审查模型可要求 Style、Core 或 Nutrition 返工一次，携带完整原因与问题片段。Core/营养修复后重新交给
+聊天 Agent 分配表达；不重执行业务写工具。复审仍不通过则保留系统消息与真实工具卡片。
+共享 Turn 预算同时约束 Core、专家、聊天、风格、视觉和召回调用，各 Agent 还保留局部限制。
+Token 由 Provider 返回后累计，单次调用可能越过额度，后续调用会阻止；这不是精确计费上限。
 管理台展示审查结果、返回边、版本关系和过去 7 天的拒绝/修复/降级率。
 
 智谱可选配置：
@@ -333,8 +319,7 @@ MEMORY_PRELOAD_MAX_FACTS=30
 MEMORY_HEALTH_REVIEW_DAYS=180
 MEMORY_RECENT_TURN_COUNT=3
 MEMORY_RECENT_DIALOGUE_MAX_CHARS=1500
-MEMORY_RECENT_IMAGE_COUNT=3
-MEMORY_HANDOFF_TTL_DAYS=14
+TASK_CLARIFICATION_TTL_DAYS=14
 MEMORY_INGESTION_ENABLED=true
 MEMORY_INGESTION_HISTORY_COUNT=20
 MEMORY_INGESTION_HISTORY_MAX_CHARS=6000

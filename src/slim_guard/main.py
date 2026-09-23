@@ -8,13 +8,11 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, Request, Response
 
-from slim_guard.agent.composition import (
-    AgentRuntimeDefinition,
-    build_agent_graph_manifest,
-    build_agent_manifest,
-    build_agent_runtime,
-)
+from slim_guard.agent.composition import build_agent_runtime
+from slim_guard.agent.definition import AgentRuntimeDefinition
+from slim_guard.agent.manifest import build_agent_manifest
 from slim_guard.agent.runtime import AgentRuntime
+from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.embeddings import ZhipuEmbeddingGateway
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
@@ -34,6 +32,7 @@ from slim_guard.domain.routine.status import DailyCheckinStatusRepository
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComClient, WeComClientProtocol
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
+from slim_guard.memory.config import MemoryRuntimeConfig
 from slim_guard.memory.engine import Mem0HttpMemoryEngine, MemoryEngine
 from slim_guard.memory.extraction import (
     MemoryExtractionJobRepository,
@@ -52,7 +51,7 @@ from slim_guard.mobile.auth import (
 )
 from slim_guard.mobile.platform import MobilePlatformService
 from slim_guard.mobile.service import MobileApplicationService
-from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository
+from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository, NutritionKnowledgeService
 from slim_guard.nutrition_rag.answerability import ModelAnswerabilityGateway
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
 from slim_guard.nutrition_rag.gateways import (
@@ -84,6 +83,11 @@ from slim_guard.services.reply_agent import (
 from slim_guard.services.routine_scheduler import RoutineSchedulerService
 from slim_guard.style_management.routes import router as expression_style_router
 from slim_guard.style_management.worker import StyleWorker
+from slim_guard.tasks.config import TaskRuntimeConfig
+from slim_guard.tasks.repository import ConversationTaskRepository
+from slim_guard.usage.gateway import MeasuredModelGateway
+from slim_guard.usage.repository import UsageRepository
+from slim_guard.usage.routes import router as usage_router
 
 logger = logging.getLogger(__name__)
 
@@ -98,18 +102,6 @@ def create_app(
     memory_engine: MemoryEngine | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
-    if app_settings.nutrition_rag_enabled and not app_settings.nutrition_agent_enabled:
-        raise ValueError("NUTRITION_RAG_ENABLED requires NUTRITION_AGENT_ENABLED")
-    if app_settings.nutrition_rag_enabled and not app_settings.nutrition_require_rag_citations:
-        raise ValueError(
-            "NUTRITION_REQUIRE_RAG_CITATIONS must stay enabled when Nutrition RAG is enabled"
-        )
-    if (
-        app_settings.nutrition_rag_enabled
-        and app_settings.nutrition_rag_engine == "v2"
-        and not app_settings.zhipu_is_configured
-    ):
-        raise ValueError("NUTRITION_RAG_ENGINE=v2 requires ZHIPU_API_KEY")
     model_parameters = {
         "thinking": {"type": "disabled"},
         "do_sample": False,
@@ -117,35 +109,25 @@ def create_app(
         "max_reply_chars": app_settings.agent_reply_max_chars,
     }
     runtime_definition = AgentRuntimeDefinition(
-        model_provider="zhipu",
-        text_model=app_settings.zhipu_text_model,
-        vision_model=app_settings.zhipu_vision_model,
-        model_parameters=model_parameters,
-        code_revision=app_settings.agent_code_revision,
-        image_retention_seconds=app_settings.agent_image_retention_seconds,
-        vision_max_output_tokens=app_settings.zhipu_max_output_tokens,
-        memory_preload_max_facts=app_settings.memory_preload_max_facts,
-        memory_health_review_days=app_settings.memory_health_review_days,
-        memory_recent_turn_count=app_settings.memory_recent_turn_count,
-        memory_recent_dialogue_max_chars=(app_settings.memory_recent_dialogue_max_chars),
-        memory_recent_image_count=app_settings.memory_recent_image_count,
-        memory_handoff_ttl_days=app_settings.memory_handoff_ttl_days,
-        memory_recall_search_limit=app_settings.memory_recall_search_limit,
-        memory_recall_max_selected=app_settings.memory_recall_max_selected,
-        multi_agent_mode=app_settings.multi_agent_mode,
-        multi_agent_graph_version=app_settings.multi_agent_graph_version,
-        agent_specialist_timeout_seconds=(app_settings.agent_specialist_timeout_seconds),
-        multi_agent_invocation_max_total_tokens=(
-            app_settings.multi_agent_invocation_max_total_tokens
+        models=ModelRuntimeConfig(
+            provider="zhipu",
+            text_model=app_settings.zhipu_text_model,
+            vision_model=app_settings.zhipu_vision_model,
+            parameters=model_parameters,
+            vision_max_output_tokens=app_settings.zhipu_max_output_tokens,
         ),
-        style_render_all_normal_replies=app_settings.style_render_all_normal_replies,
-        nutrition_agent_enabled=app_settings.nutrition_agent_enabled,
-        nutrition_rag_enabled=app_settings.nutrition_rag_enabled,
-        nutrition_require_rag_citations=app_settings.nutrition_require_rag_citations,
-        response_reviewer_enabled=app_settings.response_reviewer_enabled,
-        group_chat_enabled=app_settings.group_chat_enabled,
+        code_revision=app_settings.agent_code_revision,
+        tasks=TaskRuntimeConfig(clarification_ttl_days=app_settings.task_clarification_ttl_days),
+        memory=MemoryRuntimeConfig(
+            preload_max_facts=app_settings.memory_preload_max_facts,
+            health_review_days=app_settings.memory_health_review_days,
+            recent_turn_count=app_settings.memory_recent_turn_count,
+            recent_dialogue_max_chars=app_settings.memory_recent_dialogue_max_chars,
+            recall_search_limit=app_settings.memory_recall_search_limit,
+            recall_max_selected=app_settings.memory_recall_max_selected,
+        ),
+        agent_specialist_timeout_seconds=(app_settings.agent_specialist_timeout_seconds),
     )
-    agent_graph_manifest = build_agent_graph_manifest(runtime_definition)
     agent_manifest = build_agent_manifest(runtime_definition)
     owned_client: WeComClient | None = None
     owned_model_gateway: ZhipuModelGateway | None = None
@@ -173,10 +155,6 @@ def create_app(
             active_model_for_services is None
             and app_settings.zhipu_is_configured
             and app_settings.nutrition_rag_engine == "v2"
-            and (
-                app_settings.nutrition_rag_enabled
-                or app_settings.nutrition_knowledge_worker_enabled
-            )
         ):
             owned_model_gateway = ZhipuModelGateway(
                 api_key=app_settings.zhipu_api_key,
@@ -198,33 +176,25 @@ def create_app(
             if app_settings.tencent_cos_is_configured
             else None
         )
-        active_nutrition_knowledge = None
-        if (
-            app_settings.nutrition_rag_engine == "v2"
-            and app_settings.zhipu_is_configured
-            and (
-                app_settings.nutrition_rag_enabled
-                or app_settings.nutrition_knowledge_worker_enabled
-            )
-        ):
+        active_nutrition_knowledge: NutritionKnowledgeService | HybridNutritionRagService | None = (
+            NutritionKnowledgeService(NutritionKnowledgeRepository(database))
+            if app_settings.nutrition_rag_engine == "v1"
+            else None
+        )
+        if app_settings.nutrition_rag_engine == "v2" and app_settings.zhipu_is_configured:
             owned_nutrition_embedding = ZhipuEmbeddingGateway(
+                usage_store=UsageRepository(database),
                 api_key=app_settings.zhipu_api_key,
                 base_url=app_settings.zhipu_base_url,
                 model=app_settings.nutrition_embedding_model,
                 dimensions=app_settings.nutrition_embedding_dimensions,
                 timeout_seconds=app_settings.zhipu_http_timeout_seconds,
             )
-        if (
-            app_settings.nutrition_rag_engine == "v2"
-            and (
-                app_settings.nutrition_rag_enabled
-                or app_settings.nutrition_knowledge_worker_enabled
-            )
-            and owned_nutrition_embedding is not None
-        ):
+        if app_settings.nutrition_rag_engine == "v2" and owned_nutrition_embedding is not None:
             if active_model_for_services is None:
                 raise RuntimeError("Nutrition answerability model is not configured")
             owned_nutrition_reranker = ZhipuRerankGateway(
+                usage_store=UsageRepository(database),
                 api_key=app_settings.zhipu_api_key,
                 base_url=app_settings.zhipu_base_url,
                 model=app_settings.nutrition_rerank_model,
@@ -235,7 +205,9 @@ def create_app(
                 embedding_gateway=owned_nutrition_embedding,
                 rerank_gateway=owned_nutrition_reranker,
                 answerability_gateway=ModelAnswerabilityGateway(
-                    gateway=active_model_for_services,
+                    gateway=MeasuredModelGateway(
+                        active_model_for_services, UsageRepository(database)
+                    ),
                     model=app_settings.zhipu_text_model,
                 ),
             )
@@ -461,6 +433,7 @@ def create_app(
             )
         memory_maintenance = MemoryMaintenanceService(
             lifecycle=MemoryLifecycleRepository(database),
+            tasks=ConversationTaskRepository(database),
             transcript_retention=timedelta(days=app_settings.agent_transcript_body_retention_days),
             revoked_value_retention=timedelta(
                 days=app_settings.memory_revoked_value_retention_days
@@ -483,7 +456,7 @@ def create_app(
                     database,
                     index_sync_enabled=active_memory_engine is not None,
                 ),
-                model=active_model_for_services,
+                model=MeasuredModelGateway(active_model_for_services, UsageRepository(database)),
                 model_name=app_settings.zhipu_text_model,
                 interval_seconds=app_settings.memory_extraction_interval_seconds,
                 batch_size=app_settings.memory_extraction_batch_size,
@@ -527,7 +500,7 @@ def create_app(
                 active_model_for_services = owned_model_gateway
             style_iteration_worker = StyleWorker(
                 database,
-                active_model_for_services,
+                MeasuredModelGateway(active_model_for_services, UsageRepository(database)),
                 app_settings.zhipu_text_model,
                 app_settings.style_iteration_poll_seconds,
             )
@@ -560,7 +533,7 @@ def create_app(
                         repository=nutrition_control,
                         retrieval=active_nutrition_knowledge,
                     )
-                    if active_nutrition_knowledge is not None
+                    if isinstance(active_nutrition_knowledge, HybridNutritionRagService)
                     else None
                 ),
             )
@@ -660,15 +633,12 @@ def create_app(
     application.include_router(router)
     application.include_router(expression_style_router)
     application.include_router(admin_router)
+    application.include_router(usage_router)
     application.include_router(nutrition_knowledge_router)
     application.include_router(mobile_router)
     application.state.agent_manifest = agent_manifest
-    application.state.agent_graph_manifest = agent_graph_manifest
     application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
-    application.state.multi_agent_mode = app_settings.multi_agent_mode
-    application.state.multi_agent_graph_version = app_settings.multi_agent_graph_version
-    application.state.group_chat_enabled = app_settings.group_chat_enabled
     application.state.mobile_auth = None
     application.state.mobile_service = None
     application.state.mobile_platform = None

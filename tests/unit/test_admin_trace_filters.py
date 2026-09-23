@@ -100,9 +100,6 @@ async def traces(tmp_path: Path) -> AsyncIterator[AdminQueryRepository]:
                             caller="turn_harness",
                             input_schema_version="1",
                             deadline_at=created + timedelta(seconds=30),
-                            max_model_calls=2,
-                            max_tool_calls=0,
-                            max_total_tokens=1024,
                             status="failed" if label == "on" else "succeeded",
                             input_payload_json=json.dumps(
                                 {

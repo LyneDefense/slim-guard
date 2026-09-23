@@ -173,7 +173,7 @@ export function BuildProgress({
       )}
       {run.error && (
         <p role="alert">
-          {run.error}。已有阶段产物保留在下方；恢复沿用快照和剩余预算。
+          {run.error}。已有阶段产物保留在下方；恢复沿用快照和累计执行时间，不受 Token 或调用次数预算限制。
         </p>
       )}
       <div className="expression-actions">

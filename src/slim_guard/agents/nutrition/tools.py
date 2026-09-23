@@ -465,6 +465,7 @@ class NutritionToolRegistry:
         retrieved_in_invocation_id: str | None = None,
         frozen_release_id: str | None = None,
     ) -> NutritionToolResult:
+
         try:
             definition = self.resolve(name)
         except KeyError:

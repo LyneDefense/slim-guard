@@ -21,9 +21,12 @@ from slim_guard.domain.weight.repository import WeightRepository
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.state_repository import ItemRef
-from slim_guard.memory.handoff import HandoffRepository
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
+from slim_guard.tasks.ports import TaskStore
+from slim_guard.tasks.presentation import task_summary
+
+CONTEXT_POLICY_VERSION = "model-ranked-authoritative-message-attachments-tasks-v11"
 
 
 class ContextDataProvider(Protocol):
@@ -66,7 +69,7 @@ class AuthoritativeContextDataProvider:
         checkins: DailyCheckinStatusRepository | None = None,
         memories: MemoryRepository | None = None,
         conversation: ConversationWindowRepository | None = None,
-        handoffs: HandoffRepository | None = None,
+        tasks: TaskStore | None = None,
         pending_actions: PendingActionRepository | None = None,
         weight_limit: int = 7,
         meal_limit: int = 10,
@@ -74,7 +77,6 @@ class AuthoritativeContextDataProvider:
         memory_limit: int = 30,
         dialogue_turn_limit: int = 3,
         dialogue_char_limit: int = 1500,
-        recent_image_limit: int = 3,
         preload_domain_history: bool = True,
     ) -> None:
         self._database = database
@@ -86,7 +88,7 @@ class AuthoritativeContextDataProvider:
         self._checkins = checkins
         self._memories = memories
         self._conversation = conversation
-        self._handoffs = handoffs
+        self._tasks = tasks
         self._pending_actions = pending_actions
         self._weight_limit = weight_limit
         self._meal_limit = meal_limit
@@ -94,7 +96,6 @@ class AuthoritativeContextDataProvider:
         self._memory_limit = memory_limit
         self._dialogue_turn_limit = dialogue_turn_limit
         self._dialogue_char_limit = dialogue_char_limit
-        self._recent_image_limit = recent_image_limit
         self._preload_domain_history = preload_domain_history
 
     async def load(
@@ -125,62 +126,64 @@ class AuthoritativeContextDataProvider:
                 self._meals.recent(user_id, limit=self._meal_limit),
                 self._exercise.recent(user_id, limit=self._exercise_limit),
             )
-            context.update({
-                "recent_weights": [
+            context.update(
                 {
-                    "weight_kg": self._decimal_text(record.weight_kg),
-                    "measured_at": record.measured_at.isoformat(),
-                    "condition": record.condition.value,
-                }
-                    for record in weight_trend.records
-                ],
-                "recent_body_fat": [
-                {
-                    "body_fat_percent": self._decimal_text(record.percent),
-                    "measured_at": record.measured_at.isoformat(),
-                }
-                    for record in body_fat_trend.records
-                ],
-                "recent_meals": [
-                {
-                    "meal_type": record.meal_type.value,
-                    "foods": [
+                    "recent_weights": [
                         {
-                            "name": food.name,
-                            **({"portion": food.portion} if food.portion else {}),
+                            "weight_kg": self._decimal_text(record.weight_kg),
+                            "measured_at": record.measured_at.isoformat(),
+                            "condition": record.condition.value,
                         }
-                        for food in record.foods
+                        for record in weight_trend.records
                     ],
-                    "occurred_at": record.occurred_at.isoformat(),
-                    **({"note": record.note} if record.note else {}),
+                    "recent_body_fat": [
+                        {
+                            "body_fat_percent": self._decimal_text(record.percent),
+                            "measured_at": record.measured_at.isoformat(),
+                        }
+                        for record in body_fat_trend.records
+                    ],
+                    "recent_meals": [
+                        {
+                            "meal_type": record.meal_type.value,
+                            "foods": [
+                                {
+                                    "name": food.name,
+                                    **({"portion": food.portion} if food.portion else {}),
+                                }
+                                for food in record.foods
+                            ],
+                            "occurred_at": record.occurred_at.isoformat(),
+                            **({"note": record.note} if record.note else {}),
+                        }
+                        for record in meals
+                    ],
+                    "recent_exercise": [
+                        {
+                            "activity_name": record.activity_name,
+                            "occurred_at": record.occurred_at.isoformat(),
+                            **(
+                                {"duration_minutes": record.duration_minutes}
+                                if record.duration_minutes is not None
+                                else {}
+                            ),
+                            **({"steps": record.steps} if record.steps is not None else {}),
+                            **(
+                                {"distance_meters": record.distance_meters}
+                                if record.distance_meters is not None
+                                else {}
+                            ),
+                            **(
+                                {"reported_energy_kcal": record.reported_energy_kcal}
+                                if record.reported_energy_kcal is not None
+                                else {}
+                            ),
+                            **({"note": record.note} if record.note else {}),
+                        }
+                        for record in exercise
+                    ],
                 }
-                    for record in meals
-                ],
-                "recent_exercise": [
-                {
-                    "activity_name": record.activity_name,
-                    "occurred_at": record.occurred_at.isoformat(),
-                    **(
-                        {"duration_minutes": record.duration_minutes}
-                        if record.duration_minutes is not None
-                        else {}
-                    ),
-                    **({"steps": record.steps} if record.steps is not None else {}),
-                    **(
-                        {"distance_meters": record.distance_meters}
-                        if record.distance_meters is not None
-                        else {}
-                    ),
-                    **(
-                        {"reported_energy_kcal": record.reported_energy_kcal}
-                        if record.reported_energy_kcal is not None
-                        else {}
-                    ),
-                    **({"note": record.note} if record.note else {}),
-                }
-                    for record in exercise
-                ],
-            })
+            )
         if profile is not None:
             context["profile"] = profile
         if self._memories is not None:
@@ -198,25 +201,17 @@ class AuthoritativeContextDataProvider:
                         "assertion": memory.assertion.value,
                         "sensitivity": memory.sensitivity.value,
                         "stale": (
-                            memory.review_after is not None
-                            and memory.review_after <= current_time
+                            memory.review_after is not None and memory.review_after <= current_time
                         ),
                     }
                     for memory in memories
                 ]
         working_memory: dict[str, Any] = {}
         if self._conversation is not None:
-            dialogue, recent_images = await asyncio.gather(
-                self._conversation.recent(
-                    user_id,
-                    turn_limit=self._dialogue_turn_limit,
-                    char_limit=self._dialogue_char_limit,
-                ),
-                self._conversation.recent_images(
-                    user_id,
-                    at=current_time,
-                    limit=self._recent_image_limit,
-                ),
+            dialogue = await self._conversation.recent(
+                user_id,
+                turn_limit=self._dialogue_turn_limit,
+                char_limit=self._dialogue_char_limit,
             )
             if dialogue:
                 working_memory["recent_dialogue"] = [
@@ -225,6 +220,11 @@ class AuthoritativeContextDataProvider:
                             {
                                 "role": message.role,
                                 "content": message.content,
+                                **(
+                                    {"attachments": list(message.attachments)}
+                                    if message.attachments
+                                    else {}
+                                ),
                                 **(
                                     {"evidence_ref": message.evidence_ref}
                                     if message.evidence_ref is not None
@@ -236,64 +236,23 @@ class AuthoritativeContextDataProvider:
                     }
                     for turn in dialogue
                 ]
-            if recent_images:
-                working_memory["recent_images"] = [
-                    {
-                        "asset_id": image.asset_id,
-                        "mime_type": image.mime_type,
-                        "created_at": image.created_at.isoformat(),
-                        "expires_at": image.expires_at.isoformat(),
-                        **(
-                            {"observation": image.observation}
-                            if image.observation is not None
-                            else {}
-                        ),
-                        **(
-                            {
-                                "requires_user_confirmation": (
-                                    image.requires_user_confirmation
-                                )
-                            }
-                            if image.requires_user_confirmation is not None
-                            else {}
-                        ),
-                        **(
-                            {"dish_clarification": list(image.dish_clarification)}
-                            if image.dish_clarification
-                            else {}
-                        ),
-                        **(
-                            {"suggested_question": image.suggested_question}
-                            if image.suggested_question is not None
-                            else {}
-                        ),
-                    }
-                    for image in recent_images
-                ]
-        if self._handoffs is not None:
-            handoff = await self._handoffs.active(user_id, at=current_time)
-            if handoff is not None:
-                working_memory["active_handoff"] = {
-                    "handoff_id": handoff.id,
-                    "objective": handoff.objective,
-                    "unresolved": list(handoff.unresolved),
-                    "created_at": handoff.created_at.isoformat(),
-                    "expires_at": handoff.expires_at.isoformat(),
-                }
+        if self._tasks is not None:
+            tasks = await self._tasks.list_for_user(user_id, at=current_time)
+            if tasks:
+                working_memory["conversation_tasks"] = [task_summary(task) for task in tasks]
+                working_memory["tasks_may_have_more"] = len(tasks) == 20
         if self._pending_actions is not None:
             pending = await self._pending_actions.list_open_for_user(
                 user_id=user_id,
                 at=current_time,
             )
             if pending:
-                # ``confirm_dishes`` belonged to the retired graph workflow.  Do not
-                # expose an action that the Core Agent can no longer resolve; current
-                # image clarification stays in recent dialogue/image working memory.
-                ordinary = [action for action in pending if action.tool_name != "confirm_dishes"]
+                ordinary = pending
                 if ordinary:
                     working_memory["pending_user_confirmations"] = [
                         {
                             "action_id": action.id,
+                            "task_id": action.task_id,
                             "tool_name": action.tool_name,
                             "reason": action.reason,
                             "expires_at": action.expires_at.isoformat(),
@@ -312,9 +271,7 @@ class AuthoritativeContextDataProvider:
                     "daily_review_time": routine.daily_review_time,
                 }
                 if self._checkins is not None:
-                    local_date = current_time.astimezone(
-                        ZoneInfo(routine.timezone)
-                    ).date()
+                    local_date = current_time.astimezone(ZoneInfo(routine.timezone)).date()
                     status = await self._checkins.get(
                         user_id=user_id,
                         local_date=local_date,
@@ -331,9 +288,7 @@ class AuthoritativeContextDataProvider:
 
     async def _profile(self, user_id: str) -> dict[str, Any] | None:
         async with self._database.session() as session:
-            row = await session.scalar(
-                select(SlimGuardUser).where(SlimGuardUser.id == user_id)
-            )
+            row = await session.scalar(select(SlimGuardUser).where(SlimGuardUser.id == user_id))
             if row is None:
                 return None
             coach = await session.get(MobileCoachProfileRecord, user_id)

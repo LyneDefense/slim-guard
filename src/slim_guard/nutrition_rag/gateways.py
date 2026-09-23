@@ -3,10 +3,15 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
+
+from slim_guard.usage.context import usage_operation
+from slim_guard.usage.gateway import ModelCall, capture_provider_usage
+from slim_guard.usage.ports import UsageStore
 
 
 class NutritionModelGatewayError(RuntimeError):
@@ -49,10 +54,12 @@ class ZhipuRerankGateway:
         model: str = "rerank",
         timeout_seconds: float = 45.0,
         client: httpx.AsyncClient | None = None,
+        usage_store: UsageStore | None = None,
     ) -> None:
         if not api_key:
             raise ValueError("Zhipu API key is required")
         self._model = model
+        self._usage_store = usage_store
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
@@ -60,6 +67,7 @@ class ZhipuRerankGateway:
             headers={"Authorization": f"Bearer {api_key}"},
         )
 
+    @usage_operation("rerank", kind="tool")
     async def rerank(
         self,
         *,
@@ -77,6 +85,14 @@ class ZhipuRerankGateway:
             raise ValueError("Rerank documents must be nonblank and at most 4096 characters")
         if not 1 <= top_n <= len(normalized):
             raise ValueError("top_n is outside the document collection")
+        async with (
+            ModelCall(self._usage_store, "zhipu", self._model, "rerank")
+            if self._usage_store
+            else nullcontext()
+        ):
+            return await self._rerank(query, normalized, top_n)
+
+    async def _rerank(self, query: str, normalized: tuple[str, ...], top_n: int) -> RerankResult:
         started = time.monotonic()
         try:
             response = await self._client.post(
@@ -91,6 +107,7 @@ class ZhipuRerankGateway:
             )
             response.raise_for_status()
             payload = response.json()
+            capture_provider_usage(payload)
         except (httpx.HTTPError, ValueError) as error:
             raise NutritionModelGatewayError("rerank_provider_error") from error
         results = payload.get("results") if isinstance(payload, dict) else None

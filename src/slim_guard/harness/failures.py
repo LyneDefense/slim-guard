@@ -40,9 +40,7 @@ def model_gateway_failure(error: ModelGatewayError) -> HarnessFailure:
         return _failure("model_transport_error", error, retryable=True)
     if isinstance(error, ModelProviderError):
         status = error.status_code
-        retryable = status in {408, 409, 425, 429} or (
-            status is not None and status >= 500
-        )
+        retryable = status in {408, 409, 425, 429} or (status is not None and status >= 500)
         return _failure(
             "model_provider_error",
             error,

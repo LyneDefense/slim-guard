@@ -19,6 +19,9 @@ class PlannedResponse:
     plan: ResponsePlan
     assessment: ProfessionalAssessment | None
     assessment_artifact_id: str | None
+    # Evidence for reviewing a selected participant block, not content the block
+    # must repeat verbatim. System-owned warnings remain outside coach text.
+    supporting_assessment: ProfessionalAssessment | None = None
 
 
 class ResponsePlanBuilder:

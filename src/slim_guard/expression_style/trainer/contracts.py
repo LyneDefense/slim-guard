@@ -76,10 +76,8 @@ class Comparison(Artifact):
     right_scores: ExpressionScores
 
 
-class BuildBudget(Artifact):
+class BuildExecutionConfig(Artifact):
     max_rounds: int = Field(default=2, ge=1, le=4)
-    max_calls: int = Field(default=350, ge=20, le=2000)
-    max_tokens: int = Field(default=1_000_000, ge=10000, le=10_000_000)
     max_seconds: int = Field(default=3600, ge=120, le=7200)
     request_seconds: int = Field(default=120, ge=10, le=300)
     max_request_bytes: int = Field(default=100_000, ge=4096, le=200_000)

@@ -4,10 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from slim_guard.agent_models.vision import (
-    DishVisionResponse,
     VisionCertainty,
-    VisionDishCandidate,
-    VisionDishItem,
     VisionInspectionRequest,
     VisionInspectionResponse,
     VisionObservation,
@@ -44,22 +41,8 @@ class FakeVisionGateway:
     async def close(self) -> None:
         return None
 
-    async def recognize_dishes(
-        self, request: VisionInspectionRequest
-    ) -> DishVisionResponse:
-        self.requests.append(request)
-        return DishVisionResponse(
-            image_kind="meal",
-            dishes=(
-                VisionDishItem(
-                    candidates=(
-                        VisionDishCandidate(label="番茄炒蛋", confidence=0.91),
-                    ),
-                    visible_ingredients=("番茄", "鸡蛋"),
-                    preparation_candidates=("炒",),
-                ),
-            ),
-        )
+    async def recognize_dishes(self, request: VisionInspectionRequest) -> None:
+        raise AssertionError("General image understanding must not dispatch by food category")
 
 
 async def prepare_asset(
@@ -111,7 +94,7 @@ async def test_inspect_image_reads_owned_asset_and_returns_observation(tmp_path:
     try:
         result = await handlers.inspect_image(
             context(),
-            InspectImageArguments(asset_id=asset_id, focus="weight_scale"),
+            InspectImageArguments(asset_id=asset_id, question="体重是多少？"),
         )
 
         assert result.status is ToolResultStatus.SUCCEEDED
@@ -150,7 +133,9 @@ async def test_inspect_image_cannot_read_another_users_asset(tmp_path: Path) -> 
         await database.close()
 
 
-async def test_meal_inspection_returns_governed_dish_recognition(tmp_path: Path) -> None:
+async def test_general_inspection_does_not_dispatch_to_food_specific_provider(
+    tmp_path: Path,
+) -> None:
     database, assets, asset_id = await prepare_asset(tmp_path)
     vision = FakeVisionGateway()
     handlers = ImageToolHandlers(
@@ -162,12 +147,13 @@ async def test_meal_inspection_returns_governed_dish_recognition(tmp_path: Path)
     try:
         result = await handlers.inspect_image(
             context(),
-            InspectImageArguments(asset_id=asset_id, focus="meal"),
+            InspectImageArguments(asset_id=asset_id, question="图片上有什么？"),
         )
-        recognition = result.output["dish_recognition"]
         assert result.status is ToolResultStatus.SUCCEEDED
-        assert recognition["dishes"][0]["candidates"][0]["label"] == "番茄炒蛋"
-        assert recognition["overall_requires_confirmation"] is False
-        assert "不输出重量" in vision.requests[0].prompt
+        assert result.output["category"] == "weight_scale"
+        assert "不预设图片属于食物" in vision.requests[0].prompt
+        annotations = await assets.annotations(user_id="user-1", asset_ids=(asset_id,))
+        assert annotations[asset_id]["annotation"]["description"] == "体重秤显示 77.6 kg。"
+        assert annotations[asset_id]["annotation"]["tool_call_id"] == "call-inspect"
     finally:
         await database.close()

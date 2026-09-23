@@ -21,6 +21,7 @@ class ReviewerContextCompiler:
         response_plan: ResponsePlan,
         styled_response: StyledResponse,
         assessment: ProfessionalAssessment | None = None,
+        supporting_assessment: ProfessionalAssessment | None = None,
         style_profile: StyleProfile = SLIMGUARD_DEFAULT_V1,
         available_evidence_ids: Sequence[str] | None = None,
         evidence_summaries: Sequence[ReviewerEvidenceSummary] = (),
@@ -31,6 +32,7 @@ class ReviewerContextCompiler:
             styled_response=styled_response,
             style_profile=style_profile,
             assessment=assessment,
+            supporting_assessment=supporting_assessment,
             evidence_summaries=tuple(evidence_summaries),
             available_evidence_ids=(
                 tuple(available_evidence_ids) if available_evidence_ids is not None else None

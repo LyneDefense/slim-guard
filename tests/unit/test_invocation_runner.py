@@ -30,7 +30,7 @@ class ExampleOutput(BaseModel):
     text: str
 
 
-def invocation(*, max_model_calls: int = 2, deadline: datetime | None = None) -> AgentInvocation:
+def invocation(*, deadline: datetime | None = None) -> AgentInvocation:
     return AgentInvocation(
         invocation_id="invocation-1",
         trace_id="trace-1",
@@ -41,9 +41,6 @@ def invocation(*, max_model_calls: int = 2, deadline: datetime | None = None) ->
         caller="turn_harness",
         privacy_scopes=("current_user_message",),
         deadline_at=deadline or NOW + timedelta(seconds=20),
-        max_model_calls=max_model_calls,
-        max_tool_calls=0,
-        max_total_tokens=100,
     )
 
 

@@ -1,0 +1,18 @@
+.usage { min-width: 0; }
+.usage p { overflow-wrap: anywhere; }
+.usage-filters, .usage-pager { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 20px 0; }
+.usage-filters label { display: grid; gap: 8px; }
+.usage input, .usage button { padding: 8px 12px; border: 1px solid #cddbd4; border-radius: 8px; background: white; color: #243b32; }
+.usage button:disabled { opacity: .4; cursor: not-allowed; }
+.usage-counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 20px 0; }
+.usage-counters > div, .usage-call { border: 1px solid #dce6df; border-radius: 12px; background: white; padding: 16px; }
+.usage-counters strong { font-size: 24px; display: block; }
+.usage-counters span, .usage-note { color: #586b62; font-size: 13px; }
+.usage-table { overflow: auto; }
+.usage-table table { width: 100%; border-collapse: collapse; background: white; }
+.usage-table td, .usage-table th { padding: 12px; text-align: left; border-bottom: 1px solid #e2e9e4; }
+.usage-table small { display: block; max-width: 260px; overflow-wrap: anywhere; color: #657a6f; }
+.usage-call { margin: 12px 0; }
+.usage summary { cursor: pointer; }
+.usage dl > div { display: flex; gap: 16px; padding: 5px 0; }
+.usage dt { min-width: 130px; }.usage dd { margin: 0; overflow-wrap: anywhere; }

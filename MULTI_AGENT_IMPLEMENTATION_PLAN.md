@@ -501,14 +501,7 @@ off → shadow → test1~test5 → 小比例真实用户 → 全量 on
 第一阶段计划增加以下配置，具体名称实施时以 `Settings` 规范为准：
 
 ```text
-MULTI_AGENT_MODE=off|shadow|canary|on
 MULTI_AGENT_CANARY_USER_IDS=
-MULTI_AGENT_GRAPH_VERSION=typed-supervisor-v1
-STYLE_RENDER_ALL_NORMAL_REPLIES=true
-NUTRITION_AGENT_ENABLED=false
-NUTRITION_RAG_ENABLED=false
-NUTRITION_REQUIRE_RAG_CITATIONS=true
-RESPONSE_REVIEWER_ENABLED=false
 ```
 
 配置只决定产品启用范围和安全策略，不能用关键词配置代替模型对用户语义的理解。

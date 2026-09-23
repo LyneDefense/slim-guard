@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect
 
-from slim_guard.expression_style.trainer.contracts import BuildBudget
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 from slim_guard.style_management.builds import BuildRepository
 from slim_guard.style_management.contracts import ExampleInput, ReviewInput, StyleInput
 from slim_guard.style_management.corpus import CorpusRepository
@@ -160,12 +160,12 @@ async def test_failed_build_does_not_mark_material_used_and_resume_reuses_cache(
     assert sum(r.output_schema_name == "AnalysisBatch" for r in gateway.requests) == analysis_calls
 
 
-async def test_budget_failures_and_style_scoping(style_db):
+async def test_build_completes_past_former_budget_and_keeps_style_scoping(style_db):
     corpus, builds = CorpusRepository(style_db), BuildRepository(style_db)
     first = await material(style_db)
     other = await corpus.create_style(StyleInput(name="另一风格"))
     run = await builds.build(
-        "doctor", "admin", model="test-model", budget=BuildBudget(max_calls=20)
+        "doctor", "admin", model="test-model", config=BuildExecutionConfig()
     )
     with pytest.raises(LookupError):
         await builds.detail(other["id"], run["id"])
@@ -173,10 +173,10 @@ async def test_budget_failures_and_style_scoping(style_db):
         await corpus.delete(other["id"], first["id"])
     await StyleWorker(style_db, TrainerGateway(), "test-model").run_once()
     detail = await builds.detail("doctor", run["id"])
-    assert detail["status"] == "failed"
-    assert detail["usage"]["calls"] == 20
+    assert detail["status"] == "completed"
+    assert detail["usage"]["calls"] > 20
     async with style_db.session() as s:
-        assert await s.get(Version, run["id"]) is None
+        assert await s.get(Version, run["id"]) is not None
 
 
 async def test_bad_test_objection_never_becomes_style_material_or_regression(style_db):

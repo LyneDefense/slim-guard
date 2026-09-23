@@ -23,6 +23,7 @@ from slim_guard.nutrition_rag.repository import (
     NutritionRagRepository,
 )
 from slim_guard.nutrition_rag.retrieval import HybridNutritionRagService
+from slim_guard.usage.context import usage_operation
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +52,7 @@ class NutritionEvaluationService:
         self.database = repository.database
         self.retrieval = retrieval
 
+    @usage_operation("nutrition_evaluation", source="job", category="evaluation")
     async def execute(
         self,
         job: NutritionJob,
