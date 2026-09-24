@@ -23,22 +23,24 @@ async function writeQueue(queue: PendingChat[]): Promise<void> {
 
 export async function enqueueChat(
   payload: ChatPayload,
-  imageUri?: string,
+  imageUris: string[] = [],
 ): Promise<PendingChat> {
-  let savedImageUri: string | undefined;
-  if (imageUri) {
+  const savedImageUris: string[] = [];
+  if (imageUris.length > 0) {
     if (!queueDirectory.exists) queueDirectory.create({ intermediates: true, idempotent: true });
-    const source = new File(imageUri);
-    const extension = source.extension || '.jpg';
-    const destination = new File(queueDirectory, `${payload.idempotency_key}${extension}`);
-    await source.copy(destination);
-    savedImageUri = destination.uri;
+    for (const [index, imageUri] of imageUris.entries()) {
+      const source = new File(imageUri);
+      const extension = source.extension || '.jpg';
+      const destination = new File(queueDirectory, `${payload.idempotency_key}-${index}${extension}`);
+      await source.copy(destination);
+      savedImageUris.push(destination.uri);
+    }
   }
-  const { image_base64: _, ...storedPayload } = payload;
+  const { image_base64: _legacyImage, images: _images, ...storedPayload } = payload;
   const item: PendingChat = {
     payload: storedPayload,
-    imageUri: savedImageUri,
-    previewUri: savedImageUri,
+    imageUris: savedImageUris,
+    previewUri: savedImageUris[0],
     createdAt: new Date().toISOString(),
   };
   const queue = await readQueue();
@@ -51,18 +53,27 @@ export async function listPendingChats(): Promise<PendingChat[]> {
 }
 
 export async function hydratePendingChat(item: PendingChat): Promise<ChatPayload> {
-  if (!item.imageUri) return item.payload;
-  const file = new File(item.imageUri);
-  if (!file.exists) throw new Error('离线照片已不可用，请重新选择');
-  return { ...item.payload, image_base64: await file.base64() };
+  const imageUris = item.imageUris?.length ? item.imageUris : item.imageUri ? [item.imageUri] : [];
+  if (!imageUris.length) return item.payload;
+  const images = [];
+  for (const uri of imageUris) {
+    const file = new File(uri);
+    if (!file.exists) throw new Error('离线照片已不可用，请重新选择');
+    images.push({ image_base64: await file.base64(), mime_type: 'image/jpeg' as const });
+  }
+  if (item.imageUri && !item.imageUris?.length) {
+    return { ...item.payload, image_base64: images[0].image_base64, image_mime_type: 'image/jpeg' };
+  }
+  return { ...item.payload, images };
 }
 
 export async function removePendingChat(idempotencyKey: string): Promise<void> {
   const queue = await readQueue();
   const removed = queue.find((item) => item.payload.idempotency_key === idempotencyKey);
   await writeQueue(queue.filter((item) => item.payload.idempotency_key !== idempotencyKey));
-  if (removed?.imageUri) {
-    const file = new File(removed.imageUri);
+  const imageUris = removed?.imageUris?.length ? removed.imageUris : removed?.imageUri ? [removed.imageUri] : [];
+  for (const uri of imageUris) {
+    const file = new File(uri);
     if (file.exists) file.delete();
   }
 }

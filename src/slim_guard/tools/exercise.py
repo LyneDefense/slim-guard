@@ -17,6 +17,7 @@ from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolEffectLevel,
+    ToolEffectStatus,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -68,6 +69,19 @@ class ExerciseToolHandlers:
         self._repository = repository
         self._clock = clock or self._utc_now
 
+    async def lookup_result(self, context: ToolContext) -> ToolResult | None:
+        if context.execution_idempotency_key is None:
+            return None
+        record = await self._repository.by_operation(
+            context.user_id, context.execution_idempotency_key
+        )
+        if record is None:
+            return None
+        return ToolResult.success(
+            output={**self._record_output(record), "created": False},
+            source_ids=(record.id,),
+        )
+
     async def record_exercise(
         self,
         context: ToolContext,
@@ -90,23 +104,33 @@ class ExerciseToolHandlers:
                 ),
                 reported_energy_kcal=arguments.reported_energy_kcal,
                 note=arguments.note,
-                occurred_at=self._occurrence_time(arguments.occurred_at),
+                occurred_at=self._occurrence_time(
+                    arguments.occurred_at
+                    or (
+                        context.operation_started_at.isoformat()
+                        if context.operation_started_at
+                        else None
+                    )
+                ),
                 idempotency_key=context.execution_idempotency_key,
                 source_turn_id=context.turn_id,
                 source_item_id=context.source_item_id,
                 source_tool_call_id=context.tool_call_id,
             )
-            creation = await self._repository.record(command)
         except ValidationError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_exercise_record",
                 message="The exercise record contains invalid or out-of-range data.",
             )
         except ValueError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_exercise_time",
                 message="The exercise time must be a timezone-aware ISO 8601 value.",
             )
+        try:
+            creation = await self._repository.record(command)
         except ExerciseRecordCollision:
             return ToolResult.failed(
                 code="exercise_record_collision",
@@ -114,6 +138,7 @@ class ExerciseToolHandlers:
             )
         except ExerciseSourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="exercise_source_mismatch",
                 message="The exercise record source could not be verified.",
             )
@@ -208,6 +233,7 @@ def exercise_tool_executors(
         RECORD_EXERCISE_TOOL_NAME: ToolExecutor(
             arguments_model=RecordExerciseArguments,
             handler=handlers.record_exercise,
+            lookup_result=handlers.lookup_result,
         ),
         GET_RECENT_EXERCISE_TOOL_NAME: ToolExecutor(
             arguments_model=GetRecentExerciseArguments,

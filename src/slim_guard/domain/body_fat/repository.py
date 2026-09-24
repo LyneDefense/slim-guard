@@ -27,6 +27,17 @@ class BodyFatRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    async def by_operation(self, user_id: str, operation_id: str) -> BodyFatRecordRef | None:
+        """Lookup committed state, including archived rows; absence is not a retry grant."""
+        async with self.database.session() as session:
+            row = await session.scalar(
+                select(BodyFatRecord).where(
+                    BodyFatRecord.user_id == user_id,
+                    BodyFatRecord.idempotency_key == operation_id,
+                )
+            )
+            return self._ref(row) if row is not None else None
+
     async def record(self, command: BodyFatMeasurementCommand) -> BodyFatRecordCreation:
         row = BodyFatRecord(
             user_id=command.user_id,

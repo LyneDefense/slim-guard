@@ -13,6 +13,7 @@ from slim_guard.agent_models.errors import (
     ModelTransportError,
 )
 from slim_guard.agent_models.gateway import ModelUsage
+from slim_guard.agent_models.retry import parse_retry_after
 from slim_guard.agent_models.vision import (
     VisionInspectionRequest,
     VisionInspectionResponse,
@@ -62,9 +63,7 @@ class ZhipuVisionModelGateway:
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": (
-                                    f"data:{request.image_mime_type};base64,{encoded}"
-                                )
+                                "url": (f"data:{request.image_mime_type};base64,{encoded}")
                             },
                         },
                     ],
@@ -84,9 +83,14 @@ class ZhipuVisionModelGateway:
         except httpx.TransportError:
             raise ModelTransportError("Zhipu vision network request failed") from None
         if response.is_error:
+            try:
+                capture_provider_usage(response.json())
+            except ValueError:
+                pass
             raise ModelProviderError(
                 f"Zhipu vision returned HTTP status {response.status_code}",
                 status_code=response.status_code,
+                retry_after_seconds=parse_retry_after(response.headers.get("Retry-After")),
             )
         try:
             return response.json()
@@ -166,9 +170,7 @@ class ZhipuVisionModelGateway:
             output_tokens=ZhipuVisionModelGateway._token_count(
                 raw.get("completion_tokens", raw.get("output_tokens", 0))
             ),
-            total_tokens=ZhipuVisionModelGateway._token_count(
-                raw.get("total_tokens", 0)
-            ),
+            total_tokens=ZhipuVisionModelGateway._token_count(raw.get("total_tokens", 0)),
         )
 
     @staticmethod

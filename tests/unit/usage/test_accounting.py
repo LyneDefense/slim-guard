@@ -189,6 +189,35 @@ async def test_background_job_binds_original_user_turn():
     assert bound.category == "background"
 
 
+@pytest.mark.parametrize("succeeds", [True, False])
+async def test_network_retry_attempts_aggregate_with_unknown_usage(usage_db, succeeds):
+    from slim_guard.agent_models.assembly import build_model_gateway
+    from slim_guard.agent_models.errors import ModelTimeoutError
+
+    error = ModelTimeoutError("network timeout")
+    model = ScriptedModelGateway(
+        [error, response(ModelUsage(total_tokens=10))] if succeeds else [error, error, error]
+    )
+    repo = UsageRepository(usage_db)
+    gateway = build_model_gateway(model, repo)
+    with usage_scope(user_id="a", turn_id="t", agent_role="core", invocation_id="core"):
+        if succeeds:
+            await gateway.complete(request())
+        else:
+            with pytest.raises(ModelTimeoutError) as caught:
+                await gateway.complete(request())
+            assert caught.value is error
+    detail = await repo.detail(user_id="a", request_id="t", limit=20, offset=0)
+    assert detail["summary"]["calls"] == (2 if succeeds else 3)
+    assert detail["summary"]["unknown_calls"] == (1 if succeeds else 3)
+    assert detail["summary"]["failed_calls"] == (1 if succeeds else 3)
+    assert detail["summary"]["total_tokens"] == (10 if succeeds else 0)
+    assert detail["agents"][0]["calls"] == (2 if succeeds else 3)
+    assert all(row["total_tokens"] is None for row in detail["items"] if row["status"] == "failed")
+    other = await repo.detail(user_id="b", request_id="t", limit=20, offset=0)
+    assert other["items"] == []
+
+
 async def test_embedding_shape_failure_retains_raw_usage():
     store = Store()
     async with httpx.AsyncClient(

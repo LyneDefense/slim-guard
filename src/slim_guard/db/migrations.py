@@ -41,6 +41,7 @@ from slim_guard.nutrition_rag.profiles import (
 from slim_guard.style_management.migration import reset_style_schema
 from slim_guard.style_management.trainer_migration import migrate_trainer_schema
 from slim_guard.tasks.migration import migrate_conversation_tasks
+from slim_guard.tool_operations.migration import migrate_tool_operations
 from slim_guard.usage.migration import migrate_usage
 
 
@@ -539,6 +540,7 @@ MIGRATIONS = (
     SchemaMigration("20260920_01_chat_attachment_retention", retain_chat_attachments),
     SchemaMigration("20260923_01_conversation_tasks", migrate_conversation_tasks),
     SchemaMigration("20260923_02_model_usage", migrate_usage),
+    SchemaMigration("20260923_03_tool_operations", migrate_tool_operations),
 )
 
 

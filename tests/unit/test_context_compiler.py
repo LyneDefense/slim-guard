@@ -103,7 +103,7 @@ def initialized_turn(
                 sequence=1,
                 item_type=ItemType.USER_MESSAGE,
                 status=ItemStatus.COMPLETED,
-                payload={"text": "今天 77.6kg"},
+                payload={"text": "今天 77.6kg", "source_message_id": "current-message"},
             ),
             ItemRef(
                 id="item-image",
@@ -111,7 +111,11 @@ def initialized_turn(
                 sequence=2,
                 item_type=ItemType.IMAGE_ATTACHMENT,
                 status=ItemStatus.COMPLETED,
-                payload={"asset_id": "asset-scale-1", "mime_type": "image/jpeg"},
+                payload={
+                    "asset_id": "asset-scale-1",
+                    "mime_type": "image/jpeg",
+                    "source_message_id": "current-message",
+                },
             ),
         )
     context = HarnessTurnContext(
@@ -159,12 +163,10 @@ def test_compiler_builds_minimal_versioned_model_request() -> None:
     ]
     assert request.messages[0].content == SYSTEM_PROMPT
     assert "不可信数据" in (request.messages[1].content or "")
-    assert current_time.isoformat() in (request.messages[1].content or "")
-    assert request.messages[2].content == "今天 77.6kg"
+    assert current_time.isoformat() in (request.messages[2].content or "")
     assert json.loads(request.messages[3].content or "") == {
-        "asset_id": "asset-scale-1",
-        "mime_type": "image/jpeg",
-        "type": "image_attachment",
+        "attachments": [{"asset_id": "asset-scale-1", "mime_type": "image/jpeg"}],
+        "text": "今天 77.6kg",
     }
     assert compiled.input_item_ids == ("item-text", "item-image")
     assert request.metadata["agent_version_id"] == agent_manifest.version_id
@@ -213,14 +215,16 @@ def test_compiler_places_authoritative_facts_before_untrusted_input() -> None:
     assert [message.role for message in messages] == [
         MessageRole.SYSTEM,
         MessageRole.SYSTEM,
-        MessageRole.SYSTEM,
+        MessageRole.USER,
         MessageRole.USER,
         MessageRole.USER,
     ]
-    assert "权威用户事实" in (messages[2].content or "")
-    assert json.loads((messages[2].content or "").split("：", maxsplit=1)[1]) == {
-        "profile": {"nickname": "小明"},
-        "recent_weights": [{"weight_kg": "77.6"}],
+    assert json.loads((messages[3].content or "").split("：", maxsplit=1)[1]) == {
+        "type": "authoritative_context",
+        "data": {
+            "profile": {"nickname": "小明"},
+            "recent_weights": [{"weight_kg": "77.6"}],
+        },
     }
 
 
@@ -260,6 +264,72 @@ def test_compiler_only_authorizes_user_evidence_refs_from_working_memory() -> No
     assert compiled.evidence_item_ids == ("item-user-height",)
 
 
+def test_context_data_uses_user_role_and_recent_dialogue_keeps_speakers() -> None:
+    agent_manifest = manifest()
+    compiler = ContextCompiler(
+        manifest=agent_manifest,
+        system_prompt=SYSTEM_PROMPT,
+        tools=registry(),
+    )
+    compiled = compiler.compile(
+        initialized=initialized_turn(agent_manifest),
+        current_time=datetime.now(UTC),
+        authoritative_context={
+            "profile": {"nickname": "小明"},
+            "working_memory": {
+                "pending_user_confirmations": [{"action_id": "action-1"}],
+                "recent_dialogue": [
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "这是我的午餐",
+                                "evidence_ref": "item-lunch",
+                                "attachments": [
+                                    {
+                                        "asset_id": "asset-lunch",
+                                        "mime_type": "image/jpeg",
+                                        "annotation": {"description": "米饭和青菜"},
+                                    }
+                                ],
+                            },
+                            {"role": "assistant", "content": "已收到。"},
+                        ]
+                    }
+                ],
+            },
+        },
+    )
+
+    messages = compiled.request.messages
+    assert [message.role for message in messages] == [
+        MessageRole.SYSTEM,
+        MessageRole.SYSTEM,
+        MessageRole.USER,
+        MessageRole.USER,
+        MessageRole.USER,
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.USER,
+    ]
+    assert all(message.role is not MessageRole.SYSTEM for message in messages[2:])
+    historical_user = json.loads(messages[5].content or "")
+    assert historical_user == {
+        "type": "historical_user_message",
+        "text": "这是我的午餐",
+        "evidence_ref": "item-lunch",
+        "attachments": [
+            {
+                "asset_id": "asset-lunch",
+                "mime_type": "image/jpeg",
+                "annotation": {"description": "米饭和青菜"},
+            }
+        ],
+    }
+    assert messages[6].content == "已收到。"
+    assert json.loads(messages[7].content or "")["attachments"][0]["asset_id"] == "asset-scale-1"
+
+
 def test_scheduled_turn_needs_no_fake_user_message() -> None:
     agent_manifest = manifest()
     compiler = ContextCompiler(
@@ -281,9 +351,10 @@ def test_scheduled_turn_needs_no_fake_user_message() -> None:
     assert [message.role for message in compiled.request.messages] == [
         MessageRole.SYSTEM,
         MessageRole.SYSTEM,
+        MessageRole.USER,
     ]
     assert '"trigger":"daily_review"' in (
-        compiled.request.messages[1].content or ""
+        compiled.request.messages[2].content or ""
     )
     assert compiled.request.tool_choice is ToolChoice.NONE
 

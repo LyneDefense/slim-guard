@@ -23,6 +23,7 @@ from slim_guard.agent_models.gateway import (
     ResponseFormat,
     ToolChoice,
 )
+from slim_guard.agent_models.retry import parse_retry_after
 from slim_guard.usage.gateway import capture_provider_usage
 
 
@@ -59,9 +60,14 @@ class ZhipuModelGateway:
         except httpx.TransportError:
             raise ModelTransportError("Zhipu network request failed") from None
         if response.is_error:
+            try:
+                capture_provider_usage(response.json())
+            except ValueError:
+                pass
             raise ModelProviderError(
                 f"Zhipu returned HTTP status {response.status_code}",
                 status_code=response.status_code,
+                retry_after_seconds=parse_retry_after(response.headers.get("Retry-After")),
             )
         try:
             body = response.json()
@@ -155,9 +161,7 @@ class ZhipuModelGateway:
                 message=ModelMessage(
                     role=MessageRole.ASSISTANT,
                     content=(
-                        content.strip()
-                        if isinstance(content, str) and content.strip()
-                        else None
+                        content.strip() if isinstance(content, str) and content.strip() else None
                     ),
                     tool_calls=tool_calls,
                 ),

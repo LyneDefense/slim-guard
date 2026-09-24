@@ -1,7 +1,10 @@
 """Prepare trusted context and effective permissions before Core executes."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
@@ -13,6 +16,9 @@ from slim_guard.harness.safety import DefaultInputSafetyPolicy, InputSafetyPolic
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.memory.recall import MemoryRecaller, MemoryRecallResult
 from slim_guard.tools.policy import ToolAuthorization
+
+if TYPE_CHECKING:
+    from slim_guard.tool_operations.contracts import OperationStore
 
 
 class TurnGrants(BaseModel):
@@ -52,12 +58,14 @@ class TurnContextPreparer:
         context_data: ContextDataProvider | None = None,
         memory_recaller: MemoryRecaller | None = None,
         input_safety: InputSafetyPolicy | None = None,
+        operations: OperationStore | None = None,
     ) -> None:
         self._compiler = compiler
         self._recorder = recorder
         self._context_data = context_data or EmptyContextDataProvider()
         self._memory_recaller = memory_recaller
         self._input_safety = input_safety or DefaultInputSafetyPolicy()
+        self._operations = operations
 
     async def prepare(
         self, initialized: InitializedTurn, grants: TurnGrants, now: datetime
@@ -73,6 +81,26 @@ class TurnContextPreparer:
                     input_items=initialized.input_items,
                 )
             )
+            if self._operations is not None and not safety.blocks_tools:
+                unsettled = await self._operations.list_unsettled(
+                    user_id=initialized.context.user_id,
+                    thread_id=initialized.context.thread_id,
+                    execution_mode=initialized.context.execution_mode,
+                )
+                summaries = [
+                    {
+                        "operation_id": op.id,
+                        "tool_name": op.tool_name,
+                        "status": op.status,
+                        "source_turn_id": op.context.turn_id,
+                        "source_item_id": op.context.source_item_id,
+                    }
+                    for op in unsettled
+                    if grants.allowed_tool_names is None
+                    or op.tool_name in grants.allowed_tool_names
+                ]
+                if summaries:
+                    context["unfinished_tool_operations"] = summaries
             if self._memory_recaller is not None:
                 recall = await self._memory_recaller.recall(
                     initialized=initialized, current_time=now, context=context

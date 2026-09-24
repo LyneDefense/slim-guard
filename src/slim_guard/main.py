@@ -12,6 +12,7 @@ from slim_guard.agent.composition import build_agent_runtime
 from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.manifest import build_agent_manifest
 from slim_guard.agent.runtime import AgentRuntime
+from slim_guard.agent_models.assembly import build_model_gateway
 from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.embeddings import ZhipuEmbeddingGateway
 from slim_guard.agent_models.gateway import ModelGateway
@@ -85,7 +86,6 @@ from slim_guard.style_management.routes import router as expression_style_router
 from slim_guard.style_management.worker import StyleWorker
 from slim_guard.tasks.config import TaskRuntimeConfig
 from slim_guard.tasks.repository import ConversationTaskRepository
-from slim_guard.usage.gateway import MeasuredModelGateway
 from slim_guard.usage.repository import UsageRepository
 from slim_guard.usage.routes import router as usage_router
 
@@ -205,7 +205,7 @@ def create_app(
                 embedding_gateway=owned_nutrition_embedding,
                 rerank_gateway=owned_nutrition_reranker,
                 answerability_gateway=ModelAnswerabilityGateway(
-                    gateway=MeasuredModelGateway(
+                    gateway=build_model_gateway(
                         active_model_for_services, UsageRepository(database)
                     ),
                     model=app_settings.zhipu_text_model,
@@ -456,7 +456,7 @@ def create_app(
                     database,
                     index_sync_enabled=active_memory_engine is not None,
                 ),
-                model=MeasuredModelGateway(active_model_for_services, UsageRepository(database)),
+                model=build_model_gateway(active_model_for_services, UsageRepository(database)),
                 model_name=app_settings.zhipu_text_model,
                 interval_seconds=app_settings.memory_extraction_interval_seconds,
                 batch_size=app_settings.memory_extraction_batch_size,
@@ -500,7 +500,7 @@ def create_app(
                 active_model_for_services = owned_model_gateway
             style_iteration_worker = StyleWorker(
                 database,
-                MeasuredModelGateway(active_model_for_services, UsageRepository(database)),
+                build_model_gateway(active_model_for_services, UsageRepository(database)),
                 app_settings.zhipu_text_model,
                 app_settings.style_iteration_poll_seconds,
             )

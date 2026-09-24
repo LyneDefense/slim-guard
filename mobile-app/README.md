@@ -61,11 +61,19 @@ MOBILE_TEST_ACCOUNT_PASSWORD=123456
 
 ## 静态校验
 
+React 与 React DOM 显式固定为 Expo SDK 57 要求的 `19.2.3`。即使只运行原生 App，
+`@expo/ui` 的依赖树也会涉及 React DOM；不要单独升级其中一个包，也不要用 `--force` 或
+`--legacy-peer-deps` 绕过版本冲突。修改依赖后应验证一次标准 `npm ci`，确认锁文件可以干净安装。
+
 ```bash
+npm test
 npm run typecheck
 npm run bundle:ios
 npm run bundle:android
 ```
+
+`npm test` 当前覆盖日期字段的 JS 交互和日期序列化，使用原生视图替身；它不替代 iOS/Android
+真机布局验收。iOS 日期选择在独立弹窗中完成，滚动后点“确定”才回填，“取消”不修改原值。
 
 完整部署和 EAS 构建步骤见仓库根目录的
 [`MOBILE_APP_DEPLOYMENT.md`](../MOBILE_APP_DEPLOYMENT.md)。

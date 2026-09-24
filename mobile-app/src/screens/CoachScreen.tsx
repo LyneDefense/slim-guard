@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandMark } from '../components/ui';
 import { useApp } from '../context/AppContext';
+import { mobileApi } from '../lib/api';
 import { colors, radius, spacing } from '../theme';
 import type { ChatMessage } from '../types';
 
@@ -26,7 +27,7 @@ type SelectedImage = { uri: string; mimeType: 'image/jpeg' };
 export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDraft: () => void }) {
   const { data, sendMessage, online, pending } = useApp();
   const [text, setText] = useState('');
-  const [image, setImage] = useState<SelectedImage | null>(null);
+  const [images, setImages] = useState<SelectedImage[]>([]);
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -42,6 +43,10 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
   }, [data?.messages.length, pending.length]);
 
   async function chooseImage(source: 'camera' | 'library') {
+    if (images.length >= 8) {
+      Alert.alert('照片数量已达上限', '一条消息最多可以发送 8 张照片。');
+      return;
+    }
     if (source === 'camera') {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -51,14 +56,22 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
     }
     const result = source === 'camera'
       ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+      : await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        allowsMultipleSelection: true,
+        selectionLimit: Math.max(1, 8 - images.length),
+      });
     if (result.canceled) return;
-    const asset = result.assets[0];
-    const context = ImageManipulator.manipulate(asset.uri);
-    if (asset.width > 1600) context.resize({ width: 1600, height: null });
-    const rendered = await context.renderAsync();
-    const converted = await rendered.saveAsync({ compress: 0.72, format: SaveFormat.JPEG });
-    setImage({ uri: converted.uri, mimeType: 'image/jpeg' });
+    const selected = result.assets.slice(0, Math.max(0, 8 - images.length));
+    const converted = await Promise.all(selected.map(async (asset) => {
+      const context = ImageManipulator.manipulate(asset.uri);
+      if (asset.width > 1600) context.resize({ width: 1600, height: null });
+      const rendered = await context.renderAsync();
+      const saved = await rendered.saveAsync({ compress: 0.72, format: SaveFormat.JPEG });
+      return { uri: saved.uri, mimeType: 'image/jpeg' as const };
+    }));
+    setImages((current) => [...current, ...converted]);
   }
 
   function showImageMenu() {
@@ -70,18 +83,18 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
   }
 
   async function send() {
-    if ((!text.trim() && !image) || sending) return;
+    if ((!text.trim() && !images.length) || sending) return;
     const messageText = text;
-    const messageImage = image;
+    const messageImages = images;
     setText('');
-    setImage(null);
+    setImages([]);
     setSending(true);
     try {
-      const result = await sendMessage(messageText, messageImage || undefined);
+      const result = await sendMessage(messageText, messageImages);
       if (result === 'queued') Alert.alert('已放进待发送', '网络恢复后会自动发送，不需要再发一次。');
     } catch {
       setText(messageText);
-      setImage(messageImage);
+      setImages(messageImages);
     } finally {
       setSending(false);
     }
@@ -112,11 +125,19 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
             </View>
           ) : null}
         </ScrollView>
-        {image ? (
+        {images.length ? (
           <View style={styles.previewBar}>
-            <Image source={{ uri: image.uri }} style={styles.previewImage} />
-            <Text style={styles.previewText}>照片已准备好</Text>
-            <Pressable onPress={() => setImage(null)} style={styles.removeImage}><Ionicons name="close" size={19} color={colors.ink} /></Pressable>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewList}>
+              {images.map((image, index) => (
+                <View key={`${image.uri}-${index}`} style={styles.previewItem}>
+                  <Image source={{ uri: image.uri }} style={styles.previewImage} />
+                  <Pressable onPress={() => setImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={styles.removeImage} accessibilityLabel="移除照片">
+                    <Ionicons name="close" size={14} color={colors.ink} />
+                  </Pressable>
+                </View>
+              ))}
+              <Text style={styles.previewText}>{images.length} 张照片将和文字一起发送</Text>
+            </ScrollView>
           </View>
         ) : null}
         <View style={styles.composer}>
@@ -135,9 +156,9 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
           />
           <Pressable
             accessibilityLabel="发送"
-            disabled={(!text.trim() && !image) || sending}
+            disabled={(!text.trim() && !images.length) || sending}
             onPress={() => void send()}
-            style={[styles.sendButton, ((!text.trim() && !image) || sending) && styles.sendDisabled]}
+            style={[styles.sendButton, ((!text.trim() && !images.length) || sending) && styles.sendDisabled]}
           >
             <Ionicons name={sending ? 'hourglass-outline' : 'arrow-up'} size={21} color={colors.white} />
           </Pressable>
@@ -150,14 +171,22 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
 function Bubble({ message }: { message: ChatMessage }) {
   const mine = message.participant === 'user' || message.role === 'user';
   const coach = message.participant === 'coach';
-  const displayedText = (message.text || (message.kind === 'image' ? '📷 图片' : '')).replace(/\*\*/g, '');
+  const displayedText = (message.text || (message.kind === 'image' && !message.attachments?.length ? '📷 图片' : '')).replace(/\*\*/g, '');
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
       {!mine ? <View style={[styles.smallAvatar, coach ? styles.coachAvatar : styles.systemAvatar]}><Ionicons name={coach ? 'medkit-outline' : 'settings-outline'} size={13} color={colors.white} /></View> : null}
       <View style={[styles.bubble, mine ? styles.bubbleMine : coach ? styles.bubbleCoach : styles.bubbleSystem, message.failed && styles.bubbleFailed]}>
         {!mine ? <Text style={styles.senderLabel}>{coach ? '医生教练' : '系统助手'}</Text> : null}
         {message.kind === 'card' && message.card ? <CardContent card={message.card} /> : null}
-        {message.kind !== 'card' ? <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{displayedText}</Text> : null}
+        {message.attachments?.length ? (
+          <View style={styles.messageAttachments}>
+            {message.attachments.map((attachment, index) => {
+              const source = mobileApi.imageSource(attachment);
+              return source ? <Image key={`${attachment.asset_id || attachment.uri}-${index}`} source={source} style={styles.messageImage} resizeMode="cover" /> : null;
+            })}
+          </View>
+        ) : null}
+        {message.kind !== 'card' && displayedText ? <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{displayedText}</Text> : null}
         {message.pending ? <Text style={[styles.messageState, mine && { color: '#D8E5DC' }]}>发送中…</Text> : null}
         {message.failed ? <Text style={styles.failedText}>发送失败，可重新发送</Text> : null}
       </View>
@@ -232,10 +261,14 @@ const styles = StyleSheet.create({
   failedText: { color: colors.danger, fontSize: 10, marginTop: 4 },
   queueBanner: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: colors.accentSoft, borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginTop: spacing.sm },
   queueText: { color: colors.warning, fontSize: 12, fontWeight: '600' },
-  previewBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, backgroundColor: colors.surface },
-  previewImage: { width: 48, height: 48, borderRadius: 12 },
-  previewText: { color: colors.ink, fontSize: 13, fontWeight: '600', marginLeft: spacing.md },
-  removeImage: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: colors.surfaceMuted, alignItems: 'center', justifyContent: 'center' },
+  previewBar: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, backgroundColor: colors.surface },
+  previewList: { alignItems: 'center', gap: spacing.sm },
+  previewItem: { position: 'relative' },
+  previewImage: { width: 54, height: 54, borderRadius: 12 },
+  previewText: { color: colors.inkMuted, fontSize: 12, fontWeight: '600', marginLeft: spacing.xs },
+  removeImage: { position: 'absolute', right: -5, top: -5, width: 22, height: 22, borderRadius: 11, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', elevation: 1 },
+  messageAttachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 5 },
+  messageImage: { width: 180, height: 180, borderRadius: 12, backgroundColor: colors.line },
   composer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: spacing.md, paddingVertical: 10, gap: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, backgroundColor: colors.surface },
   addButton: { width: 44, height: 44, borderRadius: 16, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, minHeight: 44, maxHeight: 116, borderRadius: 18, backgroundColor: colors.surfaceMuted, color: colors.ink, fontSize: 15, lineHeight: 21, paddingHorizontal: spacing.lg, paddingVertical: 11 },

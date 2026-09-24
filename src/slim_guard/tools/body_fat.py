@@ -17,7 +17,13 @@ from slim_guard.domain.body_fat.errors import (
     BodyFatSourceMismatch,
 )
 from slim_guard.domain.body_fat.repository import BodyFatRepository
-from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolContext,
+    ToolEffectLevel,
+    ToolEffectStatus,
+    ToolResult,
+)
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
@@ -45,6 +51,19 @@ class BodyFatToolHandlers:
         self._repository = repository
         self._clock = clock or self._utc_now
 
+    async def lookup_result(self, context: ToolContext) -> ToolResult | None:
+        if context.execution_idempotency_key is None:
+            return None
+        record = await self._repository.by_operation(
+            context.user_id, context.execution_idempotency_key
+        )
+        if record is None:
+            return None
+        return ToolResult.success(
+            output={**self._record_output(record), "created": False},
+            source_ids=(record.id,),
+        )
+
     async def record_body_fat(
         self,
         context: ToolContext,
@@ -56,28 +75,37 @@ class BodyFatToolHandlers:
                 message="The body-fat record is missing its trusted execution identity.",
             )
         try:
-            measured_at = self._measurement_time(arguments.measured_at)
-            creation = await self._repository.record(
-                BodyFatMeasurementCommand(
-                    user_id=context.user_id,
-                    value=Decimal(str(arguments.value)),
-                    measured_at=measured_at,
-                    idempotency_key=context.execution_idempotency_key,
-                    source_turn_id=context.turn_id,
-                    source_item_id=context.source_item_id,
-                    source_tool_call_id=context.tool_call_id,
+            measured_at = self._measurement_time(
+                arguments.measured_at
+                or (
+                    context.operation_started_at.isoformat()
+                    if context.operation_started_at
+                    else None
                 )
+            )
+            command = BodyFatMeasurementCommand(
+                user_id=context.user_id,
+                value=Decimal(str(arguments.value)),
+                measured_at=measured_at,
+                idempotency_key=context.execution_idempotency_key,
+                source_turn_id=context.turn_id,
+                source_item_id=context.source_item_id,
+                source_tool_call_id=context.tool_call_id,
             )
         except ValidationError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_body_fat_measurement",
                 message="The body-fat percentage is invalid or outside the supported range.",
             )
         except ValueError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_measurement_time",
                 message="The measurement time must be a timezone-aware ISO 8601 value.",
             )
+        try:
+            creation = await self._repository.record(command)
         except BodyFatRecordCollision:
             return ToolResult.failed(
                 code="body_fat_record_collision",
@@ -85,6 +113,7 @@ class BodyFatToolHandlers:
             )
         except BodyFatSourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="body_fat_source_mismatch",
                 message="The body-fat record source could not be verified.",
             )
@@ -121,9 +150,7 @@ class BodyFatToolHandlers:
             "records": [cls._record_output(record) for record in trend.records],
             "current_record_id": trend.current.id if trend.current else None,
             "previous_record_id": trend.previous.id if trend.previous else None,
-            "change_percentage_points": cls._decimal_text(
-                trend.change_percentage_points
-            ),
+            "change_percentage_points": cls._decimal_text(trend.change_percentage_points),
             "direction": trend.direction.value,
         }
 
@@ -189,6 +216,7 @@ def body_fat_tool_executors(
         RECORD_BODY_FAT_TOOL_NAME: ToolExecutor(
             arguments_model=RecordBodyFatArguments,
             handler=handlers.record_body_fat,
+            lookup_result=handlers.lookup_result,
         ),
         GET_RECENT_BODY_FAT_TREND_TOOL_NAME: ToolExecutor(
             arguments_model=GetRecentBodyFatTrendArguments,

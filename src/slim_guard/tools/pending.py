@@ -123,7 +123,7 @@ class PendingActionToolHandlers:
             resolved_by=context.user_id,
             now=now.astimezone(UTC),
         )
-        if outcome.turn.id != context.turn_id and outcome.turn.status is TurnStatus.RUNNING:
+        if outcome.turn.id != context.turn_id:
             await self._state.append_item(
                 turn_id=outcome.turn.id,
                 item_type=ItemType.APPROVAL_RESULT,
@@ -134,18 +134,17 @@ class PendingActionToolHandlers:
                     "status": outcome.action.status.value,
                 },
             )
-            await self._state.transition_turn(
-                turn_id=outcome.turn.id,
-                target=TurnStatus.COMPLETED,
-                expected=TurnStatus.RUNNING,
-            )
+            if outcome.turn.status is TurnStatus.RUNNING:
+                await self._state.transition_turn(
+                    turn_id=outcome.turn.id,
+                    target=TurnStatus.COMPLETED,
+                    expected=TurnStatus.RUNNING,
+                )
         nested = outcome.tool_outcome
         if nested is not None and nested.execution.result.failure is not None:
-            return ToolResult.failed(
-                code="confirmed_action_failed",
-                message="The confirmed action could not be completed.",
-                retryable=nested.execution.result.failure.retryable,
-            )
+            # Preserve the underlying effect status, field issues and operation
+            # reference. Approval failure is not a second business command.
+            return nested.execution.result
         return ToolResult.success(
             output={
                 "action_id": action.id,
@@ -214,5 +213,6 @@ def pending_action_tool_executors(
         RESOLVE_PENDING_USER_ACTION_TOOL_NAME: ToolExecutor(
             arguments_model=ResolvePendingUserActionArguments,
             handler=handlers.resolve_pending_user_action,
+            delegates_operation=True,
         )
     }

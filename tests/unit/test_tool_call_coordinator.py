@@ -33,6 +33,9 @@ class FakeToolGateway:
         self.execution = execution
         self.calls: list[NormalizedToolCall] = []
 
+    def preview_policy(self, *, call, context, authorization):
+        return self.execution.policy_decision
+
     async def execute(
         self,
         *,

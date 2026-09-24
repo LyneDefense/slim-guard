@@ -23,7 +23,13 @@ from slim_guard.memory.errors import (
     MemoryStaleEvidence,
 )
 from slim_guard.memory.repository import MemoryRepository
-from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolContext,
+    ToolEffectLevel,
+    ToolEffectStatus,
+    ToolResult,
+)
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
@@ -77,11 +83,7 @@ def _unit_in_evidence(
 ) -> bool:
     lowered = evidence.lower()
     candidates = sorted(
-        (
-            (unit, alias.lower())
-            for unit, unit_aliases in aliases.items()
-            for alias in unit_aliases
-        ),
+        ((unit, alias.lower()) for unit, unit_aliases in aliases.items() for alias in unit_aliases),
         key=lambda candidate: len(candidate[1]),
         reverse=True,
     )
@@ -97,11 +99,7 @@ def _unit_in_evidence(
 
 
 def _unit_alias_spans(alias: str, lowered: str) -> tuple[tuple[int, int], ...]:
-    pattern = (
-        rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
-        if alias.isascii()
-        else re.escape(alias)
-    )
+    pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])" if alias.isascii() else re.escape(alias)
     return tuple((match.start(), match.end()) for match in re.finditer(pattern, lowered))
 
 
@@ -141,20 +139,23 @@ class UpsertExercisePreferenceArguments(MemoryEvidenceArguments):
 
 
 class ListUserMemoriesArguments(ToolArguments):
-    key: Literal[
-        "identity.preferred_name",
-        "profile.height",
-        "profile.exercise_habit",
-        "coaching.response_style",
-        "food.preference",
-        "exercise.preference",
-        "goal.target_weight",
-        "goal.target_body_fat",
-        "goal.behavior",
-        "constraint.dietary",
-        "constraint.exercise",
-        "constraint.health_context",
-    ] | None = None
+    key: (
+        Literal[
+            "identity.preferred_name",
+            "profile.height",
+            "profile.exercise_habit",
+            "coaching.response_style",
+            "food.preference",
+            "exercise.preference",
+            "goal.target_weight",
+            "goal.target_body_fat",
+            "goal.behavior",
+            "constraint.dietary",
+            "constraint.exercise",
+            "constraint.health_context",
+        ]
+        | None
+    ) = None
     limit: int = Field(default=30, ge=1, le=100)
 
 
@@ -452,6 +453,7 @@ class MemoryToolHandlers:
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="missing_memory_execution_identity",
                 message="Forgetting a memory requires a trusted current user message.",
             )
@@ -468,11 +470,13 @@ class MemoryToolHandlers:
             )
         except MemoryNotFound:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_not_found",
                 message="That memory is not visible to the current user.",
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_source_mismatch",
                 message="The memory change source could not be verified.",
             )
@@ -488,6 +492,7 @@ class MemoryToolHandlers:
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="missing_memory_execution_identity",
                 message="Clearing memories requires a trusted current user message.",
             )
@@ -505,11 +510,13 @@ class MemoryToolHandlers:
             )
         except MemoryEvidenceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_evidence_mismatch",
                 message="The clear request must be grounded in this user message.",
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_source_mismatch",
                 message="The memory clear source could not be verified.",
             )
@@ -543,14 +550,13 @@ class MemoryToolHandlers:
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="missing_memory_execution_identity",
                 message="Saving a memory requires a trusted current user message.",
             )
-        if (
-            evidence_ref is not None
-            and evidence_ref not in context.trusted_evidence_item_ids
-        ):
+        if evidence_ref is not None and evidence_ref not in context.trusted_evidence_item_ids:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_evidence_not_visible",
                 message=(
                     "Historical memory evidence must come from a user message visible in "
@@ -572,16 +578,19 @@ class MemoryToolHandlers:
             )
         except MemoryEvidenceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_evidence_mismatch",
                 message="The memory must be grounded in an exact excerpt of this user message.",
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_source_mismatch",
                 message="The memory source could not be verified.",
             )
         except MemoryStaleEvidence:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_stale_evidence",
                 message=(
                     "That historical statement conflicts with a newer saved value. Ask the "
@@ -596,15 +605,14 @@ class MemoryToolHandlers:
             )
         except ValidationError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_memory_value",
                 message="The memory value is outside its supported schema or safe range.",
             )
         return ToolResult.success(
             output={
                 "memories": [self._output(fact) for fact in result.facts],
-                "changes": [
-                    change.model_dump(mode="json") for change in result.changes
-                ],
+                "changes": [change.model_dump(mode="json") for change in result.changes],
                 "created_count": result.created_count,
             },
             source_ids=tuple(fact.id for fact in result.facts),
@@ -624,6 +632,7 @@ class MemoryToolHandlers:
     def _value_not_in_evidence() -> ToolResult:
         return ToolResult.failed(
             code="memory_value_not_in_evidence",
+            effect_status=ToolEffectStatus.NOT_APPLIED,
             message="The remembered entity must appear exactly in the evidence excerpt.",
         )
 

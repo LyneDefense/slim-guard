@@ -10,7 +10,13 @@ from slim_guard.harness.errors import PendingActionStateConflict
 from slim_guard.tasks.contracts import TaskConflict, TaskError, TaskWrite, Text
 from slim_guard.tasks.ports import TaskAuthorizationStore, TaskStore
 from slim_guard.tasks.presentation import task_summary
-from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolContext,
+    ToolEffectLevel,
+    ToolEffectStatus,
+    ToolResult,
+)
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
@@ -52,7 +58,9 @@ class TaskToolHandlers:
     async def save(self, context: ToolContext, arguments: SaveTaskArguments) -> ToolResult:
         if context.source_item_id is None or context.execution_idempotency_key is None:
             return ToolResult.failed(
-                code="task_source_missing", message="A user source is required."
+                code="task_source_missing",
+                message="A user source is required.",
+                effect_status=ToolEffectStatus.NOT_APPLIED,
             )
         try:
             task = await self._tasks.write(
@@ -70,6 +78,7 @@ class TaskToolHandlers:
                 code="task_update_rejected",
                 message=str(exc)[:1024],
                 retryable=isinstance(exc, TaskConflict),
+                effect_status=ToolEffectStatus.NOT_APPLIED,
             )
         return ToolResult.success(output={"task": task_summary(task)}, source_ids=(task.id,))
 
@@ -126,7 +135,11 @@ class TaskToolHandlers:
             )
             action = await self._actions.attach_task(action_id=arguments.action_id, task=task)
         except (TaskError, LookupError, PendingActionStateConflict) as exc:
-            return ToolResult.failed(code="task_action_link_rejected", message=str(exc))
+            return ToolResult.failed(
+                code="task_action_link_rejected",
+                message=str(exc),
+                effect_status=ToolEffectStatus.NOT_APPLIED,
+            )
         return ToolResult.success(
             output={
                 "task_id": task.id,

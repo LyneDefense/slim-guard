@@ -2,6 +2,7 @@
 
 from slim_guard.agents.nutrition import nutrition_agent_tool_definitions
 from slim_guard.tasks.tools import task_tool_definitions
+from slim_guard.tool_operations.tools import operation_tool_definitions
 from slim_guard.tools.body_fat import body_fat_tool_definitions
 from slim_guard.tools.exercise import exercise_tool_definitions
 from slim_guard.tools.image import image_tool_definitions
@@ -31,6 +32,7 @@ def build_core_tool_registry() -> ToolRegistry:
             *task_tool_definitions(),
             *long_term_memory_tool_definitions(),
             *pending_action_tool_definitions(),
+            *operation_tool_definitions(),
             *nutrition_agent_tool_definitions(),
         )
     )

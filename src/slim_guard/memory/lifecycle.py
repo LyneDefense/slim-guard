@@ -23,6 +23,7 @@ from slim_guard.db.models import (
     UserMemoryFactRecord,
 )
 from slim_guard.db.session import Database
+from slim_guard.tool_operations.lifecycle import scrub_operation_bodies
 from slim_guard.tools.contracts import ToolFailure, ToolResult, ToolResultStatus
 
 TRANSCRIPT_REDACTION_POLICY_VERSION = "agent-item-body-redaction-v1"
@@ -48,6 +49,7 @@ class TranscriptScrubResult:
     pending_action_count: int
     outbound_message_count: int
     proactive_message_count: int
+    tool_operation_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +175,7 @@ class MemoryLifecycleRepository:
             )
             for proactive_message in proactive_messages:
                 proactive_message.content = self.redacted_text(proactive_message.content)
+            operation_count = await scrub_operation_bodies(session, before=cutoff, limit=limit)
             await session.flush()
             return TranscriptScrubResult(
                 item_count=len(items),
@@ -180,6 +183,7 @@ class MemoryLifecycleRepository:
                 pending_action_count=len(actions),
                 outbound_message_count=len(outbound_messages),
                 proactive_message_count=len(proactive_messages),
+                tool_operation_count=operation_count,
             )
 
     async def purge_revoked_values(self, *, before: datetime) -> int:
@@ -376,9 +380,10 @@ class MemoryLifecycleRepository:
                     code=result.failure.code,
                     message="Tool failure detail redacted after retention.",
                     retryable=result.failure.retryable,
+                    effect_status=result.failure.effect_status,
                 ),
             )
-        return redacted.to_model_content()
+        return redacted.model_copy(update={"operation": result.operation}).to_model_content()
 
     @classmethod
     def redacted_json(cls, value: str) -> str:

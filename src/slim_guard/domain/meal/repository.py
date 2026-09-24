@@ -26,6 +26,17 @@ class MealRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    async def by_operation(self, user_id: str, operation_id: str) -> MealRecordRef | None:
+        """Lookup committed state, including archived rows; absence is not a retry grant."""
+        async with self.database.session() as session:
+            row = await session.scalar(
+                select(MealRecord).where(
+                    MealRecord.user_id == user_id,
+                    MealRecord.idempotency_key == operation_id,
+                )
+            )
+            return self._ref(row) if row is not None else None
+
     async def record(self, command: MealRecordCommand) -> MealRecordCreation:
         foods_json = self._foods_json(command.foods)
         row = MealRecord(
@@ -56,9 +67,7 @@ class MealRepository:
             except IntegrityError:
                 await session.rollback()
                 existing = await session.scalar(
-                    select(MealRecord).where(
-                        MealRecord.idempotency_key == command.idempotency_key
-                    )
+                    select(MealRecord).where(MealRecord.idempotency_key == command.idempotency_key)
                 )
                 if existing is None:
                     raise MealRecordCollision(

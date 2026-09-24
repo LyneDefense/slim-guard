@@ -26,6 +26,21 @@ class ToolCallOutcome:
 
 
 class ToolCallRunner(Protocol):
+    def requires_waiting(
+        self,
+        *,
+        call: NormalizedToolCall,
+        context: ToolContext,
+        authorization: ToolAuthorization,
+    ) -> bool: ...
+
+    async def finalize_batch(
+        self,
+        *,
+        turn_id: str,
+        outcomes: tuple[ToolCallOutcome, ...],
+    ) -> TurnStatus | None: ...
+
     async def execute(
         self,
         *,
@@ -34,6 +49,7 @@ class ToolCallRunner(Protocol):
         authorization: ToolAuthorization,
         source_item_id: str | None,
         now: datetime,
+        defer_waiting_transition: bool = False,
     ) -> ToolCallOutcome: ...
 
 
@@ -57,6 +73,20 @@ class ToolCallCoordinator:
         self._confirmation_ttl = confirmation_ttl
         self._review_ttl = review_ttl
 
+    def requires_waiting(
+        self,
+        *,
+        call: NormalizedToolCall,
+        context: ToolContext,
+        authorization: ToolAuthorization,
+    ) -> bool:
+        decision = self._gateway.preview_policy(
+            call=call,
+            context=context,
+            authorization=authorization,
+        )
+        return decision in {ToolPolicyDecision.CONFIRM, ToolPolicyDecision.REVIEW}
+
     async def execute(
         self,
         *,
@@ -65,6 +95,7 @@ class ToolCallCoordinator:
         authorization: ToolAuthorization,
         source_item_id: str | None,
         now: datetime,
+        defer_waiting_transition: bool = False,
     ) -> ToolCallOutcome:
         turn = await self._turn_state.get_turn(context.turn_id)
         if turn is None:
@@ -120,16 +151,39 @@ class ToolCallCoordinator:
             raise PendingActionConfigurationError(
                 f"Existing pending action is already {creation.action.status.value}"
             )
-        waiting_turn = await self._turn_state.transition_turn(
-            turn_id=context.turn_id,
-            target=target_status,
-            expected=TurnStatus.RUNNING,
-        )
+        if not defer_waiting_transition:
+            turn = await self._turn_state.transition_turn(
+                turn_id=context.turn_id,
+                target=target_status,
+                expected=TurnStatus.RUNNING,
+            )
         return ToolCallOutcome(
             execution=execution,
-            turn=waiting_turn,
+            turn=turn,
             pending_action=creation.action,
         )
+
+    async def finalize_batch(
+        self,
+        *,
+        turn_id: str,
+        outcomes: tuple[ToolCallOutcome, ...],
+    ) -> TurnStatus | None:
+        """Publish the batch's first gate only after its ungated calls have run."""
+        pending = [outcome.pending_action for outcome in outcomes if outcome.pending_action]
+        if not pending:
+            return None
+        action_type = pending[0].action_type
+        if action_type is PendingActionType.USER_CONFIRMATION:
+            target = TurnStatus.WAITING_USER_CONFIRMATION
+        else:
+            target = TurnStatus.WAITING_HUMAN_REVIEW
+        turn = await self._turn_state.transition_turn(
+            turn_id=turn_id,
+            target=target,
+            expected=TurnStatus.RUNNING,
+        )
+        return turn.status
 
     def _waiting_spec(
         self,

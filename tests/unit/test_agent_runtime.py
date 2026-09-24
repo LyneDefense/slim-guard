@@ -92,18 +92,14 @@ class HistoricalHeightModelGateway:
         if step == 0:
             return final_reply("知道了。")
         if step == 1:
-            working_memory = next(
-                message.content or ""
+            historical_user = next(
+                json.loads(message.content or "{}")
                 for message in request.messages
-                if "近期对话工作记忆" in (message.content or "")
+                if message.role is MessageRole.USER
+                and '"type":"historical_user_message"' in (message.content or "")
+                and "我身高179" in (message.content or "")
             )
-            payload = json.loads(working_memory.split("：", maxsplit=1)[1])
-            evidence_ref = next(
-                message["evidence_ref"]
-                for turn in payload["recent_dialogue"]
-                for message in turn["messages"]
-                if message["role"] == "user" and message["content"] == "我身高179"
-            )
+            evidence_ref = historical_user["evidence_ref"]
             return tool_call(
                 "call-historical-height",
                 SET_BODY_PROFILE_TOOL_NAME,
@@ -186,7 +182,7 @@ class MealImageFollowupModelGateway:
         step = len(self.requests)
         if step == 1:
             image_input = json.loads(request.messages[-1].content or "")
-            self.asset_id = image_input["asset_id"]
+            self.asset_id = image_input["attachments"][0]["asset_id"]
             return tool_call(
                 "call-inspect-first",
                 "inspect_image",
@@ -199,7 +195,8 @@ class MealImageFollowupModelGateway:
             working = next(
                 message.content or ""
                 for message in request.messages
-                if "近期对话工作记忆" in (message.content or "")
+                if message.role is MessageRole.USER
+                and self.asset_id in (message.content or "")
             )
             assert self.asset_id in working
             assert '"author":"vision_model"' in working
@@ -391,6 +388,9 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             "forget_long_term_memory",
             "clear_long_term_memories",
             "resolve_pending_user_action",
+            "list_unsettled_tool_operations",
+            "get_tool_operation",
+            "resume_tool_operation",
             "consult_nutrition_specialist",
         ]
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
@@ -929,13 +929,20 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
         working_context = next(
             message.content or ""
             for message in model.requests[1].messages
-            if "近期对话工作记忆" in (message.content or "")
+            if message.role is MessageRole.USER
+            and "帮我定个容易开始的运动计划" in (message.content or "")
         )
 
-        assert '"role":"user"' in working_context
-        assert "帮我定个容易开始的运动计划" in working_context
-        assert "先从一周三次快走开始，每次二十分钟。" in working_context
-        assert "刚才那个继续" not in working_context
+        assert json.loads(working_context)["type"] == "historical_user_message"
+        assert any(
+            message.role is MessageRole.ASSISTANT
+            and message.content == "先从一周三次快走开始，每次二十分钟。"
+            for message in model.requests[1].messages
+        )
+        assert not any(
+            "刚才那个继续" in (message.content or "")
+            for message in model.requests[1].messages[:-1]
+        )
         model.assert_exhausted()
     finally:
         await model.close()
@@ -1174,7 +1181,7 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
             ItemType.AGENT_MESSAGE,
         ]
         assert model.requests[0].tools == ()
-        assert '"trigger":"weight_reminder"' in (model.requests[0].messages[1].content or "")
+        assert '"trigger":"weight_reminder"' in (model.requests[0].messages[2].content or "")
     finally:
         await model.close()
         await database.close()

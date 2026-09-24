@@ -78,14 +78,15 @@ class PendingActionResumeCoordinator:
             return PendingResumeOutcome(action=resolved, turn=turn, tool_outcome=None)
         if resolved.status is not PendingActionStatus.APPROVED:
             running_turn = await self._ensure_running(turn, expected_waiting=expected_waiting)
+            waiting_turn = await self._wait_for_next_pending(running_turn)
             return PendingResumeOutcome(
                 action=resolved,
-                turn=running_turn,
+                turn=waiting_turn,
                 tool_outcome=None,
             )
 
         if turn.status not in {expected_waiting, TurnStatus.RUNNING}:
-            related_actions = await self._pending_actions.list_for_execution(resolved.execution_key)
+            related_actions = await self._pending_actions.list_for_turn(turn.id)
             if self._has_pending_gate_for_turn(related_actions, turn.status):
                 return PendingResumeOutcome(
                     action=resolved,
@@ -124,9 +125,10 @@ class PendingActionResumeCoordinator:
         if tool_outcome.execution.policy_decision is ToolPolicyDecision.ALLOW:
             related_actions = await self._consume_approved(related_actions, now=now)
             resolved = next(item for item in related_actions if item.id == resolved.id)
+        waiting_turn = await self._wait_for_next_pending(tool_outcome.turn)
         return PendingResumeOutcome(
             action=resolved,
-            turn=tool_outcome.turn,
+            turn=waiting_turn,
             tool_outcome=tool_outcome,
         )
 
@@ -150,6 +152,27 @@ class PendingActionResumeCoordinator:
             turn_id=turn.id,
             target=TurnStatus.RUNNING,
             expected=expected_waiting,
+        )
+
+    async def _wait_for_next_pending(self, turn: TurnRef) -> TurnRef:
+        pending = [
+            action
+            for action in await self._pending_actions.list_for_turn(turn.id)
+            if action.status is PendingActionStatus.PENDING
+        ]
+        if not pending:
+            return turn
+        target = self._waiting_status(pending[0].action_type)
+        if turn.status is target:
+            return turn
+        if turn.status is not TurnStatus.RUNNING:
+            raise TurnNotWritable(
+                f"Cannot wait for the next action while turn is {turn.status.value}"
+            )
+        return await self._turn_state.transition_turn(
+            turn_id=turn.id,
+            target=target,
+            expected=TurnStatus.RUNNING,
         )
 
     @classmethod

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Self
 
@@ -58,11 +59,35 @@ class ToolContext(BaseModel):
         max_length=128,
     )
     trusted_evidence_item_ids: tuple[str, ...] = ()
+    operation_started_at: datetime | None = None
 
 
 class ToolResultStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+class ToolEffectStatus(StrEnum):
+    NOT_APPLIED = "not_applied"
+    UNKNOWN = "unknown"
+
+
+class ToolFieldError(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: tuple[str | int, ...]
+    code: str
+    message: str
+
+
+class ToolOperationReceipt(BaseModel):
+    """Execution-layer identity, not a model assertion of business equivalence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation_id: str
+    tool_name: str
+    status: str
 
 
 class ToolFailure(BaseModel):
@@ -71,6 +96,8 @@ class ToolFailure(BaseModel):
     code: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=1024)
     retryable: bool = False
+    effect_status: ToolEffectStatus = ToolEffectStatus.UNKNOWN
+    field_errors: tuple[ToolFieldError, ...] = ()
 
 
 class ToolResult(BaseModel):
@@ -82,6 +109,7 @@ class ToolResult(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict)
     source_ids: tuple[str, ...] = ()
     failure: ToolFailure | None = None
+    operation: ToolOperationReceipt | None = None
 
     @model_validator(mode="after")
     def validate_status_payload(self) -> Self:
@@ -111,10 +139,18 @@ class ToolResult(BaseModel):
         code: str,
         message: str,
         retryable: bool = False,
+        effect_status: ToolEffectStatus = ToolEffectStatus.UNKNOWN,
+        field_errors: tuple[ToolFieldError, ...] = (),
     ) -> ToolResult:
         return cls(
             status=ToolResultStatus.FAILED,
-            failure=ToolFailure(code=code, message=message, retryable=retryable),
+            failure=ToolFailure(
+                code=code,
+                message=message,
+                retryable=retryable,
+                effect_status=effect_status,
+                field_errors=field_errors,
+            ),
         )
 
     def to_model_content(self) -> str:

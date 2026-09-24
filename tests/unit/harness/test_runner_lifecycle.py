@@ -48,6 +48,12 @@ def response(text="中性草稿。", *, calls=()):
 
 
 class NoTools:
+    def requires_waiting(self, **kwargs):
+        return False
+
+    async def finalize_batch(self, **kwargs):
+        return None
+
     async def execute(self, **kwargs):
         raise AssertionError("Unexpected tool execution")
 
@@ -179,7 +185,8 @@ async def test_core_finishes_before_reply_but_turn_stays_running(env):
     result = await env.build(model=model, finalizer=ObserveFinalizer()).run(request=env.request)
     assert result.final_text == "教练回复。"
     assert len(model.requests) == 1
-    assert result.loop.model_call_count == 3 and result.loop.total_token_count == 37
+    assert result.model_call_count == 3 and result.total_token_count == 37
+    assert result.loop.model_call_count == 1 and result.loop.total_token_count == 7
     (core,) = await env.invocations.list_turn_invocations(result.initialized.turn.id)
     assert core.model_call_count == 1 and core.total_token_count == 7
     assert len(env.recorder.finishes) == 1
@@ -221,8 +228,8 @@ async def test_output_guard_policy_is_applied_once_per_stage(env, blocked_text):
     expected = ["中性草稿。"] if blocked_text == "中性草稿。" else ["中性草稿。", "教练回复。"]
     assert guard.texts == expected
     assert result.final_text == ("安全提示。" if len(expected) == 1 else "中性草稿。")
-    assert result.loop.outgoing_messages == ()
-    assert result.loop.final_output_artifact_id is None
+    assert result.outgoing_messages == ()
+    assert result.final_output_artifact_id is None
     assert len(env.recorder.finishes) == 1
 
 
@@ -230,6 +237,12 @@ async def test_unknown_core_exception_is_rethrown_with_completed_usage(env):
     error = RuntimeError("do not persist this sensitive message")
 
     class BrokenTools:
+        def requires_waiting(self, **kwargs):
+            return False
+
+        async def finalize_batch(self, **kwargs):
+            return None
+
         async def execute(self, **kwargs):
             raise error
 
@@ -306,6 +319,12 @@ async def test_finish_failure_does_not_duplicate_user_messages(env):
 
 async def test_core_cancellation_retains_already_completed_model_usage(env):
     class CancelTools:
+        def requires_waiting(self, **kwargs):
+            return False
+
+        async def finalize_batch(self, **kwargs):
+            return None
+
         async def execute(self, **kwargs):
             raise asyncio.CancelledError()
 
@@ -326,6 +345,12 @@ async def test_core_cancellation_retains_already_completed_model_usage(env):
 )
 async def test_waiting_tool_operation_is_not_completed_as_a_reply(env, waiting):
     class WaitingTools:
+        def requires_waiting(self, **kwargs):
+            return False
+
+        async def finalize_batch(self, **kwargs):
+            return waiting
+
         async def execute(self, *, call, context, **kwargs):
             turn = await env.state.transition_turn(
                 turn_id=context.turn_id, target=waiting, expected=TurnStatus.RUNNING
@@ -356,7 +381,7 @@ async def test_waiting_tool_operation_is_not_completed_as_a_reply(env, waiting):
     result = await env.build(model=model, tools=WaitingTools(), finalizer=MustNotFinalize()).run(
         request=env.request
     )
-    assert result.loop.termination.value == waiting.value
+    assert result.termination.value == waiting.value
     assert result.response_finalization is None and result.final_text is None
     assert (await env.state.get_turn(result.initialized.turn.id)).status is waiting
     assert len(env.recorder.finishes) == 1

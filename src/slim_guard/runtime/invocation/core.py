@@ -80,7 +80,11 @@ class CoreInvocationRunner:
         try:
             result = await self._agent.run(
                 request=compiled.request,
-                context=replace(initialized.context, agent_invocation_id=invocation.invocation_id),
+                context=replace(
+                    initialized.context,
+                    agent_invocation_id=invocation.invocation_id,
+                    deadline_at=invocation.deadline_at,
+                ),
                 authorization=prepared.authorization,
                 source_item_id=initialized.source_item_id,
                 now=now,
@@ -158,4 +162,4 @@ class CoreInvocationRunner:
                 ),
                 completed_at=self._clock(),
             )
-        return replace(result, core_output_artifact_id=artifact_id)
+        return result

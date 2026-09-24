@@ -78,6 +78,8 @@ export type AuthOptions = {
 
 export type ChatPayload = {
   text?: string;
+  images?: Array<{ image_base64: string; mime_type: 'image/jpeg' | 'image/png' | 'image/webp' }>;
+  // Kept for already-enqueued requests created by older app builds.
   image_base64?: string;
   image_mime_type?: 'image/jpeg' | 'image/png' | 'image/webp';
   idempotency_key: string;
@@ -102,9 +104,17 @@ export type ChatMessage = {
   kind: 'text' | 'image' | 'card';
   text: string | null;
   card?: { card_type?: string; status?: string; data?: Record<string, unknown> } | null;
+  attachments?: ChatAttachment[];
   created_at: string;
   pending?: boolean;
   failed?: boolean;
+};
+
+export type ChatAttachment = {
+  asset_id?: string;
+  mime_type: string;
+  url?: string;
+  uri?: string;
 };
 
 export type MemoryItem = {
@@ -154,7 +164,9 @@ export type DashboardData = {
 };
 
 export type PendingChat = {
-  payload: Omit<ChatPayload, 'image_base64'>;
+  payload: Omit<ChatPayload, 'image_base64' | 'images'>;
+  imageUris?: string[];
+  // Legacy offline queue item shape.
   imageUri?: string;
   previewUri?: string;
   createdAt: string;

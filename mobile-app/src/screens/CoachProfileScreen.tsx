@@ -1,4 +1,3 @@
-import DateTimePicker from '@expo/ui/community/datetime-picker';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
 import {
@@ -15,7 +14,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button, Card } from '../components/ui';
+import { DateField } from '../components/DateField';
 import { useApp } from '../context/AppContext';
+import { parseDate, startOfToday, todayText, tomorrow } from '../lib/dates';
 import { colors, radius, spacing } from '../theme';
 import type {
   CoachAgeBand,
@@ -231,46 +232,6 @@ function NumberField({ label, unit, value, onChange, placeholder }: {
   );
 }
 
-function DateField({ label, value, onChange, minimumDate, maximumDate }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  minimumDate?: Date;
-  maximumDate?: Date;
-}) {
-  const [open, setOpen] = useState(false);
-  const fallback = minimumDate ?? maximumDate ?? startOfToday();
-  return (
-    <View>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <Pressable accessibilityRole="button" onPress={() => setOpen(true)} style={styles.dateButton}>
-        <Text style={[styles.dateText, !value && styles.datePlaceholder]}>{value ? displayDate(value) : '请选择日期'}</Text>
-        <Ionicons name="calendar-outline" size={19} color={colors.primary} />
-      </Pressable>
-      {open ? (
-        <View style={styles.datePickerWrap}>
-          <DateTimePicker
-            value={value ? parseDate(value) : fallback}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'compact' : 'default'}
-            presentation="dialog"
-            locale="zh_CN"
-            minimumDate={minimumDate}
-            maximumDate={maximumDate}
-            positiveButton={{ label: '确定' }}
-            negativeButton={{ label: '取消' }}
-            onDismiss={() => setOpen(false)}
-            onValueChange={(_event, selected) => {
-              onChange(dateText(selected));
-              setOpen(false);
-            }}
-          />
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 function FieldDivider() {
   return <View style={styles.divider} />;
 }
@@ -345,38 +306,6 @@ function numberText(value: number | null | undefined): string {
   return typeof value === 'number' ? String(value) : '';
 }
 
-function startOfToday(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
-}
-
-function tomorrow(): Date {
-  const result = startOfToday();
-  result.setDate(result.getDate() + 1);
-  return result;
-}
-
-function todayText(): string {
-  return dateText(startOfToday());
-}
-
-function parseDate(value: string): Date {
-  const [year, month, day] = value.split('-').map(Number);
-  return new Date(year, month - 1, day, 12);
-}
-
-function dateText(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function displayDate(value: string): string {
-  const date = parseDate(value);
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   safe: { flex: 1, backgroundColor: colors.background },
@@ -403,10 +332,6 @@ const styles = StyleSheet.create({
   numberField: { minHeight: 49, flexDirection: 'row', alignItems: 'center', borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   numberInput: { flex: 1, minHeight: 49, paddingHorizontal: spacing.md, color: colors.ink, fontSize: 17, fontWeight: '700' },
   unit: { minWidth: 48, paddingRight: spacing.md, color: colors.inkMuted, fontSize: 13, textAlign: 'right' },
-  dateButton: { minHeight: 49, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
-  dateText: { color: colors.ink, fontSize: 15, fontWeight: '700' },
-  datePlaceholder: { color: '#949B96', fontWeight: '500' },
-  datePickerWrap: { marginTop: spacing.sm, alignItems: 'flex-start' },
   validation: { color: colors.danger, fontSize: 12, lineHeight: 18, marginTop: spacing.lg, textAlign: 'center' },
   saveButton: { marginTop: spacing.lg },
   footnote: { color: colors.inkMuted, fontSize: 10, lineHeight: 16, textAlign: 'center', marginTop: spacing.md, paddingHorizontal: spacing.lg },

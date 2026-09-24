@@ -4,7 +4,7 @@ from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Annotated, TypeVar, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 
 from slim_guard.config import Settings
 from slim_guard.mobile.auth import (
@@ -250,6 +250,22 @@ async def chat_history(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> ChatHistoryView:
     return await _mobile_call(_mobile(request).history(principal.user_id, limit=limit))
+
+
+@router.get("/chat/assets/{asset_id}")
+async def chat_image_asset(
+    asset_id: str,
+    principal: Principal,
+    request: Request,
+) -> Response:
+    content, mime_type = await _mobile_call(
+        _mobile(request).image_asset(principal.user_id, asset_id)
+    )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/today", response_model=TodayView)

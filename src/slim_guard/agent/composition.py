@@ -15,6 +15,7 @@ from slim_guard.agent.manifest import build_agent_manifest
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT
 from slim_guard.agent.runtime import AgentRuntime
 from slim_guard.agent.tool_catalog import build_core_tool_registry
+from slim_guard.agent_models.assembly import build_model_gateway, build_vision_gateway
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agents.core import CoreAgent
@@ -35,7 +36,7 @@ from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.response_pipeline.processor import ResponseProcessor
 from slim_guard.runtime.invocation.core import CoreInvocationRunner
 from slim_guard.runtime.turn import TurnHarness
-from slim_guard.usage.gateway import MeasuredModelGateway, MeasuredVisionGateway
+from slim_guard.tool_operations.repository import ToolOperationRepository
 from slim_guard.usage.repository import UsageRepository
 
 # Existing Invocation/Trace label, not a selector or a deployment setting.
@@ -60,11 +61,11 @@ def build_agent_runtime(
 
     registry = build_core_tool_registry()
     usage = UsageRepository(database)
-    model = MeasuredModelGateway(model, usage, definition.models.provider)
+    model = build_model_gateway(model, usage, definition.models.provider)
     if vision is not None:
-        vision = MeasuredVisionGateway(vision, usage, definition.models.provider)
+        vision = build_vision_gateway(vision, usage, definition.models.provider)
     if memory_recall_model is not None:
-        memory_recall_model = MeasuredModelGateway(
+        memory_recall_model = build_model_gateway(
             memory_recall_model, usage, definition.models.provider
         )
     expected_manifest = build_agent_manifest(definition, registry=registry)
@@ -144,6 +145,7 @@ def build_agent_runtime(
             recorder=recorder,
             context_data=business.context,
             memory_recaller=memory.recaller,
+            operations=ToolOperationRepository(database),
         ),
         core=CoreInvocationRunner(
             agent=CoreAgent(model=model, tool_calls=tool_calls, recorder=recorder, clock=clock),

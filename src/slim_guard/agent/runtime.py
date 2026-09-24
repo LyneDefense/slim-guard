@@ -27,6 +27,13 @@ from slim_guard.usage.context import CURRENT, usage_scope
 logger = logging.getLogger(__name__)
 
 
+class AgentImageAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    content: bytes = Field(min_length=1, max_length=20_971_520)
+    mime_type: str = Field(min_length=1, max_length=128)
+
+
 class AgentRuntimeRequest(BaseModel):
     """Trusted application command for one inbound user message."""
 
@@ -36,6 +43,7 @@ class AgentRuntimeRequest(BaseModel):
     text: str | None = Field(default=None, max_length=20_000)
     image_bytes: bytes | None = Field(default=None, min_length=1, max_length=20_971_520)
     image_mime_type: str | None = Field(default=None, max_length=128)
+    image_attachments: tuple[AgentImageAttachment, ...] = Field(default=(), max_length=8)
     source_message_id: str | None = Field(default=None, min_length=1, max_length=256)
     channel_id: str | None = Field(default=None, min_length=1, max_length=128)
     occurred_at: datetime | None = None
@@ -53,12 +61,13 @@ class AgentRuntimeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_content(self) -> AgentRuntimeRequest:
-        if self.text is None and self.image_bytes is None:
+        if self.text is None and self.image_bytes is None and not self.image_attachments:
             raise ValueError("Agent request requires text or an image")
         if self.image_mime_type is not None and self.image_bytes is None:
             raise ValueError("Image MIME type requires image bytes")
+        if self.image_bytes is not None and self.image_attachments:
+            raise ValueError("Use either the legacy image fields or image_attachments")
         return self
-
 
 @dataclass(frozen=True, slots=True)
 class AgentRuntimeResult:
@@ -156,18 +165,33 @@ class AgentRuntime:
                     occurred_at=request.occurred_at,
                 )
             )
-        if request.image_bytes is not None:
+        images = request.image_attachments or (
+            (
+                AgentImageAttachment(
+                    content=request.image_bytes,
+                    mime_type=request.image_mime_type or "image/jpeg",
+                ),
+            )
+            if request.image_bytes is not None
+            else ()
+        )
+        for index, image in enumerate(images):
             now = self._clock()
             if now.utcoffset() is None:
                 raise ValueError("Agent Runtime clock must be timezone-aware")
+            asset_source_id = (
+                f"{request.source_message_id}:image:{index}"
+                if request.source_message_id is not None
+                else None
+            )
             creation = await self._assets.save(
                 SaveImageAssetCommand(
                     user_id=request.user_id,
-                    content=request.image_bytes,
-                    declared_mime_type=request.image_mime_type,
+                    content=image.content,
+                    declared_mime_type=image.mime_type,
                     source_text=request.text,
                     channel_id=request.channel_id,
-                    source_message_id=request.source_message_id,
+                    source_message_id=asset_source_id,
                 )
             )
             inputs.append(
@@ -194,7 +218,7 @@ class AgentRuntime:
         )
         if (
             self._memory_extraction_scheduler is not None
-            and run.loop.termination is HarnessTermination.FINAL_RESPONSE
+            and run.termination is HarnessTermination.FINAL_RESPONSE
             and run.initialized.source_item_id is not None
         ):
             try:
@@ -212,10 +236,10 @@ class AgentRuntime:
             thread_id=run.initialized.thread.id,
             turn_id=run.initialized.turn.id,
             agent_version_id=run.initialized.turn.agent_version_id,
-            termination=run.loop.termination,
+            termination=run.termination,
             final_text=run.final_text,
             failure_code=run.loop.failure.code if run.loop.failure is not None else None,
-            messages=run.loop.outgoing_messages,
+            messages=run.outgoing_messages,
         )
 
     async def run_scheduled(self, request: AgentScheduledRequest) -> AgentRuntimeResult:
@@ -253,10 +277,10 @@ class AgentRuntime:
             thread_id=run.initialized.thread.id,
             turn_id=run.initialized.turn.id,
             agent_version_id=run.initialized.turn.agent_version_id,
-            termination=run.loop.termination,
+            termination=run.termination,
             final_text=run.final_text,
             failure_code=run.loop.failure.code if run.loop.failure is not None else None,
-            messages=run.loop.outgoing_messages,
+            messages=run.outgoing_messages,
         )
 
     @staticmethod

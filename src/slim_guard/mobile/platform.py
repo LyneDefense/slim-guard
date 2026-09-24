@@ -53,6 +53,7 @@ from slim_guard.mobile.contracts import (
     DeviceView,
     WeComBindingView,
 )
+from slim_guard.tool_operations.lifecycle import delete_user_operations
 from slim_guard.usage.repository import UsageRepository
 
 _BINDING_PATTERN = re.compile(r"^SG-([A-HJ-NP-Z2-9]{8})$", re.IGNORECASE)
@@ -408,6 +409,7 @@ class MobilePlatformService:
                     delete(user_data_model).where(user_data_model.user_id == user_id)
                 )
             if turn_ids:
+                await delete_user_operations(session, user_id)
                 await session.execute(
                     delete(PendingActionRecord).where(PendingActionRecord.turn_id.in_(turn_ids))
                 )

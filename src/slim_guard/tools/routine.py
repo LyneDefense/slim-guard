@@ -11,7 +11,13 @@ from slim_guard.domain.routine.contracts import (
     RoutineSetting,
 )
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
-from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolContext,
+    ToolEffectLevel,
+    ToolEffectStatus,
+    ToolResult,
+)
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
@@ -47,10 +53,9 @@ class RoutineToolHandlers:
             )
         except ValidationError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_checkin_schedule",
-                message=(
-                    "The schedule needs a valid IANA timezone and HH:MM local times."
-                ),
+                message=("The schedule needs a valid IANA timezone and HH:MM local times."),
             )
         preference = await self._repository.update(command)
         return ToolResult.success(output=self._output(preference))

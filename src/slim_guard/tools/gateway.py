@@ -14,7 +14,9 @@ from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
+    ToolEffectStatus,
     ToolExecution,
+    ToolFieldError,
     ToolPolicyDecision,
     ToolResult,
 )
@@ -44,7 +46,21 @@ class ToolHandler(Protocol[ArgumentsT_contra]):
     ) -> ToolResult: ...
 
 
+class ToolResultLookup(Protocol):
+    async def __call__(self, context: ToolContext) -> ToolResult | None:
+        """Return a verified committed result; absence does NOT prove no effect."""
+        ...
+
+
 class ToolGatewayProtocol(Protocol):
+    def preview_policy(
+        self,
+        *,
+        call: NormalizedToolCall,
+        context: ToolContext,
+        authorization: ToolAuthorization,
+    ) -> ToolPolicyDecision | None: ...
+
     async def execute(
         self,
         *,
@@ -58,6 +74,9 @@ class ToolGatewayProtocol(Protocol):
 class ToolExecutor(Generic[ArgumentsT]):
     arguments_model: type[ArgumentsT]
     handler: ToolHandler[ArgumentsT]
+    lookup_result: ToolResultLookup | None = None
+    manages_timeout: bool = False
+    delegates_operation: bool = False
 
     def validate(self, raw_arguments: dict[str, Any]) -> ArgumentsT:
         return self.arguments_model.model_validate(raw_arguments)
@@ -134,6 +153,7 @@ class ToolGateway:
                 tool=tool,
                 code="invalid_arguments",
                 message=self._validation_message(exc),
+                field_errors=self._validation_errors(exc),
             )
 
         canonical_arguments = arguments.model_dump(mode="json")
@@ -173,8 +193,11 @@ class ToolGateway:
             update={"execution_idempotency_key": idempotency_key}
         )
         try:
-            async with asyncio.timeout(tool.timeout_seconds):
+            if executor.manages_timeout:
                 result = await executor.invoke(execution_context, arguments)
+            else:
+                async with asyncio.timeout(tool.timeout_seconds):
+                    result = await executor.invoke(execution_context, arguments)
         except TimeoutError:
             result = ToolResult.failed(
                 code="tool_timeout",
@@ -216,6 +239,39 @@ class ToolGateway:
             result=completed.result,
         )
 
+    def preview_policy(
+        self,
+        *,
+        call: NormalizedToolCall,
+        context: ToolContext,
+        authorization: ToolAuthorization,
+    ) -> ToolPolicyDecision | None:
+        """Inspect a call's gate without claiming or invoking the tool."""
+        if call.id != context.tool_call_id:
+            raise ToolContextMismatchError(
+                "Tool context call ID does not match the requested tool call"
+            )
+        try:
+            tool = self._registry.resolve(call.name)
+        except UnknownToolError:
+            return None
+        try:
+            arguments = self._executors[tool.name].validate(call.arguments)
+        except ValidationError:
+            return None
+        canonical_arguments = arguments.model_dump(mode="json")
+        execution_key = self._idempotency_key(
+            context=context,
+            tool=tool,
+            arguments=canonical_arguments,
+        )
+        return self._policy.evaluate(
+            tool=tool,
+            context=context,
+            execution_key=execution_key,
+            authorization=authorization,
+        ).decision
+
     @staticmethod
     def _replayed_execution(execution: ToolExecutionRef) -> ToolExecution:
         if execution.result is None:
@@ -243,6 +299,13 @@ class ToolGateway:
             location = ".".join(str(part) for part in error["loc"]) or "arguments"
             issues.append(f"{location}: {error['msg']}")
         return ("Invalid tool arguments. " + "; ".join(issues))[:1024]
+
+    @staticmethod
+    def _validation_errors(exc: ValidationError) -> tuple[ToolFieldError, ...]:
+        return tuple(
+            ToolFieldError(path=error["loc"], code=error["type"], message=error["msg"])
+            for error in exc.errors(include_url=False, include_context=False, include_input=False)
+        )
 
     @staticmethod
     def _idempotency_key(
@@ -276,6 +339,7 @@ class ToolGateway:
         canonical_arguments: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
         policy_decision: ToolPolicyDecision | None = None,
+        field_errors: tuple[ToolFieldError, ...] = (),
     ) -> ToolExecution:
         return ToolExecution(
             tool_call_id=call.id,
@@ -288,5 +352,7 @@ class ToolGateway:
                 code=code,
                 message=message,
                 retryable=retryable,
+                effect_status=ToolEffectStatus.NOT_APPLIED,
+                field_errors=field_errors,
             ),
         )

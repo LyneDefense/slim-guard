@@ -51,6 +51,15 @@ class RecordingToolCallRunner:
         self.calls: list[NormalizedToolCall] = []
         self.contexts: list[ToolContext] = []
 
+    def requires_waiting(self, *, call, context, authorization) -> bool:
+        return self.turn_status in {
+            TurnStatus.WAITING_USER_CONFIRMATION,
+            TurnStatus.WAITING_HUMAN_REVIEW,
+        }
+
+    async def finalize_batch(self, *, turn_id, outcomes):
+        return self.turn_status
+
     async def execute(
         self,
         *,
@@ -59,6 +68,7 @@ class RecordingToolCallRunner:
         authorization: ToolAuthorization,
         source_item_id: str | None,
         now: datetime,
+        defer_waiting_transition: bool = False,
     ) -> ToolCallOutcome:
         assert call.name in authorization.allowed_tool_names
         assert source_item_id == "user-item-1"
@@ -398,6 +408,63 @@ async def test_loop_executes_multiple_tool_calls_before_next_model_call() -> Non
     ]
 
 
+async def test_ungated_tool_calls_run_before_confirmation_gated_calls() -> None:
+    gated = tool_call("gated", name="confirm_weight")
+    ungated = tool_call("ungated")
+    model = ScriptedModelGateway(
+        (assistant_tool_calls(gated, ungated),)
+    )
+
+    class OrderedTools(RecordingToolCallRunner):
+        def __init__(self):
+            super().__init__()
+            self.finalized = False
+
+        def requires_waiting(self, *, call, context, authorization) -> bool:
+            return call.name == "confirm_weight"
+
+        async def finalize_batch(self, *, turn_id, outcomes):
+            self.finalized = True
+            if any(item.execution.tool_name == "confirm_weight" for item in outcomes):
+                return TurnStatus.WAITING_USER_CONFIRMATION
+            return None
+
+    tools = OrderedTools()
+    authorization_with_both_tools = ToolAuthorization(
+        allowed_tool_names=frozenset({"record_weight", "confirm_weight"}),
+        isolated_write_environment=True,
+    )
+
+    result = await run_loop(
+        model,
+        tools,
+        authorization_override=authorization_with_both_tools,
+    )
+
+    assert result.termination is HarnessTermination.WAITING_USER_CONFIRMATION
+    assert [call.id for call in tools.calls] == ["ungated", "gated"]
+    assert tools.finalized is True
+
+
+async def test_empty_model_reply_is_a_nonretryable_fatal_result() -> None:
+    empty_response = ModelResponse(
+        message=ModelMessage(role=MessageRole.ASSISTANT, content="  "),
+        finish_reason="stop",
+        usage=ModelUsage(total_tokens=3),
+    )
+    model = ScriptedModelGateway((empty_response,))
+
+    result = await run_loop(model, RecordingToolCallRunner())
+
+    assert result.termination is HarnessTermination.FATAL_ERROR
+    assert result.final_text is None
+    assert result.failure is not None
+    assert result.failure.code == "empty_model_response"
+    assert result.failure.retryable is False
+    assert result.model_call_count == 1
+    assert result.total_token_count == 3
+
+
 async def test_loop_pauses_immediately_when_tool_requires_confirmation() -> None:
     model = ScriptedModelGateway((assistant_tool_calls(tool_call("call-1")),))
     tools = RecordingToolCallRunner(turn_status=TurnStatus.WAITING_USER_CONFIRMATION)
@@ -450,7 +517,7 @@ async def test_tool_failure_emits_structured_warning_without_arguments(caplog) -
     assert "77.6" not in record.getMessage()
 
 
-async def test_nonretryable_failure_forces_text_without_repeating_tool_call() -> None:
+async def test_nonretryable_failure_leaves_recovery_choice_to_model() -> None:
     model = ScriptedModelGateway(
         (
             assistant_tool_calls(tool_call("call-1")),
@@ -465,8 +532,71 @@ async def test_nonretryable_failure_forces_text_without_repeating_tool_call() ->
     assert result.final_text == "这次没有保存成功，我不会继续重复尝试。"
     assert result.model_call_count == 2
     assert result.tool_call_count == 1
-    assert model.requests[1].tools == ()
-    assert model.requests[1].tool_choice is ToolChoice.NONE
+    assert model.requests[1].tools == model.requests[0].tools
+    assert model.requests[1].tool_choice == model.requests[0].tool_choice
+
+
+async def test_failure_does_not_drop_sibling_tool_observations_or_recovery_calls() -> None:
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(tool_call("bad"), tool_call("sibling")),
+            assistant_tool_calls(tool_call("corrected", arguments={"weight_kg": 78.0})),
+            assistant_text("已记录。"),
+        )
+    )
+
+    class RecoveringTools(RecordingToolCallRunner):
+        async def execute(self, **kwargs):
+            self.failure_code = "invalid_arguments" if kwargs["call"].id == "bad" else None
+            return await super().execute(**kwargs)
+
+    tools = RecoveringTools()
+    result = await run_loop(model, tools)
+    assert result.final_text == "已记录。"
+    assert [call.id for call in tools.calls] == ["bad", "sibling", "corrected"]
+    assert [
+        message.tool_call_id
+        for message in model.requests[1].messages
+        if message.role is MessageRole.TOOL
+    ] == ["bad", "sibling"]
+    assert model.requests[1].tools == model.requests[0].tools
+
+
+async def test_network_retry_after_tool_success_does_not_replay_business_tool() -> None:
+    from slim_guard.agent_models.assembly import build_model_gateway
+    from slim_guard.agent_models.errors import ModelTimeoutError
+
+    class Store:
+        def __init__(self):
+            self.rows = {}
+
+        async def start(self, values):
+            self.rows[values["id"]] = dict(values)
+
+        async def finish(self, key, values):
+            self.rows[key].update(values)
+
+    model = ScriptedModelGateway(
+        (
+            assistant_tool_calls(tool_call("call-1"), total_tokens=4),
+            ModelTimeoutError("temporary network failure after the write"),
+            assistant_text("已记录。"),
+        )
+    )
+    store = Store()
+    tools = RecordingToolCallRunner()
+    result = await run_loop(build_model_gateway(model, store), tools)
+    assert result.final_text == "已记录。"
+    assert len(tools.calls) == 1
+    assert len(model.requests) == 3
+    assert model.requests[1] is model.requests[2]
+    assert model.requests[2].messages[-1].role is MessageRole.TOOL
+    # Loop sees only completed responses; the request ledger sees every attempt.
+    assert result.model_call_count == 2
+    rows = list(store.rows.values())
+    assert [r["status"] for r in rows] == ["succeeded", "failed", "succeeded"]
+    assert rows[1].get("total_tokens") is None
+    assert all(r["agent_role"] == "core" for r in rows)
 
 
 async def test_retryable_failures_do_not_remove_model_tools() -> None:

@@ -221,11 +221,19 @@ class ToolExecutionRepository:
         target: ToolExecutionStatus,
         result_json: str,
     ) -> None:
-        same_result = row.result_json == result_json or (
-            row.result_json is not None
-            and ToolExecutionRepository._matches_redacted_result(
-                row.result_json,
-                result_json,
+        same_result = (
+            row.result_json == result_json
+            or (
+                row.result_json is not None
+                and ToolResult.model_validate_json(row.result_json).to_model_content()
+                == result_json
+            )
+            or (
+                row.result_json is not None
+                and ToolExecutionRepository._matches_redacted_result(
+                    row.result_json,
+                    result_json,
+                )
             )
         )
         if row.status != target.value or not same_result:
@@ -237,13 +245,9 @@ class ToolExecutionRepository:
     def _ref(row: ToolExecutionRecord) -> ToolExecutionRef:
         arguments = json.loads(row.canonical_arguments_json)
         if not isinstance(arguments, dict):
-            raise ValueError(
-                f"Tool execution arguments are not an object: {row.idempotency_key}"
-            )
+            raise ValueError(f"Tool execution arguments are not an object: {row.idempotency_key}")
         result = (
-            ToolResult.model_validate_json(row.result_json)
-            if row.result_json is not None
-            else None
+            ToolResult.model_validate_json(row.result_json) if row.result_json is not None else None
         )
         return ToolExecutionRef(
             idempotency_key=row.idempotency_key,

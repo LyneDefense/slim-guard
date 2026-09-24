@@ -90,12 +90,19 @@ def compose_messages(
 
 def project_cards(outcomes: tuple[ToolCallOutcome, ...]) -> tuple[CardPayload, ...]:
     cards: list[CardPayload] = []
+    seen: set[str] = set()
     for outcome in outcomes:
         execution = outcome.execution
-        card_type = _CARD_TOOLS.get(execution.tool_name)
+        operation = execution.result.operation
+        tool_name = operation.tool_name if operation is not None else execution.tool_name
+        identity = operation.operation_id if operation is not None else execution.tool_call_id
+        card_type = _CARD_TOOLS.get(tool_name)
         if card_type is None or execution.result.status.value != "succeeded":
             continue
-        data = _project_card_data(execution.tool_name, execution.result.output)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        data = _project_card_data(tool_name, execution.result.output)
         cards.append(
             CardPayload(
                 card_type=card_type,
@@ -131,9 +138,7 @@ def _project_card_data(tool_name: str, value: dict[str, Any]) -> dict[str, Any]:
                     label = f"{label}（{portion.strip()}）"
                 visible_foods.append(label)
         result: dict[str, Any] = {
-            "meal_type": _MEAL_TYPE_LABELS.get(
-                str(value.get("meal_type")), "餐食"
-            ),
+            "meal_type": _MEAL_TYPE_LABELS.get(str(value.get("meal_type")), "餐食"),
             "foods": visible_foods,
         }
         note = value.get("note")

@@ -10,8 +10,10 @@ from slim_guard.harness.pending_config import PendingActionConfig
 from slim_guard.harness.pending_resume import PendingActionResumeCoordinator
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.tool_calls import ToolCallCoordinator
+from slim_guard.tool_operations.gateway import OperationGateway
+from slim_guard.tool_operations.repository import ToolOperationRepository
 from slim_guard.tools.execution_repository import ToolExecutionRepository
-from slim_guard.tools.gateway import ToolExecutor, ToolGateway
+from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.pending import PendingActionToolHandlers, pending_action_tool_executors
 from slim_guard.tools.policy import DefaultToolPolicy
 from slim_guard.tools.registry import ToolRegistry
@@ -35,7 +37,7 @@ def build_tool_calls(
         state=state,
         clock=clock,
     )
-    gateway = ToolGateway(
+    gateway = OperationGateway(
         registry=registry,
         executors={
             **business_executors,
@@ -45,6 +47,7 @@ def build_tool_calls(
             **specialist_executors,
         },
         execution_store=ToolExecutionRepository(database),
+        operation_store=ToolOperationRepository(database, clock=clock),
         policy=DefaultToolPolicy(),
     )
     tool_calls = ToolCallCoordinator(

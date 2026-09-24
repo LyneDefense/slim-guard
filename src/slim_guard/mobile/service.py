@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from slim_guard.agent.runtime import (
+    AgentImageAttachment,
     AgentRuntimeProtocol,
     AgentRuntimeRequest,
     AgentRuntimeResult,
@@ -26,6 +27,7 @@ from slim_guard.db.models import (
     SlimGuardUser,
 )
 from slim_guard.db.session import Database
+from slim_guard.domain.assets.repository import ImageAssetRepository
 from slim_guard.domain.body_fat.repository import BodyFatRepository
 from slim_guard.domain.exercise.repository import ExerciseRepository
 from slim_guard.domain.meal.repository import MealRepository
@@ -37,6 +39,7 @@ from slim_guard.harness.events import ItemType
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.mobile.contracts import (
+    ChatAttachmentView,
     ChatHistoryView,
     ChatMessageView,
     ChatRequest,
@@ -91,6 +94,7 @@ class MobileApplicationService:
         self._runtime = runtime
         self._traces = traces
         self._max_image_bytes = max_image_bytes
+        self._assets = ImageAssetRepository(database)
         self._memories = MemoryRepository(database)
         self._weights = WeightRepository(database)
         self._body_fat = BodyFatRepository(database)
@@ -205,8 +209,8 @@ class MobileApplicationService:
             )
         if self._runtime is None:
             raise MobileServiceError("agent_unavailable", "SlimGuard Agent is unavailable")
-        image = self._decode_image(request.image_base64)
-        request_hash = self._request_hash(request, image)
+        images = self._request_images(request)
+        request_hash = self._request_hash(request, images)
         claim = await self._claim_request(
             user_id=user_id,
             idempotency_key=request.idempotency_key,
@@ -242,8 +246,20 @@ class MobileApplicationService:
                     AgentRuntimeRequest(
                         user_id=user_id,
                         text=request.text,
-                        image_bytes=image,
-                        image_mime_type=request.image_mime_type,
+                        image_attachments=(
+                            ()
+                            if request.image_base64 is not None
+                            else tuple(
+                                AgentImageAttachment(content=content, mime_type=mime_type)
+                                for content, mime_type in images
+                            )
+                        ),
+                        image_bytes=(
+                            images[0][0] if request.image_base64 is not None else None
+                        ),
+                        image_mime_type=(
+                            request.image_mime_type if request.image_base64 is not None else None
+                        ),
                         source_message_id=request.idempotency_key,
                         channel_id="mobile",
                         occurred_at=request.occurred_at,
@@ -374,11 +390,13 @@ class MobileApplicationService:
                 )
             )
         items: list[ChatMessageView] = []
+        user_messages: dict[tuple[str, str], int] = {}
         for row in reversed(rows):
             payload = self._json(row.payload_json)
             if payload.get("redacted") is True:
                 continue
             item_type = ItemType(row.item_type)
+            text = payload.get("text")
             if item_type is ItemType.AGENT_MESSAGE:
                 participant = payload.get("participant", "system_assistant")
                 if participant not in {"coach", "system_assistant"}:
@@ -387,24 +405,88 @@ class MobileApplicationService:
                 kind = payload.get("kind", "text")
                 if kind not in {"text", "image", "card"}:
                     kind = "text"
+                items.append(
+                    ChatMessageView(
+                        id=row.id,
+                        turn_id=row.turn_id,
+                        participant=participant,
+                        role=role,
+                        kind=kind,
+                        text=text if isinstance(text, str) else None,
+                        card=payload.get("card") if isinstance(payload.get("card"), dict) else None,
+                        created_at=self._aware(row.created_at),
+                    )
+                )
+                continue
             else:
                 participant = "user"
                 role = "user"
-                kind = "image" if item_type is ItemType.IMAGE_ATTACHMENT else "text"
-            text = payload.get("text")
-            items.append(
-                ChatMessageView(
-                    id=row.id,
-                    turn_id=row.turn_id,
-                    participant=participant,
-                    role=role,
-                    kind=kind,
-                    text=text if isinstance(text, str) else None,
-                    card=payload.get("card") if isinstance(payload.get("card"), dict) else None,
-                    created_at=self._aware(row.created_at),
+                source_message_id = payload.get("source_message_id")
+                source_key = (
+                    source_message_id if isinstance(source_message_id, str) and source_message_id
+                    else row.id
                 )
-            )
+                key = (row.turn_id, source_key)
+                if item_type is ItemType.USER_MESSAGE:
+                    index = user_messages.get(key)
+                    if index is None:
+                        user_messages[key] = len(items)
+                        items.append(
+                            ChatMessageView(
+                                id=row.id,
+                                turn_id=row.turn_id,
+                                participant=participant,
+                                role=role,
+                                kind="text",
+                                text=text if isinstance(text, str) else None,
+                                created_at=self._aware(row.created_at),
+                            )
+                        )
+                    else:
+                        existing = items[index]
+                        items[index] = existing.model_copy(
+                            update={"text": text if isinstance(text, str) else None}
+                        )
+                elif item_type is ItemType.IMAGE_ATTACHMENT:
+                    asset_id = payload.get("asset_id")
+                    mime_type = payload.get("mime_type")
+                    if not isinstance(asset_id, str) or not isinstance(mime_type, str):
+                        continue
+                    attachment = ChatAttachmentView(
+                        asset_id=asset_id,
+                        mime_type=mime_type,
+                        url=f"/api/mobile/v1/chat/assets/{asset_id}",
+                    )
+                    index = user_messages.get(key)
+                    if index is None:
+                        user_messages[key] = len(items)
+                        items.append(
+                            ChatMessageView(
+                                id=row.id,
+                                turn_id=row.turn_id,
+                                participant=participant,
+                                role=role,
+                                kind="image",
+                                text=None,
+                                attachments=[attachment],
+                                created_at=self._aware(row.created_at),
+                            )
+                        )
+                    else:
+                        existing = items[index]
+                        items[index] = existing.model_copy(
+                            update={
+                                "kind": "text" if existing.text else "image",
+                                "attachments": [*existing.attachments, attachment],
+                            }
+                        )
         return ChatHistoryView(items=items)
+
+    async def image_asset(self, user_id: str, asset_id: str) -> tuple[bytes, str]:
+        image = await self._assets.get_for_user(asset_id, user_id=user_id, at=datetime.now(UTC))
+        if image is None:
+            raise MobileServiceError("image_not_found", "Image was not found")
+        return image.content, image.ref.mime_type
 
     async def _messages_for_turn(
         self, user_id: str, turn_id: str | None
@@ -669,12 +751,30 @@ class MobileApplicationService:
             raise MobileServiceError("invalid_image_size", "Image size is not allowed")
         return content
 
+    def _request_images(self, request: ChatRequest) -> list[tuple[bytes, str]]:
+        inputs = [(item.image_base64, item.mime_type) for item in request.images]
+        if request.image_base64 is not None:
+            inputs.append((request.image_base64, request.image_mime_type or "image/jpeg"))
+        result: list[tuple[bytes, str]] = []
+        total_size = 0
+        for encoded, mime_type in inputs:
+            content = self._decode_image(encoded)
+            if content is None:
+                continue
+            total_size += len(content)
+            if total_size > self._max_image_bytes:
+                raise MobileServiceError("invalid_image_size", "Combined image size is not allowed")
+            result.append((content, mime_type))
+        return result
+
     @staticmethod
-    def _request_hash(request: ChatRequest, image: bytes | None) -> str:
+    def _request_hash(request: ChatRequest, images: list[tuple[bytes, str]]) -> str:
         payload = {
             "text": request.text,
-            "image_sha256": hashlib.sha256(image).hexdigest() if image else None,
-            "image_mime_type": request.image_mime_type,
+            "images": [
+                {"sha256": hashlib.sha256(image).hexdigest(), "mime_type": mime_type}
+                for image, mime_type in images
+            ],
             "occurred_at": request.occurred_at.isoformat() if request.occurred_at else None,
         }
         return hashlib.sha256(

@@ -37,7 +37,7 @@ type AppContextValue = {
   loginWithPassword: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
-  sendMessage: (text: string, image?: ImageInput) => Promise<'sent' | 'queued'>;
+  sendMessage: (text: string, images?: ImageInput[]) => Promise<'sent' | 'queued'>;
   updateProfile: (nickname: string) => Promise<void>;
   saveCoachProfile: (profile: CoachProfileInput) => Promise<CoachProfileStatus>;
   updateRoutine: (routine: Routine) => Promise<boolean>;
@@ -190,11 +190,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const sendMessage = useCallback(async (text: string, image?: ImageInput): Promise<'sent' | 'queued'> => {
+  const sendMessage = useCallback(async (text: string, images: ImageInput[] = []): Promise<'sent' | 'queued'> => {
     const idempotencyKey = Crypto.randomUUID();
     const payload: ChatPayload = {
       ...(text.trim() ? { text: text.trim() } : {}),
-      ...(image ? { image_mime_type: image.mimeType } : {}),
       idempotency_key: idempotencyKey,
       occurred_at: new Date().toISOString(),
     };
@@ -203,20 +202,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       turn_id: '',
       participant: 'user',
       role: 'user',
-      kind: image ? 'image' : 'text',
-      text: text.trim() || (image ? '📷 饮食照片' : null),
+      kind: text.trim() ? 'text' : 'image',
+      text: text.trim() || null,
+      attachments: images.map((image) => ({ uri: image.uri, mime_type: image.mimeType })),
       created_at: payload.occurred_at,
       pending: true,
     };
     setData((current) => current ? { ...current, messages: [...current.messages, optimistic] } : current);
 
     if (!online) {
-      await enqueueChat(payload, image?.uri);
+      await enqueueChat(payload, images.map((image) => image.uri));
       setPending(await listPendingChats());
       return 'queued';
     }
     try {
-      if (image) payload.image_base64 = await new File(image.uri).base64();
+      if (images.length) {
+        payload.images = await Promise.all(images.map(async (image) => ({
+          image_base64: await new File(image.uri).base64(),
+          mime_type: image.mimeType,
+        })));
+      }
       const response = await mobileApi.sendChat(payload);
       if (response.status === 'failed') throw new Error('教练这次没有处理成功，请重试');
       setData((current) => current ? {
@@ -238,7 +243,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return 'sent';
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 0) {
-        await enqueueChat(payload, image?.uri);
+        await enqueueChat(payload, images.map((image) => image.uri));
         setPending(await listPendingChats());
         setOnline(false);
         return 'queued';

@@ -26,6 +26,17 @@ class WeightRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    async def by_operation(self, user_id: str, operation_id: str) -> WeightRecordRef | None:
+        """Lookup committed state, including archived rows; absence is not a retry grant."""
+        async with self.database.session() as session:
+            row = await session.scalar(
+                select(WeightRecord).where(
+                    WeightRecord.user_id == user_id,
+                    WeightRecord.idempotency_key == operation_id,
+                )
+            )
+            return self._ref(row) if row is not None else None
+
     async def record(self, command: WeightMeasurementCommand) -> WeightRecordCreation:
         row = WeightRecord(
             user_id=command.user_id,
@@ -142,9 +153,7 @@ class WeightRepository:
             supersedes_id=row.supersedes_id,
             created_at=cls._as_utc(row.created_at),
             superseded_at=(
-                cls._as_utc(row.superseded_at)
-                if row.superseded_at is not None
-                else None
+                cls._as_utc(row.superseded_at) if row.superseded_at is not None else None
             ),
         )
 

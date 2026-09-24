@@ -85,6 +85,8 @@ class PendingActionStore(Protocol):
 
     async def list_for_execution(self, execution_key: str) -> list[PendingActionRef]: ...
 
+    async def list_for_turn(self, turn_id: str) -> list[PendingActionRef]: ...
+
     async def resolve(
         self,
         *,
@@ -235,6 +237,15 @@ class PendingActionRepository:
                 select(PendingActionRecord)
                 .where(PendingActionRecord.execution_key == execution_key)
                 .order_by(PendingActionRecord.created_at)
+            )
+            return [self._ref(row) for row in rows]
+
+    async def list_for_turn(self, turn_id: str) -> list[PendingActionRef]:
+        async with self.database.session() as session:
+            rows = await session.scalars(
+                select(PendingActionRecord)
+                .where(PendingActionRecord.turn_id == turn_id)
+                .order_by(PendingActionRecord.created_at, PendingActionRecord.id)
             )
             return [self._ref(row) for row in rows]
 

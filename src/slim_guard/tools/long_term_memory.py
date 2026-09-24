@@ -20,7 +20,13 @@ from slim_guard.memory.long_term import (
     LongTermMemoryRepository,
     LongTermMemorySensitivity,
 )
-from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolContext,
+    ToolEffectLevel,
+    ToolEffectStatus,
+    ToolResult,
+)
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
@@ -71,6 +77,7 @@ class LongTermMemoryToolHandlers:
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="missing_long_term_memory_identity",
                 message="Remembering requires a trusted current user message.",
             )
@@ -96,11 +103,13 @@ class LongTermMemoryToolHandlers:
             )
         except MemoryEvidenceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_evidence_mismatch",
                 message="The memory must quote the current user message exactly.",
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_source_mismatch",
                 message="The memory source could not be verified.",
             )
@@ -112,6 +121,7 @@ class LongTermMemoryToolHandlers:
             )
         except ValueError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_long_term_memory",
                 message="The memory or expiry is outside the supported schema.",
             )
@@ -145,6 +155,7 @@ class LongTermMemoryToolHandlers:
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="missing_long_term_memory_identity",
                 message="Forgetting requires a trusted current user message.",
             )
@@ -159,16 +170,19 @@ class LongTermMemoryToolHandlers:
             )
         except MemoryNotFound:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_not_found",
                 message="That memory is not visible to the current user.",
             )
         except MemoryEvidenceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_evidence_mismatch",
                 message="The forget request must quote the current user message exactly.",
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_source_mismatch",
                 message="The forget request source could not be verified.",
             )
@@ -184,6 +198,7 @@ class LongTermMemoryToolHandlers:
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="missing_long_term_memory_identity",
                 message="Clearing memories requires a trusted current user message.",
             )
@@ -197,11 +212,13 @@ class LongTermMemoryToolHandlers:
             )
         except MemoryEvidenceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_evidence_mismatch",
                 message="The clear request must quote the current user message exactly.",
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="long_term_memory_source_mismatch",
                 message="The clear request source could not be verified.",
             )

@@ -64,6 +64,7 @@ def test_group_chat_composer_keeps_coach_and_system_as_distinct_messages() -> No
 
 def test_meal_card_projects_only_user_facing_fields() -> None:
     result = SimpleNamespace(
+        operation=None,
         status=SimpleNamespace(value="succeeded"),
         output={
             "created": True,
@@ -88,3 +89,37 @@ def test_meal_card_projects_only_user_facing_fields() -> None:
         "meal_type": "午餐",
         "foods": ["米饭", "鸡胸肉（一份）"],
     }
+
+
+def test_resumed_operation_projects_one_business_card_per_turn() -> None:
+    from slim_guard.tools.contracts import ToolExecution, ToolOperationReceipt, ToolResult
+
+    result = ToolResult.success(
+        output={
+            "record_id": "meal-1",
+            "meal_type": "lunch",
+            "foods": [{"name": "烧茄子"}],
+        }
+    ).model_copy(
+        update={
+            "operation": ToolOperationReceipt(
+                operation_id="op-1",
+                tool_name="record_meal",
+                status="succeeded",
+            )
+        }
+    )
+    outcomes = tuple(
+        SimpleNamespace(
+            execution=ToolExecution(
+                tool_call_id=call,
+                tool_name=name,
+                result=result,
+            )
+        )
+        for call, name in [("call-1", "record_meal"), ("call-2", "resume_tool_operation")]
+    )
+    cards = project_cards(outcomes)
+    assert len(cards) == 1
+    assert cards[0].data["foods"] == ["烧茄子"]
+    assert len(project_cards(outcomes[1:])) == 1

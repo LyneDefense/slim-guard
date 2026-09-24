@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime, timedelta
 
 from httpx import ASGITransport, AsyncClient
@@ -70,6 +71,16 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
             )
             chat_payload = {
                 "text": "今天开始认真记录",
+                "images": [
+                    {
+                        "image_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nphoto").decode(),
+                        "mime_type": "image/png",
+                    },
+                    {
+                        "image_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nphoto-2").decode(),
+                        "mime_type": "image/png",
+                    },
+                ],
                 "idempotency_key": "mobile-message-0001",
             }
             blocked_chat = await http.post(
@@ -105,6 +116,11 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
                 json=chat_payload,
             )
             history = await http.get("/api/mobile/v1/chat/messages", headers=headers)
+            user_message = history.json()["items"][0]
+            image_response = await http.get(
+                f"https://test{user_message['attachments'][0]['url']}",
+                headers=headers,
+            )
             routine = await http.put(
                 "/api/mobile/v1/routine",
                 headers=headers,
@@ -163,6 +179,12 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
             "user",
             "assistant",
         ]
+        assert user_message["text"] == "今天开始认真记录"
+        assert len(user_message["attachments"]) == 2
+        assert len({item["asset_id"] for item in user_message["attachments"]}) == 2
+        assert user_message["attachments"][0]["mime_type"] == "image/png"
+        assert image_response.status_code == 200
+        assert image_response.content == b"\x89PNG\r\n\x1a\nphoto"
         assert routine.json()["weight_reminder_time"] == "08:00"
         assert today.status_code == 200
         assert today.json()["current_weight_kg"] == 72.5

@@ -13,6 +13,7 @@ from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolEffectLevel,
+    ToolEffectStatus,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -41,9 +42,7 @@ class MealFoodArguments(BaseModel):
 
 
 class RecordMealArguments(ToolArguments):
-    meal_type: Literal["breakfast", "lunch", "dinner", "snack", "unspecified"] = (
-        "unspecified"
-    )
+    meal_type: Literal["breakfast", "lunch", "dinner", "snack", "unspecified"] = "unspecified"
     # Model tool calls arrive as JSON, whose collection type is an array/list.
     # Keep the boundary JSON-native and normalize to immutable tuples only in
     # the trusted domain command below.
@@ -66,6 +65,19 @@ class MealToolHandlers:
         self._repository = repository
         self._clock = clock or self._utc_now
 
+    async def lookup_result(self, context: ToolContext) -> ToolResult | None:
+        if context.execution_idempotency_key is None:
+            return None
+        record = await self._repository.by_operation(
+            context.user_id, context.execution_idempotency_key
+        )
+        if record is None:
+            return None
+        return ToolResult.success(
+            output={**self._record_output(record), "created": False},
+            source_ids=(record.id,),
+        )
+
     async def record_meal(
         self,
         context: ToolContext,
@@ -81,27 +93,36 @@ class MealToolHandlers:
                 user_id=context.user_id,
                 meal_type=MealType(arguments.meal_type),
                 foods=tuple(
-                    MealFood(name=food.name, portion=food.portion)
-                    for food in arguments.foods
+                    MealFood(name=food.name, portion=food.portion) for food in arguments.foods
                 ),
                 note=arguments.note,
-                occurred_at=self._occurrence_time(arguments.occurred_at),
+                occurred_at=self._occurrence_time(
+                    arguments.occurred_at
+                    or (
+                        context.operation_started_at.isoformat()
+                        if context.operation_started_at
+                        else None
+                    )
+                ),
                 idempotency_key=context.execution_idempotency_key,
                 source_turn_id=context.turn_id,
                 source_item_id=context.source_item_id,
                 source_tool_call_id=context.tool_call_id,
             )
-            creation = await self._repository.record(command)
         except ValidationError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_meal_record",
                 message="The meal record contains invalid food or note data.",
             )
         except ValueError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_meal_time",
                 message="The meal time must be a timezone-aware ISO 8601 value.",
             )
+        try:
+            creation = await self._repository.record(command)
         except MealRecordCollision:
             return ToolResult.failed(
                 code="meal_record_collision",
@@ -109,6 +130,7 @@ class MealToolHandlers:
             )
         except MealSourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="meal_source_mismatch",
                 message="The meal record source could not be verified.",
             )
@@ -194,6 +216,7 @@ def meal_tool_executors(
         RECORD_MEAL_TOOL_NAME: ToolExecutor(
             arguments_model=RecordMealArguments,
             handler=handlers.record_meal,
+            lookup_result=handlers.lookup_result,
         ),
         GET_RECENT_MEALS_TOOL_NAME: ToolExecutor(
             arguments_model=GetRecentMealsArguments,

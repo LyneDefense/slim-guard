@@ -1,6 +1,7 @@
 import type {
   AuthOptions,
   AuthTokens,
+  ChatAttachment,
   ChatMessage,
   ChatPayload,
   ChatResponse,
@@ -37,6 +38,15 @@ class MobileApi {
   private accessToken: string | null = null;
   private refreshInFlight: Promise<AuthTokens> | null = null;
   private authChanged: ((tokens: AuthTokens | null) => void) | null = null;
+
+  imageSource(attachment: ChatAttachment): { uri: string; headers?: Record<string, string> } | null {
+    if (attachment.uri) return { uri: attachment.uri };
+    if (!attachment.url) return null;
+    return {
+      uri: `${API_BASE_URL}${attachment.url}`,
+      ...(this.accessToken ? { headers: { Authorization: `Bearer ${this.accessToken}` } } : {}),
+    };
+  }
 
   onAuthChanged(listener: (tokens: AuthTokens | null) => void): () => void {
     this.authChanged = listener;

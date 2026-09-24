@@ -1,8 +1,9 @@
 """Own output safety, finalization adoption and fallback outside the Core loop."""
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
+from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.loop import HarnessLoopResult
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class ProcessedResponse:
     loop: HarnessLoopResult
+    final_text: str | None
+    outgoing_messages: tuple[ChatMessage, ...] = ()
+    final_output_artifact_id: str | None = None
     finalization: ResponseFinalizationResult | None = None
 
 
@@ -49,17 +53,16 @@ class ResponseProcessor:
         assessment: SafetyAssessment,
     ) -> ProcessedResponse:
         if result.termination is not HarnessTermination.FINAL_RESPONSE:
-            return ProcessedResponse(result)
+            return ProcessedResponse(result, final_text=None)
         assert result.final_text is not None
         guarded = self._guard.review(
             text=result.final_text, assessment=assessment, tool_outcomes=result.tool_outcomes
         )
-        neutral = replace(result, final_text=guarded.text)
         if guarded.modified:
             await self._recorder.record_output_guard(turn_id=invocation.turn_id, code=guarded.code)
-            return ProcessedResponse(neutral)
+            return ProcessedResponse(result, final_text=guarded.text)
         if self._finalizer is None:
-            return ProcessedResponse(neutral)
+            return ProcessedResponse(result, final_text=guarded.text)
 
         finalization = None
         try:
@@ -82,12 +85,6 @@ class ResponseProcessor:
                         deadline_at=invocation.deadline_at,
                     )
                 )
-            neutral = replace(
-                neutral,
-                pipeline_model_call_count=finalization.model_call_count,
-                pipeline_total_token_count=finalization.total_token_count,
-                core_output_artifact_id=finalization.core_output_artifact_id,
-            )
             checked = self._guard.review(
                 text=finalization.text, assessment=assessment, tool_outcomes=result.tool_outcomes
             )
@@ -97,7 +94,7 @@ class ResponseProcessor:
                 await self._degraded(
                     invocation, "response_pipeline_output_guard_modified", finalization
                 )
-                return ProcessedResponse(neutral, finalization)
+                return ProcessedResponse(result, final_text=guarded.text, finalization=finalization)
             await self._recorder.record_workflow_event(
                 turn_id=invocation.turn_id,
                 event_type=ItemType.RESPONSE_ADOPTED,
@@ -108,18 +105,16 @@ class ResponseProcessor:
                 },
             )
             return ProcessedResponse(
-                replace(
-                    neutral,
-                    final_text=checked.text,
-                    final_output_artifact_id=finalization.final_output_artifact_id,
-                    outgoing_messages=finalization.messages,
-                ),
-                finalization,
+                result,
+                final_text=checked.text,
+                outgoing_messages=finalization.messages,
+                final_output_artifact_id=finalization.final_output_artifact_id,
+                finalization=finalization,
             )
         except Exception:
             logger.exception("final_response_workflow_failed")
             await self._degraded(invocation, "response_pipeline_failed", finalization)
-            return ProcessedResponse(neutral, finalization)
+            return ProcessedResponse(result, final_text=guarded.text, finalization=finalization)
 
     async def _degraded(
         self,

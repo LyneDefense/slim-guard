@@ -206,10 +206,19 @@ class CoachProfileStatusView(BaseModel):
     profile: CoachProfileData | None = None
 
 
+class ChatImageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_base64: str = Field(min_length=1, max_length=28_000_000)
+    mime_type: Literal["image/jpeg", "image/png", "image/webp"]
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str | None = Field(default=None, max_length=20_000)
+    images: list[ChatImageInput] = Field(default_factory=list, max_length=8)
+    # Legacy single-image fields remain accepted for queued clients during rollout.
     image_base64: str | None = Field(default=None, max_length=28_000_000)
     image_mime_type: Literal["image/jpeg", "image/png", "image/webp"] | None = None
     idempotency_key: str = Field(min_length=8, max_length=128)
@@ -225,7 +234,9 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_content(self) -> ChatRequest:
-        if self.text is None and self.image_base64 is None:
+        if self.image_base64 is not None and self.images:
+            raise ValueError("Use either images or the legacy single-image fields")
+        if self.text is None and self.image_base64 is None and not self.images:
             raise ValueError("A chat request requires text or an image")
         if self.image_base64 is not None and self.image_mime_type is None:
             raise ValueError("Image MIME type is required with image content")
@@ -246,6 +257,12 @@ class ChatResponse(BaseModel):
     messages: list[ChatMessageView] = Field(default_factory=list)
 
 
+class ChatAttachmentView(BaseModel):
+    asset_id: str
+    mime_type: str
+    url: str
+
+
 class ChatMessageView(BaseModel):
     id: str
     turn_id: str
@@ -255,6 +272,7 @@ class ChatMessageView(BaseModel):
     kind: Literal["text", "image", "card"]
     text: str | None
     card: dict[str, object] | None = None
+    attachments: list[ChatAttachmentView] = Field(default_factory=list)
     created_at: datetime
 
 

@@ -8,7 +8,13 @@ from slim_guard.domain.records.service import (
     RecordStatusAction,
     UserRecordStatusService,
 )
-from slim_guard.tools.contracts import ToolArguments, ToolContext, ToolEffectLevel, ToolResult
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolContext,
+    ToolEffectLevel,
+    ToolEffectStatus,
+    ToolResult,
+)
 from slim_guard.tools.gateway import ToolExecutor
 from slim_guard.tools.registry import RegisteredTool
 
@@ -40,11 +46,13 @@ class RecordStatusToolHandlers:
             )
         except ValueError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="record_status_conflict",
                 message="This record cannot be changed from its current status.",
             )
         if result is None:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="record_not_found",
                 message="No matching record owned by the current user was found.",
             )

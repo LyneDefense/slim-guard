@@ -20,6 +20,7 @@ from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolEffectLevel,
+    ToolEffectStatus,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -55,6 +56,19 @@ class WeightToolHandlers:
         self._repository = repository
         self._clock = clock or self._utc_now
 
+    async def lookup_result(self, context: ToolContext) -> ToolResult | None:
+        if context.execution_idempotency_key is None:
+            return None
+        record = await self._repository.by_operation(
+            context.user_id, context.execution_idempotency_key
+        )
+        if record is None:
+            return None
+        return ToolResult.success(
+            output={**self._record_output(record), "created": False},
+            source_ids=(record.id,),
+        )
+
     async def record_weight(
         self,
         context: ToolContext,
@@ -66,7 +80,14 @@ class WeightToolHandlers:
                 message="The weight record is missing its trusted execution identity.",
             )
         try:
-            measured_at = self._measurement_time(arguments.measured_at)
+            measured_at = self._measurement_time(
+                arguments.measured_at
+                or (
+                    context.operation_started_at.isoformat()
+                    if context.operation_started_at
+                    else None
+                )
+            )
             command = WeightMeasurementCommand(
                 user_id=context.user_id,
                 value=Decimal(str(arguments.value)),
@@ -78,17 +99,20 @@ class WeightToolHandlers:
                 source_item_id=context.source_item_id,
                 source_tool_call_id=context.tool_call_id,
             )
-            creation = await self._repository.record(command)
         except ValidationError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_weight_measurement",
                 message="The weight measurement is invalid or outside the supported range.",
             )
         except ValueError:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="invalid_measurement_time",
                 message="The measurement time must be a timezone-aware ISO 8601 value.",
             )
+        try:
+            creation = await self._repository.record(command)
         except WeightRecordCollision:
             return ToolResult.failed(
                 code="weight_record_collision",
@@ -96,6 +120,7 @@ class WeightToolHandlers:
             )
         except WeightSourceMismatch:
             return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="weight_source_mismatch",
                 message="The weight record source could not be verified.",
             )
@@ -206,6 +231,7 @@ def weight_tool_executors(
         RECORD_WEIGHT_TOOL_NAME: ToolExecutor(
             arguments_model=RecordWeightArguments,
             handler=handlers.record_weight,
+            lookup_result=handlers.lookup_result,
         ),
         GET_RECENT_WEIGHT_TREND_TOOL_NAME: ToolExecutor(
             arguments_model=GetRecentWeightTrendArguments,
