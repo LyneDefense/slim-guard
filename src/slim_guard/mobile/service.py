@@ -5,7 +5,7 @@ import binascii
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
@@ -28,12 +28,12 @@ from slim_guard.db.models import (
 )
 from slim_guard.db.session import Database
 from slim_guard.domain.assets.repository import ImageAssetRepository
-from slim_guard.domain.body_fat.repository import BodyFatRepository
-from slim_guard.domain.exercise.repository import ExerciseRepository
-from slim_guard.domain.meal.repository import MealRepository
 from slim_guard.domain.routine.contracts import RoutinePreferenceCommand, RoutineSetting
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.composition import (
+    HealthRecordReaders,
+    build_record_readers,
+)
 from slim_guard.group_chat.contracts import ChatMessage, ParticipantRole
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.termination import HarnessTermination
@@ -57,9 +57,10 @@ from slim_guard.mobile.contracts import (
     RoutineUpdateRequest,
     RoutineView,
     TodayView,
-    TrendPoint,
 )
+from slim_guard.mobile.record_projection import record_progress
 from slim_guard.observability.tracing import InteractionTraceRepository, bind_trace
+from slim_guard.services.record_changes import build_record_service
 from slim_guard.tools.contracts import ToolExecutionMode
 from slim_guard.usage.context import usage_scope
 
@@ -89,17 +90,20 @@ class MobileApplicationService:
         runtime: AgentRuntimeProtocol | None,
         traces: InteractionTraceRepository,
         max_image_bytes: int = 10_485_760,
+        health_records: HealthRecordReaders | None = None,
     ) -> None:
         self._database = database
+        self.records = build_record_service(database)
         self._runtime = runtime
         self._traces = traces
         self._max_image_bytes = max_image_bytes
         self._assets = ImageAssetRepository(database)
         self._memories = MemoryRepository(database)
-        self._weights = WeightRepository(database)
-        self._body_fat = BodyFatRepository(database)
-        self._meals = MealRepository(database)
-        self._exercise = ExerciseRepository(database)
+        records = health_records or build_record_readers(database)
+        self._weights = records.weights
+        self._body_fat = records.body_fat
+        self._meals = records.meals
+        self._exercise = records.exercise
         self._routines = RoutinePreferenceRepository(database)
 
     async def user(self, user_id: str) -> MobileUserView:
@@ -288,33 +292,6 @@ class MobileApplicationService:
                     turn_id=result.turn_id,
                     text=final_text,
                     messages=messages,
-                )
-            if result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
-                final_text = "这项操作需要你再次确认。确认执行，还是取消？"
-                await self._complete_request(
-                    claim.id,
-                    status="succeeded",
-                    turn_id=result.turn_id,
-                    final_text=final_text,
-                    failure_code=None,
-                )
-                await self._finish_trace(trace_id, result, succeeded=True)
-                return ChatResponse(
-                    request_id=claim.id,
-                    status="succeeded",
-                    turn_id=result.turn_id,
-                    text=final_text,
-                    messages=[
-                        ChatMessageView(
-                            id=f"pending-{result.turn_id}",
-                            turn_id=result.turn_id,
-                            participant="system_assistant",
-                            role="assistant",
-                            kind="text",
-                            text=final_text,
-                            created_at=datetime.now(UTC),
-                        )
-                    ],
                 )
             failure_code = result.failure_code or result.termination.value
             await self._complete_request(
@@ -554,51 +531,7 @@ class MobileApplicationService:
         )
 
     async def progress(self, user_id: str, *, limit: int = 30) -> ProgressView:
-        weights = await self._weights.recent_trend(user_id, limit=limit)
-        body_fat = await self._body_fat.recent_trend(user_id, limit=limit)
-        meals = await self._meals.recent(user_id, limit=limit)
-        exercise = await self._exercise.recent(user_id, limit=limit)
-        return ProgressView(
-            weights=[
-                TrendPoint(
-                    id=row.id,
-                    value=float(row.weight_kg),
-                    occurred_at=self._aware(row.measured_at),
-                )
-                for row in reversed(weights.records)
-            ],
-            body_fat=[
-                TrendPoint(
-                    id=row.id,
-                    value=float(row.percent),
-                    occurred_at=self._aware(row.measured_at),
-                )
-                for row in reversed(body_fat.records)
-            ],
-            meals=[
-                {
-                    "id": row.id,
-                    "meal_type": row.meal_type.value,
-                    "foods": [food.model_dump(mode="json") for food in row.foods],
-                    "note": row.note,
-                    "occurred_at": self._aware(row.occurred_at),
-                }
-                for row in reversed(meals)
-            ],
-            exercise=[
-                {
-                    "id": row.id,
-                    "activity_name": row.activity_name,
-                    "duration_minutes": row.duration_minutes,
-                    "steps": row.steps,
-                    "distance_meters": row.distance_meters,
-                    "reported_energy_kcal": row.reported_energy_kcal,
-                    "note": row.note,
-                    "occurred_at": self._aware(row.occurred_at),
-                }
-                for row in reversed(exercise)
-            ],
-        )
+        return await record_progress(self.records, user_id, limit)
 
     async def today(self, user_id: str, *, now: datetime) -> TodayView:
         routine = await self.routine(user_id)
@@ -608,7 +541,7 @@ class MobileApplicationService:
         profile_is_latest_weight = coach_profile is not None and (
             not progress.weights
             or coach_profile.weight_measured_on
-            > self._aware(progress.weights[-1].occurred_at).date()
+            > self._calendar_day(progress.weights[-1].occurred_at, routine.timezone)
         )
         profile_is_latest_body_fat = (
             coach_profile is not None
@@ -616,19 +549,19 @@ class MobileApplicationService:
             and (
                 not progress.body_fat
                 or coach_profile.weight_measured_on
-                > self._aware(progress.body_fat[-1].occurred_at).date()
+                > self._calendar_day(progress.body_fat[-1].occurred_at, routine.timezone)
             )
         )
         meals_logged = sum(
             1
             for item in progress.meals
-            if self._aware(item["occurred_at"]).astimezone(ZoneInfo(routine.timezone)).date()
+            if self._calendar_day(item.get("occurred_on") or item["occurred_at"], routine.timezone)
             == local_date
         )
         exercise_logged = sum(
             1
             for item in progress.exercise
-            if self._aware(item["occurred_at"]).astimezone(ZoneInfo(routine.timezone)).date()
+            if self._calendar_day(item.get("occurred_on") or item["occurred_at"], routine.timezone)
             == local_date
         )
         return TodayView(
@@ -878,6 +811,14 @@ class MobileApplicationService:
         except json.JSONDecodeError:
             return {}
         return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _calendar_day(value: object, timezone: str) -> date:
+        if isinstance(value, datetime):
+            return MobileApplicationService._aware(value).astimezone(ZoneInfo(timezone)).date()
+        if isinstance(value, date):
+            return value
+        return date.min
 
     @staticmethod
     def _aware(value: object) -> datetime:

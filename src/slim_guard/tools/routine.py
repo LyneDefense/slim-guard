@@ -16,6 +16,7 @@ from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectLevel,
     ToolEffectStatus,
+    ToolMutationKind,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -94,8 +95,8 @@ def routine_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=ROUTINE_TOOL_VERSION,
             arguments_model=ConfigureRoutineArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.ROUTINE_SETTINGS,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -105,7 +106,6 @@ def routine_tool_definitions() -> tuple[RegisteredTool, ...]:
             arguments_model=GetRoutineArguments,
             effect_level=ToolEffectLevel.READ,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
     )

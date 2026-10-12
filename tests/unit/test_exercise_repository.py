@@ -7,12 +7,12 @@ import pytest
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.exercise.contracts import ExerciseRecordCommand
-from slim_guard.domain.exercise.errors import (
+from slim_guard.features.health_records.exercise.contracts import ExerciseRecordCommand
+from slim_guard.features.health_records.exercise.errors import (
     ExerciseRecordCollision,
     ExerciseSourceMismatch,
 )
-from slim_guard.domain.exercise.repository import ExerciseRepository
+from slim_guard.features.health_records.exercise.repository import ExerciseRepository
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,

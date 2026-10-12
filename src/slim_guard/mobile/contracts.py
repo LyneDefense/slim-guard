@@ -316,7 +316,8 @@ class RoutineView(BaseModel):
 class TrendPoint(BaseModel):
     id: str
     value: float
-    occurred_at: datetime
+    occurred_at: datetime | date
+    time_precision: str = "datetime"
 
 
 class ProgressView(BaseModel):

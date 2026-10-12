@@ -28,24 +28,6 @@ _TERMINAL_TURN_STATUSES = frozenset({TurnStatus.COMPLETED, TurnStatus.FAILED, Tu
 _ALLOWED_TURN_TRANSITIONS: dict[TurnStatus, frozenset[TurnStatus]] = {
     TurnStatus.RUNNING: frozenset(
         {
-            TurnStatus.WAITING_USER_CONFIRMATION,
-            TurnStatus.WAITING_HUMAN_REVIEW,
-            TurnStatus.COMPLETED,
-            TurnStatus.FAILED,
-            TurnStatus.SUSPENDED,
-        }
-    ),
-    TurnStatus.WAITING_USER_CONFIRMATION: frozenset(
-        {
-            TurnStatus.RUNNING,
-            TurnStatus.COMPLETED,
-            TurnStatus.FAILED,
-            TurnStatus.SUSPENDED,
-        }
-    ),
-    TurnStatus.WAITING_HUMAN_REVIEW: frozenset(
-        {
-            TurnStatus.RUNNING,
             TurnStatus.COMPLETED,
             TurnStatus.FAILED,
             TurnStatus.SUSPENDED,

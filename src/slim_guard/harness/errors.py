@@ -23,19 +23,3 @@ class ItemStateConflict(HarnessStateError):
 
 class ContextCompilationError(HarnessStateError):
     pass
-
-
-class PendingActionCollision(HarnessStateError):
-    pass
-
-
-class InvalidPendingActionTransition(HarnessStateError):
-    pass
-
-
-class PendingActionStateConflict(HarnessStateError):
-    pass
-
-
-class PendingActionConfigurationError(HarnessStateError):
-    pass

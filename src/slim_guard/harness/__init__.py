@@ -13,16 +13,6 @@ from slim_guard.harness.loop import (
     HarnessTurnContext,
 )
 from slim_guard.harness.manifest import AgentManifest
-from slim_guard.harness.pending_actions import (
-    PendingActionCreation,
-    PendingActionRef,
-    PendingActionRepository,
-    PendingActionStore,
-)
-from slim_guard.harness.pending_resume import (
-    PendingActionResumeCoordinator,
-    PendingResumeOutcome,
-)
 from slim_guard.harness.preparation import TurnGrants
 from slim_guard.harness.runner import (
     TurnHarness,
@@ -41,12 +31,6 @@ __all__ = [
     "TurnHarness",
     "TurnRunResult",
     "InitializedTurn",
-    "PendingActionCreation",
-    "PendingActionRef",
-    "PendingActionRepository",
-    "PendingActionResumeCoordinator",
-    "PendingActionStore",
-    "PendingResumeOutcome",
     "ToolCallCoordinator",
     "ToolCallOutcome",
     "TurnInitializationRequest",

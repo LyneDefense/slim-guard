@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,30 +25,27 @@ from slim_guard.agent_models.vision import (
 )
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.body_fat.repository import BodyFatRepository
-from slim_guard.domain.meal.repository import MealRepository
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.body_fat.repository import BodyFatRepository
+from slim_guard.features.health_records.body_fat.tools import RECORD_BODY_FAT_TOOL_NAME
+from slim_guard.features.health_records.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.tools import RECORD_MEAL_TOOL_NAME
+from slim_guard.features.health_records.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.tools import (
+    RECORD_WEIGHT_TOOL_NAME,
+)
 from slim_guard.harness.events import WORKFLOW_TRACE_ITEM_TYPES, ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.contracts import MemoryKey
 from slim_guard.memory.repository import MemoryRepository
-from slim_guard.tools.body_fat import RECORD_BODY_FAT_TOOL_NAME
 from slim_guard.tools.contracts import ToolExecutionMode
-from slim_guard.tools.meal import RECORD_MEAL_TOOL_NAME
 from slim_guard.tools.memory import (
-    CLEAR_USER_MEMORIES_TOOL_NAME,
     SET_BODY_FAT_GOAL_TOOL_NAME,
     SET_BODY_PROFILE_TOOL_NAME,
     SET_COACHING_PROFILE_TOOL_NAME,
     SET_EXERCISE_PROFILE_TOOL_NAME,
     SET_WEIGHT_GOAL_TOOL_NAME,
-)
-from slim_guard.tools.pending import RESOLVE_PENDING_USER_ACTION_TOOL_NAME
-from slim_guard.tools.weight import (
-    GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-    RECORD_WEIGHT_TOOL_NAME,
 )
 from slim_guard.usage.repository import UsageRepository
 from tests.conversation_script import SystemConversationScript
@@ -117,61 +113,6 @@ class HistoricalHeightModelGateway:
         return None
 
 
-class MemoryClearModelGateway:
-    def __init__(self) -> None:
-        self.requests: list[ModelRequest] = []
-        self._step = 0
-
-    async def complete(self, request: ModelRequest) -> ModelResponse:
-        self.requests.append(request)
-        step = self._step
-        self._step += 1
-        if step == 0:
-            return tool_call(
-                "call-profile",
-                SET_COACHING_PROFILE_TOOL_NAME,
-                {"preferred_name": "阿杰", "evidence_excerpt": "以后叫我阿杰"},
-            )
-        if step == 1:
-            return final_reply("记住了，以后叫你阿杰。")
-        if step == 2:
-            return tool_call(
-                "call-clear",
-                CLEAR_USER_MEMORIES_TOOL_NAME,
-                {
-                    "scope": "profile_goal_constraint",
-                    "evidence_excerpt": "清空我的个性化记忆",
-                },
-            )
-        if step == 3:
-            context = next(
-                message.content or ""
-                for message in request.messages
-                if "近期对话工作记忆" in (message.content or "")
-                and "pending_user_confirmations" in (message.content or "")
-            )
-            match = re.search(r'"action_id":"([^"]+)"', context)
-            assert match is not None
-            return tool_call(
-                "call-resolve-clear",
-                RESOLVE_PENDING_USER_ACTION_TOOL_NAME,
-                {
-                    "action_id": match.group(1),
-                    "decision": "approve",
-                    "evidence_excerpt": "确认执行",
-                },
-            )
-        if step == 4:
-            return final_reply("个性化记忆已经清空；体重、饮食和运动记录未删除。")
-        raise AssertionError(f"Unexpected model call: {step}")
-
-    async def close(self) -> None:
-        return None
-
-    def assert_exhausted(self) -> None:
-        assert self._step == 5
-
-
 class MealImageFollowupModelGateway:
     def __init__(self) -> None:
         self.requests: list[ModelRequest] = []
@@ -195,8 +136,7 @@ class MealImageFollowupModelGateway:
             working = next(
                 message.content or ""
                 for message in request.messages
-                if message.role is MessageRole.USER
-                and self.asset_id in (message.content or "")
+                if message.role is MessageRole.USER and self.asset_id in (message.content or "")
             )
             assert self.asset_id in working
             assert '"author":"vision_model"' in working
@@ -248,7 +188,6 @@ class UncertainMealVisionGateway:
                     certainty=VisionCertainty.UNCERTAIN,
                 ),
             ),
-            requires_user_confirmation=True,
         )
 
     async def close(self) -> None:
@@ -276,12 +215,20 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             tool_call(
                 "call-record",
                 RECORD_WEIGHT_TOOL_NAME,
-                {"value": 77.6, "unit": "kg", "condition": "fasting"},
+                {
+                    "value": 77.6,
+                    "unit": "kg",
+                    "condition": "fasting",
+                    "evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
+                },
             ),
             tool_call(
                 "call-trend",
-                GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-                {"limit": 7},
+                "search_health_records",
+                {"query": {"kind": "weight", "limit": 7}},
             ),
             final_reply("已记录今天空腹体重 77.6kg。这是第一条记录，先建立基线。"),
         )
@@ -352,47 +299,19 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         }
         assert [
             item.payload["tool_name"] for item in items if item.item_type is ItemType.TOOL_CALL
-        ] == [RECORD_WEIGHT_TOOL_NAME, GET_RECENT_WEIGHT_TREND_TOOL_NAME]
+        ] == [RECORD_WEIGHT_TOOL_NAME, "search_health_records"]
         assert model.requests[0].messages[0].content == SLIM_GUARD_HARNESS_PROMPT
-        assert [tool.name for tool in model.requests[0].tools] == [
-            RECORD_WEIGHT_TOOL_NAME,
-            GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-            "record_body_fat",
-            "get_recent_body_fat_trend",
-            "inspect_image",
-            "record_meal",
-            "get_recent_meals",
-            "record_exercise",
-            "get_recent_exercise",
-            "configure_checkin_schedule",
-            "get_checkin_schedule",
-            "update_record_status",
-            "set_coaching_profile",
-            "set_body_profile",
-            "set_exercise_profile",
-            "upsert_food_preference",
-            "upsert_exercise_preference",
-            "set_weight_goal",
-            "set_body_fat_goal",
-            "set_behavior_goal",
-            "record_user_constraint",
-            "list_user_memories",
-            "forget_user_memory",
-            "clear_user_memories",
-            "save_conversation_task",
-            "get_conversation_task",
-            "list_conversation_tasks",
-            "link_task_authorization",
-            "remember_long_term_memory",
-            "list_long_term_memories",
-            "forget_long_term_memory",
-            "clear_long_term_memories",
-            "resolve_pending_user_action",
-            "list_unsettled_tool_operations",
-            "get_tool_operation",
-            "resume_tool_operation",
-            "consult_nutrition_specialist",
-        ]
+        tool_names = {tool.name for tool in model.requests[0].tools}
+        assert {"record_weight", "search_health_records", "update_meal_record"} <= tool_names
+        assert (
+            not {
+                "clear_user_memories",
+                "clear_long_term_memories",
+                "link_task_authorization",
+                "resolve_pending_user_action",
+            }
+            & tool_names
+        )
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")
         assert first_observation["status"] == "succeeded"
@@ -620,7 +539,13 @@ async def test_runtime_handles_onboarding_measurements_goals_and_habits(
                         NormalizedToolCall(
                             id="call-weight",
                             name=RECORD_WEIGHT_TOOL_NAME,
-                            arguments={"value": 58},
+                            arguments={
+                                "value": 58,
+                                "evidence": {
+                                    "source_kind": "user_reported",
+                                    "source_refs": ["current-user-message"],
+                                },
+                            },
                         ),
                         NormalizedToolCall(
                             id="call-weight-goal",
@@ -633,7 +558,13 @@ async def test_runtime_handles_onboarding_measurements_goals_and_habits(
                         NormalizedToolCall(
                             id="call-body-fat",
                             name=RECORD_BODY_FAT_TOOL_NAME,
-                            arguments={"value": 31},
+                            arguments={
+                                "value": 31,
+                                "evidence": {
+                                    "source_kind": "user_reported",
+                                    "source_refs": ["current-user-message"],
+                                },
+                            },
                         ),
                         NormalizedToolCall(
                             id="call-body-fat-goal",
@@ -767,8 +698,9 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == ("已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。")
-        assert all(item.item_type is not ItemType.OUTPUT_GUARD for item in items)
+        assert result.final_text == "这次只有部分更改完成，其他操作没有确认成功。"
+        guard = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
+        assert guard.payload["code"] == "partial_mutation_claim"
     finally:
         await model.close()
         await database.close()
@@ -813,11 +745,9 @@ async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Pa
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == (
-            "这项记忆没有确认保存或撤销成功，请把你的要求再说一次，我会重新处理。"
-        )
+        assert result.final_text == "这项更改没有确认成功。"
         guard = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
-        assert guard.payload["code"] == "failed_memory_write_success_claim"
+        assert guard.payload["code"] == "failed_mutation_claim"
     finally:
         await model.close()
         await database.close()
@@ -940,8 +870,7 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
             for message in model.requests[1].messages
         )
         assert not any(
-            "刚才那个继续" in (message.content or "")
-            for message in model.requests[1].messages[:-1]
+            "刚才那个继续" in (message.content or "") for message in model.requests[1].messages[:-1]
         )
         model.assert_exhausted()
     finally:
@@ -1089,61 +1018,6 @@ async def test_runtime_persists_explicit_task_for_a_later_turn(
         await database.close()
 
 
-async def test_runtime_requires_and_applies_bulk_memory_clear_confirmation(
-    tmp_path: Path,
-) -> None:
-    database = await prepare_database(tmp_path)
-    model = MemoryClearModelGateway()
-    runtime = build_agent_runtime(
-        database=database,
-        model=SystemConversationScript(model),
-        definition=AgentRuntimeDefinition(
-            models=ModelRuntimeConfig(
-                provider="zhipu",
-                text_model="glm-5.2",
-                vision_model="glm-5v-turbo",
-            ),
-            code_revision="test-memory-clear",
-        ),
-        clock=lambda: FIXED_NOW,
-    )
-    try:
-        await runtime.run_user_message(
-            AgentRuntimeRequest(
-                user_id="user-1",
-                text="以后叫我阿杰",
-                execution_mode=ToolExecutionMode.EVALUATION,
-                isolated_write_environment=True,
-            )
-        )
-        requested = await runtime.run_user_message(
-            AgentRuntimeRequest(
-                user_id="user-1",
-                text="清空我的个性化记忆",
-                execution_mode=ToolExecutionMode.EVALUATION,
-                isolated_write_environment=True,
-            )
-        )
-        before_confirmation = await MemoryRepository(database).active("user-1")
-        confirmed = await runtime.run_user_message(
-            AgentRuntimeRequest(
-                user_id="user-1",
-                text="确认执行",
-                execution_mode=ToolExecutionMode.EVALUATION,
-                isolated_write_environment=True,
-            )
-        )
-
-        assert requested.termination is HarnessTermination.WAITING_USER_CONFIRMATION
-        assert len(before_confirmation) == 1
-        assert confirmed.final_text == ("个性化记忆已经清空；体重、饮食和运动记录未删除。")
-        assert await MemoryRepository(database).active("user-1") == ()
-        model.assert_exhausted()
-    finally:
-        await model.close()
-        await database.close()
-
-
 async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Path) -> None:
     database = await prepare_database(tmp_path)
     model = ScriptedModelGateway((final_reply("早上好，记得空腹称一下体重哦。"),))
@@ -1187,7 +1061,7 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
         await database.close()
 
 
-async def test_runtime_blocks_tools_and_replaces_emergency_model_output(
+async def test_runtime_does_not_run_input_risk_word_checks(
     tmp_path: Path,
 ) -> None:
     database = await prepare_database(tmp_path)
@@ -1216,11 +1090,9 @@ async def test_runtime_blocks_tools_and_replaces_emergency_model_output(
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
         assert result.termination is HarnessTermination.FINAL_RESPONSE
-        assert "尽快联系当地急救服务或前往急诊" in (result.final_text or "")
-        assert model.requests[0].tools == ()
-        assert any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
-        guard_item = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
-        assert guard_item.payload["code"] == "medical_emergency_escalation"
+        assert result.final_text == "没关系，继续运动观察一下。"
+        assert model.requests[0].tools
+        assert not any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
     finally:
         await model.close()
         await database.close()

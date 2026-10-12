@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from slim_guard.tasks.record_requests import RecordRequest
+
 Text = Annotated[str, Field(min_length=1, max_length=500)]
 TaskStatus = Literal["open", "resolved", "cancelled", "expired"]
 
@@ -35,6 +37,7 @@ class TaskRef(BaseModel):
     created_at: datetime
     expires_at: datetime
     resolved_at: datetime | None
+    request: RecordRequest | None = None
 
 
 class TaskWrite(BaseModel):
@@ -53,6 +56,7 @@ class TaskWrite(BaseModel):
     evidence_excerpt: str = Field(max_length=512)
     interpretation: str = Field(min_length=1, max_length=1000)
     source_item_ids: tuple[str, ...] = Field(default=(), max_length=20)
+    request: RecordRequest | None = None
 
     @model_validator(mode="after")
     def validate_transition_shape(self) -> TaskWrite:
@@ -62,8 +66,10 @@ class TaskWrite(BaseModel):
             raise ValueError("New tasks start open")
         if self.status == "resolved" and self.unresolved:
             raise ValueError("Resolved tasks cannot retain unresolved items")
-        if self.status == "open" and not self.unresolved:
+        if self.status == "open" and not self.unresolved and self.request is None:
             raise ValueError("Open tasks need an unfinished item")
+        if self.status == "resolved" and self.request is not None:
+            raise ValueError("Record requests are resolved by successful record transactions")
         return self
 
 

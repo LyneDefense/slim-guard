@@ -16,7 +16,6 @@ from slim_guard.db.models import (
     LongTermMemoryEventRecord,
     LongTermMemoryIndexOutboxRecord,
     OutboundMessage,
-    PendingActionRecord,
     ProactiveMessageRecord,
     ToolExecutionRecord,
     UserLongTermMemoryRecord,
@@ -39,14 +38,12 @@ _REDACTED_ITEM_TYPES = (
     "agent_message",
 )
 _TERMINAL_EXECUTIONS = ("succeeded", "failed")
-_TERMINAL_ACTIONS = ("rejected", "expired", "cancelled", "consumed")
 
 
 @dataclass(frozen=True, slots=True)
 class TranscriptScrubResult:
     item_count: int
     tool_execution_count: int
-    pending_action_count: int
     outbound_message_count: int
     proactive_message_count: int
     tool_operation_count: int = 0
@@ -127,24 +124,6 @@ class MemoryLifecycleRepository:
                 if execution.result_json is not None:
                     execution.result_json = self._redacted_tool_result(execution.result_json)
 
-            actions = tuple(
-                await session.scalars(
-                    select(PendingActionRecord)
-                    .join(AgentTurnRecord, AgentTurnRecord.id == PendingActionRecord.turn_id)
-                    .where(
-                        PendingActionRecord.created_at <= cutoff,
-                        PendingActionRecord.status.in_(_TERMINAL_ACTIONS),
-                        AgentTurnRecord.status.in_(_TERMINAL_TURNS),
-                        ~PendingActionRecord.canonical_arguments_json.like('%"_redacted":true%'),
-                    )
-                    .order_by(PendingActionRecord.created_at, PendingActionRecord.id)
-                    .limit(limit)
-                )
-            )
-            for action in actions:
-                action.canonical_arguments_json = self.redacted_json(
-                    action.canonical_arguments_json
-                )
             outbound_messages = tuple(
                 await session.scalars(
                     select(OutboundMessage)
@@ -180,7 +159,6 @@ class MemoryLifecycleRepository:
             return TranscriptScrubResult(
                 item_count=len(items),
                 tool_execution_count=len(executions),
-                pending_action_count=len(actions),
                 outbound_message_count=len(outbound_messages),
                 proactive_message_count=len(proactive_messages),
                 tool_operation_count=operation_count,

@@ -41,7 +41,6 @@ class VisionInspectionResponse(BaseModel):
     category: Literal["weight_scale", "meal", "exercise", "other"] = "other"
     description: str = Field(min_length=1, max_length=20_000)
     observations: tuple[VisionObservation, ...] = Field(default=(), max_length=50)
-    requires_user_confirmation: bool = False
     usage: ModelUsage = Field(default_factory=ModelUsage)
     provider_request_id: str | None = None
 

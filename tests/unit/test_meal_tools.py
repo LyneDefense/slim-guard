@@ -6,7 +6,15 @@ from pathlib import Path
 from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.tools import (
+    GetRecentMealsArguments,
+    MealFoodArguments,
+    MealToolHandlers,
+    RecordMealArguments,
+    meal_tool_definitions,
+    meal_tool_executors,
+)
 from slim_guard.harness.events import ItemStatus, ItemType, TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,
@@ -19,14 +27,6 @@ from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResultStatus
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.gateway import ToolGateway
-from slim_guard.tools.meal import (
-    GetRecentMealsArguments,
-    MealFoodArguments,
-    MealToolHandlers,
-    RecordMealArguments,
-    meal_tool_definitions,
-    meal_tool_executors,
-)
 from slim_guard.tools.policy import DefaultToolPolicy, ToolAuthorization
 from slim_guard.tools.registry import ToolRegistry
 
@@ -100,7 +100,11 @@ async def test_record_and_read_meal_tools(tmp_path: Path) -> None:
 
         assert recorded.status is ToolResultStatus.SUCCEEDED
         assert recorded.output["created"] is True
-        assert recorded.output["foods"][1] == {"name": "米饭", "portion": "半碗"}
+        assert recorded.output["foods"][1] == {
+            "item_id": None,
+            "name": "米饭",
+            "portion": "半碗",
+        }
         assert recent.status is ToolResultStatus.SUCCEEDED
         assert recent.output["records"][0]["meal_type"] == "lunch"
         assert recent.source_ids == recorded.source_ids
@@ -122,6 +126,7 @@ async def test_record_meal_requires_gateway_execution_identity(tmp_path: Path) -
         assert result.status is ToolResultStatus.FAILED
         assert result.failure is not None
         assert result.failure.code == "missing_execution_identity"
+        assert result.failure.effect_status.value == "not_applied"
     finally:
         await database.close()
 
@@ -208,6 +213,8 @@ async def test_old_visual_uncertainty_does_not_block_an_unrelated_supported_reco
         )
 
         assert confirmed.status is ToolResultStatus.SUCCEEDED
-        assert confirmed.output["foods"] == [{"name": "鸡胸肉", "portion": None}]
+        assert confirmed.output["foods"] == [
+            {"item_id": None, "name": "鸡胸肉", "portion": None}
+        ]
     finally:
         await database.close()

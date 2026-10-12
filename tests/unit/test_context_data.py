@@ -2,19 +2,21 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from slim_guard.db.models import MobileCoachProfileRecord, SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.exercise.contracts import ExerciseRecordCommand
-from slim_guard.domain.exercise.repository import ExerciseRepository
-from slim_guard.domain.meal.contracts import MealFood, MealRecordCommand, MealType
-from slim_guard.domain.meal.repository import MealRepository
-from slim_guard.domain.weight.contracts import (
+from slim_guard.domain.profile.repository import UserProfileRepository
+from slim_guard.features.health_records.exercise.contracts import ExerciseRecordCommand
+from slim_guard.features.health_records.exercise.repository import ExerciseRepository
+from slim_guard.features.health_records.meal.contracts import MealFood, MealRecordCommand, MealType
+from slim_guard.features.health_records.meal.repository import MealRepository
+from slim_guard.features.health_records.weight.contracts import (
     WeightMeasurementCommand,
     WeightMeasurementCondition,
     WeightUnit,
 )
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.harness.context_data import AuthoritativeContextDataProvider
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
@@ -30,6 +32,52 @@ from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+
+
+async def test_provider_bounds_pending_confirmations_and_marks_truncation(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'pending-context.sqlite3'}")
+    await database.create_schema()
+    async with database.session() as session, session.begin():
+        session.add(
+            SlimGuardUser(
+                id="user-1",
+                nickname=None,
+                first_seen_at=NOW,
+                last_seen_at=NOW,
+            )
+        )
+
+    class PendingActions:
+        async def list_open_for_user(self, *, user_id, at, limit):
+            assert user_id == "user-1"
+            assert limit == 21
+            return [
+                SimpleNamespace(
+                    id=f"action-{index}",
+                    task_id=None,
+                    tool_name="record_meal",
+                    reason="Confirm the meal before saving.",
+                    expires_at=NOW + timedelta(minutes=15),
+                )
+                for index in range(21)
+            ]
+
+    try:
+        context = await AuthoritativeContextDataProvider(
+            profiles=UserProfileRepository(database),
+            weights=WeightRepository(database),
+            meals=MealRepository(database),
+            exercise=ExerciseRepository(database),
+            pending_actions=PendingActions(),  # type: ignore[arg-type]
+            preload_domain_history=False,
+        ).load(user_id="user-1", current_time=NOW, trigger=TurnTrigger.USER_MESSAGE)
+
+        pending = context["working_memory"]["pending_user_confirmations"]
+        assert len(pending) == 20
+        assert pending[0]["action_id"] == "action-0"
+        assert context["working_memory"]["pending_user_confirmations_may_have_more"] is True
+    finally:
+        await database.close()
 
 
 async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None:
@@ -145,7 +193,7 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
         )
     )
     provider = AuthoritativeContextDataProvider(
-        database=database,
+        profiles=UserProfileRepository(database),
         weights=weights,
         meals=meals,
         exercise=exercise,
@@ -196,7 +244,7 @@ async def test_provider_loads_bounded_authoritative_user_facts(tmp_path) -> None
         assert context["profile_memory"][0]["stale"] is True
 
         core_context = await AuthoritativeContextDataProvider(
-            database=database,
+            profiles=UserProfileRepository(database),
             weights=weights,
             meals=meals,
             exercise=exercise,

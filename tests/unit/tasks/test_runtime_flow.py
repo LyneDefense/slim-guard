@@ -11,7 +11,7 @@ from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.gateway import MessageRole, ModelRequest, ModelResponse
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.repository import MealRepository
 from slim_guard.memory.config import MemoryRuntimeConfig
 from slim_guard.tasks.repository import ConversationTaskRepository
 from slim_guard.tools.contracts import ToolExecutionMode
@@ -69,6 +69,10 @@ class ClarificationScript:
                 {
                     "meal_type": "lunch",
                     "foods": [{"name": "荷包蛋"}, {"name": "烧茄子"}],
+                    "evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
                 },
             )
         assert index == 7

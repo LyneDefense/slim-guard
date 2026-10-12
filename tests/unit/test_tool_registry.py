@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from slim_guard.tools.contracts import (
     ToolArguments,
     ToolEffectLevel,
+    ToolMutationKind,
     ToolResult,
     ToolResultStatus,
 )
@@ -30,8 +31,8 @@ def record_weight_tool() -> RegisteredTool:
         version="v1",
         arguments_model=WeightArguments,
         effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+        mutation_kind=ToolMutationKind.HEALTH_RECORD,
         idempotent=True,
-        requires_confirmation=False,
         timeout_seconds=3,
     )
 
@@ -44,7 +45,6 @@ def profile_tool() -> RegisteredTool:
         arguments_model=EmptyArguments,
         effect_level=ToolEffectLevel.READ,
         idempotent=True,
-        requires_confirmation=False,
         timeout_seconds=1,
     )
 
@@ -86,6 +86,19 @@ def test_registry_rejects_duplicate_and_unknown_tools() -> None:
         registry.resolve("missing_tool")
 
 
+def test_registry_requires_mutation_category_for_reversible_writes() -> None:
+    with pytest.raises(ValidationError, match="user-visible mutation kind"):
+        RegisteredTool(
+            name="record_weight",
+            description="Record one measured body weight.",
+            version="v1",
+            arguments_model=WeightArguments,
+            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            idempotent=True,
+            timeout_seconds=3,
+        )
+
+
 def test_tool_result_is_a_canonical_model_observation() -> None:
     result = ToolResult.success(
         output={"weight_kg": 77.6, "recorded": True},
@@ -94,6 +107,7 @@ def test_tool_result_is_a_canonical_model_observation() -> None:
 
     assert json.loads(result.to_model_content()) == {
         "failure": None,
+        "operation": None,
         "output": {"recorded": True, "weight_kg": 77.6},
         "source_ids": ["weight-record-1"],
         "status": "succeeded",

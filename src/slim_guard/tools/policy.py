@@ -19,8 +19,6 @@ class ToolAuthorization(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     allowed_tool_names: frozenset[str]
-    confirmed_execution_keys: frozenset[str] = frozenset()
-    reviewed_execution_keys: frozenset[str] = frozenset()
     isolated_write_environment: bool = False
 
 
@@ -76,23 +74,11 @@ class DefaultToolPolicy:
                 code="non_live_write_not_isolated",
                 reason="Write tools require an isolated environment outside live mode.",
             )
-        if (
-            tool.effect_level is ToolEffectLevel.EXTERNAL_EFFECT
-            and execution_key not in authorization.reviewed_execution_keys
-        ):
+        if tool.effect_level in {ToolEffectLevel.SENSITIVE_WRITE, ToolEffectLevel.EXTERNAL_EFFECT}:
             return ToolPolicyResult(
-                decision=ToolPolicyDecision.REVIEW,
-                code="tool_review_required",
-                reason=f"The tool '{tool.name}' requires human review.",
-            )
-        if (
-            tool.requires_confirmation
-            or tool.effect_level is ToolEffectLevel.SENSITIVE_WRITE
-        ) and execution_key not in authorization.confirmed_execution_keys:
-            return ToolPolicyResult(
-                decision=ToolPolicyDecision.CONFIRM,
-                code="tool_confirmation_required",
-                reason=f"The tool '{tool.name}' requires user confirmation.",
+                decision=ToolPolicyDecision.DENY,
+                code="management_operation_not_available",
+                reason="Sensitive management and external operations are not Agent capabilities.",
             )
         return ToolPolicyResult(
             decision=ToolPolicyDecision.ALLOW,

@@ -22,6 +22,18 @@ class ToolEffectLevel(StrEnum):
     PROHIBITED = "prohibited"
 
 
+class ToolMutationKind(StrEnum):
+    """User-visible mutation category declared by the registered capability."""
+
+    NONE = "none"
+    HEALTH_RECORD = "health_record"
+    CONVERSATION_TASK = "conversation_task"
+    USER_PROFILE = "user_profile"
+    USER_MEMORY = "user_memory"
+    ROUTINE_SETTINGS = "routine_settings"
+    SYSTEM_OPERATION = "system_operation"
+
+
 class ToolExecutionMode(StrEnum):
     LIVE = "live"
     EVALUATION = "evaluation"
@@ -173,4 +185,5 @@ class ToolExecution(BaseModel):
     canonical_arguments: dict[str, Any] | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
     policy_decision: ToolPolicyDecision | None = None
+    mutation_kind: ToolMutationKind = ToolMutationKind.NONE
     result: ToolResult

@@ -7,9 +7,9 @@ import pytest
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.meal.contracts import MealFood, MealRecordCommand, MealType
-from slim_guard.domain.meal.errors import MealRecordCollision, MealSourceMismatch
-from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.contracts import MealFood, MealRecordCommand, MealType
+from slim_guard.features.health_records.meal.errors import MealRecordCollision, MealSourceMismatch
+from slim_guard.features.health_records.meal.repository import MealRepository
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,

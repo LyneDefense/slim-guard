@@ -23,6 +23,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from slim_guard.features.health_records.persistence.metadata import RecordMetadata
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -135,7 +137,7 @@ class AgentItemRedactionRecord(Base):
     )
 
 
-class WeightRecord(Base):
+class WeightRecord(RecordMetadata, Base):
     __tablename__ = "weight_records"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_weight_record_idempotency_key"),
@@ -165,7 +167,7 @@ class WeightRecord(Base):
     weight_grams: Mapped[int] = mapped_column(Integer, nullable=False)
     original_value: Mapped[str] = mapped_column(String(32), nullable=False)
     original_unit: Mapped[str] = mapped_column(String(16), nullable=False)
-    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     measurement_condition: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -185,7 +187,7 @@ class WeightRecord(Base):
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class BodyFatRecord(Base):
+class BodyFatRecord(RecordMetadata, Base):
     __tablename__ = "body_fat_records"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_body_fat_record_idempotency_key"),
@@ -205,7 +207,7 @@ class BodyFatRecord(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     body_fat_basis_points: Mapped[int] = mapped_column(Integer, nullable=False)
     original_value: Mapped[str] = mapped_column(String(32), nullable=False)
-    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     source_turn_id: Mapped[str] = mapped_column(
@@ -253,7 +255,7 @@ class ImageAssetRecord(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class MealRecord(Base):
+class MealRecord(RecordMetadata, Base):
     __tablename__ = "meal_records"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_meal_record_idempotency_key"),
@@ -274,7 +276,7 @@ class MealRecord(Base):
     meal_type: Mapped[str] = mapped_column(String(32), nullable=False)
     foods_json: Mapped[str] = mapped_column(Text, nullable=False)
     note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     source_turn_id: Mapped[str] = mapped_column(
@@ -289,7 +291,7 @@ class MealRecord(Base):
     )
 
 
-class ExerciseRecord(Base):
+class ExerciseRecord(RecordMetadata, Base):
     __tablename__ = "exercise_records"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_exercise_record_idempotency_key"),
@@ -325,7 +327,7 @@ class ExerciseRecord(Base):
     distance_meters: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reported_energy_kcal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     source_turn_id: Mapped[str] = mapped_column(
@@ -340,51 +342,6 @@ class ExerciseRecord(Base):
     )
 
 
-class PendingActionRecord(Base):
-    __tablename__ = "pending_actions"
-    __table_args__ = (
-        UniqueConstraint(
-            "execution_key",
-            "action_type",
-            name="uq_pending_action_execution_type",
-        ),
-        Index("ix_pending_action_thread_status", "thread_id", "status"),
-        Index("ix_pending_action_status_expiry", "status", "expires_at"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str | None] = mapped_column(
-        ForeignKey("conversation_tasks.id", ondelete="SET NULL"), nullable=True
-    )
-    thread_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=False
-    )
-    turn_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False
-    )
-    source_item_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_items.id", ondelete="SET NULL"), nullable=True
-    )
-    execution_key: Mapped[str] = mapped_column(String(128), nullable=False)
-    tool_call_id: Mapped[str] = mapped_column(String(256), nullable=False)
-    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    tool_version: Mapped[str] = mapped_column(String(128), nullable=False)
-    canonical_arguments_json: Mapped[str] = mapped_column(Text, nullable=False)
-    execution_mode: Mapped[str] = mapped_column(String(32), nullable=False)
-    isolated_write_environment: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
-    reason: Mapped[str] = mapped_column(String(1024), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    resolved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
-    )
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ToolExecutionRecord(Base):
@@ -1089,6 +1046,7 @@ class ConversationTaskRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     objective: Mapped[str] = mapped_column(String(300), nullable=False)
     unresolved_json: Mapped[str] = mapped_column(Text, nullable=False)
+    request_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     source_item_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     attachment_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -13,9 +12,7 @@ from slim_guard.agent_models.gateway import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    NormalizedToolCall,
 )
-from slim_guard.harness.events import TurnStatus
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
@@ -201,175 +198,59 @@ class HarnessLoop:
                     tool_outcomes=tool_outcomes,
                 )
 
-            ready_calls: list[NormalizedToolCall] = []
-            waiting_calls: list[NormalizedToolCall] = []
+            # Tool dependencies are planned by Core. Each completed observation is
+            # retained immediately; no approval gate keeps this Turn open.
             for call in calls:
-                call_context = context.for_tool_call(
-                    call.id,
-                    source_item_id=source_item_id,
-                    trusted_evidence_item_ids=trusted_evidence_item_ids,
-                )
-                if self._tool_calls.requires_waiting(
-                    call=call,
-                    context=call_context,
-                    authorization=authorization,
-                ):
-                    waiting_calls.append(call)
-                else:
-                    ready_calls.append(call)
-
-            # A batch of calls was produced from one model observation. Run calls
-            # that do not need a user/reviewer gate first so a gated call cannot
-            # leave independent, immediately executable work behind it.
-            batch_start = len(tool_outcomes)
-            try:
-                for call in (*ready_calls, *waiting_calls):
-                    if self._deadline_exceeded(context):
-                        waiting = await self._finalize_batch(
-                            context.turn_id, tool_outcomes[batch_start:]
-                        )
-                        if waiting is not None:
-                            return self._result(
-                                termination=waiting,
-                                messages=messages,
-                                model_responses=model_responses,
-                                tool_outcomes=tool_outcomes,
-                            )
-                        return self._deadline_result(
-                            messages=messages,
-                            model_responses=model_responses,
-                            tool_outcomes=tool_outcomes,
-                        )
-                    trace = await self._recorder.start_tool_call(
-                        turn_id=context.turn_id,
-                        call=call,
-                        call_index=len(tool_outcomes) + 1,
-                    )
-                    tool_started_at = self._clock()
-                    outcome = await self._tool_calls.execute(
-                        call=call,
-                        context=context.for_tool_call(
-                            call.id,
-                            source_item_id=source_item_id,
-                            trusted_evidence_item_ids=trusted_evidence_item_ids,
-                        ),
-                        authorization=authorization,
-                        source_item_id=source_item_id,
-                        now=now,
-                        defer_waiting_transition=True,
-                    )
-                    tool_completed_at = self._clock()
-                    tool_outcomes.append(outcome)
-                    await self._recorder.finish_tool_call(
-                        trace=trace,
-                        outcome=outcome,
-                        started_at=tool_started_at,
-                        completed_at=tool_completed_at,
-                    )
-                    messages.append(
-                        ModelMessage(
-                            role=MessageRole.TOOL,
-                            tool_call_id=call.id,
-                            content=outcome.execution.result.to_model_content(),
-                        )
-                    )
-                    failure = outcome.execution.result.failure
-                    if failure is not None:
-                        logger.warning(
-                            "slim_guard_tool_call_failed",
-                            extra={
-                                "turn_id": context.turn_id,
-                                "tool_name": outcome.execution.tool_name,
-                                "failure_code": failure.code,
-                                "retryable": failure.retryable,
-                                "tool_call_index": len(tool_outcomes),
-                            },
-                        )
-                    if self._deadline_exceeded(context):
-                        waiting = await self._finalize_batch(
-                            context.turn_id, tool_outcomes[batch_start:]
-                        )
-                        if waiting is not None:
-                            return self._result(
-                                termination=waiting,
-                                messages=messages,
-                                model_responses=model_responses,
-                                tool_outcomes=tool_outcomes,
-                            )
-                        return self._deadline_result(
-                            messages=messages,
-                            model_responses=model_responses,
-                            tool_outcomes=tool_outcomes,
-                        )
-            except (asyncio.CancelledError, Exception) as exc:
-                task = asyncio.create_task(
-                    self._tool_calls.finalize_batch(
-                        turn_id=context.turn_id,
-                        outcomes=tuple(tool_outcomes[batch_start:]),
-                    )
-                )
-                status: TurnStatus | None = None
-                try:
-                    status = await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    try:
-                        status = await task
-                    except Exception:
-                        logger.exception("slim_guard_interrupted_batch_finalize_failed")
-                except Exception:
-                    logger.exception("slim_guard_interrupted_batch_finalize_failed")
-                waiting = self._waiting_termination_status(status)
-                if waiting is not None:
-                    logger.warning(
-                        "slim_guard_tool_batch_interrupted_while_waiting",
-                        extra={"turn_id": context.turn_id, "error_type": type(exc).__name__},
-                    )
-                    return self._result(
-                        termination=waiting,
+                if self._deadline_exceeded(context):
+                    return self._deadline_result(
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
                     )
-                raise
-
-            waiting = await self._finalize_batch(context.turn_id, tool_outcomes[batch_start:])
-            if waiting is not None:
-                return self._result(
-                    termination=waiting,
-                    messages=messages,
-                    model_responses=model_responses,
-                    tool_outcomes=tool_outcomes,
+                trace = await self._recorder.start_tool_call(
+                    turn_id=context.turn_id,
+                    call=call,
+                    call_index=len(tool_outcomes) + 1,
                 )
-
-    @staticmethod
-    def _waiting_termination(outcome: ToolCallOutcome) -> HarnessTermination | None:
-        return HarnessLoop._waiting_termination_status(outcome.turn.status)
-
-    @staticmethod
-    def _waiting_termination_status(status: TurnStatus | None) -> HarnessTermination | None:
-        if status is TurnStatus.WAITING_USER_CONFIRMATION:
-            return HarnessTermination.WAITING_USER_CONFIRMATION
-        if status is TurnStatus.WAITING_HUMAN_REVIEW:
-            return HarnessTermination.WAITING_HUMAN_REVIEW
-        return None
-
-    async def _finalize_batch(
-        self,
-        turn_id: str,
-        outcomes: list[ToolCallOutcome],
-    ) -> HarnessTermination | None:
-        status = await self._tool_calls.finalize_batch(
-            turn_id=turn_id,
-            outcomes=tuple(outcomes),
-        )
-        waiting = self._waiting_termination_status(status)
-        if waiting is not None:
-            return waiting
-        for outcome in outcomes:
-            waiting = self._waiting_termination(outcome)
-            if waiting is not None:
-                return waiting
-        return None
+                started_at = self._clock()
+                outcome = await self._tool_calls.execute(
+                    call=call,
+                    context=context.for_tool_call(
+                        call.id,
+                        source_item_id=source_item_id,
+                        trusted_evidence_item_ids=trusted_evidence_item_ids,
+                    ),
+                    authorization=authorization,
+                    source_item_id=source_item_id,
+                    now=now,
+                )
+                completed_at = self._clock()
+                tool_outcomes.append(outcome)
+                messages.append(
+                    ModelMessage(
+                        role=MessageRole.TOOL,
+                        tool_call_id=call.id,
+                        content=outcome.execution.result.to_model_content(),
+                    )
+                )
+                await self._recorder.finish_tool_call(
+                    trace=trace,
+                    outcome=outcome,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                )
+                failure = outcome.execution.result.failure
+                if failure is not None:
+                    logger.warning(
+                        "slim_guard_tool_call_failed",
+                        extra={
+                            "turn_id": context.turn_id,
+                            "tool_name": outcome.execution.tool_name,
+                            "failure_code": failure.code,
+                            "retryable": failure.retryable,
+                            "tool_call_index": len(tool_outcomes),
+                        },
+                    )
 
     @staticmethod
     def _result(

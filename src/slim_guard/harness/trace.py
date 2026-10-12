@@ -7,7 +7,6 @@ from typing import Any, Protocol
 
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
 from slim_guard.group_chat.contracts import ChatMessage
-from slim_guard.harness.errors import TurnStateConflict
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, WorkflowTraceEvent
 from slim_guard.harness.failures import HarnessFailure
 from slim_guard.harness.state_repository import HarnessRunStore
@@ -348,9 +347,6 @@ class PersistentHarnessRunRecorder:
                 "tool_call_id": outcome.execution.tool_call_id,
                 "tool_name": outcome.execution.tool_name,
                 "execution": outcome.execution.model_dump(mode="json"),
-                "pending_action_id": (
-                    outcome.pending_action.id if outcome.pending_action is not None else None
-                ),
                 "started_at": started_at.isoformat(),
                 "completed_at": completed_at.isoformat(),
             },
@@ -400,28 +396,6 @@ class PersistentHarnessRunRecorder:
             )
             return
 
-        if termination in {
-            HarnessTermination.WAITING_USER_CONFIRMATION,
-            HarnessTermination.WAITING_HUMAN_REVIEW,
-        }:
-            turn = await self._store.get_turn(turn_id)
-            expected = (
-                TurnStatus.WAITING_USER_CONFIRMATION
-                if termination is HarnessTermination.WAITING_USER_CONFIRMATION
-                else TurnStatus.WAITING_HUMAN_REVIEW
-            )
-            if turn is None:
-                raise LookupError(f"Agent turn not found: {turn_id}")
-            if turn.status is not expected:
-                raise TurnStateConflict(
-                    f"Turn {turn_id} should be {expected.value}, found {turn.status.value}"
-                )
-            await self._store.transition_turn(
-                turn_id=turn_id,
-                target=expected,
-                step_count=model_call_count + tool_call_count,
-            )
-            return
 
         if termination is HarnessTermination.FATAL_ERROR and failure is None:
             raise ValueError("Fatal error termination requires failure details")

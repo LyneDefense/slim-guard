@@ -2,7 +2,7 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 
 
 def test_core_prompt_is_short_and_keeps_conversation_out_of_core() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION.endswith("v31")
+    assert SLIM_GUARD_PROMPT_VERSION.endswith("v34")
     assert "Conversation Agent" in SLIM_GUARD_HARNESS_PROMPT
     assert "CoachStyleRenderer" in SLIM_GUARD_HARNESS_PROMPT
     assert "不声称工具成功" in SLIM_GUARD_HARNESS_PROMPT
@@ -17,6 +17,8 @@ def test_core_prompt_delegates_domain_parameters_to_contracts() -> None:
     )
     assert "不要在回复中重复工具手册" in SLIM_GUARD_HARNESS_PROMPT
     assert "工具参数必须来自用户原话" in SLIM_GUARD_HARNESS_PROMPT
+    assert "必须先用原 operation_id 调用 get_tool_operation 核实" in SLIM_GUARD_HARNESS_PROMPT
+    assert "告知用户暂勿重发" in SLIM_GUARD_HARNESS_PROMPT
 
 
 def test_core_prompt_separates_verified_context_from_unverified_summaries() -> None:
@@ -25,4 +27,3 @@ def test_core_prompt_separates_verified_context_from_unverified_summaries() -> N
         SLIM_GUARD_HARNESS_PROMPT
     )
     assert "工作记忆和待确认任务" in SLIM_GUARD_HARNESS_PROMPT
-    assert "任务状态更新不代表操作授权" in SLIM_GUARD_HARNESS_PROMPT

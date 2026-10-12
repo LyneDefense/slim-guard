@@ -88,7 +88,6 @@ class NutritionAgentToolHandler:
                 user_id=context.user_id,
                 current_time=now,
                 trigger=turn.trigger,
-                input_items=tuple(items),
             )
         )
         user_request = (
@@ -183,7 +182,6 @@ def nutrition_agent_tool_definitions() -> tuple[RegisteredTool, ...]:
             arguments_model=ConsultNutritionArguments,
             effect_level=ToolEffectLevel.READ,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=60,
         ),
     )

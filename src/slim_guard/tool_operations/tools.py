@@ -1,6 +1,6 @@
 from pydantic import Field
 
-from slim_guard.tools.contracts import ToolArguments, ToolEffectLevel
+from slim_guard.tools.contracts import ToolArguments, ToolEffectLevel, ToolMutationKind
 from slim_guard.tools.registry import RegisteredTool
 
 LIST_OPERATIONS = "list_unsettled_tool_operations"
@@ -41,8 +41,12 @@ def operation_tool_definitions() -> tuple[RegisteredTool, ...]:
                 if name == RESUME_OPERATION
                 else ToolEffectLevel.READ
             ),
+            mutation_kind=(
+                ToolMutationKind.SYSTEM_OPERATION
+                if name == RESUME_OPERATION
+                else ToolMutationKind.NONE
+            ),
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=300,
         )
         for name, description in descriptions.items()

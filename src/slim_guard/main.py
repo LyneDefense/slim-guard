@@ -20,6 +20,7 @@ from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
 from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 from slim_guard.api.admin_routes import router as admin_router
+from slim_guard.api.mobile_record_routes import router as mobile_record_router
 from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.nutrition_knowledge_routes import router as nutrition_knowledge_router
 from slim_guard.api.routes import router
@@ -636,6 +637,7 @@ def create_app(
     application.include_router(usage_router)
     application.include_router(nutrition_knowledge_router)
     application.include_router(mobile_router)
+    application.include_router(mobile_record_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode

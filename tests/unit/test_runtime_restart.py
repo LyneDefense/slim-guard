@@ -30,7 +30,7 @@ from slim_guard.db.models import (
     WeightRecord,
 )
 from slim_guard.db.session import Database
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.harness.events import ItemType, TurnStatus
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination

@@ -32,6 +32,7 @@ from slim_guard.tools.contracts import (
     ToolEffectLevel,
     ToolExecution,
     ToolExecutionMode,
+    ToolMutationKind,
     ToolPolicyDecision,
     ToolResult,
 )
@@ -74,6 +75,7 @@ class RecordingToolRunner:
                 canonical_arguments=call.arguments,
                 idempotency_key=f"execution-{call.id}",
                 policy_decision=ToolPolicyDecision.ALLOW,
+                mutation_kind=ToolMutationKind.HEALTH_RECORD,
                 result=ToolResult.success(output={"weight_kg": call.arguments["weight_kg"]}),
             ),
             turn=TurnRef(
@@ -85,7 +87,6 @@ class RecordingToolRunner:
                 deadline_at=None,
                 completed_at=None,
             ),
-            pending_action=None,
         )
 
 
@@ -98,8 +99,8 @@ def tool_registry() -> ToolRegistry:
                 version="v1",
                 arguments_model=RecordWeightArguments,
                 effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+                mutation_kind=ToolMutationKind.HEALTH_RECORD,
                 idempotent=True,
-                requires_confirmation=False,
                 timeout_seconds=3,
             ),
         )
@@ -251,7 +252,7 @@ async def test_turn_harness_persists_one_complete_primary_path(tmp_path) -> None
         await database.close()
 
 
-async def test_minor_signal_keeps_coaching_tools_and_enters_trusted_context(tmp_path) -> None:
+async def test_turn_harness_does_not_classify_input_risk_phrases(tmp_path) -> None:
     database, user = await prepare_database(tmp_path)
     manifest = build_manifest(with_tools=True)
     await AgentVersionRepository(database).register(manifest)
@@ -277,13 +278,11 @@ async def test_minor_signal_keeps_coaching_tools_and_enters_trusted_context(tmp_
 
         assert result.compiled is not None
         assert [tool.name for tool in result.compiled.request.tools] == ["record_weight"]
-        trusted = next(
-            message.content
-            for message in result.compiled.request.messages
-            if message.content and message.content.startswith("权威用户事实")
+        prompt_content = "\n".join(
+            message.content or "" for message in result.compiled.request.messages
         )
-        assert '"blocks_tools":false' in trusted
-        assert '"code":"minor"' in trusted
+        assert "health_safety" not in prompt_content
+        assert "blocks_tools" not in prompt_content
     finally:
         await database.close()
 

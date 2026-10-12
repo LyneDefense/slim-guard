@@ -7,26 +7,26 @@ from decimal import Decimal
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
-
-from slim_guard.db.models import MobileCoachProfileRecord, SlimGuardUser
-from slim_guard.db.session import Database
-from slim_guard.domain.body_fat.contracts import BodyFatTrend
-from slim_guard.domain.body_fat.repository import BodyFatRepository
-from slim_guard.domain.exercise.repository import ExerciseRepository
-from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.domain.profile.contracts import UserProfileSnapshot
+from slim_guard.domain.profile.ports import UserProfileReader
 from slim_guard.domain.routine.repository import RoutinePreferenceRepository
 from slim_guard.domain.routine.status import DailyCheckinStatusRepository
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.body_fat.contracts import BodyFatTrend
+from slim_guard.features.health_records.ports import (
+    BodyFatReader,
+    ExerciseReader,
+    MealReader,
+    WeightReader,
+)
+from slim_guard.features.health_records.queries import RecordQuery
+from slim_guard.features.health_records.service import RecordService
 from slim_guard.harness.events import TurnTrigger
-from slim_guard.harness.pending_actions import PendingActionRepository
-from slim_guard.harness.state_repository import ItemRef
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.memory.working import ConversationWindowRepository
 from slim_guard.tasks.ports import TaskStore
 from slim_guard.tasks.presentation import task_summary
 
-CONTEXT_POLICY_VERSION = "model-ranked-authoritative-message-attachments-tasks-v11"
+CONTEXT_POLICY_VERSION = "model-ranked-authoritative-message-attachments-tasks-v12"
 
 
 class ContextDataProvider(Protocol):
@@ -38,7 +38,6 @@ class ContextDataProvider(Protocol):
         user_id: str,
         current_time: datetime,
         trigger: TurnTrigger | None = None,
-        input_items: tuple[ItemRef, ...] = (),
     ) -> Mapping[str, Any]: ...
 
 
@@ -49,7 +48,6 @@ class EmptyContextDataProvider:
         user_id: str,
         current_time: datetime,
         trigger: TurnTrigger | None = None,
-        input_items: tuple[ItemRef, ...] = (),
     ) -> Mapping[str, Any]:
         return {}
 
@@ -60,17 +58,17 @@ class AuthoritativeContextDataProvider:
     def __init__(
         self,
         *,
-        database: Database,
-        weights: WeightRepository,
-        body_fat: BodyFatRepository | None = None,
-        meals: MealRepository,
-        exercise: ExerciseRepository,
+        profiles: UserProfileReader | None = None,
+        records: RecordService | None = None,
+        weights: WeightReader,
+        body_fat: BodyFatReader | None = None,
+        meals: MealReader,
+        exercise: ExerciseReader,
         routines: RoutinePreferenceRepository | None = None,
         checkins: DailyCheckinStatusRepository | None = None,
         memories: MemoryRepository | None = None,
         conversation: ConversationWindowRepository | None = None,
         tasks: TaskStore | None = None,
-        pending_actions: PendingActionRepository | None = None,
         weight_limit: int = 7,
         meal_limit: int = 10,
         exercise_limit: int = 10,
@@ -79,7 +77,8 @@ class AuthoritativeContextDataProvider:
         dialogue_char_limit: int = 1500,
         preload_domain_history: bool = True,
     ) -> None:
-        self._database = database
+        self._profiles = profiles
+        self._records = records
         self._weights = weights
         self._body_fat = body_fat
         self._meals = meals
@@ -89,7 +88,6 @@ class AuthoritativeContextDataProvider:
         self._memories = memories
         self._conversation = conversation
         self._tasks = tasks
-        self._pending_actions = pending_actions
         self._weight_limit = weight_limit
         self._meal_limit = meal_limit
         self._exercise_limit = exercise_limit
@@ -104,18 +102,26 @@ class AuthoritativeContextDataProvider:
         user_id: str,
         current_time: datetime,
         trigger: TurnTrigger | None = None,
-        input_items: tuple[ItemRef, ...] = (),
     ) -> Mapping[str, Any]:
         if current_time.utcoffset() is None:
             raise ValueError("Context data time must be timezone-aware")
-        profile = await self._profile(user_id)
+        profile = await self._profiles.get(user_id) if self._profiles is not None else None
         context: dict[str, Any] = {}
         preload_domain_history = self._preload_domain_history or trigger in {
             TurnTrigger.WEIGHT_REMINDER,
             TurnTrigger.MEAL_REMINDER,
             TurnTrigger.DAILY_REVIEW,
         }
-        if preload_domain_history:
+        if preload_domain_history and self._records is not None:
+            for kind, name, limit in (
+                ("weight", "recent_weights", self._weight_limit),
+                ("body_fat", "recent_body_fat", self._weight_limit),
+                ("meal", "recent_meals", self._meal_limit),
+                ("exercise", "recent_exercise", self._exercise_limit),
+            ):
+                page = await self._records.search(user_id, RecordQuery(kind=kind, limit=limit))
+                context[name] = [record.model_dump(mode="json") for record in page.records]
+        elif preload_domain_history:
             weight_trend, body_fat_trend, meals, exercise = await asyncio.gather(
                 self._weights.recent_trend(user_id, limit=self._weight_limit),
                 (
@@ -131,7 +137,9 @@ class AuthoritativeContextDataProvider:
                     "recent_weights": [
                         {
                             "weight_kg": self._decimal_text(record.weight_kg),
-                            "measured_at": record.measured_at.isoformat(),
+                            "measured_at": record.measured_at.isoformat()
+                            if record.measured_at
+                            else None,
                             "condition": record.condition.value,
                         }
                         for record in weight_trend.records
@@ -139,7 +147,9 @@ class AuthoritativeContextDataProvider:
                     "recent_body_fat": [
                         {
                             "body_fat_percent": self._decimal_text(record.percent),
-                            "measured_at": record.measured_at.isoformat(),
+                            "measured_at": record.measured_at.isoformat()
+                            if record.measured_at
+                            else None,
                         }
                         for record in body_fat_trend.records
                     ],
@@ -153,7 +163,9 @@ class AuthoritativeContextDataProvider:
                                 }
                                 for food in record.foods
                             ],
-                            "occurred_at": record.occurred_at.isoformat(),
+                            "occurred_at": record.occurred_at.isoformat()
+                            if record.occurred_at
+                            else None,
                             **({"note": record.note} if record.note else {}),
                         }
                         for record in meals
@@ -161,7 +173,9 @@ class AuthoritativeContextDataProvider:
                     "recent_exercise": [
                         {
                             "activity_name": record.activity_name,
-                            "occurred_at": record.occurred_at.isoformat(),
+                            "occurred_at": record.occurred_at.isoformat()
+                            if record.occurred_at
+                            else None,
                             **(
                                 {"duration_minutes": record.duration_minutes}
                                 if record.duration_minutes is not None
@@ -185,7 +199,7 @@ class AuthoritativeContextDataProvider:
                 }
             )
         if profile is not None:
-            context["profile"] = profile
+            context["profile"] = self._profile_context(profile)
         if self._memories is not None:
             memories = await self._memories.active(
                 user_id,
@@ -241,24 +255,6 @@ class AuthoritativeContextDataProvider:
             if tasks:
                 working_memory["conversation_tasks"] = [task_summary(task) for task in tasks]
                 working_memory["tasks_may_have_more"] = len(tasks) == 20
-        if self._pending_actions is not None:
-            pending = await self._pending_actions.list_open_for_user(
-                user_id=user_id,
-                at=current_time,
-            )
-            if pending:
-                ordinary = pending
-                if ordinary:
-                    working_memory["pending_user_confirmations"] = [
-                        {
-                            "action_id": action.id,
-                            "task_id": action.task_id,
-                            "tool_name": action.tool_name,
-                            "reason": action.reason,
-                            "expires_at": action.expires_at.isoformat(),
-                        }
-                        for action in ordinary
-                    ]
         if working_memory:
             context["working_memory"] = working_memory
         if self._routines is not None:
@@ -286,64 +282,60 @@ class AuthoritativeContextDataProvider:
                     }
         return context
 
-    async def _profile(self, user_id: str) -> dict[str, Any] | None:
-        async with self._database.session() as session:
-            row = await session.scalar(select(SlimGuardUser).where(SlimGuardUser.id == user_id))
-            if row is None:
-                return None
-            coach = await session.get(MobileCoachProfileRecord, user_id)
-            profile: dict[str, Any] = {
-                **({"nickname": row.nickname} if row.nickname else {}),
-                "first_seen_at": self._as_aware(row.first_seen_at).isoformat(),
-            }
-            if coach is not None:
-                profile["coach_profile"] = {
-                    "source": "user_completed_mobile_profile",
-                    "schema_version": coach.schema_version,
-                    "revision": coach.revision,
-                    "age_band": coach.age_band,
-                    "weight_assessment_standard": (
-                        "minor" if coach.age_band in {"0_9", "10_17"} else "adult"
-                    ),
-                    "height_cm": self._decimal_text(
-                        Decimal(coach.height_millimeters) / Decimal("10")
-                    ),
-                    "current_weight_kg": self._decimal_text(
-                        Decimal(coach.current_weight_grams) / Decimal("1000")
-                    ),
-                    "weight_measured_on": coach.weight_measured_on.isoformat(),
-                    "goal_type": coach.goal_type,
-                    "target_weight_kg": self._decimal_text(
-                        Decimal(coach.target_weight_grams) / Decimal("1000")
-                    ),
-                    "target_date": coach.target_date.isoformat(),
-                    **(
-                        {
-                            "current_body_fat_percent": self._decimal_text(
-                                Decimal(coach.current_body_fat_basis_points) / Decimal("100")
-                            )
-                        }
-                        if coach.current_body_fat_basis_points is not None
-                        else {}
-                    ),
-                    **(
-                        {
-                            "target_body_fat_percent": self._decimal_text(
-                                Decimal(coach.target_body_fat_basis_points) / Decimal("100")
-                            )
-                        }
-                        if coach.target_body_fat_basis_points is not None
-                        else {}
-                    ),
-                    **(
-                        {"exercise_frequency": coach.exercise_frequency}
-                        if coach.exercise_frequency is not None
-                        else {}
-                    ),
-                    "completed_at": self._as_aware(coach.completed_at).isoformat(),
-                    "updated_at": self._as_aware(coach.updated_at).isoformat(),
+    @classmethod
+    def _profile_context(cls, profile: UserProfileSnapshot) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            **({"nickname": profile.nickname} if profile.nickname else {}),
+            "first_seen_at": cls._as_aware(profile.first_seen_at).isoformat(),
+        }
+        coach = profile.coach_profile
+        if coach is None:
+            return result
+        result["coach_profile"] = {
+            "source": "user_completed_mobile_profile",
+            "schema_version": coach.schema_version,
+            "revision": coach.revision,
+            "age_band": coach.age_band,
+            "weight_assessment_standard": (
+                "minor" if coach.age_band in {"0_9", "10_17"} else "adult"
+            ),
+            "height_cm": cls._decimal_text(Decimal(coach.height_millimeters) / Decimal("10")),
+            "current_weight_kg": cls._decimal_text(
+                Decimal(coach.current_weight_grams) / Decimal("1000")
+            ),
+            "weight_measured_on": coach.weight_measured_on.isoformat(),
+            "goal_type": coach.goal_type,
+            "target_weight_kg": cls._decimal_text(
+                Decimal(coach.target_weight_grams) / Decimal("1000")
+            ),
+            "target_date": coach.target_date.isoformat(),
+            **(
+                {
+                    "current_body_fat_percent": cls._decimal_text(
+                        Decimal(coach.current_body_fat_basis_points) / Decimal("100")
+                    )
                 }
-            return profile
+                if coach.current_body_fat_basis_points is not None
+                else {}
+            ),
+            **(
+                {
+                    "target_body_fat_percent": cls._decimal_text(
+                        Decimal(coach.target_body_fat_basis_points) / Decimal("100")
+                    )
+                }
+                if coach.target_body_fat_basis_points is not None
+                else {}
+            ),
+            **(
+                {"exercise_frequency": coach.exercise_frequency}
+                if coach.exercise_frequency is not None
+                else {}
+            ),
+            "completed_at": cls._as_aware(coach.completed_at).isoformat(),
+            "updated_at": cls._as_aware(coach.updated_at).isoformat(),
+        }
+        return result
 
     @staticmethod
     async def _empty_body_fat() -> BodyFatTrend:

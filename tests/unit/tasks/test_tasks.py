@@ -11,12 +11,9 @@ from slim_guard.db.session import Database
 from slim_guard.harness.events import (
     ItemStatus,
     ItemType,
-    PendingActionStatus,
-    PendingActionType,
     TurnTrigger,
 )
 from slim_guard.harness.initialization import TurnInitializationRequest, TurnInitializer, TurnInput
-from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.tasks.contracts import TaskConflict, TaskError, TaskWrite
@@ -130,7 +127,7 @@ async def test_multiturn_answers_preserve_prior_evidence_and_original_attachment
     )
     assert await repo.list_for_user("user-1", at=NOW) == ()
     # Loading task evidence does not depend on the recent-dialogue window.
-    handlers = TaskToolHandlers(repo, PendingActionRepository(database), clock=lambda: NOW)
+    handlers = TaskToolHandlers(repo, clock=lambda: NOW)
     result = await handlers.get(
         ToolContext(
             user_id="user-1",
@@ -222,46 +219,6 @@ async def test_forged_sources_rejected(database: Database, corruption: str):
         await repo.write(cmd)
 
 
-async def test_link_and_task_resolution_never_approve_an_operation(database: Database):
-    repo = ConversationTaskRepository(database, clock=lambda: NOW)
-    cmd = await source(database, "请处理这个请求")
-    task = await repo.write(cmd)
-    actions = PendingActionRepository(database)
-    created = await actions.create(
-        thread_id=cmd.thread_id,
-        turn_id=cmd.source_turn_id,
-        source_item_id=cmd.source_item_id,
-        execution_key="authorized-write",
-        tool_call_id="delete",
-        tool_name="delete_record",
-        tool_version="v1",
-        canonical_arguments={"record_id": "record-1"},
-        execution_mode=ToolExecutionMode.EVALUATION,
-        isolated_write_environment=True,
-        action_type=PendingActionType.USER_CONFIRMATION,
-        reason="sensitive",
-        expires_at=NOW + timedelta(minutes=15),
-    )
-    linked = await actions.attach_task(action_id=created.action.id, task=task)
-    assert linked.task_id == task.id
-    assert (await actions.attach_task(action_id=linked.id, task=task)) == linked
-    resolution = await source(database, "信息都补充了")
-    await repo.write(
-        resolution.model_copy(
-            update={
-                "task_id": task.id,
-                "expected_revision": 1,
-                "status": "resolved",
-                "unresolved": (),
-            }
-        )
-    )
-    action = await actions.get(linked.id)
-    assert action and action.status is PendingActionStatus.PENDING
-    assert action.canonical_arguments == {"record_id": "record-1"}
-    foreign_task = await repo.write(await source(database, "其他用户请求", user_id="user-2"))
-    with pytest.raises(LookupError):
-        await actions.attach_task(action_id=linked.id, task=foreign_task)
 
 
 async def test_image_only_input_is_a_valid_task_source(database: Database):

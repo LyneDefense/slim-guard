@@ -7,7 +7,7 @@ from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.loop import HarnessLoopResult
-from slim_guard.harness.safety import OutputGuard, PermissiveOutputGuard, SafetyAssessment
+from slim_guard.harness.safety import OutputGuard, PermissiveOutputGuard
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline.contracts import (
@@ -50,13 +50,12 @@ class ResponseProcessor:
         initialized: InitializedTurn,
         invocation: AgentInvocation,
         result: HarnessLoopResult,
-        assessment: SafetyAssessment,
     ) -> ProcessedResponse:
         if result.termination is not HarnessTermination.FINAL_RESPONSE:
             return ProcessedResponse(result, final_text=None)
         assert result.final_text is not None
         guarded = self._guard.review(
-            text=result.final_text, assessment=assessment, tool_outcomes=result.tool_outcomes
+            text=result.final_text, tool_outcomes=result.tool_outcomes
         )
         if guarded.modified:
             await self._recorder.record_output_guard(turn_id=invocation.turn_id, code=guarded.code)
@@ -86,7 +85,7 @@ class ResponseProcessor:
                     )
                 )
             checked = self._guard.review(
-                text=finalization.text, assessment=assessment, tool_outcomes=result.tool_outcomes
+                text=finalization.text, tool_outcomes=result.tool_outcomes
             )
             if checked.modified:
                 # Preserve the existing fallback policy; role-preserving repair is

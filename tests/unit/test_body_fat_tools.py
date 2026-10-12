@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.body_fat.repository import BodyFatRepository
+from slim_guard.features.health_records.body_fat.repository import BodyFatRepository
+from slim_guard.features.health_records.body_fat.tools import (
+    GET_RECENT_BODY_FAT_TREND_TOOL_NAME,
+    RECORD_BODY_FAT_TOOL_NAME,
+    body_fat_tool_definitions,
+    body_fat_tool_executors,
+)
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,
@@ -15,12 +21,6 @@ from slim_guard.harness.initialization import (
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
-from slim_guard.tools.body_fat import (
-    GET_RECENT_BODY_FAT_TREND_TOOL_NAME,
-    RECORD_BODY_FAT_TOOL_NAME,
-    body_fat_tool_definitions,
-    body_fat_tool_executors,
-)
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResultStatus
 from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.gateway import ToolGateway

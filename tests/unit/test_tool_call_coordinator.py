@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.harness.errors import PendingActionConfigurationError
+from slim_guard.harness.errors import PendingActionCollision, PendingActionConfigurationError
 from slim_guard.harness.events import (
     PendingActionType,
     TurnStatus,
@@ -241,5 +242,109 @@ async def test_gated_execution_requires_a_complete_frozen_command(tmp_path) -> N
                 source_item_id=None,
                 now=datetime.now(UTC),
             )
+    finally:
+        await database.close()
+
+
+async def test_deferred_gate_is_committed_with_turn_waiting_state_as_one_batch(
+    tmp_path,
+) -> None:
+    database, turn_state, turn, context = await prepare_state(tmp_path)
+    pending_actions = PendingActionRepository(database)
+    coordinator = ToolCallCoordinator(
+        gateway=FakeToolGateway(execution(ToolPolicyDecision.CONFIRM)),
+        pending_actions=pending_actions,
+        turn_state=turn_state,
+        confirmation_ttl=timedelta(minutes=10),
+        review_ttl=timedelta(hours=2),
+    )
+    try:
+        outcome = await coordinator.execute(
+            call=NormalizedToolCall(
+                id="call-1",
+                name="record_weight",
+                arguments={"weight_kg": 77.6},
+            ),
+            context=context,
+            authorization=authorization(),
+            source_item_id=None,
+            now=datetime.now(UTC),
+            defer_waiting_transition=True,
+        )
+
+        assert outcome.turn.status is TurnStatus.RUNNING
+        assert outcome.pending_action is None
+        assert outcome.pending_action_draft is not None
+        assert await pending_actions.list_open(
+            thread_id=turn.thread_id,
+            at=datetime.now(UTC),
+        ) == []
+
+        status = await coordinator.finalize_batch(
+            turn_id=turn.id,
+            outcomes=(outcome,),
+        )
+
+        persisted_turn = await turn_state.get_turn(turn.id)
+        pending = await pending_actions.list_open(
+            thread_id=turn.thread_id,
+            at=datetime.now(UTC),
+        )
+        assert status is TurnStatus.WAITING_USER_CONFIRMATION
+        assert persisted_turn is not None
+        assert persisted_turn.status is TurnStatus.WAITING_USER_CONFIRMATION
+        assert outcome.turn.status is TurnStatus.WAITING_USER_CONFIRMATION
+        assert outcome.pending_action is not None
+        assert outcome.pending_action_draft is None
+        assert pending == [outcome.pending_action]
+    finally:
+        await database.close()
+
+
+async def test_failed_pending_batch_rolls_back_rows_and_turn_transition(tmp_path) -> None:
+    database, turn_state, turn, context = await prepare_state(tmp_path)
+    pending_actions = PendingActionRepository(database)
+    coordinator = ToolCallCoordinator(
+        gateway=FakeToolGateway(execution(ToolPolicyDecision.CONFIRM)),
+        pending_actions=pending_actions,
+        turn_state=turn_state,
+        confirmation_ttl=timedelta(minutes=10),
+        review_ttl=timedelta(hours=2),
+    )
+    try:
+        outcome = await coordinator.execute(
+            call=NormalizedToolCall(
+                id="call-1",
+                name="record_weight",
+                arguments={"weight_kg": 77.6},
+            ),
+            context=context,
+            authorization=authorization(),
+            source_item_id=None,
+            now=datetime.now(UTC),
+            defer_waiting_transition=True,
+        )
+        assert outcome.pending_action_draft is not None
+        conflicting_draft = replace(
+            outcome.pending_action_draft,
+            tool_call_id="call-conflict",
+            canonical_arguments={"weight_kg": 78.0},
+        )
+
+        with pytest.raises(PendingActionCollision):
+            await pending_actions.create_batch_and_transition(
+                turn_id=turn.id,
+                drafts=(outcome.pending_action_draft, conflicting_draft),
+                target_status=TurnStatus.WAITING_USER_CONFIRMATION,
+            )
+
+        persisted_turn = await turn_state.get_turn(turn.id)
+        pending = await pending_actions.list_open(
+            thread_id=turn.thread_id,
+            at=datetime.now(UTC),
+        )
+        assert persisted_turn is not None
+        assert persisted_turn.status is TurnStatus.RUNNING
+        assert pending == []
     finally:
         await database.close()

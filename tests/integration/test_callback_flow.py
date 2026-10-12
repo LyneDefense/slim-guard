@@ -21,7 +21,7 @@ from slim_guard.agent_models.vision import (
 from slim_guard.config import Settings
 from slim_guard.db.models import InteractionTraceRecord, TraceSpanRecord
 from slim_guard.db.repositories import MessageRepository
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.integrations.wecom_kf.client import WeComMedia
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto

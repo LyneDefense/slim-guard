@@ -361,14 +361,9 @@ class EvidenceBuilder:
             if not isinstance(observation, (str, Mapping)) or not observation:
                 missing.append(f"visual_observation_missing:{source_ref or 'image'}")
                 return None
-            requires_confirmation = payload.get("requires_user_confirmation", True) is not False
             uncertainty = payload.get("uncertainty")
             if not isinstance(uncertainty, str) or not uncertainty.strip():
-                uncertainty = (
-                    "Visual interpretation requires user confirmation"
-                    if requires_confirmation
-                    else "Visual interpretation may omit or misclassify details"
-                )
+                uncertainty = "Visual interpretation may omit or misclassify details"
             return self._make_item(
                 turn_id=turn_id,
                 source_type=EvidenceSourceType.VISION_OBSERVATION,
@@ -376,7 +371,6 @@ class EvidenceBuilder:
                 content={
                     "asset_id": payload.get("asset_id") or source_ref,
                     "observation": observation,
-                    "requires_user_confirmation": requires_confirmation,
                 },
                 source_ref=str(payload.get("asset_id") or source_ref or "image"),
                 occurred_at=self._timestamp(payload),

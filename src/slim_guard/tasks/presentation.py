@@ -13,6 +13,7 @@ def task_summary(task: TaskRef) -> dict[str, Any]:
         "status": task.status,
         "objective": task.objective,
         "unresolved": list(task.unresolved),
+        "request": task.request.model_dump(mode="json") if task.request else None,
         "evidence": [e.model_dump() for e in task.evidence[-20:]],
         "evidence_truncated": len(task.evidence) > 20,
         "source_item_ids": list(task.source_item_ids[-20:]),

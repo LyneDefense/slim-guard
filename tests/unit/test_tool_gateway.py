@@ -15,6 +15,7 @@ from slim_guard.tools.contracts import (
     ToolEffectLevel,
     ToolExecutionMode,
     ToolExecutionStatus,
+    ToolMutationKind,
     ToolPolicyDecision,
     ToolResult,
     ToolResultStatus,
@@ -97,8 +98,8 @@ def registered_tool(
         version="v1",
         arguments_model=arguments_model,
         effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+        mutation_kind=ToolMutationKind.HEALTH_RECORD,
         idempotent=True,
-        requires_confirmation=False,
         timeout_seconds=timeout_seconds,
     )
 
@@ -171,6 +172,7 @@ async def test_gateway_validates_arguments_executes_handler_and_returns_audit_da
     assert received[0][0].execution_idempotency_key == execution.idempotency_key
     assert execution.result.status is ToolResultStatus.SUCCEEDED
     assert execution.policy_decision is ToolPolicyDecision.ALLOW
+    assert execution.mutation_kind is ToolMutationKind.HEALTH_RECORD
     assert execution.result.source_ids == ("weight-1",)
     assert execution.canonical_arguments == {"weight_kg": 77.6}
     assert execution.idempotency_key is not None
@@ -292,6 +294,7 @@ async def test_gateway_returns_structured_unknown_tool_and_validation_failures()
     assert unknown.tool_version is None
     assert invalid.result.failure is not None
     assert invalid.result.failure.code == "invalid_arguments"
+    assert invalid.result.failure.effect_status.value == "not_applied"
     assert "weight_kg" in invalid.result.failure.message
     assert "user_id" in invalid.result.failure.message
     assert execution_store.executions == {}
@@ -383,8 +386,10 @@ async def test_gateway_converts_timeout_and_handler_exception_to_safe_results(
     assert timeout.result.failure is not None
     assert timeout.result.failure.code == "tool_timeout"
     assert timeout.result.failure.retryable is True
+    assert timeout.result.failure.effect_status.value == "unknown"
     assert failure.result.failure is not None
     assert failure.result.failure.code == "tool_execution_failed"
+    assert failure.result.failure.effect_status.value == "unknown"
     assert "password" not in failure.result.failure.message
     assert "password" not in caplog.text
 

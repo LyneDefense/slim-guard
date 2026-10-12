@@ -3,7 +3,8 @@ import React from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BrandMark, Card, SectionTitle } from '../components/ui';
+import { BrandMark, SectionTitle } from '../components/ui';
+import { RecordHistory } from '../features/record-history/RecordHistory';
 import { useApp } from '../context/AppContext';
 import { findGoal } from '../lib/memoryFormat';
 import { colors, radius, spacing } from '../theme';
@@ -67,16 +68,7 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
           <QuickAction icon="chatbubble-ellipses-outline" title="聊一聊" subtitle="问教练任何事" onPress={() => openCoach()} />
         </View>
 
-        <SectionTitle title="今日节奏" />
-        <Card>
-          <PulseRow icon="restaurant" title="饮食记录" value={`${today.meals_logged} 次`} done={today.meals_logged > 0} />
-          <View style={styles.divider} />
-          <PulseRow icon="walk" title="运动记录" value={`${today.exercise_logged} 次`} done={today.exercise_logged > 0} />
-          <View style={styles.coachNote}>
-            <Ionicons name="sparkles" size={17} color={colors.primary} />
-            <Text style={styles.coachText}>{today.meals_logged + today.exercise_logged > 0 ? '已经留下记录了。下一步让身体舒服一点就好。' : '还没记录也没关系，从最容易的一件开始。'}</Text>
-          </View>
-        </Card>
+        <RecordHistory timezone={today.routine.timezone} refreshKey={data} />
 
       </ScrollView>
     </SafeAreaView>
@@ -99,16 +91,6 @@ function QuickAction({ icon, title, subtitle, onPress }: { icon: keyof typeof Io
       <View style={styles.quickIcon}><Ionicons name={icon} size={22} color={colors.primary} /></View>
       <View><Text style={styles.quickTitle}>{title}</Text><Text style={styles.quickSubtitle}>{subtitle}</Text></View>
     </Pressable>
-  );
-}
-
-function PulseRow({ icon, title, value, done }: { icon: keyof typeof Ionicons.glyphMap; title: string; value: string; done: boolean }) {
-  return (
-    <View style={styles.pulseRow}>
-      <View style={[styles.pulseIcon, done && styles.pulseIconDone]}><Ionicons name={done ? 'checkmark' : icon} size={18} color={done ? colors.white : colors.primary} /></View>
-      <Text style={styles.pulseTitle}>{title}</Text>
-      <Text style={styles.pulseValue}>{value}</Text>
-    </View>
   );
 }
 

@@ -16,12 +16,12 @@ from slim_guard.db.models import (
     UserMemoryFactRecord,
 )
 from slim_guard.db.session import Database
-from slim_guard.domain.weight.contracts import (
+from slim_guard.features.health_records.weight.contracts import (
     WeightMeasurementCommand,
     WeightMeasurementCondition,
     WeightUnit,
 )
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository

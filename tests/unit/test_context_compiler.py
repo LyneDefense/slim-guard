@@ -14,7 +14,12 @@ from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.loop import HarnessTurnContext
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.state_repository import ItemRef, ThreadRef, TurnRef
-from slim_guard.tools.contracts import ToolArguments, ToolEffectLevel, ToolExecutionMode
+from slim_guard.tools.contracts import (
+    ToolArguments,
+    ToolEffectLevel,
+    ToolExecutionMode,
+    ToolMutationKind,
+)
 from slim_guard.tools.registry import RegisteredTool, ToolRegistry
 
 SYSTEM_PROMPT = "You are SlimGuard."
@@ -37,8 +42,8 @@ def registry(*, record_weight_version: str = "v1") -> ToolRegistry:
                 version=record_weight_version,
                 arguments_model=RecordWeightArguments,
                 effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+                mutation_kind=ToolMutationKind.HEALTH_RECORD,
                 idempotent=True,
-                requires_confirmation=False,
                 timeout_seconds=3,
             ),
             RegisteredTool(
@@ -48,7 +53,6 @@ def registry(*, record_weight_version: str = "v1") -> ToolRegistry:
                 arguments_model=InspectImageArguments,
                 effect_level=ToolEffectLevel.READ,
                 idempotent=True,
-                requires_confirmation=False,
                 timeout_seconds=10,
             ),
         )

@@ -8,10 +8,23 @@ from sqlalchemy import select
 
 from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.db.models import ToolExecutionRecord
-from slim_guard.domain.body_fat.repository import BodyFatRepository
-from slim_guard.domain.exercise.repository import ExerciseRepository
-from slim_guard.domain.meal.repository import MealRepository
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.body_fat.repository import BodyFatRepository
+from slim_guard.features.health_records.body_fat.tools import (
+    body_fat_tool_definitions,
+    body_fat_tool_executors,
+)
+from slim_guard.features.health_records.exercise.repository import ExerciseRepository
+from slim_guard.features.health_records.exercise.tools import (
+    exercise_tool_definitions,
+    exercise_tool_executors,
+)
+from slim_guard.features.health_records.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.tools import meal_tool_definitions, meal_tool_executors
+from slim_guard.features.health_records.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.tools import (
+    weight_tool_definitions,
+    weight_tool_executors,
+)
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.tool_operations.gateway import OperationGateway
 from slim_guard.tool_operations.models import ToolOperationRecord
@@ -22,14 +35,10 @@ from slim_guard.tool_operations.tools import (
     RESUME_OPERATION,
     operation_tool_definitions,
 )
-from slim_guard.tools.body_fat import body_fat_tool_definitions, body_fat_tool_executors
 from slim_guard.tools.contracts import ToolContext, ToolEffectStatus, ToolExecutionMode, ToolResult
-from slim_guard.tools.exercise import exercise_tool_definitions, exercise_tool_executors
 from slim_guard.tools.gateway import ToolExecutor
-from slim_guard.tools.meal import meal_tool_definitions, meal_tool_executors
 from slim_guard.tools.policy import DefaultToolPolicy, ToolAuthorization
 from slim_guard.tools.registry import ToolRegistry
-from slim_guard.tools.weight import weight_tool_definitions, weight_tool_executors
 from tests.unit.test_tool_execution_repository import prepare_ledger
 from tests.unit.test_tool_gateway import WeightArguments, registered_tool
 

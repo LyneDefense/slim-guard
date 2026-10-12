@@ -6,8 +6,8 @@ from slim_guard.agents.nutrition import (
     CONSULT_NUTRITION_TOOL_NAME,
     nutrition_agent_tool_definitions,
 )
+from slim_guard.features.health_records.tools import health_record_tool_definitions
 from slim_guard.tools.registry import ToolRegistry
-from slim_guard.tools.weight import weight_tool_definitions
 
 
 def test_catalog_matches_current_manifest() -> None:
@@ -27,7 +27,7 @@ def test_catalog_matches_current_manifest() -> None:
 
 def test_catalog_preserves_business_and_nutrition_contracts() -> None:
     registry = build_core_tool_registry()
-    for tool in (*weight_tool_definitions(), *nutrition_agent_tool_definitions()):
+    for tool in (*health_record_tool_definitions(), *nutrition_agent_tool_definitions()):
         assert registry.resolve(tool.name) == tool
         assert registry.resolve(tool.name).model_definition() == tool.model_definition()
 
@@ -41,7 +41,7 @@ def test_manifest_uses_supplied_registry_without_rebuilding_catalog() -> None:
         ),
         code_revision="test",
     )
-    registry = ToolRegistry(weight_tool_definitions())
+    registry = ToolRegistry(health_record_tool_definitions())
 
     manifest = build_agent_manifest(definition, registry=registry)
 

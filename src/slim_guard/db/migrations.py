@@ -22,6 +22,8 @@ from slim_guard.db.models import (
     new_uuid,
 )
 from slim_guard.domain.assets.migration import retain_chat_attachments
+from slim_guard.features.health_records.persistence.migration import migrate_health_records
+from slim_guard.db.approval_retirement import retire_approval_waits
 from slim_guard.nutrition_rag.profiles import (
     ANSWERABILITY_V1_QUERY_PLAN_VERSION,
     ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID,
@@ -541,6 +543,8 @@ MIGRATIONS = (
     SchemaMigration("20260923_01_conversation_tasks", migrate_conversation_tasks),
     SchemaMigration("20260923_02_model_usage", migrate_usage),
     SchemaMigration("20260923_03_tool_operations", migrate_tool_operations),
+    SchemaMigration("20260924_01_health_records", migrate_health_records),
+    SchemaMigration("20260924_02_retire_approval_waits", retire_approval_waits),
 )
 
 

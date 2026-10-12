@@ -17,6 +17,7 @@ from slim_guard.tools.contracts import (
     ToolEffectStatus,
     ToolExecution,
     ToolFieldError,
+    ToolMutationKind,
     ToolPolicyDecision,
     ToolResult,
 )
@@ -187,7 +188,7 @@ class ToolGateway:
             canonical_arguments=canonical_arguments,
         )
         if not claim.created:
-            return self._replayed_execution(claim.execution)
+            return self._replayed_execution(claim.execution, tool.mutation_kind)
 
         execution_context = context.model_copy(
             update={"execution_idempotency_key": idempotency_key}
@@ -236,6 +237,7 @@ class ToolGateway:
             canonical_arguments=completed.canonical_arguments,
             idempotency_key=completed.idempotency_key,
             policy_decision=ToolPolicyDecision.ALLOW,
+            mutation_kind=tool.mutation_kind,
             result=completed.result,
         )
 
@@ -273,7 +275,9 @@ class ToolGateway:
         ).decision
 
     @staticmethod
-    def _replayed_execution(execution: ToolExecutionRef) -> ToolExecution:
+    def _replayed_execution(
+        execution: ToolExecutionRef, mutation_kind: ToolMutationKind
+    ) -> ToolExecution:
         if execution.result is None:
             result = ToolResult.failed(
                 code="tool_execution_in_progress",
@@ -289,6 +293,7 @@ class ToolGateway:
             canonical_arguments=execution.canonical_arguments,
             idempotency_key=execution.idempotency_key,
             policy_decision=ToolPolicyDecision.ALLOW,
+            mutation_kind=mutation_kind,
             result=result,
         )
 
@@ -348,6 +353,7 @@ class ToolGateway:
             canonical_arguments=canonical_arguments,
             idempotency_key=idempotency_key,
             policy_decision=policy_decision,
+            mutation_kind=tool.mutation_kind if tool is not None else ToolMutationKind.NONE,
             result=ToolResult.failed(
                 code=code,
                 message=message,

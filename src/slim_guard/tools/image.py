@@ -46,11 +46,11 @@ summary 是图片的描述性注释，不是用户原话，也不是当前待办
   "summary": "结合用户原话描述图片及相关不确定性",
   "observations": [
     {"label": "观察项", "detail": "视觉证据", "certainty": "clear|uncertain"}
-  ],
-  "requires_user_confirmation": false
+  ]
 }
-category 只是观察结果。requires_user_confirmation 仅表示视觉判断的不确定性，
-是否需要用户补充、后续补充是否解决问题，由对话任务上下文决定。
+category 和 certainty 只是观察结果。是否提问由 Core 结合用户请求和上下文决定，
+不能将 uncertain 自动转换成确认步骤。保留每项合理识别结果及具体疑问，
+能识别到足够的菜品粒度时不猜测肉的部位、用油量等不可见细节。
 """.strip()
 
 
@@ -154,7 +154,6 @@ class ImageToolHandlers:
                 "observations": [
                     observation.model_dump(mode="json") for observation in response.observations
                 ],
-                "requires_user_confirmation": response.requires_user_confirmation,
             },
             source_ids=(asset.ref.id,),
         )
@@ -179,7 +178,6 @@ def image_tool_definitions() -> tuple[RegisteredTool, ...]:
             arguments_model=InspectImageArguments,
             effect_level=ToolEffectLevel.READ,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=45,
         ),
     )

@@ -1,18 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from slim_guard.tasks.contracts import TaskRef, TaskStatus, TaskWrite
-
-if TYPE_CHECKING:
-    from slim_guard.harness.pending_actions import PendingActionRef
-
-
-class TaskAuthorizationStore(Protocol):
-    async def attach_task(self, *, action_id: str, task: TaskRef) -> PendingActionRef: ...
-
-    async def list_for_task(self, task: TaskRef) -> list[PendingActionRef]: ...
 
 
 class TaskStore(Protocol):

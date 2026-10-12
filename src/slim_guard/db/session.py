@@ -19,6 +19,10 @@ class Database:
         self.url = url
         self._ensure_sqlite_parent_exists(url)
         self.engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
+        # Register the date projection before the first connection enters the pool.
+        from slim_guard.features.health_records.persistence.queries import install_sqlite_dates
+
+        install_sqlite_dates(self)
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
 
     @staticmethod

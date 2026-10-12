@@ -21,7 +21,7 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.runtime.contracts import AgentRole
 from slim_guard.tools.contracts import ToolExecutionMode

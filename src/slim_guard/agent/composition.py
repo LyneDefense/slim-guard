@@ -98,7 +98,6 @@ def build_agent_runtime(
         memory_config=definition.memory,
         memory=memory,
         tasks=tasks.store,
-        pending_actions=tasks.authorizations,
         clock=clock,
     )
     nutrition = build_nutrition_components(
@@ -116,12 +115,10 @@ def build_agent_runtime(
         database=database,
         registry=registry,
         state=state,
-        pending_actions=tasks.authorizations,
         business_executors={**business.executors, **attachments.executors},
         memory_executors=memory.executors,
         task_executors=tasks.executors,
         specialist_executors=nutrition.executors,
-        config=definition.pending_actions,
         clock=clock,
     )
     response_finalizer = build_response_finalizer(

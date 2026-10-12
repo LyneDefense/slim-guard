@@ -104,7 +104,6 @@ class ZhipuVisionModelGateway:
             "category",
             "summary",
             "observations",
-            "requires_user_confirmation",
         }
         if set(structured) != required:
             raise ValueError("structured inspection response has unexpected fields")
@@ -112,7 +111,6 @@ class ZhipuVisionModelGateway:
             category=structured["category"],
             description=structured["summary"],
             observations=structured["observations"],
-            requires_user_confirmation=structured["requires_user_confirmation"],
             usage=usage,
             provider_request_id=request_id,
         )

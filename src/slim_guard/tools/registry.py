@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slim_guard.agent_models.gateway import ToolDefinition
-from slim_guard.tools.contracts import ToolArguments, ToolEffectLevel
+from slim_guard.tools.contracts import ToolArguments, ToolEffectLevel, ToolMutationKind
 from slim_guard.tools.errors import DuplicateToolError, UnknownToolError
 
 
@@ -19,9 +19,18 @@ class RegisteredTool(BaseModel):
     version: str = Field(min_length=1, max_length=128)
     arguments_model: type[ToolArguments]
     effect_level: ToolEffectLevel
+    mutation_kind: ToolMutationKind = ToolMutationKind.NONE
     idempotent: bool
-    requires_confirmation: bool
     timeout_seconds: float = Field(gt=0, le=300)
+
+    @model_validator(mode="after")
+    def require_mutation_kind_for_writes(self) -> RegisteredTool:
+        if (
+            self.effect_level is ToolEffectLevel.REVERSIBLE_WRITE
+            and self.mutation_kind is ToolMutationKind.NONE
+        ):
+            raise ValueError("Reversible writes must declare their user-visible mutation kind")
+        return self
 
     def model_definition(self) -> ToolDefinition:
         return ToolDefinition(

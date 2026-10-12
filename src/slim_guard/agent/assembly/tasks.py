@@ -7,7 +7,6 @@ from typing import Any
 
 from slim_guard.db.models import utc_now
 from slim_guard.db.session import Database
-from slim_guard.harness.pending_actions import PendingActionRepository
 from slim_guard.tasks.config import TaskRuntimeConfig
 from slim_guard.tasks.ports import TaskStore
 from slim_guard.tasks.repository import ConversationTaskRepository
@@ -18,7 +17,6 @@ from slim_guard.tools.gateway import ToolExecutor
 @dataclass(frozen=True, slots=True)
 class TaskComponents:
     store: TaskStore
-    authorizations: PendingActionRepository
     executors: Mapping[str, ToolExecutor[Any]]
 
 
@@ -34,9 +32,7 @@ def build_task_components(
         ttl=timedelta(days=config.clarification_ttl_days),
         clock=active_clock,
     )
-    actions = PendingActionRepository(database)
     return TaskComponents(
         store=tasks,
-        authorizations=actions,
-        executors=task_tool_executors(TaskToolHandlers(tasks, actions, clock=active_clock)),
+        executors=task_tool_executors(TaskToolHandlers(tasks, clock=active_clock)),
     )

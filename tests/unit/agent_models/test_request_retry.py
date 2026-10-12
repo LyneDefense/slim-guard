@@ -77,7 +77,6 @@ async def test_http_attempts_have_individual_usage_and_unchanged_payload(vision,
                     "category": "other",
                     "summary": "一张图片",
                     "observations": [],
-                    "requires_user_confirmation": False,
                 }
             )
             if vision

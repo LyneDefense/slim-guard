@@ -45,7 +45,6 @@ async def test_zhipu_vision_serializes_image_and_normalizes_response() -> None:
                                             "certainty": "clear",
                                         }
                                     ],
-                                    "requires_user_confirmation": False,
                                 },
                                 ensure_ascii=False,
                             )
@@ -81,7 +80,6 @@ async def test_zhipu_vision_serializes_image_and_normalizes_response() -> None:
     assert response.description == "体重秤显示 77.6 kg，单位清晰。"
     assert response.category == "weight_scale"
     assert response.observations[0].certainty == "clear"
-    assert response.requires_user_confirmation is False
     assert response.usage.total_tokens == 40
     assert response.provider_request_id == "vision-response-1"
 

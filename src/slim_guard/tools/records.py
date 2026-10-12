@@ -13,6 +13,7 @@ from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectLevel,
     ToolEffectStatus,
+    ToolMutationKind,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -79,8 +80,8 @@ def record_status_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=RECORD_STATUS_TOOL_VERSION,
             arguments_model=UpdateRecordStatusArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.HEALTH_RECORD,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
     )

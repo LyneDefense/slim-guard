@@ -8,7 +8,7 @@ from slim_guard.agent.runtime import AgentRuntimeRequest
 from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import MessageRole
-from slim_guard.domain.meal.repository import MealRepository
+from slim_guard.features.health_records.meal.repository import MealRepository
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination

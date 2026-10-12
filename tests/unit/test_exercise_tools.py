@@ -5,7 +5,12 @@ from pathlib import Path
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.exercise.repository import ExerciseRepository
+from slim_guard.features.health_records.exercise.repository import ExerciseRepository
+from slim_guard.features.health_records.exercise.tools import (
+    ExerciseToolHandlers,
+    GetRecentExerciseArguments,
+    RecordExerciseArguments,
+)
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,
@@ -16,11 +21,6 @@ from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResultStatus
-from slim_guard.tools.exercise import (
-    ExerciseToolHandlers,
-    GetRecentExerciseArguments,
-    RecordExerciseArguments,
-)
 
 NOW = datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
 

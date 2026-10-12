@@ -29,8 +29,6 @@ class TurnTrigger(StrEnum):
 
 class TurnStatus(StrEnum):
     RUNNING = "running"
-    WAITING_USER_CONFIRMATION = "waiting_user_confirmation"
-    WAITING_HUMAN_REVIEW = "waiting_human_review"
     COMPLETED = "completed"
     FAILED = "failed"
     SUSPENDED = "suspended"
@@ -65,18 +63,6 @@ class ItemStatus(StrEnum):
     FAILED = "failed"
 
 
-class PendingActionType(StrEnum):
-    USER_CONFIRMATION = "user_confirmation"
-    HUMAN_REVIEW = "human_review"
-
-
-class PendingActionStatus(StrEnum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    EXPIRED = "expired"
-    CANCELLED = "cancelled"
-    CONSUMED = "consumed"
 
 
 WORKFLOW_TRACE_EVENT_FIELDS: dict[ItemType, frozenset[str]] = {

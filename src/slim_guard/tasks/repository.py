@@ -71,6 +71,7 @@ class ConversationTaskRepository:
                         status="open",
                         objective=command.objective,
                         unresolved_json=json.dumps(command.unresolved, ensure_ascii=False),
+                        request_json=command.request.model_dump_json() if command.request else None,
                         evidence_json=json.dumps([evidence.model_dump()], ensure_ascii=False),
                         source_item_ids_json=json.dumps(source_ids),
                         attachment_ids_json=json.dumps(attachments),
@@ -94,6 +95,8 @@ class ConversationTaskRepository:
                             "Task is closed or expired; it cannot be silently reopened"
                         )
                     prior = self._ref(row)
+                    if prior.request is not None and command.status == "resolved":
+                        raise TaskError("Resolve record requests through the record mutation tool")
                     result = await session.execute(
                         update(ConversationTaskRecord)
                         .where(
@@ -106,6 +109,9 @@ class ConversationTaskRepository:
                             objective=command.objective,
                             status=command.status,
                             unresolved_json=json.dumps(command.unresolved, ensure_ascii=False),
+                            request_json=command.request.model_dump_json()
+                            if command.request
+                            else row.request_json,
                             evidence_json=json.dumps(
                                 [entry.model_dump() for entry in (*prior.evidence, evidence)],
                                 ensure_ascii=False,
@@ -228,4 +234,5 @@ class ConversationTaskRepository:
             created_at=as_utc(row.created_at),
             expires_at=as_utc(row.expires_at),
             resolved_at=as_utc(row.resolved_at) if row.resolved_at else None,
+            request=json.loads(row.request_json) if row.request_json else None,
         )

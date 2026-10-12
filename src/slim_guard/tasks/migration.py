@@ -3,7 +3,7 @@
 import json
 from typing import cast
 
-from sqlalchemy import MetaData, Table, inspect, select, text
+from sqlalchemy import MetaData, Table, inspect, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from slim_guard.db.models import ConversationTaskOperationRecord, ConversationTaskRecord
@@ -14,21 +14,6 @@ async def migrate_conversation_tasks(connection: AsyncConnection) -> None:
         table = cast(Table, model.__table__)
         await connection.run_sync(table.create, checkfirst=True)
     tables = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
-    if "pending_actions" in tables:
-        columns = await connection.run_sync(
-            lambda sync: {c["name"] for c in inspect(sync).get_columns("pending_actions")}
-        )
-        if "task_id" not in columns:
-            await connection.execute(
-                text(
-                    "ALTER TABLE pending_actions ADD COLUMN task_id VARCHAR(36) "
-                    "REFERENCES conversation_tasks(id) ON DELETE SET NULL"
-                )
-            )
-        # Retired dish authorization is not a valid operation in the current registry.
-        await connection.execute(
-            text("DELETE FROM pending_actions WHERE tool_name = 'confirm_dishes'")
-        )
     if "memory_handoffs" not in tables:
         return
     legacy = await connection.run_sync(

@@ -6,15 +6,16 @@ from typing import Any, Literal
 
 from pydantic import Field, ValidationError
 
-from slim_guard.harness.errors import PendingActionStateConflict
 from slim_guard.tasks.contracts import TaskConflict, TaskError, TaskWrite, Text
-from slim_guard.tasks.ports import TaskAuthorizationStore, TaskStore
+from slim_guard.tasks.ports import TaskStore
 from slim_guard.tasks.presentation import task_summary
+from slim_guard.tasks.record_requests import RecordRequest
 from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolEffectLevel,
     ToolEffectStatus,
+    ToolMutationKind,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -22,6 +23,7 @@ from slim_guard.tools.registry import RegisteredTool
 
 
 class SaveTaskArguments(ToolArguments):
+    request: RecordRequest | None = None
     task_id: str | None = Field(default=None, min_length=1, max_length=128)
     expected_revision: int | None = Field(default=None, ge=1)
     objective: str = Field(min_length=1, max_length=300)
@@ -44,16 +46,11 @@ class ListTasksArguments(ToolArguments):
     limit: int = Field(default=20, ge=1, le=100)
 
 
-class LinkTaskActionArguments(ToolArguments):
-    task_id: str = Field(min_length=1, max_length=128)
-    action_id: str = Field(min_length=1, max_length=128)
-
-
 class TaskToolHandlers:
     def __init__(
-        self, tasks: TaskStore, actions: TaskAuthorizationStore, *, clock: Callable[[], datetime]
+        self, tasks: TaskStore, *, clock: Callable[[], datetime]
     ) -> None:
-        self._tasks, self._actions, self._clock = tasks, actions, clock
+        self._tasks, self._clock = tasks, clock
 
     async def save(self, context: ToolContext, arguments: SaveTaskArguments) -> ToolResult:
         if context.source_item_id is None or context.execution_idempotency_key is None:
@@ -89,7 +86,6 @@ class TaskToolHandlers:
             )
         except TaskError as exc:
             return ToolResult.failed(code="task_not_found", message=str(exc))
-        actions = await self._actions.list_for_task(task)
         start = arguments.evidence_offset
         source_start = arguments.source_offset
         return ToolResult.success(
@@ -102,10 +98,6 @@ class TaskToolHandlers:
                 else None,
                 "evidence_page": [e.model_dump() for e in task.evidence[start : start + 20]],
                 "evidence_next_offset": start + 20 if start + 20 < len(task.evidence) else None,
-                "authorization_actions": [
-                    {"action_id": a.id, "status": a.status.value, "tool_name": a.tool_name}
-                    for a in actions
-                ],
             },
             source_ids=(task.id,),
         )
@@ -128,28 +120,6 @@ class TaskToolHandlers:
             source_ids=tuple(t.id for t in tasks),
         )
 
-    async def link(self, context: ToolContext, arguments: LinkTaskActionArguments) -> ToolResult:
-        try:
-            task = await self._tasks.get(
-                arguments.task_id, user_id=context.user_id, thread_id=context.thread_id
-            )
-            action = await self._actions.attach_task(action_id=arguments.action_id, task=task)
-        except (TaskError, LookupError, PendingActionStateConflict) as exc:
-            return ToolResult.failed(
-                code="task_action_link_rejected",
-                message=str(exc),
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-            )
-        return ToolResult.success(
-            output={
-                "task_id": task.id,
-                "action_id": action.id,
-                "authorization_status": action.status.value,
-            },
-            source_ids=(task.id, action.id),
-        )
-
-
 _TOOLS = (
     (
         "save_conversation_task",
@@ -161,15 +131,15 @@ _TOOLS = (
         "task_id and expected_revision; preserve earlier answers and remove resolved questions. "
         "Quote current user evidence exactly (empty only for image-only input); interpretation is "
         "your summary, not a user quote. Additional source_item_ids reference user messages or "
-        "attachments. Multiple tasks coexist. Resolving/cancelling a task NEVER approves a tool.",
+        "attachments. Multiple tasks coexist. Complete record requests through write receipts.",
     ),
     (
         "get_conversation_task",
         GetTaskArguments,
         "get",
         ToolEffectLevel.READ,
-        "Load a task, original attachment references, paginated answer evidence and linked "
-        "authorization states. Historical visual uncertainty does not override later user answers.",
+        "Load a task, original attachment references and paginated answer evidence. "
+        "Historical visual uncertainty does not override later user answers.",
     ),
     (
         "list_conversation_tasks",
@@ -177,15 +147,6 @@ _TOOLS = (
         "list",
         ToolEffectLevel.READ,
         "List the user's tasks with pagination, including closed tasks when requested.",
-    ),
-    (
-        "link_task_authorization",
-        LinkTaskActionArguments,
-        "link",
-        ToolEffectLevel.REVERSIBLE_WRITE,
-        "Associate an existing operation authorization with its conversation task. Does not "
-        "approve, reject, execute or change tool parameters. Authorization uses the dedicated "
-        "pending-action tool and its evidence checks.",
     ),
 )
 
@@ -198,8 +159,12 @@ def task_tool_definitions() -> tuple[RegisteredTool, ...]:
             version="v1",
             arguments_model=model,
             effect_level=effect,
+            mutation_kind=(
+                ToolMutationKind.CONVERSATION_TASK
+                if name == "save_conversation_task"
+                else ToolMutationKind.NONE
+            ),
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=5,
         )
         for name, model, _, effect, description in _TOOLS

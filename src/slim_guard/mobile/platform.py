@@ -34,7 +34,6 @@ from slim_guard.db.models import (
     MobileSessionRecord,
     MobileWeComBindingRecord,
     OutboundMessage,
-    PendingActionRecord,
     ProactiveMessageRecord,
     RoutineJobRecord,
     SlimGuardUser,
@@ -410,9 +409,6 @@ class MobilePlatformService:
                 )
             if turn_ids:
                 await delete_user_operations(session, user_id)
-                await session.execute(
-                    delete(PendingActionRecord).where(PendingActionRecord.turn_id.in_(turn_ids))
-                )
                 await session.execute(
                     delete(ToolExecutionRecord).where(ToolExecutionRecord.turn_id.in_(turn_ids))
                 )

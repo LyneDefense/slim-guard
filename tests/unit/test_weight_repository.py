@@ -8,14 +8,17 @@ from pydantic import ValidationError
 
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.weight.contracts import (
+from slim_guard.features.health_records.weight.contracts import (
     WeightMeasurementCommand,
     WeightMeasurementCondition,
     WeightTrendDirection,
     WeightUnit,
 )
-from slim_guard.domain.weight.errors import WeightRecordCollision, WeightSourceMismatch
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.errors import (
+    WeightRecordCollision,
+    WeightSourceMismatch,
+)
+from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,

@@ -6,7 +6,13 @@ from pathlib import Path
 from slim_guard.agent_models.gateway import NormalizedToolCall
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
-from slim_guard.domain.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.repository import WeightRepository
+from slim_guard.features.health_records.weight.tools import (
+    GET_RECENT_WEIGHT_TREND_TOOL_NAME,
+    RECORD_WEIGHT_TOOL_NAME,
+    weight_tool_definitions,
+    weight_tool_executors,
+)
 from slim_guard.harness.events import TurnTrigger
 from slim_guard.harness.initialization import (
     TurnInitializationRequest,
@@ -25,12 +31,6 @@ from slim_guard.tools.execution_repository import ToolExecutionRepository
 from slim_guard.tools.gateway import ToolGateway
 from slim_guard.tools.policy import DefaultToolPolicy, ToolAuthorization
 from slim_guard.tools.registry import ToolRegistry
-from slim_guard.tools.weight import (
-    GET_RECENT_WEIGHT_TREND_TOOL_NAME,
-    RECORD_WEIGHT_TOOL_NAME,
-    weight_tool_definitions,
-    weight_tool_executors,
-)
 
 FIXED_NOW = datetime(2026, 8, 27, 7, 30, tzinfo=UTC)
 

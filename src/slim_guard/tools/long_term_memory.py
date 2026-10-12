@@ -25,6 +25,7 @@ from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectLevel,
     ToolEffectStatus,
+    ToolMutationKind,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -262,7 +263,7 @@ class LongTermMemoryToolHandlers:
 
 
 def long_term_memory_tool_definitions() -> tuple[RegisteredTool, ...]:
-    return (
+    tools = (
         RegisteredTool(
             name=REMEMBER_LONG_TERM_MEMORY_TOOL_NAME,
             description=(
@@ -274,8 +275,8 @@ def long_term_memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=LONG_TERM_MEMORY_TOOL_VERSION,
             arguments_model=RememberLongTermMemoryArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_MEMORY,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -288,7 +289,6 @@ def long_term_memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             arguments_model=ListLongTermMemoriesArguments,
             effect_level=ToolEffectLevel.READ,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -301,27 +301,12 @@ def long_term_memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=LONG_TERM_MEMORY_TOOL_VERSION,
             arguments_model=ForgetLongTermMemoryArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_MEMORY,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
-        RegisteredTool(
-            name=CLEAR_LONG_TERM_MEMORIES_TOOL_NAME,
-            description=(
-                "Revoke every active open-text conversational memory for the current user "
-                "after explicit confirmation. This never removes structured profile/goal "
-                "facts, health records, transcripts, or audit history. scope must be "
-                "conversational_long_term and evidence_excerpt must quote the user's "
-                "original clear request exactly."
-            ),
-            version=LONG_TERM_MEMORY_TOOL_VERSION,
-            arguments_model=ClearLongTermMemoriesArguments,
-            effect_level=ToolEffectLevel.SENSITIVE_WRITE,
-            idempotent=True,
-            requires_confirmation=True,
-            timeout_seconds=5,
-        ),
     )
+    return tools
 
 
 def long_term_memory_tool_executors(
@@ -340,10 +325,6 @@ def long_term_memory_tool_executors(
         FORGET_LONG_TERM_MEMORY_TOOL_NAME: ToolExecutor(
             arguments_model=ForgetLongTermMemoryArguments,
             handler=handlers.forget,
-        ),
-        CLEAR_LONG_TERM_MEMORIES_TOOL_NAME: ToolExecutor(
-            arguments_model=ClearLongTermMemoriesArguments,
-            handler=handlers.clear_memories,
         ),
     }
 

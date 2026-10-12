@@ -70,12 +70,6 @@ class HarnessReplyAgent:
                 status=(
                     "completed"
                     if result.termination is HarnessTermination.FINAL_RESPONSE
-                    else "waiting"
-                    if result.termination
-                    in {
-                        HarnessTermination.WAITING_USER_CONFIRMATION,
-                        HarnessTermination.WAITING_HUMAN_REVIEW,
-                    }
                     else "failed"
                 ),
                 attributes={
@@ -92,12 +86,6 @@ class HarnessReplyAgent:
                     status="succeeded",
                     reply_kind="agent",
                 )
-            elif result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
-                await self._traces.mark_generation(
-                    trace_id=request.trace_id,
-                    status="waiting",
-                    reply_kind="confirmation",
-                )
             else:
                 await self._traces.mark_generation(
                     trace_id=request.trace_id,
@@ -105,11 +93,6 @@ class HarnessReplyAgent:
                     reply_kind="agent",
                     failure_code=result.failure_code or result.termination.value,
                 )
-        if result.termination is HarnessTermination.WAITING_USER_CONFIRMATION:
-            return (
-                "这项操作会更改或清空已保存的数据，需要你再次明确确认。"
-                "请回复确认执行，或回复取消。"
-            )[: self._max_reply_chars]
         if (
             result.termination is not HarnessTermination.FINAL_RESPONSE
             or result.final_text is None

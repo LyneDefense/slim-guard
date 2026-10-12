@@ -18,6 +18,7 @@ import type {
   WeComBinding,
 } from '../types';
 import { clearRefreshToken, readRefreshToken, saveRefreshToken } from './session';
+import type { RecordKind, RecordPage } from '../features/record-history/types';
 
 const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 export const API_BASE_URL = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -35,6 +36,11 @@ export class ApiError extends Error {
 type ApiErrorBody = { detail?: string | { code?: string; message?: string } };
 
 class MobileApi {
+  recordHistory(kind: RecordKind, timezone: string, cursor?: string): Promise<RecordPage> {
+    const query = new URLSearchParams({ kind, timezone, limit: '20' });
+    if (cursor) query.set('cursor', cursor);
+    return this.authorized(`/api/mobile/v1/records?${query}`);
+  }
   private accessToken: string | null = null;
   private refreshInFlight: Promise<AuthTokens> | null = null;
   private authChanged: ((tokens: AuthTokens | null) => void) | null = null;

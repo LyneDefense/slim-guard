@@ -28,6 +28,7 @@ from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectLevel,
     ToolEffectStatus,
+    ToolMutationKind,
     ToolResult,
 )
 from slim_guard.tools.gateway import ToolExecutor
@@ -638,7 +639,7 @@ class MemoryToolHandlers:
 
 
 def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
-    return (
+    tools = (
         RegisteredTool(
             name=SET_COACHING_PROFILE_TOOL_NAME,
             description=(
@@ -649,8 +650,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetCoachingProfileArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -665,8 +666,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBodyProfileArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -680,8 +681,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetExerciseProfileArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -695,8 +696,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=UpsertFoodPreferenceArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -709,8 +710,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=UpsertExercisePreferenceArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -724,8 +725,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetWeightGoalArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -739,8 +740,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBodyFatGoalArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -753,8 +754,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=SetBehaviorGoalArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -768,8 +769,8 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=RecordUserConstraintArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -782,7 +783,6 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             arguments_model=ListUserMemoriesArguments,
             effect_level=ToolEffectLevel.READ,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
         RegisteredTool(
@@ -795,27 +795,12 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             version=MEMORY_TOOL_VERSION,
             arguments_model=ForgetUserMemoryArguments,
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            requires_confirmation=False,
             timeout_seconds=3,
         ),
-        RegisteredTool(
-            name=CLEAR_USER_MEMORIES_TOOL_NAME,
-            description=(
-                "Clear all active profile, goal, and constraint memories for the current "
-                "user after explicit user confirmation. This does not delete weight, meal, "
-                "exercise, transcript, or message-idempotency records. scope must be "
-                "profile_goal_constraint and evidence_excerpt must be copied exactly from "
-                "the user's original clear request."
-            ),
-            version=MEMORY_TOOL_VERSION,
-            arguments_model=ClearUserMemoriesArguments,
-            effect_level=ToolEffectLevel.SENSITIVE_WRITE,
-            idempotent=True,
-            requires_confirmation=True,
-            timeout_seconds=5,
-        ),
     )
+    return tools
 
 
 def memory_tool_executors(
@@ -866,9 +851,5 @@ def memory_tool_executors(
         FORGET_USER_MEMORY_TOOL_NAME: ToolExecutor(
             arguments_model=ForgetUserMemoryArguments,
             handler=handlers.forget_user_memory,
-        ),
-        CLEAR_USER_MEMORIES_TOOL_NAME: ToolExecutor(
-            arguments_model=ClearUserMemoriesArguments,
-            handler=handlers.clear_user_memories,
         ),
     }
