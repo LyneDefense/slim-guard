@@ -115,6 +115,10 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
                 headers=headers,
                 json=chat_payload,
             )
+            request_status = await http.get(
+                f"/api/mobile/v1/chat/requests/{chat_payload['idempotency_key']}",
+                headers=headers,
+            )
             history = await http.get("/api/mobile/v1/chat/messages", headers=headers)
             user_message = history.json()["items"][0]
             image_response = await http.get(
@@ -175,6 +179,9 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
         assert chat.json()["text"] == "记下了，我们慢慢来。"
         assert replayed.status_code == 200
         assert replayed.json()["replayed"] is True
+        assert request_status.status_code == 200
+        assert request_status.json()["status"] == "succeeded"
+        assert request_status.json()["replayed"] is True
         assert [item["role"] for item in history.json()["items"]] == [
             "user",
             "assistant",

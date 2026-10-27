@@ -13,6 +13,7 @@ import {
   Text,
   TextInput,
   View,
+  type ScrollViewInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -29,7 +30,7 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
   const [text, setText] = useState('');
   const [images, setImages] = useState<SelectedImage[]>([]);
   const [sending, setSending] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
 
   useEffect(() => {
     if (!draft) return;
@@ -120,8 +121,10 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
           {messages.map((message) => <Bubble key={message.id} message={message} />)}
           {pending.length > 0 ? (
             <View style={styles.queueBanner}>
-              <Ionicons name="cloud-offline-outline" size={17} color={colors.warning} />
-              <Text style={styles.queueText}>{pending.length} 条消息将在联网后自动发送</Text>
+              <Ionicons name={online ? 'sync-outline' : 'cloud-offline-outline'} size={17} color={colors.warning} />
+              <Text style={styles.queueText}>
+                {online ? `${pending.length} 条消息正在等待服务器确认` : `${pending.length} 条消息将在联网后自动发送`}
+              </Text>
             </View>
           ) : null}
         </ScrollView>

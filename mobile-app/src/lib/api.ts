@@ -22,6 +22,11 @@ import type { RecordKind, RecordPage } from '../features/record-history/types';
 
 const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 export const API_BASE_URL = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+// Leave headroom under the proxy's 90s read timeout; uncertain outcomes are reconciled by key.
+const CHAT_REQUEST_TIMEOUT_MS = 75_000;
+const CHAT_STATUS_POLL_TIMEOUT_MS = 10_000;
+const CHAT_STATUS_POLL_WINDOW_MS = 60_000;
 
 export class ApiError extends Error {
   constructor(
@@ -128,11 +133,60 @@ class MobileApi {
     return { user, coach_profile: coachProfile, today, progress, memories, routine, messages: history.items };
   }
 
-  sendChat(payload: ChatPayload): Promise<ChatResponse> {
+  async sendChat(payload: ChatPayload): Promise<ChatResponse> {
+    let response: ChatResponse;
+    try {
+      response = await this.postChat(payload);
+    } catch (error) {
+      if (!this.isUncertainChatOutcome(error)) throw error;
+      try {
+        response = await this.getChatRequest(payload.idempotency_key);
+      } catch (statusError) {
+        if (!(statusError instanceof ApiError) || statusError.status !== 404) throw error;
+        // The first POST may have failed before the server claimed the key.
+        // Replaying the identical payload with the same key is safe and closes that race.
+        response = await this.postChat(payload);
+      }
+    }
+    if (response.status !== 'running') return response;
+    return this.waitForChatCompletion(payload.idempotency_key, response);
+  }
+
+  getChatRequest(idempotencyKey: string): Promise<ChatResponse> {
+    return this.authorized(
+      `/api/mobile/v1/chat/requests/${encodeURIComponent(idempotencyKey)}`,
+      { method: 'GET' },
+      true,
+      CHAT_STATUS_POLL_TIMEOUT_MS,
+    );
+  }
+
+  private postChat(payload: ChatPayload): Promise<ChatResponse> {
     return this.authorized('/api/mobile/v1/chat/messages', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, true, CHAT_REQUEST_TIMEOUT_MS);
+  }
+
+  private isUncertainChatOutcome(error: unknown): boolean {
+    return error instanceof ApiError && (
+      error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504
+    );
+  }
+
+  private async waitForChatCompletion(
+    idempotencyKey: string,
+    initial: ChatResponse,
+  ): Promise<ChatResponse> {
+    const deadline = Date.now() + CHAT_STATUS_POLL_WINDOW_MS;
+    let response = initial;
+    let delayMs = 1_000;
+    while (response.status === 'running' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      response = await this.getChatRequest(idempotencyKey);
+      delayMs = Math.min(5_000, Math.round(delayMs * 1.5));
+    }
+    return response;
   }
 
   updateProfile(nickname: string | null): Promise<MobileUser> {
@@ -185,10 +239,15 @@ class MobileApi {
     await this.clearSession();
   }
 
-  private async authorized<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  private async authorized<T>(
+    path: string,
+    init: RequestInit = {},
+    retry = true,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
     if (!this.accessToken) throw new ApiError(401, 'authentication_required', '请先登录');
     try {
-      return await this.raw<T>(path, init, this.accessToken);
+      return await this.raw<T>(path, init, this.accessToken, timeoutMs);
     } catch (error) {
       if (!(error instanceof ApiError) || error.status !== 401 || !retry) throw error;
       const refreshToken = await readRefreshToken();
@@ -197,7 +256,7 @@ class MobileApi {
         throw error;
       }
       await this.refresh(refreshToken);
-      return this.authorized<T>(path, init, false);
+      return this.authorized<T>(path, init, false, timeoutMs);
     }
   }
 
@@ -230,9 +289,14 @@ class MobileApi {
     this.authChanged?.(null);
   }
 
-  private async raw<T>(path: string, init: RequestInit, bearer?: string): Promise<T> {
+  private async raw<T>(
+    path: string,
+    init: RequestInit,
+    bearer?: string,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(`${API_BASE_URL}${path}`, {
         ...init,

@@ -37,7 +37,7 @@ type AppContextValue = {
   loginWithPassword: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
-  sendMessage: (text: string, images?: ImageInput[]) => Promise<'sent' | 'queued'>;
+  sendMessage: (text: string, images?: ImageInput[]) => Promise<'sent' | 'queued' | 'processing'>;
   updateProfile: (nickname: string) => Promise<void>;
   saveCoachProfile: (profile: CoachProfileInput) => Promise<CoachProfileStatus>;
   updateRoutine: (routine: Routine) => Promise<boolean>;
@@ -70,6 +70,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const flushing = useRef(false);
+  const queueRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueRetryDelay = useRef(5_000);
+  const flushQueueRef = useRef<(() => Promise<void>) | null>(null);
+
+  const scheduleQueueRetry = useCallback(() => {
+    if (!tokens || !online || queueRetryTimer.current) return;
+    const delayMs = queueRetryDelay.current;
+    queueRetryTimer.current = setTimeout(() => {
+      queueRetryTimer.current = null;
+      queueRetryDelay.current = Math.min(60_000, queueRetryDelay.current * 2);
+      void flushQueueRef.current?.();
+    }, delayMs);
+  }, [online, tokens]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -114,25 +127,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const flushQueue = useCallback(async () => {
     if (flushing.current || !tokens) return;
+    if (queueRetryTimer.current) {
+      clearTimeout(queueRetryTimer.current);
+      queueRetryTimer.current = null;
+    }
     flushing.current = true;
     try {
       const queue = await listPendingChats();
       for (const item of queue) {
         try {
-          await mobileApi.sendChat(await hydratePendingChat(item));
+          const response = await mobileApi.sendChat(await hydratePendingChat(item));
+          if (response.status === 'running') {
+            scheduleQueueRetry();
+            break;
+          }
           await removePendingChat(item.payload.idempotency_key);
+          queueRetryDelay.current = 5_000;
+          if (response.status === 'failed') {
+            const localId = `local-${item.payload.idempotency_key}`;
+            setData((current) => current ? {
+              ...current,
+              messages: current.messages.map((message) => message.id === localId
+                ? { ...message, pending: false, failed: true }
+                : message),
+            } : current);
+            setError(`一条待发送消息处理失败（${response.failure_code || '未知原因'}），请检查后重试`);
+          }
         } catch (caught) {
-          if (caught instanceof ApiError && caught.status === 0) break;
+          if (caught instanceof ApiError && caught.status === 0) {
+            scheduleQueueRetry();
+            break;
+          }
           await removePendingChat(item.payload.idempotency_key);
+          const localId = `local-${item.payload.idempotency_key}`;
+          setData((current) => current ? {
+            ...current,
+            messages: current.messages.map((message) => message.id === localId
+              ? { ...message, pending: false, failed: true }
+              : message),
+          } : current);
           setError(`一条离线消息发送失败：${errorMessage(caught)}`);
         }
       }
       setPending(await listPendingChats());
-      setData(await mobileApi.dashboard());
+      try {
+        setData(await mobileApi.dashboard());
+      } catch (caught) {
+        setError(errorMessage(caught));
+      }
     } finally {
       flushing.current = false;
     }
-  }, [tokens]);
+  }, [scheduleQueueRetry, tokens]);
+
+  flushQueueRef.current = flushQueue;
+
+  useEffect(() => () => {
+    if (queueRetryTimer.current) clearTimeout(queueRetryTimer.current);
+  }, []);
 
   useEffect(() => NetInfo.addEventListener((state) => {
     const connected = state.isConnected === true && state.isInternetReachable !== false;
@@ -190,7 +242,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const sendMessage = useCallback(async (text: string, images: ImageInput[] = []): Promise<'sent' | 'queued'> => {
+  const sendMessage = useCallback(async (text: string, images: ImageInput[] = []): Promise<'sent' | 'queued' | 'processing'> => {
     const idempotencyKey = Crypto.randomUUID();
     const payload: ChatPayload = {
       ...(text.trim() ? { text: text.trim() } : {}),
@@ -224,6 +276,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       const response = await mobileApi.sendChat(payload);
       if (response.status === 'failed') throw new Error('教练这次没有处理成功，请重试');
+      if (response.status === 'running') {
+        await enqueueChat(payload, images.map((image) => image.uri));
+        setPending(await listPendingChats());
+        scheduleQueueRetry();
+        return 'processing';
+      }
       setData((current) => current ? {
         ...current,
         messages: [
@@ -245,7 +303,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (caught instanceof ApiError && caught.status === 0) {
         await enqueueChat(payload, images.map((image) => image.uri));
         setPending(await listPendingChats());
-        setOnline(false);
+        scheduleQueueRetry();
+        if (caught.code === 'request_timeout') {
+          return 'processing';
+        }
         return 'queued';
       }
       setData((current) => current ? {
@@ -255,7 +316,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setError(errorMessage(caught));
       throw caught;
     }
-  }, [online, refresh]);
+  }, [online, refresh, scheduleQueueRetry]);
 
   const updateProfile = useCallback(async (nickname: string) => {
     const user = await mobileApi.updateProfile(nickname.trim() || null);
