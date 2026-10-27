@@ -1,28 +1,39 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from slim_guard.agent_models.errors import ModelGatewayError
+from slim_guard.agent_models.errors import InvalidModelResponse, ModelGatewayError
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelGateway,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NormalizedToolCall,
 )
 from slim_guard.harness.failures import HarnessFailure, model_gateway_failure
+from slim_guard.harness.model_response_recovery import (
+    MAX_FORMAT_REPAIR_ATTEMPTS,
+    expand_repair_request,
+    repair_feedback,
+)
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
-from slim_guard.tools.contracts import ToolContext, ToolExecutionMode
+from slim_guard.tools.contracts import (
+    ToolContext,
+    ToolEffectStatus,
+    ToolExecutionMode,
+    ToolResult,
+)
 from slim_guard.tools.policy import ToolAuthorization
 from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True, slots=True)
 class HarnessTurnContext:
@@ -87,6 +98,8 @@ class LoopProgress:
     messages: list[ModelMessage] = field(default_factory=list)
     model_responses: list[ModelResponse] = field(default_factory=list)
     tool_outcomes: list[ToolCallOutcome] = field(default_factory=list)
+    format_repair_attempts: int = 0
+    successful_tool_signatures: set[str] = field(default_factory=set)
 
     def interrupted(self, error: BaseException, *, cancelled: bool = False) -> HarnessLoopResult:
         return HarnessLoopResult(
@@ -151,6 +164,36 @@ class HarnessLoop:
                 response = await self._model.complete(current_request)
                 model_completed_at = self._clock()
             except ModelGatewayError as exc:
+                if (
+                    isinstance(exc, InvalidModelResponse)
+                    and exc.repairable
+                    and state.format_repair_attempts < MAX_FORMAT_REPAIR_ATTEMPTS
+                ):
+                    state.format_repair_attempts += 1
+                    messages.append(repair_feedback(exc))
+                    request = expand_repair_request(request, error=exc)
+                    logger.warning(
+                        "slim_guard_model_response_repair_requested",
+                        extra={
+                            "turn_id": context.turn_id,
+                            "reason_code": exc.reason_code,
+                            "field_path": exc.field_path,
+                            "attempt": state.format_repair_attempts,
+                            "output_limit_hit": exc.output_limit_hit,
+                        },
+                    )
+                    await self._recorder.record_workflow_event(
+                        turn_id=context.turn_id,
+                        event_type="workflow_transition",
+                        payload={
+                            "from_node": "model_response_validation",
+                            "to_node": "model_response_repair",
+                            "transition_type": "repair",
+                            "reason_code": exc.reason_code,
+                            "attempt": state.format_repair_attempts,
+                        },
+                    )
+                    continue
                 return self._result(
                     termination=HarnessTermination.FATAL_ERROR,
                     failure=model_gateway_failure(exc),
@@ -207,6 +250,28 @@ class HarnessLoop:
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
                     )
+                signature = self._tool_call_signature(call)
+                if (
+                    state.format_repair_attempts
+                    and signature in state.successful_tool_signatures
+                ):
+                    messages.append(
+                        ModelMessage(
+                            role=MessageRole.TOOL,
+                            tool_call_id=call.id,
+                            content=ToolResult.failed(
+                                code="duplicate_successful_operation_suppressed",
+                                message=(
+                                    "This identical operation already succeeded earlier in this "
+                                    "Turn and was not executed again. "
+                                    "Continue using its prior result."
+                                ),
+                                retryable=False,
+                                effect_status=ToolEffectStatus.NOT_APPLIED,
+                            ).to_model_content(),
+                        )
+                    )
+                    continue
                 trace = await self._recorder.start_tool_call(
                     turn_id=context.turn_id,
                     call=call,
@@ -226,6 +291,8 @@ class HarnessLoop:
                 )
                 completed_at = self._clock()
                 tool_outcomes.append(outcome)
+                if outcome.execution.result.failure is None:
+                    state.successful_tool_signatures.add(signature)
                 messages.append(
                     ModelMessage(
                         role=MessageRole.TOOL,
@@ -299,6 +366,16 @@ class HarnessLoop:
         if now.utcoffset() is None:
             raise ValueError("Harness clock must return a timezone-aware datetime")
         return now >= context.deadline_at
+
+    @staticmethod
+    def _tool_call_signature(call: NormalizedToolCall) -> str:
+        canonical_arguments = json.dumps(
+            call.arguments,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return f"{call.name}:{canonical_arguments}"
 
     @staticmethod
     def _utc_now() -> datetime:

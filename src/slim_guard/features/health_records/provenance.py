@@ -10,10 +10,21 @@ SourceKind = Literal["user_reported", "image_recognized", "context_inferred", "u
 class FieldEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    source_kind: SourceKind
+    source_kind: SourceKind = Field(
+        description=(
+            "Evidence origin. Use user_reported for facts stated in user text, and "
+            "image_recognized for facts inferred from an image."
+        )
+    )
     source_refs: tuple[Annotated[str, Field(min_length=1, max_length=256)], ...] = Field(
         default=(),
         max_length=20,
+        description=(
+            "Evidence IDs. For the current user's text, use the literal selector "
+            "'current-user-message' (the Harness binds it to the persisted user-message ID). "
+            "For image recognition, use the image asset_id and source_kind=image_recognized; "
+            "never cite an image asset as user_reported evidence."
+        ),
     )
     explanation: str | None = Field(default=None, min_length=1, max_length=500)
 

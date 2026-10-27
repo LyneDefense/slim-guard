@@ -72,7 +72,10 @@ class ZhipuModelGateway:
         try:
             body = response.json()
         except ValueError:
-            raise InvalidModelResponse("Zhipu response was not JSON") from None
+            raise InvalidModelResponse(
+                "Zhipu response was not JSON",
+                reason_code="provider_envelope_not_json",
+            ) from None
         capture_provider_usage(body)
         return self._model_response(body)
 
@@ -146,17 +149,47 @@ class ZhipuModelGateway:
             raw_message = choice.get("message")
             if not isinstance(raw_message, dict):
                 raise ValueError("response choice does not contain a message")
-            content = raw_message.get("content")
-            if content is not None and not isinstance(content, str):
-                raise ValueError("assistant content is not text")
-            tool_calls = cls._tool_calls(raw_message.get("tool_calls"))
-            usage = cls._usage(body.get("usage"))
             finish_reason = choice.get("finish_reason")
             if finish_reason is not None and not isinstance(finish_reason, str):
                 raise ValueError("finish_reason is not text")
             request_id = body.get("id")
             if request_id is not None and not isinstance(request_id, str):
                 raise ValueError("response id is not text")
+            usage = cls._usage(body.get("usage"))
+            if finish_reason == "length":
+                raise InvalidModelResponse(
+                    "Zhipu output reached the configured token limit",
+                    reason_code="output_truncated",
+                    repairable=True,
+                    output_limit_hit=True,
+                    finish_reason=finish_reason,
+                    provider_request_id=request_id,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
+            content = raw_message.get("content")
+            if content is not None and not isinstance(content, str):
+                raise InvalidModelResponse(
+                    "assistant content is not text",
+                    reason_code="invalid_assistant_content",
+                    field_path="message.content",
+                    repairable=True,
+                    finish_reason=finish_reason,
+                    provider_request_id=request_id,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
+            tool_calls = cls._tool_calls(raw_message.get("tool_calls"))
+            if not tool_calls and not (isinstance(content, str) and content.strip()):
+                raise InvalidModelResponse(
+                    "assistant response has neither text nor tool calls",
+                    reason_code="empty_assistant_response",
+                    repairable=True,
+                    finish_reason=finish_reason,
+                    provider_request_id=request_id,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
             return ModelResponse(
                 message=ModelMessage(
                     role=MessageRole.ASSISTANT,
@@ -169,33 +202,95 @@ class ZhipuModelGateway:
                 usage=usage,
                 provider_request_id=request_id,
             )
+        except InvalidModelResponse as exc:
+            raise InvalidModelResponse(
+                str(exc),
+                reason_code=exc.reason_code,
+                field_path=exc.field_path,
+                repairable=exc.repairable,
+                output_limit_hit=exc.output_limit_hit,
+                finish_reason=finish_reason,
+                provider_request_id=request_id,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            ) from None
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError) as exc:
-            raise InvalidModelResponse(f"Invalid Zhipu response: {exc}") from None
+            raise InvalidModelResponse(
+                f"Invalid Zhipu response: {exc}",
+                reason_code="invalid_provider_envelope",
+            ) from None
 
     @staticmethod
     def _tool_calls(raw_calls: Any) -> tuple[NormalizedToolCall, ...]:
         if raw_calls is None:
             return ()
         if not isinstance(raw_calls, list):
-            raise ValueError("tool_calls is not a list")
+            raise InvalidModelResponse(
+                "tool_calls is not a list",
+                reason_code="invalid_tool_calls_shape",
+                field_path="message.tool_calls",
+                repairable=True,
+            )
         calls: list[NormalizedToolCall] = []
-        for raw_call in raw_calls:
+        for index, raw_call in enumerate(raw_calls):
+            field_path = f"message.tool_calls[{index}]"
             if not isinstance(raw_call, dict):
-                raise ValueError("tool call is not an object")
+                raise InvalidModelResponse(
+                    "tool call is not an object",
+                    reason_code="invalid_tool_call_shape",
+                    field_path=field_path,
+                    repairable=True,
+                )
             function = raw_call.get("function")
             if not isinstance(function, dict):
-                raise ValueError("tool call does not contain a function")
+                raise InvalidModelResponse(
+                    "tool call does not contain a function",
+                    reason_code="invalid_tool_call_shape",
+                    field_path=f"{field_path}.function",
+                    repairable=True,
+                )
             call_id = raw_call.get("id")
             name = function.get("name")
             arguments_text = function.get("arguments")
             if not isinstance(call_id, str) or not isinstance(name, str):
-                raise ValueError("tool call id or name is not text")
+                raise InvalidModelResponse(
+                    "tool call id or name is not text",
+                    reason_code="invalid_tool_call_identity",
+                    field_path=field_path,
+                    repairable=True,
+                )
             if not isinstance(arguments_text, str):
-                raise ValueError("tool call arguments are not JSON text")
-            arguments = json.loads(arguments_text)
+                raise InvalidModelResponse(
+                    "tool call arguments are not JSON text",
+                    reason_code="invalid_tool_arguments_encoding",
+                    field_path=f"{field_path}.function.arguments",
+                    repairable=True,
+                )
+            try:
+                arguments = json.loads(arguments_text)
+            except json.JSONDecodeError:
+                raise InvalidModelResponse(
+                    "tool call arguments are not valid JSON",
+                    reason_code="malformed_tool_arguments_json",
+                    field_path=f"{field_path}.function.arguments",
+                    repairable=True,
+                ) from None
             if not isinstance(arguments, dict):
-                raise ValueError("tool call arguments are not an object")
-            calls.append(NormalizedToolCall(id=call_id, name=name, arguments=arguments))
+                raise InvalidModelResponse(
+                    "tool call arguments are not an object",
+                    reason_code="tool_arguments_not_object",
+                    field_path=f"{field_path}.function.arguments",
+                    repairable=True,
+                )
+            try:
+                calls.append(NormalizedToolCall(id=call_id, name=name, arguments=arguments))
+            except ValidationError:
+                raise InvalidModelResponse(
+                    "tool call does not match the normalized tool-call contract",
+                    reason_code="invalid_tool_call_contract",
+                    field_path=field_path,
+                    repairable=True,
+                ) from None
         return tuple(calls)
 
     @staticmethod

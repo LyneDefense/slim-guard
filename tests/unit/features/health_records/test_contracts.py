@@ -1,16 +1,61 @@
+from types import SimpleNamespace
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from slim_guard.features.health_records.content import MealContent, MealItem
 from slim_guard.features.health_records.meal.changes import MealPatch
 from slim_guard.features.health_records.patches import HealthRecordPatch
+from slim_guard.features.health_records.persistence.evidence import validate_evidence
 from slim_guard.features.health_records.provenance import FieldEvidence
+from slim_guard.features.health_records.references import RecordError
 
 
 @pytest.mark.parametrize("source", ["user_reported", "image_recognized", "context_inferred"])
 def test_nonlegacy_values_require_evidence_references(source):
     with pytest.raises(ValidationError, match="evidence references"):
         FieldEvidence(source_kind=source)
+
+
+def test_evidence_schema_explains_message_and_image_source_selection():
+    evidence_schema = FieldEvidence.model_json_schema()
+
+    source_refs_description = evidence_schema["properties"]["source_refs"]["description"]
+    source_kind_description = evidence_schema["properties"]["source_kind"]["description"]
+    assert "current-user-message" in source_refs_description
+    assert "image_recognized" in source_refs_description
+    assert "user_reported" in source_kind_description
+
+
+@pytest.mark.anyio
+async def test_image_asset_cannot_be_mislabeled_as_user_reported_evidence():
+    class Session:
+        async def scalar(self, statement):
+            params = statement.compile().params
+            reference = next(
+                value for value in params.values() if value in {"message-1", "image-1"}
+            )
+            if reference == "message-1":
+                return SimpleNamespace(item_type="user_message")
+            return None
+
+        async def get(self, _model, reference):
+            return SimpleNamespace(user_id="user-1") if reference == "image-1" else None
+
+    session = Session()
+    await validate_evidence(
+        session, "user-1", FieldEvidence(source_kind="user_reported", source_refs=("message-1",))
+    )
+    with pytest.raises(RecordError, match="user-message reference"):
+        await validate_evidence(
+            session, "user-1", FieldEvidence(source_kind="user_reported", source_refs=("image-1",))
+        )
+    with pytest.raises(RecordError, match="image-asset reference"):
+        await validate_evidence(
+            session,
+            "user-1",
+            FieldEvidence(source_kind="image_recognized", source_refs=("message-1",)),
+        )
 
 
 @pytest.mark.parametrize("refs", [[""], ["   "], ["message-1", "message-1"]])

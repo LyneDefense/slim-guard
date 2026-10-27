@@ -242,12 +242,37 @@ async def test_gateway_rejects_tool_arguments_that_are_not_an_object() -> None:
         ),
     )
     try:
-        with pytest.raises(InvalidModelResponse, match="arguments are not an object"):
+        with pytest.raises(InvalidModelResponse, match="arguments are not an object") as caught:
             await gateway.complete(
                 request_with(ModelMessage(role=MessageRole.USER, content="今天77.6kg"))
             )
+        assert caught.value.reason_code == "tool_arguments_not_object"
+        assert caught.value.field_path == "message.tool_calls[0].function.arguments"
+        assert caught.value.repairable is True
     finally:
         await gateway.close()
+
+
+def test_gateway_classifies_token_truncation_as_repairable() -> None:
+    with pytest.raises(InvalidModelResponse) as caught:
+        ZhipuModelGateway._model_response(
+            {
+                "id": "response-truncated",
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": None, "tool_calls": []},
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 512},
+            }
+        )
+
+    assert caught.value.reason_code == "output_truncated"
+    assert caught.value.output_limit_hit is True
+    assert caught.value.finish_reason == "length"
+    assert caught.value.input_tokens == 100
+    assert caught.value.output_tokens == 512
 
 
 async def test_gateway_normalizes_timeout_and_http_errors() -> None:

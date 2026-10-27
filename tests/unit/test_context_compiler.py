@@ -170,6 +170,7 @@ def test_compiler_builds_minimal_versioned_model_request() -> None:
     assert current_time.isoformat() in (request.messages[2].content or "")
     assert json.loads(request.messages[3].content or "") == {
         "attachments": [{"asset_id": "asset-scale-1", "mime_type": "image/jpeg"}],
+        "evidence_sources": {"user_message": "current-user-message"},
         "text": "今天 77.6kg",
     }
     assert compiled.input_item_ids == ("item-text", "item-image")

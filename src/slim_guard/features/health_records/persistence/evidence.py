@@ -19,9 +19,23 @@ async def validate_evidence(session: AsyncSession, user_id: str, evidence: Field
             .where(AgentItemRecord.id == reference, AgentThreadRecord.user_id == user_id)
         )
         if item is not None:
+            if evidence.source_kind == "image_recognized":
+                raise RecordError(
+                    "Image-recognized facts require an image-asset reference; "
+                    "use user_reported for facts stated in a user message"
+                )
             if evidence.source_kind == "user_reported" and item.item_type != "user_message":
-                raise RecordError("User-reported facts require a user-message source")
+                raise RecordError(
+                    "User-reported facts require a user-message reference; "
+                    "use image_recognized for facts sourced from an image"
+                )
             continue
         asset = await session.get(ImageAssetRecord, reference)
-        if asset is None or asset.user_id != user_id or evidence.source_kind == "user_reported":
-            raise RecordError("Evidence reference is not available to this user or source kind")
+        if asset is not None and asset.user_id == user_id:
+            if evidence.source_kind == "user_reported":
+                raise RecordError(
+                    "User-reported facts require a user-message reference; "
+                    "use image_recognized for facts sourced from an image"
+                )
+            continue
+        raise RecordError("Evidence reference is unavailable to this user")

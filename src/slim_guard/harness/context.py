@@ -316,6 +316,8 @@ class ContextCompiler:
         if not attachments and len(texts) == 1:
             return ModelMessage(role=MessageRole.USER, content=texts[0])
         payload: dict[str, Any] = {"text": "\n".join(texts)}
+        if texts:
+            payload["evidence_sources"] = {"user_message": "current-user-message"}
         if attachments:
             payload["attachments"] = attachments
         return ModelMessage(

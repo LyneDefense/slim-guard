@@ -21,6 +21,12 @@ class HarnessFailure:
     error_type: str
     retryable: bool
     provider_status_code: int | None = None
+    reason_code: str | None = None
+    field_path: str | None = None
+    finish_reason: str | None = None
+    provider_request_id: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
     def to_payload(self) -> dict[str, str | int | bool | None]:
         return {
@@ -28,6 +34,12 @@ class HarnessFailure:
             "error_type": self.error_type,
             "retryable": self.retryable,
             "provider_status_code": self.provider_status_code,
+            "reason_code": self.reason_code,
+            "field_path": self.field_path,
+            "finish_reason": self.finish_reason,
+            "provider_request_id": self.provider_request_id,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
         }
 
 
@@ -48,7 +60,17 @@ def model_gateway_failure(error: ModelGatewayError) -> HarnessFailure:
             provider_status_code=status,
         )
     if isinstance(error, InvalidModelResponse):
-        return _failure("invalid_model_response", error, retryable=True)
+        return HarnessFailure(
+            code="invalid_model_response",
+            error_type=type(error).__name__,
+            retryable=True,
+            reason_code=error.reason_code,
+            field_path=error.field_path,
+            finish_reason=error.finish_reason,
+            provider_request_id=error.provider_request_id,
+            input_tokens=error.input_tokens,
+            output_tokens=error.output_tokens,
+        )
     if isinstance(error, UnsupportedModelFeature):
         return _failure("unsupported_model_feature", error, retryable=False)
     if isinstance(error, ModelGatewayClosed):
