@@ -62,7 +62,23 @@ async def test_group_chat_only_sends_coach_after_successful_review(tmp_path, sce
     coach = None if scenario == "system_only" else "加油。"
     responses = [
         reply("已收到消息。"),
-        reply({"schema_version": "1", "system_text": "已收到消息。", "coach_text": coach}),
+        reply(
+            {
+                "schema_version": "2",
+                "messages": [
+                    *(
+                        [{"participant": "coach", "text": coach, "source_refs": []}]
+                        if coach is not None
+                        else []
+                    ),
+                    {
+                        "participant": "system_assistant",
+                        "text": "已收到消息。",
+                        "source_refs": [],
+                    },
+                ],
+            }
+        ),
     ]
     if coach is not None:
         responses.extend(

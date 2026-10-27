@@ -86,6 +86,9 @@ class MemoryToolExecutionStore:
         self.executions[idempotency_key] = completed
         return completed
 
+    async def get(self, idempotency_key: str) -> ToolExecutionRef | None:
+        return self.executions.get(idempotency_key)
+
 
 def registered_tool(
     *,

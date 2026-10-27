@@ -13,9 +13,14 @@ from sqlalchemy.exc import IntegrityError
 
 from slim_guard.db.models import utc_now
 from slim_guard.db.session import Database
-from slim_guard.tool_operations.contracts import OperationClaim, OperationStatus, ToolOperation
+from slim_guard.tool_operations.contracts import OperationClaim, ToolOperation
 from slim_guard.tool_operations.models import ToolOperationRecord
-from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResult
+from slim_guard.tools.contracts import (
+    ToolContext,
+    ToolExecutionMode,
+    ToolOperationStatus,
+    ToolResult,
+)
 
 
 def _scope(context: ToolContext, tool_name: str) -> str:
@@ -117,6 +122,24 @@ class ToolOperationRepository:
                 return None
             return operation
 
+    async def get_by_initial_execution_key(
+        self, execution_key: str, *, context: ToolContext
+    ) -> ToolOperation | None:
+        async with self.database.session() as session:
+            row = await session.scalar(
+                select(ToolOperationRecord).where(
+                    ToolOperationRecord.initial_execution_key == execution_key,
+                    ToolOperationRecord.user_id == context.user_id,
+                    ToolOperationRecord.thread_id == context.thread_id,
+                )
+            )
+            if row is None:
+                return None
+            operation = self._ref(row)
+            if operation.context.execution_mode != context.execution_mode:
+                return None
+            return operation
+
     async def list_unsettled(
         self,
         *,
@@ -169,7 +192,7 @@ class ToolOperationRepository:
         self,
         operation: ToolOperation,
         *,
-        status: OperationStatus,
+        status: ToolOperationStatus,
         result: ToolResult,
     ) -> None:
         async with self.database.session() as session, session.begin():
@@ -212,7 +235,7 @@ class ToolOperationRepository:
             tool_version=row.tool_version,
             context=ToolContext.model_validate_json(row.context_json),
             arguments=json.loads(row.arguments_json),
-            status=cast(OperationStatus, row.status),
+            status=cast(ToolOperationStatus, row.status),
             attempt=row.attempt,
             result=ToolResult.model_validate_json(row.result_json) if row.result_json else None,
         )

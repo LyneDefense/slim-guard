@@ -10,6 +10,7 @@ from slim_guard.db.models import (
     AgentTurnRecord,
     AgentVersionRecord,
     ConversationTaskRecord,
+    MealRecord,
     SlimGuardUser,
 )
 from slim_guard.db.session import Database
@@ -22,6 +23,7 @@ from slim_guard.features.health_records.commands import (
 from slim_guard.features.health_records.content import MealContent, MealItem
 from slim_guard.features.health_records.meal.changes import MealPatch
 from slim_guard.features.health_records.occurrence import Occurrence
+from slim_guard.features.health_records.persistence.migration import migrate_health_records
 from slim_guard.features.health_records.provenance import FieldProvenance, RecognitionIssue
 from slim_guard.features.health_records.queries import RecordQuery
 from slim_guard.features.health_records.references import RecordConflict, RecordError
@@ -43,9 +45,16 @@ async def records(tmp_path):
                 ),
                 AgentVersionRecord(id="v1", manifest_json="{}", code_revision="test"),
                 AgentThreadRecord(id="thread1", user_id="u1"),
+                AgentThreadRecord(id="thread2", user_id="u2"),
                 AgentTurnRecord(
                     id="turn1",
                     thread_id="thread1",
+                    agent_version_id="v1",
+                    trigger_type="user_message",
+                ),
+                AgentTurnRecord(
+                    id="turn2",
+                    thread_id="thread2",
                     agent_version_id="v1",
                     trigger_type="user_message",
                 ),
@@ -57,6 +66,15 @@ async def records(tmp_path):
                     item_type="user_message",
                     status="completed",
                     payload_json='{"text":"午餐记错了"}',
+                ),
+                AgentItemRecord(
+                    id="message2",
+                    thread_id="thread2",
+                    turn_id="turn2",
+                    sequence=1,
+                    item_type="user_message",
+                    status="completed",
+                    payload_json='{"text":"这是另一位用户的消息"}',
                 ),
             ]
         )
@@ -222,3 +240,81 @@ async def test_task_and_record_commit_together(records):
         )
         assert task.status == "resolved"
         assert task.revision == 2
+
+
+async def test_legacy_record_migration_preserves_unknown_time_and_marks_evidence_legacy(records):
+    database, service = records
+    now = datetime.now(UTC)
+    async with database.session() as session, session.begin():
+        session.add_all(
+            [
+                MealRecord(
+                    id="legacy-meal",
+                    user_id="u1",
+                    meal_type="lunch",
+                    foods_json='[{"name":"米饭","portion":null}]',
+                    note=None,
+                    occurred_at=None,
+                    status="active",
+                    idempotency_key="legacy-meal-key",
+                    source_turn_id="turn1",
+                    source_item_id="message1",
+                    source_tool_call_id="legacy-call",
+                    created_at=now,
+                ),
+                MealRecord(
+                    id="legacy-meal-foreign-source",
+                    user_id="u1",
+                    meal_type="lunch",
+                    foods_json='[{"name":"米饭","portion":null}]',
+                    note=None,
+                    occurred_at=None,
+                    status="active",
+                    idempotency_key="legacy-meal-foreign-key",
+                    source_turn_id="turn1",
+                    source_item_id="message2",
+                    source_tool_call_id="legacy-call-foreign",
+                    created_at=now,
+                ),
+            ]
+        )
+
+    async with database.engine.begin() as connection:
+        for table_name in (
+            "meal_records",
+            "exercise_records",
+            "weight_records",
+            "body_fat_records",
+        ):
+            for column_name in (
+                "revision",
+                "updated_at",
+                "occurred_on",
+                "time_precision",
+                "timezone",
+                "time_basis",
+                "source_refs_json",
+                "field_provenance_json",
+                "recognition_issues_json",
+                "retired_reason",
+            ):
+                await connection.exec_driver_sql(
+                    f"ALTER TABLE {table_name} DROP COLUMN {column_name}"
+                )
+        await migrate_health_records(connection)
+        await migrate_health_records(connection)
+
+    migrated = await service.get("u1", "meal", "legacy-meal")
+    assert migrated.occurrence.precision == "unknown"
+    assert migrated.occurrence.basis == "unknown"
+    assert migrated.source_refs == ("message1",)
+    assert migrated.ref.revision == 1
+    food = migrated.content.foods[0]
+    assert food.name == "米饭"
+    assert food.item_id
+    assert {
+        entry.source_kind for entry in migrated.field_provenance
+    } == {"legacy"}
+    assert all(not entry.source_refs for entry in migrated.field_provenance)
+    foreign_source = await service.get("u1", "meal", "legacy-meal-foreign-source")
+    assert foreign_source.source_refs == ()

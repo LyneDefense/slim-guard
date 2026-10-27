@@ -39,8 +39,21 @@ class Database:
         await self.migrate()
 
     async def migrate(self) -> tuple[str, ...]:
-        async with self.engine.begin() as connection:
-            return await migrate(connection)
+        async with self.engine.connect() as connection:
+            sqlite = connection.dialect.name == "sqlite"
+            if sqlite:
+                await connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+                await connection.commit()
+            try:
+                async with connection.begin():
+                    completed = await migrate(connection)
+            finally:
+                if sqlite:
+                    if connection.in_transaction():
+                        await connection.rollback()
+                    await connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+                    await connection.commit()
+            return completed
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

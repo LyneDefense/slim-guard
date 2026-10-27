@@ -87,7 +87,20 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
                     NormalizedToolCall(
                         id="write-once",
                         name="record_weight",
-                        arguments={"value": 77.6, "unit": "kg"},
+                        arguments={
+                            "value": 77.6,
+                            "unit": "kg",
+                            "condition": "unspecified",
+                            "occurrence": {
+                                "precision": "unknown",
+                                "timezone": "UTC",
+                                "basis": "unknown",
+                            },
+                            "evidence": {
+                                "source_kind": "user_reported",
+                                "source_refs": ["current-user-message"],
+                            },
+                        },
                     ),
                 ),
             ),
@@ -96,9 +109,15 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
         reply("已记录今天体重77.6kg。"),
         reply(
             {
-                "schema_version": "1",
-                "system_text": "已记录今天体重77.6kg。",
-                "coach_text": "加油。",
+                "schema_version": "2",
+                "messages": [
+                    {"participant": "coach", "text": "加油。", "source_refs": []},
+                    {
+                        "participant": "system_assistant",
+                        "text": "已记录今天体重77.6kg。",
+                        "source_refs": [],
+                    },
+                ],
             }
         ),
         styled("加油！"),
@@ -111,9 +130,15 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
                 reply({"neutral_draft": "已记录今天体重77.6kg。"}),
                 reply(
                     {
-                        "schema_version": "1",
-                        "system_text": "已记录今天体重77.6kg。",
-                        "coach_text": "加油。",
+                        "schema_version": "2",
+                        "messages": [
+                            {"participant": "coach", "text": "加油。", "source_refs": []},
+                            {
+                                "participant": "system_assistant",
+                                "text": "已记录今天体重77.6kg。",
+                                "source_refs": [],
+                            },
+                        ],
                     }
                 ),
             ]
@@ -147,10 +172,11 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
     )
     try:
         result = await runtime.run_user_message(
-            AgentRuntimeRequest(
-                user_id="user-1",
-                text="今天体重77.6kg",
-                occurred_at=now,
+                AgentRuntimeRequest(
+                    user_id="user-1",
+                    text="今天体重77.6kg",
+                    source_message_id="weight-message-1",
+                    occurred_at=now,
                 execution_mode=ToolExecutionMode.EVALUATION,
                 isolated_write_environment=True,
             )

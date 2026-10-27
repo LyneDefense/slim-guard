@@ -52,10 +52,6 @@ class InvocationStateConflict(InvocationStoreError):
     pass
 
 
-
-
-
-
 @dataclass(frozen=True, slots=True)
 class StoredInvocation:
     invocation_id: str
@@ -65,6 +61,7 @@ class StoredInvocation:
     agent_role: str
     agent_version: str
     attempt: int
+    sequence: int
     caller: str
     parent_invocation_id: str | None
     input_artifact_ids: tuple[str, ...]
@@ -110,6 +107,7 @@ class OrchestrationRepository:
             agent_role=invocation.agent_role.value,
             agent_version=invocation.agent_version,
             attempt=invocation.attempt,
+            sequence=invocation.sequence,
             caller=invocation.caller,
             parent_invocation_id=invocation.parent_invocation_id,
             input_artifact_ids_json=self._json_array(invocation.input_artifact_ids),
@@ -437,7 +435,6 @@ class OrchestrationRepository:
             )
         await self._artifact_from_row(session, artifact)
 
-
     @classmethod
     async def _artifact_from_row(
         cls,
@@ -485,6 +482,7 @@ class OrchestrationRepository:
             agent_role=row.agent_role,
             agent_version=row.agent_version,
             attempt=row.attempt,
+            sequence=row.sequence,
             caller=row.caller,
             parent_invocation_id=row.parent_invocation_id,
             input_artifact_ids=cls._tuple(cls._json_load(row.input_artifact_ids_json)),

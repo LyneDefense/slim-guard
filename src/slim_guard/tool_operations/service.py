@@ -7,12 +7,13 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from slim_guard.tool_operations.contracts import OperationStatus, OperationStore, ToolOperation
+from slim_guard.tool_operations.contracts import OperationStore, ToolOperation
 from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolEffectStatus,
     ToolOperationReceipt,
+    ToolOperationStatus,
     ToolPolicyDecision,
     ToolResult,
     ToolResultStatus,
@@ -37,6 +38,21 @@ class OperationService:
         self.registry = registry
         self.executors = executors
         self.policy = policy
+
+    async def lookup_execution_result(self, context: ToolContext) -> ToolResult | None:
+        """Resolve a replayed tool attempt from its durable business-operation record."""
+        execution_key = context.execution_idempotency_key
+        if execution_key is None:
+            return None
+        operation = await self.store.get_by_initial_execution_key(
+            execution_key, context=context
+        )
+        if operation is None:
+            return None
+        operation = await self._reconcile(operation)
+        if operation.status == "succeeded" and operation.result is not None:
+            return operation.result
+        return None
 
     async def start(
         self,
@@ -204,13 +220,13 @@ class OperationService:
             )
         # Cancellation deliberately leaves a running/uncertain durable claim. No
         # timeout, exception, missing receipt or age can prove a write didn't happen.
-        status: OperationStatus = "succeeded"
+        status = ToolOperationStatus.SUCCEEDED
         if result.status is ToolResultStatus.FAILED:
             status = (
-                "not_applied"
+                ToolOperationStatus.NOT_APPLIED
                 if result.failure is not None
                 and result.failure.effect_status is ToolEffectStatus.NOT_APPLIED
-                else "unknown"
+                else ToolOperationStatus.UNKNOWN
             )
         result = result.model_copy(
             update={

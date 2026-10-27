@@ -174,9 +174,7 @@ def test_compiler_builds_minimal_versioned_model_request() -> None:
     }
     assert compiled.input_item_ids == ("item-text", "item-image")
     assert request.metadata["agent_version_id"] == agent_manifest.version_id
-    assert request.metadata["user_id"] == hashlib.sha256(
-        b"user-secret-1"
-    ).hexdigest()
+    assert request.metadata["user_id"] == hashlib.sha256(b"user-secret-1").hexdigest()
     assert "user-secret-1" not in request.metadata.values()
 
 
@@ -332,6 +330,32 @@ def test_context_data_uses_user_role_and_recent_dialogue_keeps_speakers() -> Non
     }
     assert messages[6].content == "已收到。"
     assert json.loads(messages[7].content or "")["attachments"][0]["asset_id"] == "asset-scale-1"
+    assert compiled.conversation_context["current_user_input"] == {
+        "text": "今天 77.6kg",
+        "attachments": ["image/jpeg"],
+    }
+    assert compiled.conversation_context["recent_dialogue"] == [
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "这是我的午餐",
+                    "evidence_ref": "item-lunch",
+                    "attachments": [
+                        {
+                            "asset_id": "asset-lunch",
+                            "mime_type": "image/jpeg",
+                            "annotation": {"description": "米饭和青菜"},
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "已收到。"},
+            ]
+        }
+    ]
+    assert compiled.conversation_context["pending_user_confirmations"] == [
+        {"action_id": "action-1"}
+    ]
 
 
 def test_scheduled_turn_needs_no_fake_user_message() -> None:
@@ -357,9 +381,7 @@ def test_scheduled_turn_needs_no_fake_user_message() -> None:
         MessageRole.SYSTEM,
         MessageRole.USER,
     ]
-    assert '"trigger":"daily_review"' in (
-        compiled.request.messages[2].content or ""
-    )
+    assert '"trigger":"daily_review"' in (compiled.request.messages[2].content or "")
     assert compiled.request.tool_choice is ToolChoice.NONE
 
 

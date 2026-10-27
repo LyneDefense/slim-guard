@@ -342,8 +342,6 @@ class ExerciseRecord(RecordMetadata, Base):
     )
 
 
-
-
 class ToolExecutionRecord(Base):
     __tablename__ = "tool_executions"
     __table_args__ = (
@@ -2294,7 +2292,8 @@ class AgentInvocationRecord(Base):
             "turn_id",
             "agent_role",
             "attempt",
-            name="uq_agent_invocation_turn_role_attempt",
+            "sequence",
+            name="uq_agent_invocation_turn_role_attempt_sequence",
         ),
         ForeignKeyConstraint(
             ["parent_invocation_id", "turn_id"],
@@ -2324,6 +2323,7 @@ class AgentInvocationRecord(Base):
     agent_role: Mapped[str] = mapped_column(String(64), nullable=False)
     agent_version: Mapped[str] = mapped_column(String(128), nullable=False)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     caller: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_invocation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     input_artifact_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

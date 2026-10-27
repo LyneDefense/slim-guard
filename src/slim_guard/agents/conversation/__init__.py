@@ -6,7 +6,10 @@ from slim_guard.agents.conversation.agent import (
     ConversationAgent,
     ConversationAgentResult,
 )
-from slim_guard.agents.conversation.contracts import ConversationDecision
+from slim_guard.agents.conversation.contracts import (
+    ConversationDecision,
+    ConversationMessageProposal,
+)
 
 __all__ = [
     "CONVERSATION_PROMPT",
@@ -14,4 +17,5 @@ __all__ = [
     "ConversationAgent",
     "ConversationAgentResult",
     "ConversationDecision",
+    "ConversationMessageProposal",
 ]

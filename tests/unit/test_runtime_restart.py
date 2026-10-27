@@ -65,16 +65,63 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
     reply_after_restart = "之前的77.6kg记录还在，这次没有新增记录。"
     first_model = ScriptedModelGateway(
         [
-            tool_response("test-write-once", "record_weight", {"value": 77.6, "unit": "kg"}),
+            tool_response(
+                "test-write-once",
+                "record_weight",
+                {
+                    "value": 77.6,
+                    "unit": "kg",
+                    "condition": "unspecified",
+                    "occurrence": {
+                        "precision": "unknown",
+                        "timezone": "UTC",
+                        "basis": "unknown",
+                    },
+                    "evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
+                },
+            ),
             text_response(core_draft),
-            text_response(json.dumps({"system_text": core_draft, "coach_text": None})),
+            text_response(
+                json.dumps(
+                    {
+                        "schema_version": "2",
+                        "messages": [
+                            {
+                                "participant": "system_assistant",
+                                "text": core_draft,
+                                "source_refs": [],
+                            }
+                        ],
+                    }
+                )
+            ),
         ]
     )
     second_model = ScriptedModelGateway(
         [
-            tool_response("test-read-existing", "get_recent_weight_trend", {"limit": 7}),
+            tool_response(
+                "test-read-existing",
+                "search_health_records",
+                {"query": {"kind": "weight", "limit": 7, "timezone": "UTC"}},
+            ),
             text_response(reply_after_restart),
-            text_response(json.dumps({"system_text": reply_after_restart, "coach_text": None})),
+            text_response(
+                json.dumps(
+                    {
+                        "schema_version": "2",
+                        "messages": [
+                            {
+                                "participant": "system_assistant",
+                                "text": reply_after_restart,
+                                "source_refs": [],
+                            }
+                        ],
+                    }
+                )
+            ),
         ]
     )
     definition = AgentRuntimeDefinition(
@@ -145,10 +192,12 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
         assert after.records == before.records
         read_receipt = json.loads(second_model.requests[1].messages[-1].content or "{}")
         assert read_receipt["status"] == "succeeded"
-        assert read_receipt["output"]["current_record_id"] == record.id
-        assert read_receipt["output"]["records"][0]["weight_kg"] == "77.6"
+        assert read_receipt["output"]["records"][0]["ref"]["record_id"] == record.id
+        assert read_receipt["output"]["records"][0]["content"]["original_value"] == "77.6"
         assert [r.purpose for r in second_model.requests] == [
-            ModelPurpose.HARNESS_TURN, ModelPurpose.HARNESS_TURN, ModelPurpose.CONVERSATION,
+            ModelPurpose.HARNESS_TURN,
+            ModelPurpose.HARNESS_TURN,
+            ModelPurpose.CONVERSATION,
         ]
         second_model.assert_exhausted()
 
@@ -159,7 +208,7 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
             item.payload["tool_name"]
             for item in second_items
             if item.item_type is ItemType.TOOL_CALL
-        ] == ["get_recent_weight_trend"]
+        ] == ["search_health_records"]
         finals = [item for item in second_items if item.item_type is ItemType.AGENT_MESSAGE]
         assert len(finals) == 1
         assert finals[0].payload["text"] == reply_after_restart

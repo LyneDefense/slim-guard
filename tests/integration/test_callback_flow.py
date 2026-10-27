@@ -35,28 +35,40 @@ class ImageHarnessModel:
     def __init__(self) -> None:
         self.requests: list[ModelRequest] = []
         self.closed = False
+        self.asset_id: str | None = None
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
         step = len(self.requests)
         if step == 1:
             image_input = json.loads(request.messages[-1].content or "")
+            self.asset_id = image_input["attachments"][0]["asset_id"]
             return _tool_response(
                 "call-inspect",
                 "inspect_image",
-                {"asset_id": image_input["asset_id"], "question": "读取体重秤的数值和单位"},
+                {"asset_id": self.asset_id, "question": "读取体重秤的数值和单位"},
             )
         if step == 2:
+            assert self.asset_id is not None
             return _tool_response(
                 "call-record",
                 "record_weight",
-                {"value": 77.6, "unit": "kg", "condition": "unspecified"},
+                {
+                    "value": 77.6,
+                    "unit": "kg",
+                    "condition": "unspecified",
+                    "occurrence": {"precision": "unknown", "timezone": "UTC", "basis": "unknown"},
+                    "evidence": {
+                        "source_kind": "image_recognized",
+                        "source_refs": [self.asset_id],
+                    },
+                },
             )
         if step == 3:
             return _tool_response(
                 "call-trend",
-                "get_recent_weight_trend",
-                {"limit": 7},
+                "search_health_records",
+                {"query": {"kind": "weight", "limit": 7, "timezone": "Asia/Shanghai"}},
             )
         return ModelResponse(
             message=ModelMessage(
@@ -233,12 +245,26 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
             _tool_response(
                 "call-record",
                 "record_weight",
-                {"value": 77.6, "unit": "kg", "condition": "fasting"},
+                {
+                    "value": 77.6,
+                    "unit": "kg",
+                    "condition": "fasting",
+                    "occurrence": {
+                        "precision": "date",
+                        "on": "2023-11-15",
+                        "timezone": "Asia/Shanghai",
+                        "basis": "user_reported",
+                    },
+                    "evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
+                },
             ),
             _tool_response(
                 "call-trend",
-                "get_recent_weight_trend",
-                {"limit": 7},
+                "search_health_records",
+                {"query": {"kind": "weight", "limit": 7, "timezone": "Asia/Shanghai"}},
             ),
             ModelResponse(
                 message=ModelMessage(
@@ -310,75 +336,6 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
         model.assert_exhausted()
 
     assert model.closed is False
-    await model.close()
-
-
-async def test_callback_delivers_bulk_memory_clear_confirmation(
-    test_settings: Settings,
-) -> None:
-    harness_settings = test_settings.model_copy(
-        update={"agent_runtime_mode": "harness", "memory_extraction_enabled": False}
-    )
-    fake = FakeWeComClient(
-        {
-            None: SyncPage(
-                next_cursor="done",
-                has_more=False,
-                msg_list=[
-                    SyncMessage(
-                        msgid="clear-memory-message-1",
-                        external_userid="external-user-1",
-                        send_time=1_700_000_000,
-                        origin=3,
-                        msgtype="text",
-                        text={"content": "清空我的个性化记忆"},
-                    )
-                ],
-            )
-        }
-    )
-    model = ScriptedModelGateway(
-        (
-            _tool_response(
-                "call-clear",
-                "clear_user_memories",
-                {
-                    "scope": "profile_goal_constraint",
-                    "evidence_excerpt": "清空我的个性化记忆",
-                },
-            ),
-        )
-    )
-    app = create_app(harness_settings, client=fake, model_gateway=model)
-    crypto = WeComCallbackCrypto(
-        harness_settings.wecom_callback_token,
-        harness_settings.wecom_callback_aes_key,
-        harness_settings.wecom_corp_id,
-    )
-    body, signature = _encrypted_callback(crypto, timestamp="123", nonce="nonce")
-
-    async with app.router.lifespan_context(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as http:
-            response = await http.post(
-                "/callbacks/wecom/kf",
-                params={
-                    "msg_signature": signature,
-                    "timestamp": "123",
-                    "nonce": "nonce",
-                },
-                content=body,
-                headers={"content-type": "application/xml"},
-            )
-
-        assert response.status_code == 200
-        assert len(fake.sent) == 1
-        assert "需要你再次明确确认" in fake.sent[0].content
-        assert "确认执行" in fake.sent[0].content
-        model.assert_exhausted()
-
     await model.close()
 
 

@@ -60,6 +60,8 @@ class ToolExecutionStore(Protocol):
         result: ToolResult,
     ) -> ToolExecutionRef: ...
 
+    async def get(self, idempotency_key: str) -> ToolExecutionRef | None: ...
+
 
 class ToolExecutionRepository:
     """Persistent claim-and-complete ledger for idempotent tool execution."""

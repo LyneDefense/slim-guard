@@ -8,7 +8,9 @@ from typing import cast
 from sqlalchemy import Table, insert, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from slim_guard.db.approval_retirement import retire_approval_waits
 from slim_guard.db.models import (
+    AgentInvocationRecord,
     Base,
     NutritionCorpusRuntimeRecord,
     NutritionEmbeddingProfileRecord,
@@ -23,7 +25,6 @@ from slim_guard.db.models import (
 )
 from slim_guard.domain.assets.migration import retain_chat_attachments
 from slim_guard.features.health_records.persistence.migration import migrate_health_records
-from slim_guard.db.approval_retirement import retire_approval_waits
 from slim_guard.nutrition_rag.profiles import (
     ANSWERABILITY_V1_QUERY_PLAN_VERSION,
     ANSWERABILITY_V1_RETRIEVAL_PROFILE_ID,
@@ -83,6 +84,74 @@ async def _add_memory_evidence_item(connection: AsyncConnection) -> None:
             "UPDATE user_memory_facts SET evidence_item_id = source_item_id "
             "WHERE evidence_item_id IS NULL"
         )
+    )
+
+
+async def _add_agent_invocation_sequence(connection: AsyncConnection) -> None:
+    """Separate sibling invocations from retries in the invocation identity."""
+
+    await _create_application_tables(connection)
+    columns = await connection.run_sync(
+        lambda sync_connection: {
+            column["name"] for column in inspect(sync_connection).get_columns("agent_invocations")
+        }
+    )
+    if "sequence" in columns:
+        return
+
+    if connection.dialect.name == "postgresql":
+        await connection.execute(
+            text("ALTER TABLE agent_invocations ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0")
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE agent_invocations "
+                "DROP CONSTRAINT IF EXISTS uq_agent_invocation_turn_role_attempt"
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE agent_invocations "
+                "ADD CONSTRAINT uq_agent_invocation_turn_role_attempt_sequence "
+                "UNIQUE (turn_id, agent_role, attempt, sequence)"
+            )
+        )
+        return
+
+    if connection.dialect.name == "sqlite":
+        # SQLite cannot drop a table-level UNIQUE constraint. Rebuild this one
+        # append-only audit table while FK enforcement is temporarily disabled
+        # by Database.migrate; all rows and references remain intact.
+        backup_table = "agent_invocations_sequence_upgrade"
+        await connection.execute(text(f"DROP TABLE IF EXISTS {backup_table}"))
+        await connection.execute(
+            text(f"CREATE TABLE {backup_table} AS SELECT * FROM agent_invocations")
+        )
+        await connection.execute(text("DROP TABLE agent_invocations"))
+        await connection.run_sync(
+            lambda sync_connection: AgentInvocationRecord.__table__.create(
+                sync_connection,
+                checkfirst=False,
+            )
+        )
+        previous_columns = [
+            column.name
+            for column in AgentInvocationRecord.__table__.columns
+            if column.name != "sequence"
+        ]
+        quoted_columns = ", ".join(f'"{name}"' for name in previous_columns)
+        await connection.execute(
+            text(
+                "INSERT INTO agent_invocations ("
+                f'{quoted_columns}, "sequence") '
+                f"SELECT {quoted_columns}, 0 FROM {backup_table}"
+            )
+        )
+        await connection.execute(text(f"DROP TABLE {backup_table}"))
+        return
+
+    raise RuntimeError(
+        f"Invocation sequence migration is unsupported for {connection.dialect.name}"
     )
 
 
@@ -545,6 +614,7 @@ MIGRATIONS = (
     SchemaMigration("20260923_03_tool_operations", migrate_tool_operations),
     SchemaMigration("20260924_01_health_records", migrate_health_records),
     SchemaMigration("20260924_02_retire_approval_waits", retire_approval_waits),
+    SchemaMigration("20261026_01_agent_invocation_sequence", _add_agent_invocation_sequence),
 )
 
 

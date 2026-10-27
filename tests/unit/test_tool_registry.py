@@ -9,6 +9,8 @@ from slim_guard.tools.contracts import (
     ToolArguments,
     ToolEffectLevel,
     ToolMutationKind,
+    ToolOperationReceipt,
+    ToolOperationStatus,
     ToolResult,
     ToolResultStatus,
 )
@@ -86,16 +88,40 @@ def test_registry_rejects_duplicate_and_unknown_tools() -> None:
         registry.resolve("missing_tool")
 
 
-def test_registry_requires_mutation_category_for_reversible_writes() -> None:
-    with pytest.raises(ValidationError, match="user-visible mutation kind"):
+@pytest.mark.parametrize(
+    "effect_level",
+    (
+        ToolEffectLevel.REVERSIBLE_WRITE,
+        ToolEffectLevel.SENSITIVE_WRITE,
+        ToolEffectLevel.EXTERNAL_EFFECT,
+    ),
+)
+def test_registry_requires_mutation_category_for_all_write_tools(
+    effect_level: ToolEffectLevel,
+) -> None:
+    with pytest.raises(ValidationError, match="Write tools must declare"):
         RegisteredTool(
             name="record_weight",
             description="Record one measured body weight.",
             version="v1",
             arguments_model=WeightArguments,
-            effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
+            effect_level=effect_level,
             idempotent=True,
             timeout_seconds=3,
+        )
+
+
+def test_registry_rejects_mutation_category_for_read_only_tools() -> None:
+    with pytest.raises(ValidationError, match="Read-only tools cannot"):
+        RegisteredTool(
+            name="get_user_profile",
+            description="Read the current user's profile.",
+            version="v1",
+            arguments_model=EmptyArguments,
+            effect_level=ToolEffectLevel.READ,
+            mutation_kind=ToolMutationKind.USER_PROFILE,
+            idempotent=True,
+            timeout_seconds=1,
         )
 
 
@@ -125,3 +151,31 @@ def test_failed_tool_result_requires_structured_failure() -> None:
     )
     assert failure.failure is not None
     assert failure.failure.retryable is True
+
+
+def test_tool_operation_receipt_rejects_unknown_status() -> None:
+    with pytest.raises(ValidationError, match="status"):
+        ToolOperationReceipt(
+            operation_id="operation-1",
+            tool_name="record_weight",
+            status="successed",
+        )
+
+
+def test_failed_inspection_result_can_reference_a_succeeded_operation() -> None:
+    result = ToolResult.failed(
+        code="operation_tool_unavailable",
+        message="The original tool is no longer available.",
+    ).model_copy(
+        update={
+            "operation": ToolOperationReceipt(
+                operation_id="operation-1",
+                tool_name="record_weight",
+                status=ToolOperationStatus.SUCCEEDED,
+            )
+        }
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.operation is not None
+    assert result.operation.status is ToolOperationStatus.SUCCEEDED

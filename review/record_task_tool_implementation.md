@@ -1,62 +1,70 @@
-# 记录、任务与工具重构实施进度
+# 记录、任务与工具重构实施状态
 
-依据：[重构设计](../RECORD_TASK_TOOL_REFACTOR_DESIGN.md)。
+依据：[记录与跨轮任务重构设计](../RECORD_TASK_TOOL_REFACTOR_DESIGN.md)。
 
-## 当前边界
+更新日期：2026-10-26。
 
-2026-09-24：完成第一阶段的目录迁移、公开端口和纯领域修改规则。**全文重构尚未完成，新的局部更正规则尚未接入数据库写入和 Agent 工具。** 不得把本阶段的单元测试视为持久化、跨轮一致性或真实模型语义验收通过。
+## 当前结论
 
-本阶段没有操作服务器、执行线上迁移、提交或推送；保留了开始工作前已有的 Harness、上下文与档案改动。
+此前的实施说明停留在“领域契约阶段”，已与代码不符。主要的 1–4 项能力已经进入实际 Harness 和移动端链路；本轮补齐旧记录迁移中“未知时间”和“旧字段证据来源”的标注，并修正过时的迁移/恢复测试。下文记录当前实现，不代表线上部署、PostgreSQL 并发或真实模型语义已验收。
 
-## 已完成的代码
+## 已实现的主链路
 
-### 业务模块迁移
+### 1. 记录契约、持久化与事务回执
 
-- 原 `domain/{meal,exercise,weight,body_fat}` 的契约、错误和仓储移入 `features/health_records/{kind}`。
-- 原 `tools/{meal,exercise,weight,body_fat}.py` 移入对应领域的 `tools.py`，Agent Tool Adapter 与领域实现分文件。
-- 组装、工具目录、运行时和相关测试改用新路径。移除全局 `tools/__init__.py` 中对应的旧聚合导出，不保留旧路径兼容层；原数据库表和数据没有移动或删除。
-- `ports.py` 区分只读端口与写入端口。上下文只依赖读取端口，四个领域工具依赖存储端口；组装层可以选择具体实现。
-- `composition.py` 为外部消费者提供记录读取组件。移动端服务可以注入读取组件，不再直接导入四个内部仓储。
+- `src/slim_guard/features/health_records/` 定义统一的记录视图、领域内容、发生时间、字段来源、识别问题和局部修改契约；菜品有稳定子项 ID。
+- `persistence/store.py` 在同一事务中写记录、revision、字段问题清理、操作回执，并在请求要求时提交关联任务更新。
+- 更新使用记录行锁和 `expected_revision` 比较；同一操作 ID 重放原始回执，操作 ID 对应不同命令则冲突。
+- 写入前校验用户、Turn、来源消息和字段证据归属；失败时不留下半写入的记录、任务或回执。
+- `persistence/migration.py` 保留记录 ID，为旧菜品生成稳定 ID；旧时间为空时迁移为 `precision=unknown/basis=unknown`，不会伪造时间。旧字段被标为 `source_kind=legacy` 且不虚构来源引用；可验证的旧用户消息关联会保留。
 
-### 新的领域契约与纯修改规则
+### 2. 查询、修改工具与 Agent 注册
 
-| 文件/模块 | 本阶段内容 |
-| --- | --- |
-| `references.py` | 记录类别、稳定引用、版本冲突及无效果拒绝错误 |
-| `occurrence.py` | 精确时间、仅日期、未知时间互斥校验；不默认补现在或虚构时分 |
-| `provenance.py` | 字段依据、证据引用、字段值版本和特定识别问题 |
-| `content.py`、`views.py` | 有类型的当前记录视图；菜品子项身份唯一；识别问题只能绑定当前字段版本 |
-| `changes.py`、`patches.py` | 有类型的局部变更；省略表示不改，可空字段显式清除；不接受自由 JSON 路径 |
-| 各领域 `changes.py` | 各领域允许修改的字段；菜品更名、否定名称、认可、份量、更改顺序及移除相互区分 |
-| `field_lifecycle.py` | 共用字段版本和提示清理规则；图片/推断不能覆盖已有用户更正 |
-| `meal/mutations.py` | 根据子项 ID 修改，不依赖数组位置；新增子项由后端分配 ID |
-| `mutations.py` | 纯修改入口；版本/状态校验；整条命令成功后才产生新快照，不修改输入对象 |
-| `weight/values.py`、`body_fat/values.py` | 新增与更正复用的单位转换和数值范围校验；现有新增契约已复用 |
+- `features/health_records/tools.py` 通过统一 `RecordService` 提供记录创建、分页搜索、详情读取、字段更正和状态修改工具。
+- `agent/tool_catalog.py` 将这些能力注册给 Core；Tool Adapter 只做参数/来源绑定和领域服务调用，不选择业务流程或要求固定的确认步骤。
+- `persistence/queries.py` 提供按日期、来源、餐次、状态和文本筛选的游标分页；查询按用户隔离。
+- 更正使用 typed patch 和当前 revision，支持菜名替换、否定、认可、份量、顺序和移除等明确语义；过期识别问题随对应字段修订清理。
+- 对状态变化采用作废/恢复，不物理删除记录；不能将旧 superseded 记录错误恢复为当前记录。
 
-没有加入餐次时段规则、上传计数分类器、固定确认流程、疑点复看、裁剪、第二次识别或通知模块。Agent 的语义决策仍需在后续工具接入后独立验收。
+### 3. 跨轮请求与用户后续回答
 
-`apply_record_patch()` 只返回内存中的修改结果，**不是数据库提交回执**。来源引用存在性、用户归属、事务内版本比较、幂等和任务一致性必须在下一阶段的服务/存储边界实现，不能用这里的参数校验代替。
+- `tasks/record_requests.py` 将待解决记录请求保存为结构化 `RecordRequest`，包含候选目标、已知更改、未解决事项及来源。
+- `tasks/repository.py` 提供带 revision 的任务写入、读取和列表；不确定性不等于授权，也不要求每个识别问题都先阻塞写入。
+- `tasks/record_changes.py` 将已经完成的记录更正和对应任务关闭放入同一记录事务。用户后续回答可以引用原始附件/记录，不要求重新上传或重复确认已明确的信息。
+- `tests/unit/test_agent_runtime.py` 覆盖“图片识别有不确定字段时先保存记录，后续用户补充后修改同一记录”的受控模型场景。
 
-## 尚未完成的后续阶段
+### 4. 旧授权链退出与移动端历史
 
-1. 数据迁移：四类记录的持久化 revision、时间精度、字段依据、稳定菜品 ID、当前识别问题和不可变操作回执。
-2. 同库事务：记录修改、必要的任务变更与操作回执原子提交；并发冲突、提交后丢失响应及未知结果恢复。
-3. 历史查询和更正工具：分页检索、来源关联、增删改查及 Agent 注册；使新契约真正进入执行链路。
-4. 跨轮请求：结构化候选、已知变更、问题与结果关联；过期、换话题和目标失效处理。
-5. 识别与提示：立即保存识别结果，清除旧确认字段；核对实际图片传输质量，不新增复看流程。
-6. 清理授权系统：批量清空工具退出 Agent，清理旧 pending-action、审批状态、后台及迁移依赖。
-7. 消费者和界面：上下文、营养、趋势、资料与记忆派生引用更新；历史 API、首页展开记录和分页。
-8. PostgreSQL 一致性回归、真实图片和多轮模型验收、移动端交互验收。
+- `20260924_02_retire_approval_waits` 将旧的等待确认 Turn 标为失败并写入“流程已退役、未执行”事件，然后删除旧 `pending_actions` 表；它不会批准或执行冻结的旧命令。已经发布的迁移保留为历史迁移，不改写迁移版本。
+- 当前 Core Tool Catalog 不包含 `link_task_authorization`、`resolve_pending_user_action` 或批量清空记忆工具；相应的旧 Agent Tool Adapter、公开导出和过期后台标签已移除。底层存储管理方法仍留在 memory persistence 层，供后续明确授权的设置接口复用。
+- 运行时工具恢复只恢复明确引用的、可验证操作，不依赖用户确认队列。
+- `api/mobile_record_routes.py` 与 `mobile/record_projection.py` 提供记录历史/进度读取；`mobile-app/src/features/record-history/RecordHistory.tsx` 在首页展示饮食、运动历史，支持展开、分页加载、识别问题提示及刷新。
 
-旧 `*RecordCommand`/`*RecordRef` 当前仍服务既有新增和读取路径；新的 `RecordView` 与 patch 契约尚在接入阶段。第三、七阶段切换完所有调用方后必须统一并移除被替代契约，不能长期保留两套数据模型。
+## 本轮实际修正
 
-原设计第 2 节的旧源码路径描述的是设计时基线，不再代表当前目录。设计文档的验收条件保持不变。
+1. 旧记录没有发生时间时，迁移原来会保留默认 `datetime`，读取时可能因缺少时间戳而校验失败。现在按是否有真实时间/日期分别迁移为 `datetime`、`date` 或 `unknown`。
+2. 历史记录此前没有字段级来源标注。迁移现在以 `legacy` 明确表示来源细节不可得，不会把旧值误称为用户口述或图片识别。
+3. 有可信旧消息外键的记录，会保留该来源消息 ID；没有外键则不编造引用。
+4. 增加历史记录迁移回归用例，验证未知时间、字段证据、稳定菜品 ID、来源消息及 revision。
+5. 更新旧的跨轮任务迁移测试，使其验证审批表已退役，而不是要求把它留在新数据库里。
+6. Tool Operation 测试删除已不存在的“工具确认授权”假设，改为验证恢复操作时仍检查当前工具能力授权。普通工具授权和隔离策略仍由 Harness 强制执行。
+7. 清理不可达的批量清空记忆 Agent Adapter，以及要求旧确认队列继续工作的过期回调测试；工具 manifest 验收改为当前真实 Tool Catalog。
 
-## 本阶段实际验证
+## 尚需独立验收的范围
 
-- 定向测试：**130 passed**，耗时约 96 秒。包括 48 项新领域规则测试，以及原有四类记录仓储/工具、工具目录、上下文、营养工具、运行时、重启恢复、跨轮任务、操作恢复、记忆维护、回复流水线和移动端 API 的相关回归。不是全量测试。
-- 移动端 API 回归出现 2 条已有 Starlette 413 状态码常量弃用警告，测试未失败；本阶段未顺带修改无关 HTTP 常量。
-- `ruff check src tests` 通过。
-- 本次健康记录模块、上下文和移动端服务的定向 Mypy 检查通过：41 个源码文件，使用 `--follow-imports=silent`；不是全项目类型检查。
-- `git diff --check` 通过。
-- 未运行 PostgreSQL 并发测试、真实模型验收或移动端 UI 验收，本阶段没有宣称这些已通过。
+- **PostgreSQL 并发与提交中断**：本轮使用 SQLite 定向测试；没有用 PostgreSQL 实例验证 `FOR UPDATE`、并发 revision 冲突和进程崩溃后的提交结果。
+- **真实模型语义**：受控模型测试证明链路和数据库行为，不证明模型在所有自然语言、模糊图像、纯否定或多轮补充下都会选对目标；需要真实模型验收记录。
+- **手机 UI**：本轮检查了前端组件/API 结构，但没有在实体设备上验收不同日期/时区、下拉分页和刷新体验。
+- **线上状态**：没有连接服务器、执行迁移、重启服务或部署。
+
+## 本轮验证
+
+测试命令：
+
+```bash
+uv run pytest tests/unit/features/health_records tests/unit/tasks tests/integration/test_mobile_api.py tests/unit/test_agent_runtime.py tests/unit/test_db_migrations.py tests/unit/test_tool_gateway.py tests/unit/test_tool_registry.py tests/unit/tool_operations/test_recovery.py tests/unit/test_settings.py tests/unit/test_memory_tools.py tests/unit/test_long_term_memory_tools.py tests/integration/test_callback_flow.py -q --tb=short
+```
+
+结果：**162 passed，2 warnings**，耗时 105.05 秒。覆盖记录存储、任务、迁移、Harness/Runtime、操作恢复、Tool Catalog、记忆工具与移动端 API/回调，不是全量测试。两条警告是现有 Starlette 413 常量弃用提示。
+
+静态/前端检查：相关 Python 文件 `ruff check` 通过；移动端 `npm run typecheck` 通过。没有运行全项目 Mypy、全量测试或 Expo 双端打包。

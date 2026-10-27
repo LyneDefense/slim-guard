@@ -59,6 +59,7 @@ class OperationGateway:
                 wrapped[tool.name] = ToolExecutor(
                     arguments_model=tool.arguments_model,
                     handler=self._write_handler(tool),
+                    lookup_result=self._operations.lookup_execution_result,
                     manages_timeout=True,
                 )
         self._gateway = ToolGateway(

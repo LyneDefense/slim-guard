@@ -86,12 +86,27 @@ async def test_system_response_does_not_enter_style_or_review(tmp_path) -> None:
 
 
 def conversation(system: str | None, *, coach: str | None) -> ModelResponse:
+    messages = []
+    if coach is not None:
+        messages.append(
+            {
+                "participant": "coach",
+                "text": coach,
+                "source_refs": [],
+            }
+        )
+    messages.append(
+        {
+            "participant": "system_assistant",
+            "text": system or "已收到。",
+            "source_refs": [],
+        }
+    )
     return response(
         json.dumps(
             {
-                "schema_version": "1",
-                "system_text": system or "已收到。",
-                "coach_text": coach,
+                "schema_version": "2",
+                "messages": messages,
             },
             ensure_ascii=False,
         )
@@ -117,9 +132,19 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
             response(
                 json.dumps(
                     {
-                        "schema_version": "1",
-                        "system_text": "今天这条晚餐处理好了。",
-                        "coach_text": "这顿搭配不错。",
+                        "schema_version": "2",
+                        "messages": [
+                            {
+                                "participant": "coach",
+                                "text": "这顿搭配不错。",
+                                "source_refs": [],
+                            },
+                            {
+                                "participant": "system_assistant",
+                                "text": "今天这条晚餐处理好了。",
+                                "source_refs": [],
+                            },
+                        ],
                     },
                     ensure_ascii=False,
                 )
@@ -164,6 +189,11 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
             "response_style",
             "response_reviewer",
         ]
+        conversation_payload = json.loads(model.requests[1].messages[-1].content or "{}")
+        assert conversation_payload["conversation_context"]["current_user_input"] == {
+            "text": "这是我的晚餐。",
+            "attachments": [],
+        }
         repository = OrchestrationRepository(database)
         invocations = await repository.list_turn_invocations(result.turn_id)
         artifacts = await repository.list_artifacts(result.turn_id)
@@ -189,6 +219,91 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
         assert review.parent_invocation_id == style.invocation_id
         assert {resolutions[0].artifact_id, coach_neutral.artifact_id}.issubset(
             style.input_artifact_ids
+        )
+        model.assert_exhausted()
+    finally:
+        await database.close()
+
+
+async def test_multiple_coach_messages_keep_model_order_and_are_reviewed_individually(
+    tmp_path,
+) -> None:
+    database = await prepare_database(tmp_path)
+    coach_texts = ("这顿搭配不错。", "继续保持这个节奏。")
+    styled_texts = ("这顿搭配不错。", "继续保持这个节奏。")
+    model_responses = [
+        response("收到。"),
+        response(
+            json.dumps(
+                {
+                    "schema_version": "2",
+                    "messages": [
+                        {
+                            "participant": "coach",
+                            "text": coach_texts[0],
+                            "source_refs": [],
+                        },
+                        {
+                            "participant": "system_assistant",
+                            "text": "收到。",
+                            "source_refs": [],
+                        },
+                        {
+                            "participant": "coach",
+                            "text": coach_texts[1],
+                            "source_refs": [],
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        ),
+    ]
+    for text in styled_texts:
+        styled = {
+            "text": text,
+            "used_block_ids": ["core-neutral-draft"],
+            "used_claim_ids": [],
+            "used_action_ids": [],
+            "preserved_risk_flags": [],
+            "preserved_citation_refs": [],
+            "style_profile_version": "doctor_builtin_v1",
+        }
+        model_responses.extend(
+            [
+                response(json.dumps(styled, ensure_ascii=False)),
+                response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+                response('{"verdict":"pass"}'),
+            ]
+        )
+    model = ScriptedModelGateway(tuple(model_responses))
+    runtime = build_agent_runtime(
+        database=database,
+        model=model,
+        definition=AgentRuntimeDefinition(
+            models=ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision"),
+            code_revision="multiple-coach-message-test",
+        ),
+        clock=lambda: NOW,
+    )
+    try:
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(user_id="user-1", text="今天吃得不错。")
+        )
+        assert [message.participant.value for message in result.messages] == [
+            "coach",
+            "system_assistant",
+            "coach",
+        ]
+        assert [message.text for message in result.messages] == [
+            *styled_texts[:1],
+            "收到。",
+            styled_texts[1],
+        ]
+        assert result.final_text == "\n".join((styled_texts[0], "收到。", styled_texts[1]))
+        assert (
+            sum(request.purpose is ModelPurpose.RESPONSE_REVIEWER for request in model.requests)
+            == 2
         )
         model.assert_exhausted()
     finally:

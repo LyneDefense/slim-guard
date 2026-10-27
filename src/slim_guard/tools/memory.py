@@ -8,7 +8,6 @@ from typing import Any, Literal
 from pydantic import Field, ValidationError, model_validator
 
 from slim_guard.memory.contracts import (
-    MemoryBulkRevokeCommand,
     MemoryFactInput,
     MemoryFactRef,
     MemoryKey,
@@ -45,7 +44,6 @@ SET_WEIGHT_GOAL_TOOL_NAME = "set_weight_goal"
 SET_BODY_FAT_GOAL_TOOL_NAME = "set_body_fat_goal"
 SET_BEHAVIOR_GOAL_TOOL_NAME = "set_behavior_goal"
 RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
-CLEAR_USER_MEMORIES_TOOL_NAME = "clear_user_memories"
 MEMORY_TOOL_VERSION = "v8"
 
 _GRAMS_PER_UNIT = {
@@ -187,11 +185,6 @@ class RecordUserConstraintArguments(MemoryEvidenceArguments):
     category: Literal["dietary", "exercise", "health_context"]
     subject: str = Field(min_length=1, max_length=128)
     statement: str = Field(min_length=1, max_length=500)
-
-
-class ClearUserMemoriesArguments(ToolArguments):
-    scope: Literal["profile_goal_constraint"]
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
 class MemoryToolHandlers:
@@ -484,61 +477,6 @@ class MemoryToolHandlers:
         return ToolResult.success(
             output={"memory": self._output(result.fact), "changed": result.changed},
             source_ids=(result.fact.id,),
-        )
-
-    async def clear_user_memories(
-        self,
-        context: ToolContext,
-        arguments: ClearUserMemoriesArguments,
-    ) -> ToolResult:
-        if context.execution_idempotency_key is None or context.source_item_id is None:
-            return ToolResult.failed(
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-                code="missing_memory_execution_identity",
-                message="Clearing memories requires a trusted current user message.",
-            )
-        try:
-            result = await self._repository.revoke_all(
-                MemoryBulkRevokeCommand(
-                    user_id=context.user_id,
-                    scope=arguments.scope,
-                    evidence_excerpt=arguments.evidence_excerpt,
-                    operation_id=context.execution_idempotency_key,
-                    source_turn_id=context.turn_id,
-                    source_item_id=context.source_item_id,
-                    source_tool_call_id=context.tool_call_id,
-                )
-            )
-        except MemoryEvidenceMismatch:
-            return ToolResult.failed(
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-                code="memory_evidence_mismatch",
-                message="The clear request must be grounded in this user message.",
-            )
-        except MemorySourceMismatch:
-            return ToolResult.failed(
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-                code="memory_source_mismatch",
-                message="The memory clear source could not be verified.",
-            )
-        except MemoryCollision:
-            return ToolResult.failed(
-                code="memory_collision",
-                message="The memory clear conflicted with another persisted update.",
-                retryable=True,
-            )
-        return ToolResult.success(
-            output={
-                "scope": result.scope,
-                "revoked_count": result.revoked_count,
-                "excluded": [
-                    "weight_records",
-                    "meal_records",
-                    "exercise_records",
-                    "message_idempotency_metadata",
-                ],
-            },
-            source_ids=result.memory_ids,
         )
 
     async def _write(

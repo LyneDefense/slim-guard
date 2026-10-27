@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import Column, DateTime, MetaData, String, Table, Text, inspect, select, text
 
+from slim_guard.db.approval_retirement import retire_approval_waits
 from slim_guard.db.models import ConversationTaskRecord, SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.harness.repository import AgentVersionRepository
@@ -54,9 +55,7 @@ async def test_legacy_handoffs_migrate_and_old_table_is_removed(tmp_path: Path):
             await migrate_conversation_tasks(connection)
             await migrate_conversation_tasks(connection)
             tables = await connection.run_sync(lambda c: inspect(c).get_table_names())
-            columns = await connection.run_sync(lambda c: inspect(c).get_columns("pending_actions"))
             assert "memory_handoffs" not in tables
-            assert "task_id" in {c["name"] for c in columns}
         async with db.session() as session:
             rows = tuple(await session.scalars(select(ConversationTaskRecord)))
             assert len(rows) == 1
@@ -68,9 +67,10 @@ async def test_legacy_handoffs_migrate_and_old_table_is_removed(tmp_path: Path):
         await db.close()
 
 
-async def test_existing_authorization_table_gets_task_link_without_changing_grants(tmp_path: Path):
+async def test_retired_authorization_table_is_removed_without_executing_actions(tmp_path: Path):
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'authorization-upgrade.sqlite'}")
     try:
+        await db.create_schema()
         async with db.engine.begin() as connection:
             await connection.execute(
                 text(
@@ -84,9 +84,8 @@ async def test_existing_authorization_table_gets_task_link_without_changing_gran
                     "('retired', 'confirm_dishes', 'pending')"
                 )
             )
-            await migrate_conversation_tasks(connection)
-            assert (
-                await connection.execute(text("SELECT id, status, task_id FROM pending_actions"))
-            ).all() == [("kept", "pending", None)]
+            await retire_approval_waits(connection)
+            tables = await connection.run_sync(lambda c: inspect(c).get_table_names())
+            assert "pending_actions" not in tables
     finally:
         await db.close()

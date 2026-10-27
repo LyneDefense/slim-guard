@@ -29,7 +29,18 @@ class SystemConversationScript:
         return ModelResponse(
             message=ModelMessage(
                 role=MessageRole.ASSISTANT,
-                content=json.dumps({"system_text": data["system_candidate"], "coach_text": None}),
+                content=json.dumps(
+                    {
+                        "schema_version": "2",
+                        "messages": [
+                            {
+                                "participant": "system_assistant",
+                                "text": data["system_candidate"],
+                                "source_refs": [],
+                            }
+                        ],
+                    }
+                ),
             )
         )
 

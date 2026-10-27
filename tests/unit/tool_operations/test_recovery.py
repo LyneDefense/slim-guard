@@ -62,7 +62,7 @@ async def setup(tmp_path):
         await db.close()
 
 
-def compose(setup, handler, *, tool=None, lookup=None):
+def compose(setup, handler, *, tool=None, lookup=None, execution_store=None):
     _, executions, store, context = setup
     tool = tool or registered_tool()
     registry = ToolRegistry((tool, *operation_tool_definitions()))
@@ -75,7 +75,7 @@ def compose(setup, handler, *, tool=None, lookup=None):
                 lookup_result=lookup,
             )
         },
-        execution_store=executions,
+        execution_store=execution_store or executions,
         operation_store=store,
         policy=DefaultToolPolicy(),
     )
@@ -94,6 +94,43 @@ def compose(setup, handler, *, tool=None, lookup=None):
         )
 
     return call, auth
+
+
+async def test_replayed_attempt_recovers_business_receipt_if_attempt_receipt_write_fails(setup):
+    class FailingCompletionStore:
+        def __init__(self, delegate):
+            self.delegate = delegate
+
+        async def claim(self, **kwargs):
+            return await self.delegate.claim(**kwargs)
+
+        async def complete(self, **kwargs):
+            raise RuntimeError("attempt ledger unavailable")
+
+        async def get(self, idempotency_key):
+            return await self.delegate.get(idempotency_key)
+
+    count = 0
+
+    async def handler(context, arguments):
+        nonlocal count
+        count += 1
+        return ToolResult.success(output={"recorded": True})
+
+    call, _ = compose(
+        setup,
+        handler,
+        execution_store=FailingCompletionStore(setup[1]),
+    )
+
+    first = await call("same-call")
+    replay = await call("same-call")
+
+    assert first.result.status.value == "succeeded"
+    assert replay.result.status.value == "succeeded"
+    assert replay.result.operation is not None
+    assert replay.result.operation.operation_id == first.result.operation.operation_id
+    assert count == 1
 
 
 async def test_validation_can_be_repaired_without_creating_an_operation(setup):
@@ -232,33 +269,41 @@ async def test_operation_reference_does_not_grant_access(setup, change):
     assert other.result.operation is None
 
 
-async def test_current_permission_and_confirmation_are_checked_on_resume(setup):
+async def test_current_capability_grant_is_checked_on_resume(setup):
     count = 0
 
     async def handler(context, arguments):
         nonlocal count
         count += 1
+        if count == 1:
+            return ToolResult.failed(
+                code="temporary_failure",
+                message="The write was not applied.",
+                retryable=True,
+                effect_status=ToolEffectStatus.NOT_APPLIED,
+            )
         return ToolResult.success(output={"private": True})
 
-    tool = registered_tool().model_copy(update={"requires_confirmation": True})
-    call, auth = compose(setup, handler, tool=tool)
-    blocked = await call("first")
-    assert blocked.result.failure.code == "tool_confirmation_required"
-    approved = auth.model_copy(
-        update={"confirmed_execution_keys": frozenset({blocked.idempotency_key})}
-    )
-    first = await call("first", grants=approved)
+    call, auth = compose(setup, handler)
+    first = await call("first")
     args = {"operation_id": first.result.operation.operation_id}
-    denied = await call("r1", RESUME_OPERATION, args)
-    assert denied.result.failure.code == "tool_confirmation_required"
-    revoked = await call(
-        "r2",
+    denied = await call(
+        "r1",
         RESUME_OPERATION,
         args,
-        grants=approved.model_copy(update={"allowed_tool_names": frozenset({RESUME_OPERATION})}),
+        grants=auth.model_copy(update={"allowed_tool_names": frozenset({RESUME_OPERATION})}),
+    )
+    assert denied.result.failure.code == "tool_not_authorized"
+    resumed = await call("r2", RESUME_OPERATION, args)
+    assert resumed.result.status.value == "succeeded"
+    revoked = await call(
+        "r3",
+        RESUME_OPERATION,
+        args,
+        grants=auth.model_copy(update={"allowed_tool_names": frozenset({RESUME_OPERATION})}),
     )
     assert revoked.result.failure.code == "tool_not_authorized"
-    assert count == 1
+    assert count == 2
 
 
 async def test_cancellation_keeps_claim_and_can_be_found_after_restart(setup):

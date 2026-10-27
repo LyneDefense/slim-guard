@@ -293,7 +293,7 @@ class MemoryLifecycleRepository:
             if "arguments" in payload:
                 output["arguments_sha256"] = cls._value_sha256(payload["arguments"])
         elif item_type == "tool_result":
-            for key in ("tool_call_id", "tool_name", "pending_action_id"):
+            for key in ("tool_call_id", "tool_name"):
                 if key in payload:
                     output[key] = payload[key]
             execution = payload.get("execution")

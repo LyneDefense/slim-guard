@@ -37,7 +37,8 @@ class AgentInvocation(ContractModel):
     graph_version: str = Field(min_length=1, max_length=128)
     agent_role: AgentRole = Field(validation_alias=AliasChoices("agent_role", "callee"))
     agent_version: str = Field(min_length=1, max_length=128)
-    attempt: int = Field(default=1, ge=1, le=16, strict=True)
+    attempt: int = Field(default=1, ge=1, strict=True)
+    sequence: int = Field(default=0, ge=0, strict=True)
     caller: str = Field(default="turn_harness", min_length=1, max_length=128)
     parent_invocation_id: str | None = Field(default=None, min_length=1, max_length=128)
     input_artifact_ids: tuple[str, ...] = Field(

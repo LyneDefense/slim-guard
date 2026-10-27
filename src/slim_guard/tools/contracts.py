@@ -45,6 +45,15 @@ class ToolExecutionStatus(StrEnum):
     FAILED = "failed"
 
 
+class ToolOperationStatus(StrEnum):
+    """Lifecycle state of a durable tool operation, distinct from this call's result."""
+
+    RUNNING = "running"
+    UNKNOWN = "unknown"
+    NOT_APPLIED = "not_applied"
+    SUCCEEDED = "succeeded"
+
+
 class ToolPolicyDecision(StrEnum):
     ALLOW = "allow"
     CONFIRM = "confirm"
@@ -99,7 +108,7 @@ class ToolOperationReceipt(BaseModel):
 
     operation_id: str
     tool_name: str
-    status: str
+    status: ToolOperationStatus
 
 
 class ToolFailure(BaseModel):

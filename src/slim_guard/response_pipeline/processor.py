@@ -50,13 +50,12 @@ class ResponseProcessor:
         initialized: InitializedTurn,
         invocation: AgentInvocation,
         result: HarnessLoopResult,
+        conversation_context: dict[str, object] | None = None,
     ) -> ProcessedResponse:
         if result.termination is not HarnessTermination.FINAL_RESPONSE:
             return ProcessedResponse(result, final_text=None)
         assert result.final_text is not None
-        guarded = self._guard.review(
-            text=result.final_text, tool_outcomes=result.tool_outcomes
-        )
+        guarded = self._guard.review(text=result.final_text, tool_outcomes=result.tool_outcomes)
         if guarded.modified:
             await self._recorder.record_output_guard(turn_id=invocation.turn_id, code=guarded.code)
             return ProcessedResponse(result, final_text=guarded.text)
@@ -82,11 +81,10 @@ class ResponseProcessor:
                         tool_outcomes=result.tool_outcomes,
                         model_responses=result.model_responses,
                         deadline_at=invocation.deadline_at,
+                        conversation_context=conversation_context or {},
                     )
                 )
-            checked = self._guard.review(
-                text=finalization.text, tool_outcomes=result.tool_outcomes
-            )
+            checked = self._guard.review(text=finalization.text, tool_outcomes=result.tool_outcomes)
             if checked.modified:
                 # Preserve the existing fallback policy; role-preserving repair is
                 # a separate behavior change, not part of lifecycle extraction.

@@ -34,7 +34,6 @@ from slim_guard.tools.registry import RegisteredTool
 REMEMBER_LONG_TERM_MEMORY_TOOL_NAME = "remember_long_term_memory"
 LIST_LONG_TERM_MEMORIES_TOOL_NAME = "list_long_term_memories"
 FORGET_LONG_TERM_MEMORY_TOOL_NAME = "forget_long_term_memory"
-CLEAR_LONG_TERM_MEMORIES_TOOL_NAME = "clear_long_term_memories"
 LONG_TERM_MEMORY_TOOL_VERSION = "v1"
 
 
@@ -59,11 +58,6 @@ class ListLongTermMemoriesArguments(ToolArguments):
 
 class ForgetLongTermMemoryArguments(ToolArguments):
     memory_id: str = Field(min_length=1, max_length=128)
-    evidence_excerpt: str = Field(min_length=1, max_length=512)
-
-
-class ClearLongTermMemoriesArguments(ToolArguments):
-    scope: Literal["conversational_long_term"]
     evidence_excerpt: str = Field(min_length=1, max_length=512)
 
 
@@ -192,53 +186,6 @@ class LongTermMemoryToolHandlers:
             source_ids=(memory.id,),
         )
 
-    async def clear_memories(
-        self,
-        context: ToolContext,
-        arguments: ClearLongTermMemoriesArguments,
-    ) -> ToolResult:
-        if context.execution_idempotency_key is None or context.source_item_id is None:
-            return ToolResult.failed(
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-                code="missing_long_term_memory_identity",
-                message="Clearing memories requires a trusted current user message.",
-            )
-        try:
-            result = await self._repository.revoke_all(
-                user_id=context.user_id,
-                source_turn_id=context.turn_id,
-                source_item_id=context.source_item_id,
-                evidence_excerpt=arguments.evidence_excerpt,
-                operation_id=context.execution_idempotency_key,
-            )
-        except MemoryEvidenceMismatch:
-            return ToolResult.failed(
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-                code="long_term_memory_evidence_mismatch",
-                message="The clear request must quote the current user message exactly.",
-            )
-        except MemorySourceMismatch:
-            return ToolResult.failed(
-                effect_status=ToolEffectStatus.NOT_APPLIED,
-                code="long_term_memory_source_mismatch",
-                message="The clear request source could not be verified.",
-            )
-        return ToolResult.success(
-            output={
-                "scope": arguments.scope,
-                "revoked_count": result.revoked_count,
-                "excluded": [
-                    "structured_profile_goal_constraint",
-                    "weight_records",
-                    "body_fat_records",
-                    "meal_records",
-                    "exercise_records",
-                    "transcripts_and_audit",
-                ],
-            },
-            source_ids=result.memory_ids,
-        )
-
     @staticmethod
     def _expiry(raw: str | None) -> datetime | None:
         if raw is None:
@@ -330,12 +277,10 @@ def long_term_memory_tool_executors(
 
 
 __all__ = [
-    "CLEAR_LONG_TERM_MEMORIES_TOOL_NAME",
     "FORGET_LONG_TERM_MEMORY_TOOL_NAME",
     "LIST_LONG_TERM_MEMORIES_TOOL_NAME",
     "LONG_TERM_MEMORY_TOOL_VERSION",
     "REMEMBER_LONG_TERM_MEMORY_TOOL_NAME",
-    "ClearLongTermMemoriesArguments",
     "ForgetLongTermMemoryArguments",
     "ListLongTermMemoriesArguments",
     "LongTermMemoryToolHandlers",

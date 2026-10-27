@@ -90,6 +90,9 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260923_01_conversation_tasks",
             "20260923_02_model_usage",
             "20260923_03_tool_operations",
+            "20260924_01_health_records",
+            "20260924_02_retire_approval_waits",
+            "20261026_01_agent_invocation_sequence",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -248,6 +251,9 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260923_01_conversation_tasks",
             "20260923_02_model_usage",
             "20260923_03_tool_operations",
+            "20260924_01_health_records",
+            "20260924_02_retire_approval_waits",
+            "20261026_01_agent_invocation_sequence",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

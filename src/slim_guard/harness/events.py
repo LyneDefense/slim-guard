@@ -63,8 +63,6 @@ class ItemStatus(StrEnum):
     FAILED = "failed"
 
 
-
-
 WORKFLOW_TRACE_EVENT_FIELDS: dict[ItemType, frozenset[str]] = {
     ItemType.INVOCATION_STARTED: frozenset(
         {
@@ -72,6 +70,7 @@ WORKFLOW_TRACE_EVENT_FIELDS: dict[ItemType, frozenset[str]] = {
             "agent_role",
             "agent_version",
             "attempt",
+            "sequence",
             "parent_invocation_id",
             "input_artifact_ids",
             "allowed_tool_names",
@@ -132,7 +131,7 @@ _STRING_LIST_FIELDS = frozenset(
 )
 _POSITIVE_INTEGER_FIELDS = frozenset({"attempt"})
 _NONNEGATIVE_INTEGER_FIELDS = frozenset(
-    {"model_call_count", "tool_call_count", "total_token_count"}
+    {"model_call_count", "tool_call_count", "total_token_count", "sequence"}
 )
 _TIMESTAMP_FIELDS = frozenset({"started_at", "completed_at"})
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")

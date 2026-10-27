@@ -3,7 +3,7 @@
 import json
 from typing import cast
 
-from sqlalchemy import MetaData, Table, inspect, select
+from sqlalchemy import MetaData, Table, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from slim_guard.db.models import ConversationTaskOperationRecord, ConversationTaskRecord

@@ -12,7 +12,6 @@ from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResultStatus
 from slim_guard.tools.memory import (
-    ClearUserMemoriesArguments,
     ForgetUserMemoryArguments,
     ListUserMemoriesArguments,
     MemoryToolHandlers,
@@ -284,34 +283,6 @@ async def test_memory_tools_bind_writes_and_reads_to_current_harness_user(tmp_pa
         assert height.value == {"millimeters": 1790}
         assert dietary.value["statement"] == "我对花生过敏"
         assert dietary.review_after is not None
-        cleared = await handlers.clear_user_memories(
-            context.model_copy(
-                update={
-                    "tool_call_id": "call-clear",
-                    "execution_idempotency_key": "execution-clear",
-                }
-            ),
-            ClearUserMemoriesArguments(
-                scope="profile_goal_constraint",
-                evidence_excerpt="清空我的个性化记忆",
-            ),
-        )
-        replayed_clear = await handlers.clear_user_memories(
-            context.model_copy(
-                update={
-                    "tool_call_id": "call-clear",
-                    "execution_idempotency_key": "execution-clear",
-                }
-            ),
-            ClearUserMemoriesArguments(
-                scope="profile_goal_constraint",
-                evidence_excerpt="清空我的个性化记忆",
-            ),
-        )
-        assert cleared.status is ToolResultStatus.SUCCEEDED
-        assert cleared.output["revoked_count"] == 9
-        assert replayed_clear.output["revoked_count"] == 9
-        assert await repository.active("user-1") == ()
     finally:
         await database.close()
 

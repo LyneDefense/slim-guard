@@ -1,87 +1,123 @@
-"""Fail-closed validation for the LLM's coach-message proposal.
-
-The model may propose a relational coach sentence, but it never chooses a tool
-state or card sender. The router keeps the authoritative system text and drops
-unsafe or duplicate coach candidates.
-"""
+"""Validate Conversation Agent message proposals against Harness authority."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from slim_guard.group_chat.contracts import ParticipantRole
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from slim_guard.agents.conversation.contracts import ConversationMessageProposal
 
 
 @dataclass(frozen=True, slots=True)
-class CoachCandidate:
+class RoutedMessage:
+    participant: ParticipantRole
     text: str
     source_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class RoutingResult:
-    system_text: str
-    coach: CoachCandidate | None
-    suppressed_reason: str | None = None
+    messages: tuple[RoutedMessage, ...]
+    suppressed_reasons: tuple[str, ...] = ()
+
+    @property
+    def system_text(self) -> str:
+        return next(
+            message.text
+            for message in self.messages
+            if message.participant is ParticipantRole.SYSTEM_ASSISTANT
+        )
+
+    @property
+    def coach_messages(self) -> tuple[RoutedMessage, ...]:
+        return tuple(
+            message for message in self.messages if message.participant is ParticipantRole.COACH
+        )
+
+    @property
+    def suppressed_reason(self) -> str | None:
+        return ";".join(self.suppressed_reasons) or None
 
 
 class ConversationRouter:
-    """Validate a conversation plan without keyword-based scenario enums.
+    """Validate ordering and provenance while preserving authoritative status.
 
-    The model decides whether a coach sentence is useful.  This validator only
-    enforces provenance and the structured execution state supplied by the
-    Harness.
+    This is a contract/safety boundary, not a scenario router. Pending questions
+    and failed operations are facts supplied to the Conversation Agent; neither
+    status alone decides whether the coach may speak.
     """
 
     def route(
         self,
         *,
         system_text: str,
-        routed_system_text: str | None = None,
-        coach_text: str | None,
-        coach_source_refs: tuple[str, ...] = (),
+        proposals: Sequence[ConversationMessageProposal],
+        system_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
-        pending_clarification: bool = False,
-        tool_failed: bool = False,
     ) -> RoutingResult:
-        # The Core/Harness candidate is authoritative for the system assistant.
-        # Conversation Agent may suggest a nicer system sentence, but accepting
-        # it here would let the presentation model change tool state or facts.
-        # Keep the suggestion available to the caller's trace instead of making
-        # it user-visible.
-        system = system_text.strip()
-        if not system:
+        authoritative_system_text = system_text.strip()
+        if not authoritative_system_text:
             raise ValueError("The system assistant must have an authoritative response")
-        candidate = (coach_text or "").strip()
-        if not candidate:
-            return RoutingResult(system_text=system, coach=None)
-        if pending_clarification:
-            return RoutingResult(
-                system_text=system,
-                coach=None,
-                suppressed_reason="conflicts_with_pending_clarification",
-            )
-        if tool_failed:
-            return RoutingResult(
-                system_text=system,
-                coach=None,
-                suppressed_reason="conflicts_with_failed_tool",
-            )
-        allowed = set(allowed_source_refs)
-        refs = tuple(dict.fromkeys(item.strip() for item in coach_source_refs if item.strip()))
-        if any(item not in allowed for item in refs):
-            return RoutingResult(
-                system_text=system,
-                coach=None,
-                suppressed_reason="coach_source_ref_not_allowed",
-            )
-        if candidate == system:
-            return RoutingResult(
-                system_text=system,
-                coach=None,
-                suppressed_reason="duplicate_system_text",
-            )
-        return RoutingResult(
-            system_text=system,
-            coach=CoachCandidate(text=candidate, source_refs=refs),
-        )
 
-__all__ = ["CoachCandidate", "ConversationRouter", "RoutingResult"]
+        allowed = set(allowed_source_refs)
+        system_refs = tuple(ref for ref in system_source_refs if ref in allowed)
+        routed: list[RoutedMessage] = []
+        suppressed: list[str] = []
+        system_seen = False
+
+        for proposal in proposals:
+            if proposal.participant == "system_assistant":
+                if system_seen:
+                    suppressed.append("duplicate_system_message")
+                    continue
+                system_seen = True
+                if proposal.text.strip() != authoritative_system_text:
+                    # Presentation planning cannot change a verified operation
+                    # result, system fact, or required clarification.
+                    suppressed.append("system_text_kept_authoritative")
+                routed.append(
+                    RoutedMessage(
+                        participant=ParticipantRole.SYSTEM_ASSISTANT,
+                        text=authoritative_system_text,
+                        source_refs=system_refs,
+                    )
+                )
+                continue
+
+            candidate = proposal.text.strip()
+            refs = tuple(dict.fromkeys(ref.strip() for ref in proposal.source_refs if ref.strip()))
+            if any(ref not in allowed for ref in refs):
+                suppressed.append("coach_source_ref_not_allowed")
+                continue
+            if not candidate or candidate == authoritative_system_text:
+                suppressed.append("duplicate_system_text")
+                continue
+            routed.append(
+                RoutedMessage(
+                    participant=ParticipantRole.COACH,
+                    text=candidate,
+                    source_refs=refs,
+                )
+            )
+
+        if not system_seen:
+            # Defensive fallback for non-model callers. The typed output contract
+            # normally requires exactly one system message.
+            routed.append(
+                RoutedMessage(
+                    participant=ParticipantRole.SYSTEM_ASSISTANT,
+                    text=authoritative_system_text,
+                    source_refs=system_refs,
+                )
+            )
+            suppressed.append("system_message_added_by_harness")
+
+        return RoutingResult(messages=tuple(routed), suppressed_reasons=tuple(suppressed))
+
+
+__all__ = ["ConversationRouter", "RoutedMessage", "RoutingResult"]

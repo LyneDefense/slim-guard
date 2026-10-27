@@ -11,7 +11,9 @@ from slim_guard.agents.contracts import (
     RepairTarget,
     ReviewerVerdictStatus,
 )
-from slim_guard.group_chat.composer import compose_messages
+from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages
+from slim_guard.group_chat.contracts import ParticipantRole
+from slim_guard.group_chat.routing import RoutedMessage
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
@@ -34,6 +36,17 @@ from slim_guard.runtime.contracts import AgentArtifact, ArtifactProducerRole, In
 class ContentRepairOrigin:
     style: StyleStage
     review: ReviewStage
+    next_sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class CoachMessageResult:
+    outgoing: OutgoingTextMessage | None
+    style: StyleStage
+    review: ReviewStage
+    style_repaired: bool
+    model_call_count: int
+    total_token_count: int
 
 
 class GroupChatFinalizer:
@@ -61,6 +74,7 @@ class GroupChatFinalizer:
         repair_origin: ContentRepairOrigin | None = None,
     ) -> ResponseFinalizationResult:
         attempt = 1 if repair_origin is None else 2
+        sequence_base = repair_origin.next_sequence if repair_origin else 0
         pending = any(
             block.kind in {ContentBlockKind.QUESTION, ContentBlockKind.UNCERTAINTY}
             for block in planned.plan.content_blocks
@@ -70,8 +84,10 @@ class GroupChatFinalizer:
         routed = await self._stages.run_conversation(
             request=request,
             system_text=request.neutral_draft,
+            conversation_context=request.conversation_context,
             plan_artifact=plan_artifact,
             parent_invocation_id=request.core_invocation_id,
+            system_source_refs=self._system_source_refs(planned),
             semantic_summary={
                 "response_plan": planned.plan.model_dump(mode="json"),
                 "professional_assessment": (
@@ -104,27 +120,120 @@ class GroupChatFinalizer:
         )
         calls = routed.model_call_count
         tokens = routed.total_token_count
-        coach = routed.routing.coach
-        if coach is None:
-            messages = compose_messages(
-                turn_id=request.turn_id,
-                system_text=routed.routing.system_text,
-                system_source_refs=self._system_source_refs(planned),
-                coach_text=None,
-                tool_outcomes=request.tool_outcomes,
-            )
-            return ResponseFinalizationResult(
-                text=routed.routing.system_text,
-                status=routed.status,
-                core_output_artifact_id=plan_artifact.artifact_id,
-                final_output_artifact_id=routed.artifact.artifact_id,
-                style_profile_version=selection.snapshot.profile.version,
-                model_call_count=calls,
-                total_token_count=tokens,
-                messages=messages,
-                failure_code=routed.failure_code,
-            )
+        outgoing: list[OutgoingTextMessage] = []
+        reviewer_ran = False
+        style_repaired = False
+        final_artifact_id = routed.artifact.artifact_id
+        failure_codes: list[str] = list(routed.routing.suppressed_reasons)
+        coach_index = 0
+        for routed_message in routed.routing.messages:
+            if routed_message.participant is ParticipantRole.SYSTEM_ASSISTANT:
+                outgoing.append(
+                    OutgoingTextMessage(
+                        participant=ParticipantRole.SYSTEM_ASSISTANT,
+                        text=routed_message.text,
+                        source_refs=routed_message.source_refs,
+                    )
+                )
+                continue
 
+            coach_result = await self._finalize_coach_message(
+                request=request,
+                coach=routed_message,
+                planned=planned,
+                plan_artifact=plan_artifact,
+                selection=selection,
+                resolution_artifact=resolution_artifact,
+                conversation_artifact=routed.artifact,
+                conversation_invocation_id=routed.invocation_id,
+                attempt=attempt,
+                sequence=sequence_base + coach_index,
+                repair_origin=repair_origin if coach_index == 0 else None,
+            )
+            coach_index += 1
+            calls += coach_result.model_call_count
+            tokens += coach_result.total_token_count
+            reviewer_ran = True
+            style_repaired = style_repaired or coach_result.style_repaired
+            final_artifact_id = coach_result.review.artifact.artifact_id
+            review = coach_result.review
+
+            if (
+                repair_origin is None
+                and review.status is InvocationStatus.SUCCEEDED
+                and review.verdict.verdict is ReviewerVerdictStatus.REPAIR
+                and review.verdict.repair_target
+                in {RepairTarget.CORE, RepairTarget.NUTRITION_EXPERT}
+            ):
+                return await self._repair_content(
+                    request=request,
+                    planned=planned,
+                    plan_artifact=plan_artifact,
+                    selection=selection,
+                    resolution_artifact=resolution_artifact,
+                    origin=ContentRepairOrigin(
+                        style=coach_result.style,
+                        review=review,
+                        next_sequence=sequence_base + coach_index + 1,
+                    ),
+                    system_text=routed.routing.system_text,
+                    calls=calls,
+                    tokens=tokens,
+                )
+
+            if coach_result.outgoing is None:
+                failure_codes.append(
+                    review.failure_code
+                    or (
+                        "coach_message_rejected_after_style_repair"
+                        if coach_result.style_repaired
+                        else "coach_message_rejected"
+                    )
+                )
+                continue
+            outgoing.append(coach_result.outgoing)
+            if coach_result.style.status is not InvocationStatus.SUCCEEDED:
+                failure_codes.append(coach_result.style.failure_code or "coach_style_degraded")
+
+        messages = compose_messages(
+            turn_id=request.turn_id,
+            text_messages=tuple(outgoing),
+            tool_outcomes=request.tool_outcomes,
+        )
+        final_status = (
+            InvocationStatus.DEGRADED
+            if failure_codes or routed.status is InvocationStatus.DEGRADED
+            else InvocationStatus.SUCCEEDED
+        )
+        return ResponseFinalizationResult(
+            text="\n".join(item.text for item in messages if item.text),
+            status=final_status,
+            core_output_artifact_id=plan_artifact.artifact_id,
+            final_output_artifact_id=final_artifact_id,
+            style_profile_version=selection.snapshot.profile.version,
+            model_call_count=calls,
+            total_token_count=tokens,
+            reviewer_ran=reviewer_ran,
+            style_repaired=style_repaired,
+            messages=messages,
+            failure_code=";".join(failure_codes) or routed.failure_code,
+        )
+
+    async def _finalize_coach_message(
+        self,
+        *,
+        request: ResponseFinalizationRequest,
+        coach: RoutedMessage,
+        planned: PlannedResponse,
+        plan_artifact: AgentArtifact,
+        selection: ResolvedStyleProfile,
+        resolution_artifact: AgentArtifact,
+        conversation_artifact: AgentArtifact,
+        conversation_invocation_id: str,
+        attempt: int,
+        sequence: int,
+        repair_origin: ContentRepairOrigin | None,
+    ) -> CoachMessageResult:
         coach_planned = self._plan_builder.build(
             neutral_draft=coach.text,
             tool_outcomes=(),
@@ -144,7 +253,7 @@ class GroupChatFinalizer:
                 "source_refs": coach.source_refs,
                 "selected_by": "conversation_agent",
             },
-            parents=(routed.artifact.artifact_id,),
+            parents=(conversation_artifact.artifact_id,),
         )
         await self._stages.persist(coach_neutral_artifact)
         style = await self._stages.run_style(
@@ -154,15 +263,14 @@ class GroupChatFinalizer:
             plan_artifact=plan_artifact,
             neutral_artifact=coach_neutral_artifact,
             resolution_artifact=resolution_artifact,
-            parent_invocation_id=routed.invocation_id,
+            parent_invocation_id=conversation_invocation_id,
             attempt=attempt,
+            sequence=sequence,
             prior_artifact_id=(repair_origin.style.artifact.artifact_id if repair_origin else None),
             verdict_artifact_id=(
                 repair_origin.review.artifact.artifact_id if repair_origin else None
             ),
         )
-        calls += style.model_call_count
-        tokens += style.total_token_count
         review = await self._stages.run_review(
             request=request,
             planned=coach_planned,
@@ -172,29 +280,13 @@ class GroupChatFinalizer:
             plan_artifact=plan_artifact,
             parent_invocation_id=style.invocation_id,
             attempt=attempt,
+            sequence=sequence,
             prior_verdict_artifact_id=(
                 repair_origin.review.artifact.artifact_id if repair_origin else None
             ),
         )
-        calls += review.model_call_count
-        tokens += review.total_token_count
-        if (
-            repair_origin is None
-            and review.status is InvocationStatus.SUCCEEDED
-            and review.verdict.verdict is ReviewerVerdictStatus.REPAIR
-            and review.verdict.repair_target in {RepairTarget.CORE, RepairTarget.NUTRITION_EXPERT}
-        ):
-            return await self._repair_content(
-                request=request,
-                planned=planned,
-                plan_artifact=plan_artifact,
-                selection=selection,
-                resolution_artifact=resolution_artifact,
-                origin=ContentRepairOrigin(style=style, review=review),
-                system_text=routed.routing.system_text,
-                calls=calls,
-                tokens=tokens,
-            )
+        model_call_count = style.model_call_count + review.model_call_count
+        total_token_count = style.total_token_count + review.total_token_count
         style_repaired = False
         if (
             repair_origin is None
@@ -212,60 +304,29 @@ class GroupChatFinalizer:
                 resolution_artifact=resolution_artifact,
                 first_style=style,
                 first_review=review,
+                sequence=sequence,
             )
-            calls += style.model_call_count + review.model_call_count
-            tokens += style.total_token_count + review.total_token_count
+            model_call_count += style.model_call_count + review.model_call_count
+            total_token_count += style.total_token_count + review.total_token_count
             style_repaired = True
+        outgoing = None
         if (
-            review.status is not InvocationStatus.SUCCEEDED
-            or review.verdict.verdict is not ReviewerVerdictStatus.PASS
+            review.status is InvocationStatus.SUCCEEDED
+            and review.verdict.verdict is ReviewerVerdictStatus.PASS
         ):
-            messages = compose_messages(
-                turn_id=request.turn_id,
-                system_text=routed.routing.system_text,
-                system_source_refs=self._system_source_refs(planned),
-                coach_text=None,
-                tool_outcomes=request.tool_outcomes,
-            )
-            return ResponseFinalizationResult(
-                text=routed.routing.system_text,
-                status=InvocationStatus.DEGRADED,
-                core_output_artifact_id=plan_artifact.artifact_id,
-                final_output_artifact_id=review.artifact.artifact_id,
+            outgoing = OutgoingTextMessage(
+                participant=ParticipantRole.COACH,
+                text=style.response.text,
+                source_refs=coach.source_refs,
                 style_profile_version=selection.snapshot.profile.version,
-                model_call_count=calls,
-                total_token_count=tokens,
-                reviewer_ran=True,
-                style_repaired=style_repaired,
-                messages=messages,
-                failure_code=review.failure_code
-                or (
-                    "coach_message_rejected_after_style_repair"
-                    if style_repaired
-                    else "coach_message_rejected"
-                ),
             )
-        messages = compose_messages(
-            turn_id=request.turn_id,
-            system_text=routed.routing.system_text,
-            system_source_refs=self._system_source_refs(planned),
-            coach_text=style.response.text,
-            coach_source_refs=coach.source_refs,
-            style_profile_version=selection.snapshot.profile.version,
-            tool_outcomes=request.tool_outcomes,
-        )
-        return ResponseFinalizationResult(
-            text="\n".join(item.text for item in messages if item.text),
-            status=style.status,
-            core_output_artifact_id=plan_artifact.artifact_id,
-            final_output_artifact_id=style.artifact.artifact_id,
-            style_profile_version=selection.snapshot.profile.version,
-            model_call_count=calls,
-            total_token_count=tokens,
-            reviewer_ran=True,
+        return CoachMessageResult(
+            outgoing=outgoing,
+            style=style,
+            review=review,
             style_repaired=style_repaired,
-            messages=messages,
-            failure_code=style.failure_code,
+            model_call_count=model_call_count,
+            total_token_count=total_token_count,
         )
 
     async def _repair_content(
@@ -305,9 +366,13 @@ class GroupChatFinalizer:
                 nutrition_repaired=repair.nutrition_repaired,
                 messages=compose_messages(
                     turn_id=request.turn_id,
-                    system_text=system_text,
-                    system_source_refs=self._system_source_refs(planned),
-                    coach_text=None,
+                    text_messages=(
+                        OutgoingTextMessage(
+                            participant=ParticipantRole.SYSTEM_ASSISTANT,
+                            text=system_text,
+                            source_refs=self._system_source_refs(planned),
+                        ),
+                    ),
                     tool_outcomes=request.tool_outcomes,
                 ),
             )
@@ -359,12 +424,7 @@ class GroupChatFinalizer:
 
     @staticmethod
     def _has_failed_tool(outcomes: tuple[ToolCallOutcome, ...]) -> bool:
-        """Expose failed tool state to conversation routing as a fact.
-
-        The Conversation Agent may still explain the failure, but it must not
-        produce a coach acknowledgement that could be mistaken for success.
-        This is derived from tool receipts rather than message text.
-        """
+        """Expose verified tool failure as context, not a participant decision."""
 
         return any(outcome.execution.result.status.value != "succeeded" for outcome in outcomes)
 

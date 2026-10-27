@@ -27,8 +27,8 @@ from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.features.health_records.body_fat.repository import BodyFatRepository
 from slim_guard.features.health_records.body_fat.tools import RECORD_BODY_FAT_TOOL_NAME
-from slim_guard.features.health_records.meal.repository import MealRepository
 from slim_guard.features.health_records.meal.tools import RECORD_MEAL_TOOL_NAME
+from slim_guard.features.health_records.queries import RecordQuery
 from slim_guard.features.health_records.weight.repository import WeightRepository
 from slim_guard.features.health_records.weight.tools import (
     RECORD_WEIGHT_TOOL_NAME,
@@ -39,6 +39,7 @@ from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.contracts import MemoryKey
 from slim_guard.memory.repository import MemoryRepository
+from slim_guard.services.record_changes import build_record_service
 from slim_guard.tools.contracts import ToolExecutionMode
 from slim_guard.tools.memory import (
     SET_BODY_FAT_GOAL_TOOL_NAME,
@@ -113,10 +114,21 @@ class HistoricalHeightModelGateway:
         return None
 
 
-class MealImageFollowupModelGateway:
+class MealImageCorrectionModelGateway:
     def __init__(self) -> None:
         self.requests: list[ModelRequest] = []
         self.asset_id: str | None = None
+        self.record_id: str | None = None
+        self.item_id: str | None = None
+
+    @staticmethod
+    def _last_tool_output(request: ModelRequest) -> dict[str, object]:
+        for message in reversed(request.messages):
+            if message.role is MessageRole.TOOL and message.content:
+                payload = json.loads(message.content)
+                if payload.get("status") == "succeeded":
+                    return payload["output"]
+        raise AssertionError("Expected a successful tool result in the model context")
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
@@ -125,46 +137,89 @@ class MealImageFollowupModelGateway:
             image_input = json.loads(request.messages[-1].content or "")
             self.asset_id = image_input["attachments"][0]["asset_id"]
             return tool_call(
-                "call-inspect-first",
+                "call-inspect-meal",
                 "inspect_image",
                 {"asset_id": self.asset_id},
             )
         if step == 2:
-            return final_reply("图片里有几样食物不确定，请告诉我具体是什么。")
-        if step == 3:
             assert self.asset_id is not None
-            working = next(
-                message.content or ""
-                for message in request.messages
-                if message.role is MessageRole.USER and self.asset_id in (message.content or "")
-            )
-            assert self.asset_id in working
-            assert '"author":"vision_model"' in working
             return tool_call(
-                "call-inspect-recent",
-                "inspect_image",
-                {"asset_id": self.asset_id},
-            )
-        if step == 4:
-            return final_reply("明白是午餐；请确认方形块、红色条状物和黑色食物。")
-        if step == 5:
-            return tool_call(
-                "call-record-confirmed-meal",
+                "call-record-image-meal",
                 RECORD_MEAL_TOOL_NAME,
                 {
                     "meal_type": "lunch",
+                    "meal_type_evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
+                    "evidence": {
+                        "source_kind": "image_recognized",
+                        "source_refs": [self.asset_id],
+                    },
                     "foods": [
-                        {"name": "白米饭"},
-                        {"name": "炒白菜"},
-                        {"name": "蒸蛋"},
-                        {"name": "火腿肠"},
-                        {"name": "油豆腐"},
-                        {"name": "木耳"},
+                        {
+                            "name": "白米饭",
+                            "evidence": {
+                                "source_kind": "image_recognized",
+                                "source_refs": [self.asset_id],
+                            },
+                        },
+                        {
+                            "name": "方形配菜",
+                            "evidence": {
+                                "source_kind": "image_recognized",
+                                "source_refs": [self.asset_id],
+                            },
+                            "concern": {
+                                "reason": "外观不足以区分蒸蛋和豆腐",
+                                "user_message": "方形配菜的名称可能不准确。",
+                            },
+                        },
                     ],
                 },
             )
+        if step == 3:
+            output = self._last_tool_output(request)
+            record = output["record"]
+            self.record_id = record["ref"]["record_id"]
+            self.item_id = record["content"]["foods"][1]["item_id"]
+            assert len(record["recognition_issues"]) == 1
+            return final_reply("午餐已经记下，方形配菜的名称之后还可以更正。")
+        if step == 4:
+            return tool_call(
+                "call-search-meal-for-correction",
+                "search_health_records",
+                {"query": {"kind": "meal", "limit": 10}},
+            )
+        if step == 5:
+            output = self._last_tool_output(request)
+            record = output["records"][0]
+            assert record["ref"]["record_id"] == self.record_id
+            assert len(record["recognition_issues"]) == 1
+            assert self.item_id == record["content"]["foods"][1]["item_id"]
+            return tool_call(
+                "call-correct-original-meal",
+                "update_meal_record",
+                {
+                    "record_id": self.record_id,
+                    "expected_revision": record["ref"]["revision"],
+                    "patch": {
+                        "food_changes": [
+                            {
+                                "action": "replace_name",
+                                "item_id": self.item_id,
+                                "name": "蒸蛋",
+                                "evidence": {
+                                    "source_kind": "user_reported",
+                                    "source_refs": ["current-user-message"],
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
         if step == 6:
-            return final_reply("午餐已经记录。")
+            return final_reply("已把原午餐里的方形配菜改为蒸蛋。")
         raise AssertionError(f"Unexpected model call: {step}")
 
     async def close(self) -> None:
@@ -315,9 +370,13 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         first_observation = json.loads(model.requests[1].messages[-1].content or "")
         second_observation = json.loads(model.requests[2].messages[-1].content or "")
         assert first_observation["status"] == "succeeded"
-        assert first_observation["output"]["weight_kg"] == "77.6"
+        created_record = first_observation["output"]["record"]
+        assert first_observation["output"]["created"] is True
+        assert created_record["content"]["weight_grams"] == 77_600
+        assert created_record["content"]["original_value"] == "77.6"
         assert second_observation["status"] == "succeeded"
-        assert second_observation["output"]["direction"] == "unknown"
+        assert second_observation["output"]["records"][0]["ref"]["kind"] == "weight"
+        assert second_observation["output"]["records"][0]["content"]["weight_grams"] == 77_600
         usage = await UsageRepository(database).detail(
             user_id="user-1", request_id=result.turn_id, limit=20, offset=0
         )
@@ -878,11 +937,11 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
         await database.close()
 
 
-async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
+async def test_runtime_saves_uncertain_image_meal_then_corrects_same_record_across_turns(
     tmp_path: Path,
 ) -> None:
     database = await prepare_database(tmp_path)
-    model = MealImageFollowupModelGateway()
+    model = MealImageCorrectionModelGateway()
     vision = UncertainMealVisionGateway()
     runtime = build_agent_runtime(
         database=database,
@@ -902,6 +961,7 @@ async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
         first = await runtime.run_user_message(
             AgentRuntimeRequest(
                 user_id="user-1",
+                text="这是我的午餐",
                 image_bytes=b"\x89PNG\r\n\x1a\nmeal",
                 image_mime_type="image/png",
                 source_message_id="meal-image-1",
@@ -910,39 +970,31 @@ async def test_runtime_carries_real_image_reference_until_user_confirms_meal(
                 isolated_write_environment=True,
             )
         )
+        first_records = await build_record_service(database).search(
+            "user-1", RecordQuery(kind="meal", limit=10)
+        )
         second = await runtime.run_user_message(
             AgentRuntimeRequest(
                 user_id="user-1",
-                text="这个是我中午吃的",
+                text="方形配菜是蒸蛋",
                 execution_mode=ToolExecutionMode.EVALUATION,
                 isolated_write_environment=True,
             )
         )
-        before_confirmation = await MealRepository(database).recent("user-1")
-        third = await runtime.run_user_message(
-            AgentRuntimeRequest(
-                user_id="user-1",
-                text="方形块是蒸蛋，红色条状物是火腿肠，黑色的是木耳",
-                execution_mode=ToolExecutionMode.EVALUATION,
-                isolated_write_environment=True,
-            )
+        current_records = await build_record_service(database).search(
+            "user-1", RecordQuery(kind="meal", limit=10)
         )
-        meals = await MealRepository(database).recent("user-1")
 
-        assert first.final_text == "图片里有几样食物不确定，请告诉我具体是什么。"
-        assert second.final_text == ("明白是午餐；请确认方形块、红色条状物和黑色食物。")
-        assert before_confirmation == ()
-        assert third.final_text == "午餐已经记录。"
-        assert len(meals) == 1
-        assert meals[0].meal_type.value == "lunch"
-        assert [food.name for food in meals[0].foods] == [
-            "白米饭",
-            "炒白菜",
-            "蒸蛋",
-            "火腿肠",
-            "油豆腐",
-            "木耳",
-        ]
+        assert first.final_text == "午餐已经记下，方形配菜的名称之后还可以更正。"
+        assert len(first_records.records) == 1
+        assert first_records.records[0].content.foods[1].name == "方形配菜"
+        assert len(first_records.records[0].recognition_issues) == 1
+        assert second.final_text == "已把原午餐里的方形配菜改为蒸蛋。"
+        assert len(current_records.records) == 1
+        assert current_records.records[0].ref.record_id == first_records.records[0].ref.record_id
+        assert current_records.records[0].ref.revision == 2
+        assert current_records.records[0].content.foods[1].name == "蒸蛋"
+        assert current_records.records[0].recognition_issues == ()
         assert model.asset_id is not None
         assert "meal_photo" not in json.dumps(
             [request.model_dump(mode="json") for request in model.requests],

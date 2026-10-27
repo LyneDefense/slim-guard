@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -39,6 +39,7 @@ class CompiledContext:
     allowed_tool_names: tuple[str, ...]
     input_item_ids: tuple[str, ...]
     evidence_item_ids: tuple[str, ...] = ()
+    conversation_context: dict[str, object] = field(default_factory=dict)
 
 
 class ContextCompiler:
@@ -121,7 +122,41 @@ class ContextCompiler:
             allowed_tool_names=selected_names,
             input_item_ids=tuple(item.id for item in initialized.input_items),
             evidence_item_ids=self._evidence_item_ids(working_memory),
+            conversation_context=self._conversation_context(initialized, working_memory),
         )
+
+    @staticmethod
+    def _conversation_context(
+        initialized: InitializedTurn,
+        working_memory: Any,
+    ) -> dict[str, object]:
+        """Project only dialogue and task context needed to plan group-chat messages."""
+
+        user_texts: list[str] = []
+        attachment_types: list[str] = []
+        for item in initialized.input_items:
+            if item.item_type is ItemType.USER_MESSAGE:
+                text = item.payload.get("text")
+                if isinstance(text, str) and text.strip():
+                    user_texts.append(text.strip())
+            elif item.item_type is ItemType.IMAGE_ATTACHMENT:
+                mime_type = item.payload.get("mime_type")
+                if isinstance(mime_type, str) and mime_type.startswith("image/"):
+                    attachment_types.append(mime_type)
+
+        context: dict[str, object] = {
+            "current_user_input": {
+                "text": "\n".join(user_texts),
+                "attachments": attachment_types,
+            }
+        }
+        if not isinstance(working_memory, Mapping):
+            return context
+        for key in ("recent_dialogue", "conversation_tasks", "pending_user_confirmations"):
+            value = working_memory.get(key)
+            if value:
+                context[key] = value
+        return context
 
     @staticmethod
     def _evidence_item_ids(working_memory: Any) -> tuple[str, ...]:

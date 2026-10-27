@@ -18,6 +18,7 @@ async def repair_style_once(
     resolution_artifact: AgentArtifact,
     first_style: StyleStage,
     first_review: ReviewStage,
+    sequence: int = 0,
 ) -> tuple[StyleStage, ReviewStage]:
     """Repair expression only after Reviewer requests it; never rerun business tools.
 
@@ -34,6 +35,7 @@ async def repair_style_once(
         resolution_artifact=resolution_artifact,
         parent_invocation_id=first_review.invocation_id,
         attempt=2,
+        sequence=sequence,
         review_feedback=first_review.verdict,
         prior_artifact_id=first_style.artifact.artifact_id,
         verdict_artifact_id=first_review.artifact.artifact_id,
@@ -47,6 +49,7 @@ async def repair_style_once(
         plan_artifact=plan_artifact,
         parent_invocation_id=repaired.invocation_id,
         attempt=2,
+        sequence=sequence,
         prior_verdict_artifact_id=first_review.artifact.artifact_id,
     )
     return repaired, review

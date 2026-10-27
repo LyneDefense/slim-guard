@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -33,45 +34,41 @@ _CONDITION_LABELS = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class OutgoingTextMessage:
+    participant: ParticipantRole
+    text: str
+    source_refs: tuple[str, ...] = ()
+    style_profile_version: str | None = None
+
+
 def compose_messages(
     *,
     turn_id: str,
-    system_text: str,
-    system_source_refs: tuple[str, ...] = (),
-    coach_text: str | None,
-    coach_source_refs: tuple[str, ...] = (),
-    style_profile_version: str | None = None,
+    text_messages: tuple[OutgoingTextMessage, ...],
     tool_outcomes: tuple[ToolCallOutcome, ...] = (),
     created_at: datetime | None = None,
 ) -> tuple[ChatMessage, ...]:
     now = created_at or datetime.now(UTC)
     messages: list[ChatMessage] = []
-    if coach_text and coach_text.strip():
+    if not any(item.participant is ParticipantRole.SYSTEM_ASSISTANT for item in text_messages):
+        raise ValueError("Outgoing message sequence must include the system assistant")
+    for item in text_messages:
+        if not item.text.strip():
+            continue
         messages.append(
             ChatMessage(
                 id=f"chat-{uuid4()}",
                 turn_id=turn_id,
-                sequence=0,
-                participant=ParticipantRole.COACH,
+                sequence=len(messages),
+                participant=item.participant,
                 kind=RenderKind.TEXT,
-                text=coach_text.strip(),
-                source_refs=coach_source_refs,
-                style_profile_version=style_profile_version,
+                text=item.text.strip(),
+                source_refs=item.source_refs,
+                style_profile_version=item.style_profile_version,
                 created_at=now,
             )
         )
-    messages.append(
-        ChatMessage(
-            id=f"chat-{uuid4()}",
-            turn_id=turn_id,
-            sequence=len(messages),
-            participant=ParticipantRole.SYSTEM_ASSISTANT,
-            kind=RenderKind.TEXT,
-            text=system_text.strip(),
-            source_refs=system_source_refs,
-            created_at=now,
-        )
-    )
     for card in project_cards(tool_outcomes):
         messages.append(
             ChatMessage(
@@ -179,4 +176,4 @@ def _project_card_data(tool_name: str, value: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-__all__ = ["compose_messages", "project_cards"]
+__all__ = ["OutgoingTextMessage", "compose_messages", "project_cards"]

@@ -24,12 +24,19 @@ class RegisteredTool(BaseModel):
     timeout_seconds: float = Field(gt=0, le=300)
 
     @model_validator(mode="after")
-    def require_mutation_kind_for_writes(self) -> RegisteredTool:
+    def validate_mutation_kind(self) -> RegisteredTool:
+        write_effects = {
+            ToolEffectLevel.REVERSIBLE_WRITE,
+            ToolEffectLevel.SENSITIVE_WRITE,
+            ToolEffectLevel.EXTERNAL_EFFECT,
+        }
+        if self.effect_level in write_effects and self.mutation_kind is ToolMutationKind.NONE:
+            raise ValueError("Write tools must declare their user-visible mutation kind")
         if (
-            self.effect_level is ToolEffectLevel.REVERSIBLE_WRITE
-            and self.mutation_kind is ToolMutationKind.NONE
+            self.effect_level is ToolEffectLevel.READ
+            and self.mutation_kind is not ToolMutationKind.NONE
         ):
-            raise ValueError("Reversible writes must declare their user-visible mutation kind")
+            raise ValueError("Read-only tools cannot declare a user-visible mutation kind")
         return self
 
     def model_definition(self) -> ToolDefinition:

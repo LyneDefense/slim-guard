@@ -32,7 +32,6 @@ from slim_guard.tools.image import (
     image_tool_executors,
 )
 from slim_guard.tools.memory import (
-    CLEAR_USER_MEMORIES_TOOL_NAME,
     FORGET_USER_MEMORY_TOOL_NAME,
     LIST_USER_MEMORIES_TOOL_NAME,
     MEMORY_TOOL_VERSION,
@@ -45,7 +44,6 @@ from slim_guard.tools.memory import (
     SET_WEIGHT_GOAL_TOOL_NAME,
     UPSERT_EXERCISE_PREFERENCE_TOOL_NAME,
     UPSERT_FOOD_PREFERENCE_TOOL_NAME,
-    ClearUserMemoriesArguments,
     ForgetUserMemoryArguments,
     ListUserMemoriesArguments,
     MemoryToolHandlers,
@@ -89,8 +87,6 @@ from slim_guard.tools.routine import (
 
 __all__ = [
     "RegisteredTool",
-    "CLEAR_USER_MEMORIES_TOOL_NAME",
-    "ClearUserMemoriesArguments",
     "CONFIGURE_ROUTINE_TOOL_NAME",
     "ConfigureRoutineArguments",
     "GET_ROUTINE_TOOL_NAME",

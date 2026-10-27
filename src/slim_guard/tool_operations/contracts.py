@@ -1,10 +1,13 @@
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from slim_guard.tools.contracts import ToolContext, ToolExecutionMode, ToolResult
-
-OperationStatus = Literal["running", "unknown", "not_applied", "succeeded"]
+from slim_guard.tools.contracts import (
+    ToolContext,
+    ToolExecutionMode,
+    ToolOperationStatus,
+    ToolResult,
+)
 
 
 class ToolOperation(BaseModel):
@@ -16,7 +19,7 @@ class ToolOperation(BaseModel):
     tool_version: str
     context: ToolContext
     arguments: dict[str, Any]
-    status: OperationStatus
+    status: ToolOperationStatus
     attempt: int
     result: ToolResult | None = None
 
@@ -40,6 +43,10 @@ class OperationStore(Protocol):
 
     async def get(self, operation_id: str, *, context: ToolContext) -> ToolOperation | None: ...
 
+    async def get_by_initial_execution_key(
+        self, execution_key: str, *, context: ToolContext
+    ) -> ToolOperation | None: ...
+
     async def list_unsettled(
         self,
         *,
@@ -54,6 +61,6 @@ class OperationStore(Protocol):
         self,
         operation: ToolOperation,
         *,
-        status: OperationStatus,
+        status: ToolOperationStatus,
         result: ToolResult,
     ) -> None: ...

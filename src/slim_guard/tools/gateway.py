@@ -20,6 +20,7 @@ from slim_guard.tools.contracts import (
     ToolMutationKind,
     ToolPolicyDecision,
     ToolResult,
+    ToolResultStatus,
 )
 from slim_guard.tools.errors import (
     ToolContextMismatchError,
@@ -188,7 +189,12 @@ class ToolGateway:
             canonical_arguments=canonical_arguments,
         )
         if not claim.created:
-            return self._replayed_execution(claim.execution, tool.mutation_kind)
+            return await self._replayed_execution(
+                execution=claim.execution,
+                tool=tool,
+                executor=executor,
+                context=context,
+            )
 
         execution_context = context.model_copy(
             update={"execution_idempotency_key": idempotency_key}
@@ -222,21 +228,35 @@ class ToolGateway:
                 retryable=False,
             )
 
-        completed = await self._execution_store.complete(
-            idempotency_key=idempotency_key,
-            result=result,
-        )
+        try:
+            completed = await self._execution_store.complete(
+                idempotency_key=idempotency_key,
+                result=result,
+            )
+        except Exception as exc:
+            # The handler has returned a definitive result. Keep that result for
+            # this turn; a later replay can reconcile the still-running attempt
+            # through the executor's authoritative result lookup.
+            logger.error(
+                "tool_execution_receipt_persist_failed",
+                extra={
+                    "error_type": type(exc).__name__,
+                    "tool_name": tool.name,
+                    "tool_call_id": call.id,
+                    "turn_id": context.turn_id,
+                },
+            )
+            return self._execution_from_ref(
+                claim.execution,
+                mutation_kind=tool.mutation_kind,
+                result=result,
+            )
         if completed.result is None:
             raise ToolGatewayConfigurationError(
                 f"Completed tool execution has no result: {idempotency_key}"
             )
-        return ToolExecution(
-            tool_call_id=completed.tool_call_id,
-            tool_name=completed.tool_name,
-            tool_version=completed.tool_version,
-            canonical_arguments=completed.canonical_arguments,
-            idempotency_key=completed.idempotency_key,
-            policy_decision=ToolPolicyDecision.ALLOW,
+        return self._execution_from_ref(
+            completed,
             mutation_kind=tool.mutation_kind,
             result=completed.result,
         )
@@ -274,18 +294,97 @@ class ToolGateway:
             authorization=authorization,
         ).decision
 
-    @staticmethod
-    def _replayed_execution(
-        execution: ToolExecutionRef, mutation_kind: ToolMutationKind
+    async def _replayed_execution(
+        self,
+        *,
+        execution: ToolExecutionRef,
+        tool: RegisteredTool,
+        executor: ToolExecutor[Any],
+        context: ToolContext,
     ) -> ToolExecution:
-        if execution.result is None:
-            result = ToolResult.failed(
-                code="tool_execution_in_progress",
-                message=f"The tool '{execution.tool_name}' is already running.",
-                retryable=True,
+        if execution.result is not None:
+            return self._execution_from_ref(
+                execution,
+                mutation_kind=tool.mutation_kind,
+                result=execution.result,
+            )
+
+        if executor.lookup_result is not None:
+            lookup_context = context.model_copy(
+                update={"execution_idempotency_key": execution.idempotency_key}
+            )
+            try:
+                async with asyncio.timeout(tool.timeout_seconds):
+                    recovered = await executor.lookup_result(lookup_context)
+            except Exception as exc:
+                logger.warning(
+                    "tool_execution_replay_lookup_failed",
+                    extra={
+                        "error_type": type(exc).__name__,
+                        "tool_name": tool.name,
+                        "tool_call_id": context.tool_call_id,
+                        "turn_id": context.turn_id,
+                    },
+                )
+                recovered = None
+            if recovered is not None and recovered.status is ToolResultStatus.SUCCEEDED:
+                try:
+                    completed = await self._execution_store.complete(
+                        idempotency_key=execution.idempotency_key,
+                        result=recovered,
+                    )
+                    if completed.result is not None:
+                        recovered = completed.result
+                except Exception as exc:
+                    logger.error(
+                        "tool_execution_replay_receipt_persist_failed",
+                        extra={
+                            "error_type": type(exc).__name__,
+                            "tool_name": tool.name,
+                            "tool_call_id": context.tool_call_id,
+                            "turn_id": context.turn_id,
+                        },
+                    )
+                    try:
+                        persisted = await self._execution_store.get(execution.idempotency_key)
+                    except Exception:
+                        persisted = None
+                    if persisted is not None and persisted.result is not None:
+                        recovered = persisted.result
+                return self._execution_from_ref(
+                    execution,
+                    mutation_kind=tool.mutation_kind,
+                    result=recovered,
+                )
+
+        if tool.mutation_kind is ToolMutationKind.NONE:
+            message = (
+                f"The tool '{execution.tool_name}' is still running; "
+                "no result is available yet."
             )
         else:
-            result = execution.result
+            message = (
+                f"The write tool '{execution.tool_name}' may still be running or its result "
+                "could not be verified. Do not repeat the write; inspect its operation status."
+            )
+        result = ToolResult.failed(
+            code="tool_execution_in_progress",
+            message=message,
+            retryable=True,
+        )
+        return self._execution_from_ref(
+            execution,
+            mutation_kind=tool.mutation_kind,
+            result=result,
+        )
+
+    @staticmethod
+    def _execution_from_ref(
+        execution: ToolExecutionRef,
+        *,
+        mutation_kind: ToolMutationKind,
+        result: ToolResult,
+    ) -> ToolExecution:
         return ToolExecution(
             tool_call_id=execution.tool_call_id,
             tool_name=execution.tool_name,

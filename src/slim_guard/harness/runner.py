@@ -136,6 +136,7 @@ class TurnHarness:
                 initialized=initialized,
                 invocation=executed.invocation,
                 result=result,
+                conversation_context=prepared.compiled.conversation_context,
             )
             result, finalization = processed.loop, processed.finalization
             final_text = processed.final_text

@@ -5,8 +5,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 TOOL_LABELS = {
-    "clear_long_term_memories": "清空对话长期记忆",
-    "clear_user_memories": "清空用户记忆",
     "configure_checkin_schedule": "设置提醒日程",
     "forget_user_memory": "删除一条用户记忆",
     "get_checkin_schedule": "读取提醒日程",
@@ -24,8 +22,6 @@ TOOL_LABELS = {
     "select_relevant_memories": "选择相关记忆",
     "get_conversation_task": "读取跨轮待办",
     "list_conversation_tasks": "查询跨轮待办",
-    "link_task_authorization": "关联待办授权",
-    "resolve_pending_user_action": "处理待确认操作",
     "set_behavior_goal": "设置行为目标",
     "set_body_fat_goal": "设置目标体脂",
     "set_body_profile": "保存身高档案",

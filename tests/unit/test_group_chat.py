@@ -3,52 +3,73 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from slim_guard.group_chat.composer import compose_messages, project_cards
+from slim_guard.agents.conversation.contracts import ConversationMessageProposal
+from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages, project_cards
 from slim_guard.group_chat.contracts import ParticipantRole, RenderKind
 from slim_guard.group_chat.routing import ConversationRouter
 
 
-def test_conversation_router_defaults_to_system_when_clarification_is_pending() -> None:
+def test_conversation_router_does_not_suppress_coach_during_clarification() -> None:
     result = ConversationRouter().route(
         system_text="请确认这道菜是什么。",
-        coach_text="这顿搭配挺好。",
-        pending_clarification=True,
+        proposals=(
+            ConversationMessageProposal(
+                participant="system_assistant", text="请确认这道菜是什么。"
+            ),
+            ConversationMessageProposal(participant="coach", text="这顿配了蔬菜，不错。"),
+        ),
     )
 
-    assert result.coach is None
-    assert result.suppressed_reason == "conflicts_with_pending_clarification"
+    assert [item.participant for item in result.messages] == [
+        ParticipantRole.SYSTEM_ASSISTANT,
+        ParticipantRole.COACH,
+    ]
 
 
 def test_conversation_router_keeps_core_system_text_authoritative() -> None:
     result = ConversationRouter().route(
         system_text="记上了这顿饭。有荤有素，不错。",
-        routed_system_text="已记录这顿饭。",
-        coach_text="有荤有素，搭配不错。",
+        proposals=(
+            ConversationMessageProposal(participant="system_assistant", text="已记录这顿饭。"),
+            ConversationMessageProposal(participant="coach", text="有荤有素，搭配不错。"),
+        ),
     )
 
     assert result.system_text == "记上了这顿饭。有荤有素，不错。"
-    assert result.coach is not None
-    assert result.coach.text == "有荤有素，搭配不错。"
+    assert result.messages[1].participant is ParticipantRole.COACH
+    assert result.messages[1].text == "有荤有素，搭配不错。"
+    assert result.suppressed_reason == "system_text_kept_authoritative"
 
 
-def test_conversation_router_suppresses_coach_after_tool_failure() -> None:
+def test_conversation_router_does_not_route_based_on_tool_failure_alone() -> None:
     result = ConversationRouter().route(
         system_text="这次记录没有成功，请确认菜品。",
-        coach_text="这顿搭配挺好。",
-        tool_failed=True,
+        proposals=(
+            ConversationMessageProposal(
+                participant="system_assistant", text="这次记录没有成功，请确认菜品。"
+            ),
+            ConversationMessageProposal(participant="coach", text="确认好我们再继续。"),
+        ),
     )
 
-    assert result.coach is None
-    assert result.suppressed_reason == "conflicts_with_failed_tool"
+    assert len(result.coach_messages) == 1
 
 
 def test_group_chat_composer_keeps_coach_and_system_as_distinct_messages() -> None:
     messages = compose_messages(
         turn_id="turn-1",
-        system_text="已记录今日晚餐。",
-        system_source_refs=("tool-1",),
-        coach_text="行，这顿搭配挺好。",
-        style_profile_version="doctor_v1",
+        text_messages=(
+            OutgoingTextMessage(
+                participant=ParticipantRole.COACH,
+                text="行，这顿搭配挺好。",
+                style_profile_version="doctor_v1",
+            ),
+            OutgoingTextMessage(
+                participant=ParticipantRole.SYSTEM_ASSISTANT,
+                text="已记录今日晚餐。",
+                source_refs=("tool-1",),
+            ),
+        ),
         created_at=datetime(2026, 9, 18, 12, 0, tzinfo=UTC),
     )
 

@@ -1,4 +1,4 @@
-"""Own task continuity and connect it to existing operation authorizations."""
+"""Compose cross-turn task continuity independently from tool authorization."""
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass

@@ -138,8 +138,10 @@ class ResponseStageExecutor:
         request: ResponseFinalizationRequest,
         system_text: str,
         semantic_summary: dict[str, object] | None = None,
+        conversation_context: dict[str, object] | None = None,
         plan_artifact: AgentArtifact,
         parent_invocation_id: str,
+        system_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
         tool_failed: bool = False,
@@ -150,7 +152,13 @@ class ResponseStageExecutor:
             role=AgentRole.CONVERSATION,
             version=CONVERSATION_PROMPT_VERSION,
             input_schema="ConversationDecision",
-            privacy_scopes=("response_plan", "tool_outcomes"),
+            privacy_scopes=(
+                "current_user_input",
+                "recent_dialogue",
+                "conversation_tasks",
+                "response_plan",
+                "tool_outcomes",
+            ),
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=(plan_artifact.artifact_id,),
             attempt=attempt,
@@ -160,6 +168,8 @@ class ResponseStageExecutor:
             invocation=invocation,
             system_text=system_text,
             semantic_summary=semantic_summary,
+            conversation_context=conversation_context,
+            system_source_refs=system_source_refs,
             allowed_source_refs=allowed_source_refs,
             pending_clarification=pending_clarification,
             tool_failed=tool_failed,
@@ -172,12 +182,15 @@ class ResponseStageExecutor:
             payload={
                 "system_text": system_text,
                 "model_system_text": result.model_system_text,
-                "routed_system_text": result.routing.system_text,
-                "coach_text": result.routing.coach.text if result.routing.coach else None,
-                "coach_source_refs": (
-                    list(result.routing.coach.source_refs) if result.routing.coach else []
-                ),
-                "suppressed_reason": result.routing.suppressed_reason,
+                "messages": [
+                    {
+                        "participant": message.participant.value,
+                        "text": message.text,
+                        "source_refs": list(message.source_refs),
+                    }
+                    for message in result.routing.messages
+                ],
+                "suppressed_reasons": list(result.routing.suppressed_reasons),
                 "status": result.status.value,
                 "failure_code": result.failure_code,
                 "attempt": attempt,
@@ -191,7 +204,7 @@ class ResponseStageExecutor:
                 invocation_id=invocation.invocation_id,
                 status=result.status,
                 output_schema="ConversationDecision",
-                output_schema_version="1",
+                output_schema_version="2",
                 artifact_id=artifact.artifact_id,
                 model_call_count=result.model_call_count,
                 tool_call_count=0,
@@ -220,6 +233,7 @@ class ResponseStageExecutor:
         resolution_artifact: AgentArtifact,
         parent_invocation_id: str,
         attempt: int,
+        sequence: int = 0,
         review_feedback: ReviewerVerdict | None = None,
         prior_artifact_id: str | None = None,
         verdict_artifact_id: str | None = None,
@@ -241,6 +255,12 @@ class ResponseStageExecutor:
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=parents,
             attempt=attempt,
+            sequence=sequence,
+            caller=(
+                AgentRole.RESPONSE_REVIEWER.value
+                if verdict_artifact_id is not None
+                else AgentRole.CONVERSATION.value
+            ),
         )
         await self._start(invocation, "使用本轮已冻结的唯一风格 Profile 表达内容")
         context = self._style_compiler.compile(
@@ -318,6 +338,7 @@ class ResponseStageExecutor:
         plan_artifact: AgentArtifact,
         parent_invocation_id: str,
         attempt: int,
+        sequence: int = 0,
         prior_verdict_artifact_id: str | None = None,
     ) -> ReviewStage:
         parents = self.unique_ids(
@@ -339,6 +360,8 @@ class ResponseStageExecutor:
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=parents,
             attempt=attempt,
+            sequence=sequence,
+            caller=AgentRole.RESPONSE_STYLE.value,
         )
         await self._start(invocation, "检查最终文案的安全性、证据和语义忠实度")
         context = self._reviewer_compiler.compile(
@@ -575,6 +598,8 @@ class ResponseStageExecutor:
         parent_invocation_id: str,
         input_artifact_ids: tuple[str, ...],
         attempt: int,
+        sequence: int = 0,
+        caller: str | None = None,
     ) -> AgentInvocation:
         return AgentInvocation(
             invocation_id=f"inv-{uuid4()}",
@@ -585,7 +610,12 @@ class ResponseStageExecutor:
             agent_role=role,
             agent_version=version,
             attempt=attempt,
-            caller=(AgentRole.CORE.value if attempt == 1 else AgentRole.RESPONSE_REVIEWER.value),
+            sequence=sequence,
+            caller=(
+                caller
+                if caller is not None
+                else (AgentRole.CORE.value if attempt == 1 else AgentRole.RESPONSE_REVIEWER.value)
+            ),
             parent_invocation_id=parent_invocation_id,
             input_artifact_ids=input_artifact_ids,
             input_schema=input_schema,
@@ -616,6 +646,7 @@ class ResponseStageExecutor:
                 "agent_role": invocation.agent_role.value,
                 "agent_version": invocation.agent_version,
                 "attempt": invocation.attempt,
+                "sequence": invocation.sequence,
                 "parent_invocation_id": invocation.parent_invocation_id,
                 "input_artifact_ids": invocation.input_artifact_ids,
                 "allowed_tool_names": invocation.allowed_tools,
