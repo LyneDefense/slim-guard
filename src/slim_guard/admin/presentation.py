@@ -590,6 +590,40 @@ def _context_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _model_presentation(details: Mapping[str, Any]) -> dict[str, Any]:
+    invalid = _mapping(details.get("invalid_response"))
+    if invalid:
+        reason_code = str(invalid.get("reason_code") or "invalid_model_response")
+        field_path = invalid.get("field_path")
+        parser_detail = invalid.get("parser_detail")
+        parser_position = invalid.get("parser_position")
+        facts = [
+            {"label": "失败原因码", "value": _humanize_identifier(reason_code)},
+            {"label": "字段路径", "value": _display(field_path)},
+            {"label": "解析器错误", "value": _display(parser_detail)},
+            {"label": "字符位置", "value": _display(parser_position)},
+        ]
+        excerpt = invalid.get("raw_output_excerpt")
+        if isinstance(excerpt, str) and excerpt:
+            suffix = "（已截断）" if invalid.get("raw_output_truncated") is True else ""
+            facts.append({"label": f"失败字段原始片段{suffix}", "value": excerpt})
+        repair_summary = (
+            "系统已保存受限长度的失败字段片段，并将其反馈给模型进行格式修复。"
+            if invalid.get("repair_attempted") is True
+            else "系统已保存失败字段诊断；本次没有再尝试格式修复。"
+        )
+        return {
+            **_presentation(
+                "observation",
+                "模型响应格式校验失败",
+                (
+                    f"Harness 在第 {_display(details.get('call_index'))} 次模型请求中，"
+                    f"无法解析字段 {_display(field_path)}：{_display(parser_detail)}。"
+                    f"{repair_summary}"
+                ),
+            ),
+            "facts": facts,
+        }
+
     message = _mapping(details.get("message"))
     tool_calls_value = message.get("tool_calls")
     tool_calls = tool_calls_value if isinstance(tool_calls_value, list) else []

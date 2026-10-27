@@ -253,6 +253,52 @@ async def test_gateway_rejects_tool_arguments_that_are_not_an_object() -> None:
         await gateway.close()
 
 
+async def test_gateway_reports_malformed_tool_arguments_json_details() -> None:
+    malformed_arguments = '{"meal_type":"dinner" "foods":[]}'
+    gateway = ZhipuModelGateway(
+        api_key="secret-key",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "function": {
+                                            "name": "record_weight",
+                                            "arguments": malformed_arguments,
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+            )
+        ),
+    )
+    try:
+        with pytest.raises(InvalidModelResponse, match="arguments are not valid JSON") as caught:
+            await gateway.complete(
+                request_with(ModelMessage(role=MessageRole.USER, content="今天77.6kg"))
+            )
+        assert caught.value.reason_code == "malformed_tool_arguments_json"
+        assert caught.value.field_path == "message.tool_calls[0].function.arguments"
+        assert caught.value.repairable is True
+        assert caught.value.parser_detail == "Expecting ',' delimiter"
+        assert caught.value.parser_position is not None
+        assert caught.value.raw_output_excerpt == malformed_arguments
+        assert caught.value.raw_output_truncated is False
+    finally:
+        await gateway.close()
+
+
 def test_gateway_classifies_token_truncation_as_repairable() -> None:
     with pytest.raises(InvalidModelResponse) as caught:
         ZhipuModelGateway._model_response(

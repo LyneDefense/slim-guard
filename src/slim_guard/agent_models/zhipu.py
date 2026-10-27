@@ -213,6 +213,10 @@ class ZhipuModelGateway:
                 provider_request_id=request_id,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
+                parser_detail=exc.parser_detail,
+                parser_position=exc.parser_position,
+                raw_output_excerpt=exc.raw_output_excerpt,
+                raw_output_truncated=exc.raw_output_truncated,
             ) from None
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError) as exc:
             raise InvalidModelResponse(
@@ -268,12 +272,15 @@ class ZhipuModelGateway:
                 )
             try:
                 arguments = json.loads(arguments_text)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
                 raise InvalidModelResponse(
                     "tool call arguments are not valid JSON",
                     reason_code="malformed_tool_arguments_json",
                     field_path=f"{field_path}.function.arguments",
                     repairable=True,
+                    parser_detail=exc.msg,
+                    parser_position=exc.pos,
+                    raw_output_excerpt=arguments_text,
                 ) from None
             if not isinstance(arguments, dict):
                 raise InvalidModelResponse(

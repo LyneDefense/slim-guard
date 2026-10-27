@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from slim_guard.agent_models.errors import InvalidModelResponse
 from slim_guard.agent_models.gateway import ModelRequest, ModelResponse, NormalizedToolCall
 from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import ItemStatus, ItemType, TurnStatus, WorkflowTraceEvent
@@ -66,6 +67,17 @@ class HarnessRunRecorder(Protocol):
         call_index: int,
         started_at: datetime,
         completed_at: datetime,
+    ) -> None: ...
+
+    async def record_invalid_model_response(
+        self,
+        *,
+        turn_id: str,
+        request: ModelRequest,
+        error: InvalidModelResponse,
+        call_index: int,
+        failed_at: datetime,
+        repair_attempted: bool,
     ) -> None: ...
 
     async def start_tool_call(
@@ -150,6 +162,18 @@ class NullHarnessRunRecorder:
         call_index: int,
         started_at: datetime,
         completed_at: datetime,
+    ) -> None:
+        return None
+
+    async def record_invalid_model_response(
+        self,
+        *,
+        turn_id: str,
+        request: ModelRequest,
+        error: InvalidModelResponse,
+        call_index: int,
+        failed_at: datetime,
+        repair_attempted: bool,
     ) -> None:
         return None
 
@@ -297,6 +321,45 @@ class PersistentHarnessRunRecorder:
                 "provider_request_id": response.provider_request_id,
                 "started_at": started_at.isoformat(),
                 "completed_at": completed_at.isoformat(),
+            },
+        )
+
+    async def record_invalid_model_response(
+        self,
+        *,
+        turn_id: str,
+        request: ModelRequest,
+        error: InvalidModelResponse,
+        call_index: int,
+        failed_at: datetime,
+        repair_attempted: bool,
+    ) -> None:
+        """Persist bounded diagnostics for the malformed field, not the provider envelope."""
+
+        await self._store.append_item(
+            turn_id=turn_id,
+            item_type=ItemType.MODEL_MESSAGE,
+            status=ItemStatus.FAILED,
+            payload={
+                "call_index": call_index,
+                "model": request.model,
+                "purpose": request.purpose.value,
+                "invalid_response": {
+                    "reason_code": error.reason_code,
+                    "field_path": error.field_path,
+                    "parser_detail": error.parser_detail,
+                    "parser_position": error.parser_position,
+                    "raw_output_excerpt": error.raw_output_excerpt,
+                    "raw_output_truncated": error.raw_output_truncated,
+                    "repair_attempted": repair_attempted,
+                },
+                "finish_reason": error.finish_reason,
+                "provider_request_id": error.provider_request_id,
+                "usage": {
+                    "input_tokens": error.input_tokens,
+                    "output_tokens": error.output_tokens,
+                },
+                "failed_at": failed_at.isoformat(),
             },
         )
 

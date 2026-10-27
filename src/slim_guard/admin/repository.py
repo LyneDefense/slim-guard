@@ -1151,6 +1151,10 @@ class AdminQueryRepository:
                 legacy_tokens_by_turn[item_row.turn_id] = legacy_tokens_by_turn.get(
                     item_row.turn_id, 0
                 ) + self._model_message_token_count(item_row)
+                if item_row.status == "failed":
+                    timeline_by_turn.setdefault(item_row.turn_id, []).append(
+                        self._item_view(item_row, None)
+                    )
                 continue
             timeline_by_turn.setdefault(item_row.turn_id, []).append(
                 self._item_view(item_row, None)

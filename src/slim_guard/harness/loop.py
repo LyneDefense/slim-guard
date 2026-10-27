@@ -98,6 +98,7 @@ class LoopProgress:
     messages: list[ModelMessage] = field(default_factory=list)
     model_responses: list[ModelResponse] = field(default_factory=list)
     tool_outcomes: list[ToolCallOutcome] = field(default_factory=list)
+    model_request_attempts: int = 0
     format_repair_attempts: int = 0
     successful_tool_signatures: set[str] = field(default_factory=set)
 
@@ -159,11 +160,25 @@ class HarnessLoop:
                 )
             request_update: dict[str, object] = {"messages": tuple(messages)}
             current_request = request.model_copy(update=request_update)
+            state.model_request_attempts += 1
+            model_started_at = self._clock()
             try:
-                model_started_at = self._clock()
                 response = await self._model.complete(current_request)
                 model_completed_at = self._clock()
             except ModelGatewayError as exc:
+                if isinstance(exc, InvalidModelResponse):
+                    repair_attempted = (
+                        exc.repairable
+                        and state.format_repair_attempts < MAX_FORMAT_REPAIR_ATTEMPTS
+                    )
+                    await self._recorder.record_invalid_model_response(
+                        turn_id=context.turn_id,
+                        request=current_request,
+                        error=exc,
+                        call_index=state.model_request_attempts,
+                        failed_at=self._clock(),
+                        repair_attempted=repair_attempted,
+                    )
                 if (
                     isinstance(exc, InvalidModelResponse)
                     and exc.repairable

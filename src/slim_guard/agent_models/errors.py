@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+MAX_INVALID_FIELD_EXCERPT_LENGTH = 4096
+
 
 class ModelGatewayError(RuntimeError):
     """Base class for normalized model-provider failures."""
@@ -29,8 +31,8 @@ class ModelProviderError(ModelGatewayError):
 class InvalidModelResponse(ModelGatewayError):
     """A provider response the gateway could not normalize.
 
-    Only sanitized diagnostics are retained. In particular, raw provider output is
-    deliberately excluded because it can contain user data or hidden prompt text.
+    Provider envelopes and prompts are not retained. A bounded fragment of the
+    malformed field may be kept so the Harness can diagnose and repair that field.
     """
 
     def __init__(
@@ -45,6 +47,10 @@ class InvalidModelResponse(ModelGatewayError):
         provider_request_id: str | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        parser_detail: str | None = None,
+        parser_position: int | None = None,
+        raw_output_excerpt: str | None = None,
+        raw_output_truncated: bool = False,
     ) -> None:
         super().__init__(message)
         self.reason_code = reason_code
@@ -55,6 +61,17 @@ class InvalidModelResponse(ModelGatewayError):
         self.provider_request_id = provider_request_id
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+        self.parser_detail = parser_detail
+        self.parser_position = parser_position
+        self.raw_output_excerpt = (
+            raw_output_excerpt[:MAX_INVALID_FIELD_EXCERPT_LENGTH]
+            if raw_output_excerpt is not None
+            else None
+        )
+        self.raw_output_truncated = raw_output_truncated or (
+            raw_output_excerpt is not None
+            and len(raw_output_excerpt) > MAX_INVALID_FIELD_EXCERPT_LENGTH
+        )
 
 
 class UnsupportedModelFeature(ModelGatewayError):

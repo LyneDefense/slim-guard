@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from slim_guard.admin.repository import AdminQueryRepository
+from slim_guard.agent_models.errors import InvalidModelResponse
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelMessage,
@@ -14,7 +16,7 @@ from slim_guard.agent_models.gateway import (
     ModelUsage,
     NormalizedToolCall,
 )
-from slim_guard.db.models import SlimGuardUser
+from slim_guard.db.models import InteractionTraceRecord, SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.harness.events import (
     ItemStatus,
@@ -118,6 +120,72 @@ async def test_persistent_recorder_saves_final_response_and_completes_turn(tmp_p
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
         assert stored_turn.step_count == 1
+    finally:
+        await database.close()
+
+
+async def test_invalid_model_response_trace_keeps_bounded_parser_diagnostics(tmp_path) -> None:
+    database, repository, turn = await prepare_turn(tmp_path)
+    recorder = PersistentHarnessRunRecorder(repository)
+    invalid_field = '{"meal_type":"dinner" "foods":[]}'
+    try:
+        await recorder.record_invalid_model_response(
+            turn_id=turn.id,
+            request=model_request(),
+            error=InvalidModelResponse(
+                "tool call arguments are not valid JSON",
+                reason_code="malformed_tool_arguments_json",
+                field_path="message.tool_calls[1].function.arguments",
+                repairable=True,
+                parser_detail="Expecting ',' delimiter",
+                parser_position=23,
+                raw_output_excerpt=invalid_field,
+            ),
+            call_index=1,
+            failed_at=datetime(2026, 9, 4, 8, 0, tzinfo=UTC),
+            repair_attempted=True,
+        )
+        async with database.session() as session, session.begin():
+            session.add(
+                InteractionTraceRecord(
+                    id="trace-invalid-model-response",
+                    user_id="user-1",
+                    trigger_type="user_message",
+                    agent_turn_id=turn.id,
+                    agent_version_id=turn.agent_version_id,
+                    reply_kind="agent",
+                    generation_status="failed",
+                    delivery_status="failed",
+                    created_at=datetime(2026, 9, 4, 8, 0, tzinfo=UTC),
+                    updated_at=datetime(2026, 9, 4, 8, 0, tzinfo=UTC),
+                )
+            )
+
+        item = (await repository.list_items(turn.id))[0]
+        assert item.item_type is ItemType.MODEL_MESSAGE
+        assert item.status is ItemStatus.FAILED
+        assert item.payload["call_index"] == 1
+        assert item.payload["invalid_response"] == {
+            "reason_code": "malformed_tool_arguments_json",
+            "field_path": "message.tool_calls[1].function.arguments",
+            "parser_detail": "Expecting ',' delimiter",
+            "parser_position": 23,
+            "raw_output_excerpt": invalid_field,
+            "raw_output_truncated": False,
+            "repair_attempted": True,
+        }
+        trace = await AdminQueryRepository(database).get_trace(
+            user_id="user-1", trace_id="trace-invalid-model-response"
+        )
+        assert trace is not None
+        failed_model_event = next(
+            event for event in trace["timeline"] if event["operation"] == "model_message"
+        )
+        assert failed_model_event["presentation"]["title"] == "模型响应格式校验失败"
+        assert {
+            "label": "失败字段原始片段",
+            "value": invalid_field,
+        } in failed_model_event["presentation"]["facts"]
     finally:
         await database.close()
 

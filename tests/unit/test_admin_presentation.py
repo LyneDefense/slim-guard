@@ -148,6 +148,40 @@ def test_model_tool_choice_is_presented_as_an_explicit_decision() -> None:
     assert "隐藏思维" in presentation["summary"]
 
 
+def test_invalid_model_response_presentation_exposes_field_diagnostics() -> None:
+    presentation = present_event(
+        {
+            "event_type": "agent_item",
+            "operation": "model_message",
+            "status": "failed",
+            "details": {
+                "call_index": 2,
+                "invalid_response": {
+                    "reason_code": "malformed_tool_arguments_json",
+                    "field_path": "message.tool_calls[1].function.arguments",
+                    "parser_detail": "Expecting ',' delimiter",
+                    "parser_position": 28,
+                    "raw_output_excerpt": '{"meal_type":"dinner" "foods":[]}',
+                    "raw_output_truncated": False,
+                    "repair_attempted": True,
+                },
+            },
+        }
+    )
+
+    assert presentation["title"] == "模型响应格式校验失败"
+    assert "第 2 次模型请求" in presentation["summary"]
+    assert "Expecting ',' delimiter" in presentation["summary"]
+    assert {
+        "label": "字段路径",
+        "value": "message.tool_calls[1].function.arguments",
+    } in presentation["facts"]
+    assert {
+        "label": "失败字段原始片段",
+        "value": '{"meal_type":"dinner" "foods":[]}',
+    } in presentation["facts"]
+
+
 def test_visible_group_chat_messages_show_their_participant() -> None:
     presentation = present_event(
         {

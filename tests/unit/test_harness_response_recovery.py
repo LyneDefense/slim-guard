@@ -92,6 +92,13 @@ def call_response(call_id: str) -> ModelResponse:
     )
 
 
+def test_invalid_output_excerpt_is_bounded() -> None:
+    error = InvalidModelResponse("malformed", raw_output_excerpt="x" * 5000)
+
+    assert len(error.raw_output_excerpt or "") == 4096
+    assert error.raw_output_truncated is True
+
+
 class NoToolCalls:
     async def execute(self, **_kwargs):
         raise AssertionError("No tool call should be executed")
@@ -137,11 +144,17 @@ class SuccessfulToolCall:
         )
 
 
-async def run(model, tool_runner, *, model_request: ModelRequest | None = None):
+async def run(
+    model,
+    tool_runner,
+    *,
+    model_request: ModelRequest | None = None,
+    recorder=None,
+):
     return await HarnessLoop(
         model=model,
         tool_calls=tool_runner,
-        recorder=NullHarnessRunRecorder(),
+        recorder=recorder or NullHarnessRunRecorder(),
     ).run(
         request=model_request or request(),
         context=context(),
@@ -152,6 +165,13 @@ async def run(model, tool_runner, *, model_request: ModelRequest | None = None):
 
 
 async def test_invalid_format_is_sent_back_once_with_sanitized_diagnostics():
+    class CapturingRecorder(NullHarnessRunRecorder):
+        def __init__(self) -> None:
+            self.invalid_responses = []
+
+        async def record_invalid_model_response(self, **kwargs) -> None:
+            self.invalid_responses.append(kwargs)
+
     model = ScriptedModelGateway(
         (
             InvalidModelResponse(
@@ -159,12 +179,16 @@ async def test_invalid_format_is_sent_back_once_with_sanitized_diagnostics():
                 reason_code="malformed_tool_arguments_json",
                 field_path="message.tool_calls[0].function.arguments",
                 repairable=True,
+                parser_detail="Expecting ',' delimiter",
+                parser_position=12,
+                raw_output_excerpt='{"meal_type":"dinner" "foods":[]}',
             ),
             text_response("已按格式重新处理。"),
         )
     )
+    recorder = CapturingRecorder()
 
-    result = await run(model, NoToolCalls())
+    result = await run(model, NoToolCalls(), recorder=recorder)
 
     assert result.termination is HarnessTermination.FINAL_RESPONSE
     assert len(model.requests) == 2
@@ -172,7 +196,17 @@ async def test_invalid_format_is_sent_back_once_with_sanitized_diagnostics():
     assert repair.role is MessageRole.SYSTEM
     assert "malformed_tool_arguments_json" in (repair.content or "")
     assert "message.tool_calls[0].function.arguments" in (repair.content or "")
+    assert "Expecting ',' delimiter" in (repair.content or "")
+    assert "字符位置：12" in (repair.content or "")
+    assert 'meal_type\\":\\"dinner' in (repair.content or "")
     assert "private raw response fragment" not in (repair.content or "")
+    assert len(recorder.invalid_responses) == 1
+    assert recorder.invalid_responses[0]["call_index"] == 1
+    assert recorder.invalid_responses[0]["repair_attempted"] is True
+    assert (
+        recorder.invalid_responses[0]["error"].raw_output_excerpt
+        == '{"meal_type":"dinner" "foods":[]}'
+    )
 
 
 async def test_truncation_recovery_increases_output_budget():
