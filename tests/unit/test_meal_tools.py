@@ -35,6 +35,8 @@ NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
 
 async def prepare(
     tmp_path: Path,
+    *,
+    user_text: str = "午饭鸡胸肉和半碗米饭",
 ) -> tuple[Database, MealRepository, ToolContext]:
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'meal-tools.sqlite3'}")
     await database.create_schema()
@@ -60,7 +62,7 @@ async def prepare(
             agent_version_id=manifest.version_id,
             trigger=TurnTrigger.USER_MESSAGE,
             execution_mode=ToolExecutionMode.EVALUATION,
-            inputs=(TurnInput.user_message(text="午饭鸡胸肉和半碗米饭"),),
+            inputs=(TurnInput.user_message(text=user_text),),
         )
     )
     return (
@@ -108,6 +110,54 @@ async def test_record_and_read_meal_tools(tmp_path: Path) -> None:
         assert recent.status is ToolResultStatus.SUCCEEDED
         assert recent.output["records"][0]["meal_type"] == "lunch"
         assert recent.source_ids == recorded.source_ids
+    finally:
+        await database.close()
+
+
+async def test_separate_dinner_submissions_are_distinct_but_replay_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    database, repository, first_context = await prepare(
+        tmp_path, user_text="这是我的晚餐，帮我记一下"
+    )
+    handlers = MealToolHandlers(repository, clock=lambda: NOW)
+    dinner = RecordMealArguments(
+        meal_type="dinner",
+        foods=[MealFoodArguments(name="米饭"), MealFoodArguments(name="炒青菜")],
+    )
+    try:
+        first = await handlers.record_meal(first_context, dinner)
+        replay = await handlers.record_meal(first_context, dinner)
+
+        second_turn = await TurnInitializer(HarnessStateRepository(database)).initialize(
+            TurnInitializationRequest(
+                user_id="user-1",
+                agent_version_id=first_context.agent_version_id,
+                trigger=TurnTrigger.USER_MESSAGE,
+                execution_mode=ToolExecutionMode.EVALUATION,
+                inputs=(TurnInput.user_message(text="这是我的晚餐，帮我记一下"),),
+            )
+        )
+        second_context = first_context.model_copy(
+            update={
+                "thread_id": second_turn.context.thread_id,
+                "turn_id": second_turn.context.turn_id,
+                "source_item_id": second_turn.source_item_id,
+                "tool_call_id": "second-dinner-call",
+                "execution_idempotency_key": "tool-meal-second-dinner",
+            }
+        )
+        second = await handlers.record_meal(second_context, dinner)
+
+        assert first.status is replay.status is second.status is ToolResultStatus.SUCCEEDED
+        assert first.output["created"] is True
+        assert replay.output["created"] is False
+        assert replay.output["record_id"] == first.output["record_id"]
+        assert second.output["created"] is True
+        assert second.output["record_id"] != first.output["record_id"]
+        records = await repository.recent("user-1", limit=10)
+        assert len(records) == 2
+        assert all(record.meal_type.value == "dinner" for record in records)
     finally:
         await database.close()
 

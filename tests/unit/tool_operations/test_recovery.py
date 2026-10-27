@@ -226,6 +226,28 @@ async def test_unknown_write_cannot_be_repeated_with_changed_call_or_args(setup,
     assert count == 1
 
 
+async def test_uncertain_write_from_another_user_message_does_not_block_new_event(setup):
+    count = 0
+
+    async def handler(context, arguments):
+        nonlocal count
+        count += 1
+        if count == 1:
+            return ToolResult.failed(code="timeout", message="Outcome unknown.")
+        return ToolResult.success(output={"recorded": True})
+
+    call, _ = compose(setup, handler)
+    first_context = setup[3].model_copy(update={"source_item_id": "user-message-1"})
+    second_context = setup[3].model_copy(update={"source_item_id": "user-message-2"})
+    first = await call("first", as_context=first_context)
+    second = await call("second", as_context=second_context)
+
+    assert first.result.operation.status == "unknown"
+    assert second.result.status.value == "succeeded"
+    assert second.result.operation.operation_id != first.result.operation.operation_id
+    assert count == 2
+
+
 async def test_concurrent_resumes_have_one_executor(setup):
     count = 0
 
@@ -502,6 +524,12 @@ async def test_domain_validation_rejection_can_be_corrected(setup):
         authorization=auth,
     )
     assert invalid.result.operation.status == "not_applied"
+    unsettled = await store.list_unsettled(
+        user_id=context.user_id,
+        thread_id=context.thread_id,
+        execution_mode=context.execution_mode,
+    )
+    assert all(operation.id != invalid.result.operation.operation_id for operation in unsettled)
     valid = await gateway.execute(
         call=NormalizedToolCall(
             id="fixed",
@@ -516,6 +544,27 @@ async def test_domain_validation_rejection_can_be_corrected(setup):
     )
     assert valid.result.operation.status == "succeeded"
     assert len(await MealRepository(db).recent("user-1")) == 1
+
+
+async def test_unsettled_listing_keeps_uncertain_operations_visible(setup):
+    _, _, store, context = setup
+
+    async def handler(_context, _arguments):
+        raise RuntimeError("simulated uncertain external write")
+
+    call, _ = compose(setup, handler)
+    attempted = await call("unknown-write")
+    assert attempted.result.operation is not None
+    assert attempted.result.operation.status == "unknown"
+
+    unsettled = await store.list_unsettled(
+        user_id=context.user_id,
+        thread_id=context.thread_id,
+        execution_mode=context.execution_mode,
+    )
+    assert [operation.id for operation in unsettled] == [
+        attempted.result.operation.operation_id
+    ]
 
 
 async def test_new_operation_is_not_silently_matched_to_previous_success(setup):

@@ -24,7 +24,10 @@ from slim_guard.tools.contracts import (
 
 
 def _scope(context: ToolContext, tool_name: str) -> str:
-    value = [context.user_id, context.thread_id, context.execution_mode.value, tool_name]
+    # Serialize uncertain retries for the same source message, not all future
+    # writes of this capability. A separate user message is a separate event.
+    source_id = context.source_item_id or context.turn_id
+    value = [context.user_id, context.thread_id, context.execution_mode.value, source_id, tool_name]
     return hashlib.sha256(json.dumps(value).encode()).hexdigest()
 
 
@@ -153,7 +156,7 @@ class ToolOperationRepository:
                 .where(
                     ToolOperationRecord.user_id == user_id,
                     ToolOperationRecord.thread_id == thread_id,
-                    ToolOperationRecord.status != "succeeded",
+                    ToolOperationRecord.status.in_(("running", "unknown")),
                 )
                 .order_by(ToolOperationRecord.created_at.desc())
                 .limit(100)
