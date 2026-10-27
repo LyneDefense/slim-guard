@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 from slim_guard.agent import composition
@@ -8,11 +8,11 @@ from slim_guard.agent_models.config import ModelRuntimeConfig
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agents.nutrition import CONSULT_NUTRITION_TOOL_NAME
 from slim_guard.db.session import Database
-from slim_guard.harness.pending_config import PendingActionConfig
 from slim_guard.memory.config import MemoryRuntimeConfig
+from slim_guard.tasks.config import TaskRuntimeConfig
 
 
-async def test_runtime_assembly_shares_registry_context_and_confirmation_state() -> None:
+async def test_runtime_assembly_shares_registry_context_and_conversation_tasks() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     model = ScriptedModelGateway([])
     definition = AgentRuntimeDefinition(
@@ -23,18 +23,33 @@ async def test_runtime_assembly_shares_registry_context_and_confirmation_state()
             recent_dialogue_max_chars=2300,
         ),
         code_revision="assembly-test",
-        pending_actions=PendingActionConfig(confirmation_ttl_seconds=42, review_ttl_seconds=84),
+        tasks=TaskRuntimeConfig(clarification_ttl_days=42),
     )
     now = datetime(2026, 9, 20, tzinfo=UTC)
     try:
+        built_tasks = []
+        build_tasks = composition.build_task_components
+        built_tool_calls = []
+        build_tool_calls = tools.ToolCallCoordinator
+
+        def capture_task_components(**kwargs):
+            components = build_tasks(**kwargs)
+            built_tasks.append(components)
+            return components
+
+        def capture_tool_calls(**kwargs):
+            coordinator = build_tool_calls(**kwargs)
+            built_tool_calls.append(coordinator)
+            return coordinator
+
         with (
-            patch.object(tools, "ToolGateway", wraps=tools.ToolGateway) as gateway,
-            patch.object(tools, "ToolCallCoordinator", wraps=tools.ToolCallCoordinator) as calls,
+            patch.object(tools, "OperationGateway", wraps=tools.OperationGateway) as gateway,
+            patch.object(tools, "ToolCallCoordinator", side_effect=capture_tool_calls),
             patch.object(
-                tools,
-                "PendingActionResumeCoordinator",
-                wraps=tools.PendingActionResumeCoordinator,
-            ) as resume,
+                composition,
+                "build_task_components",
+                side_effect=capture_task_components,
+            ),
             patch.object(
                 business,
                 "AuthoritativeContextDataProvider",
@@ -71,18 +86,15 @@ async def test_runtime_assembly_shares_registry_context_and_confirmation_state()
 
         registry = gateway.call_args.kwargs["registry"]
         assert CONSULT_NUTRITION_TOOL_NAME in registry.names
-        assert set(gateway.call_args.kwargs["executors"]) == set(registry.names)
+        assert set(gateway.call_args.kwargs["executors"]).issubset(set(registry.names))
         assert compiler.call_args.kwargs["tools"] is registry
         assert compiler.call_args.kwargs["manifest"] is runtime.manifest
         assert dict(runtime.manifest.tool_versions) == registry.versions
 
-        pending = calls.call_args.kwargs["pending_actions"]
-        assert context.call_args.kwargs["pending_actions"] is pending
-        assert resume.call_args.kwargs["pending_actions"] is pending
-        assert resume.call_args.kwargs["turn_state"] is calls.call_args.kwargs["turn_state"]
-        assert resume.call_args.kwargs["tool_calls"] is core_agent.call_args.kwargs["tool_calls"]
-        assert calls.call_args.kwargs["confirmation_ttl"] == timedelta(seconds=42)
-        assert calls.call_args.kwargs["review_ttl"] == timedelta(seconds=84)
+        assert len(built_tasks) == 1
+        assert built_tasks[0].store is context.call_args.kwargs["tasks"]
+        assert len(built_tool_calls) == 1
+        assert core_agent.call_args.kwargs["tool_calls"] is built_tool_calls[0]
         assert core_execution.call_args.kwargs["graph_version"] == "core-primary-v1"
         assert specialist.call_args.kwargs["graph_version"] == "core-primary-v1"
 

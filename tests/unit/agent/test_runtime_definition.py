@@ -3,31 +3,31 @@ from pydantic import ValidationError
 
 from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent_models.config import ModelRuntimeConfig
-from slim_guard.harness.pending_config import PendingActionConfig
+from slim_guard.tasks.config import TaskRuntimeConfig
 
 
-def test_runtime_definition_uses_independent_pending_configs() -> None:
+def test_runtime_definition_uses_independent_task_configs() -> None:
     models = ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision")
     first = AgentRuntimeDefinition(models=models, code_revision="test")
     second = AgentRuntimeDefinition(models=models, code_revision="test")
-    assert first.pending_actions == PendingActionConfig()
-    assert first.pending_actions is not second.pending_actions
+    assert first.tasks == TaskRuntimeConfig()
+    assert first.tasks is not second.tasks
 
 
 def test_runtime_definition_preserves_nested_execution_settings() -> None:
     values = {
         "models": {"provider": "test", "text_model": "text", "vision_model": "vision"},
         "code_revision": "test",
-        "pending_actions": {"confirmation_ttl_seconds": 120, "review_ttl_seconds": 240},
+        "tasks": {"clarification_ttl_days": 21},
     }
     definition = AgentRuntimeDefinition.model_validate(values)
-    assert definition.pending_actions.model_dump() == values["pending_actions"]
+    assert definition.tasks.model_dump() == values["tasks"]
     assert AgentRuntimeDefinition.model_validate_json(definition.model_dump_json()) == definition
 
 
 @pytest.mark.parametrize(
     ("section", "field"),
-    [("pending_actions", "confirmation_ttl_seconds")],
+    [("tasks", "clarification_ttl_days")],
 )
 def test_runtime_definition_reports_nested_validation_error(section: str, field: str) -> None:
     with pytest.raises(ValidationError) as error:
