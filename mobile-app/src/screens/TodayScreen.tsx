@@ -68,7 +68,11 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
           <QuickAction icon="chatbubble-ellipses-outline" title="聊一聊" subtitle="问教练任何事" onPress={() => openCoach()} />
         </View>
 
-        <RecordHistory timezone={today.routine.timezone} refreshKey={data} />
+        <RecordHistory
+          timezone={today.routine.timezone}
+          refreshKey={data}
+          onCorrect={openCoach}
+        />
 
       </ScrollView>
     </SafeAreaView>
