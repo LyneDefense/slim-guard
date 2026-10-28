@@ -14,23 +14,26 @@ import {
   TextInput,
   View,
   type ScrollViewInstance,
+  type TextInputInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandMark } from '../components/ui';
+import { PhotoGallery } from '../components/PhotoGallery';
 import { useApp } from '../context/AppContext';
-import { mobileApi } from '../lib/api';
+import { SystemNoticeBar } from '../features/system-notices/SystemNoticeBar';
 import { colors, radius, spacing } from '../theme';
 import type { ChatMessage } from '../types';
 
 type SelectedImage = { uri: string; mimeType: 'image/jpeg' };
 
 export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDraft: () => void }) {
-  const { data, sendMessage, online, pending } = useApp();
+  const { data, sendMessage, online, pending, notices, dismissNotice } = useApp();
   const [text, setText] = useState('');
   const [images, setImages] = useState<SelectedImage[]>([]);
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollViewInstance>(null);
+  const inputRef = useRef<TextInputInstance>(null);
 
   useEffect(() => {
     if (!draft) return;
@@ -101,7 +104,7 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
     }
   }
 
-  const messages = data?.messages || [];
+  const messages = (data?.messages || []).filter(message => message.participant !== 'system_assistant');
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={4}>
@@ -128,6 +131,7 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
             </View>
           ) : null}
         </ScrollView>
+        <SystemNoticeBar notices={notices} onDismiss={dismissNotice} onReply={() => inputRef.current?.focus()} />
         {images.length ? (
           <View style={styles.previewBar}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewList}>
@@ -148,6 +152,7 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
             <Ionicons name="camera-outline" size={24} color={colors.primary} />
           </Pressable>
           <TextInput
+            ref={inputRef}
             accessibilityLabel="发给减脂教练的消息"
             multiline
             maxLength={20_000}
@@ -173,63 +178,19 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
 
 function Bubble({ message }: { message: ChatMessage }) {
   const mine = message.participant === 'user' || message.role === 'user';
-  const coach = message.participant === 'coach';
   const displayedText = (message.text || (message.kind === 'image' && !message.attachments?.length ? '📷 图片' : '')).replace(/\*\*/g, '');
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
-      {!mine ? <View style={[styles.smallAvatar, coach ? styles.coachAvatar : styles.systemAvatar]}><Ionicons name={coach ? 'medkit-outline' : 'settings-outline'} size={13} color={colors.white} /></View> : null}
-      <View style={[styles.bubble, mine ? styles.bubbleMine : coach ? styles.bubbleCoach : styles.bubbleSystem, message.failed && styles.bubbleFailed]}>
-        {!mine ? <Text style={styles.senderLabel}>{coach ? '医生教练' : '系统助手'}</Text> : null}
-        {message.kind === 'card' && message.card ? <CardContent card={message.card} /> : null}
-        {message.attachments?.length ? (
-          <View style={styles.messageAttachments}>
-            {message.attachments.map((attachment, index) => {
-              const source = mobileApi.imageSource(attachment);
-              return source ? <Image key={`${attachment.asset_id || attachment.uri}-${index}`} source={source} style={styles.messageImage} resizeMode="cover" /> : null;
-            })}
-          </View>
-        ) : null}
+      {!mine ? <View style={styles.smallAvatar}><Ionicons name="medkit-outline" size={13} color={colors.white} /></View> : null}
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleCoach, message.failed && styles.bubbleFailed]}>
+        {!mine ? <Text style={styles.senderLabel}>医生教练</Text> : null}
+        {message.attachments?.length ? <PhotoGallery photos={message.attachments} /> : null}
         {message.kind !== 'card' && displayedText ? <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{displayedText}</Text> : null}
         {message.pending ? <Text style={[styles.messageState, mine && { color: '#D8E5DC' }]}>发送中…</Text> : null}
         {message.failed ? <Text style={styles.failedText}>发送失败，可重新发送</Text> : null}
       </View>
     </View>
   );
-}
-
-function CardContent({ card }: { card: NonNullable<ChatMessage['card']> }) {
-  const data = card.data || {};
-  const title = card.card_type === 'meal_record' ? '已记录餐食' : '已完成记录';
-  const labels: Record<string, string> = {
-    meal_type: '餐次',
-    foods: '内容',
-    note: '备注',
-    weight_kg: '体重',
-    original_value: '记录值',
-    condition: '状态',
-    body_fat_percent: '体脂率',
-    activity_name: '运动',
-    duration_minutes: '时长（分钟）',
-    steps: '步数',
-    distance_meters: '距离（米）',
-    reported_energy_kcal: '消耗（千卡）',
-  };
-  const hiddenFields = new Set(['created', 'record_id', 'occurred_at', 'idempotency_key', 'source_ids', 'trusted_evidence_item_ids']);
-  const details = Object.entries(data)
-    .filter(([key]) => !hiddenFields.has(key))
-    .filter(([, value]) => value !== null && value !== undefined)
-    .map(([key, value]) => {
-      const label = labels[key] || key;
-      const rendered = Array.isArray(value)
-        ? value.map((item) => typeof item === 'object' && item !== null && 'name' in item ? (item as { name: string }).name : String(item)).join('、')
-        : typeof value === 'object' ? JSON.stringify(value) : String(value);
-      const normalized = key === 'meal_type'
-        ? ({ breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐', unspecified: '餐食' } as Record<string, string>)[String(value)] || rendered
-        : rendered;
-      return `${label}: ${normalized}`;
-    })
-    .join(' · ');
-  return <View style={styles.card}><Text style={styles.cardTitle}>{title}</Text>{details ? <Text style={styles.cardText}>{details}</Text> : null}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -250,13 +211,7 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 19, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: 6 },
   bubbleCoach: { backgroundColor: colors.surface, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
-  bubbleSystem: { backgroundColor: colors.surfaceMuted, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
-  coachAvatar: { backgroundColor: colors.primary },
-  systemAvatar: { backgroundColor: colors.inkMuted },
   senderLabel: { color: colors.inkMuted, fontSize: 11, fontWeight: '700', marginBottom: 4 },
-  card: { minWidth: 190, backgroundColor: colors.surface, borderRadius: 13, padding: spacing.md },
-  cardTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
-  cardText: { color: colors.inkMuted, fontSize: 12, lineHeight: 18, marginTop: 5 },
   bubbleFailed: { borderWidth: 1, borderColor: colors.danger },
   bubbleText: { color: colors.ink, fontSize: 15, lineHeight: 23 },
   bubbleTextMine: { color: colors.white },
@@ -270,8 +225,6 @@ const styles = StyleSheet.create({
   previewImage: { width: 54, height: 54, borderRadius: 12 },
   previewText: { color: colors.inkMuted, fontSize: 12, fontWeight: '600', marginLeft: spacing.xs },
   removeImage: { position: 'absolute', right: -5, top: -5, width: 22, height: 22, borderRadius: 11, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', elevation: 1 },
-  messageAttachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 5 },
-  messageImage: { width: 180, height: 180, borderRadius: 12, backgroundColor: colors.line },
   composer: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: spacing.md, paddingVertical: 10, gap: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, backgroundColor: colors.surface },
   addButton: { width: 44, height: 44, borderRadius: 16, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, minHeight: 44, maxHeight: 116, borderRadius: 18, backgroundColor: colors.surfaceMuted, color: colors.ink, fontSize: 15, lineHeight: 21, paddingHorizontal: spacing.lg, paddingVertical: 11 },

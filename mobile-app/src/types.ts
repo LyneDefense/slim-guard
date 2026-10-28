@@ -105,6 +105,8 @@ export type ChatMessage = {
   text: string | null;
   card?: { card_type?: string; status?: string; data?: Record<string, unknown> } | null;
   attachments?: ChatAttachment[];
+  requires_response?: boolean;
+  notice_text?: string | null;
   created_at: string;
   pending?: boolean;
   failed?: boolean;

@@ -1,6 +1,6 @@
 # SlimGuard Mobile
 
-SlimGuard Mobile 是同一套后端的 iOS/Android 客户端，使用 Expo SDK 57 和 React Native。
+SlimGuard Mobile 是同一套后端的 iOS/Android 客户端，使用 Expo SDK 58 和 React Native。
 业务语义仍由服务端 Harness Agent 与 model-first Memory 负责；客户端只负责交互、鉴权、
 安全保存刷新令牌、图片预处理和离线可靠投递。
 
@@ -14,6 +14,8 @@ SlimGuard Mobile 是同一套后端的 iOS/Android 客户端，使用 Expo SDK 5
 - 未成年人完成档案后同样可以使用教练，Agent 会采用儿童青少年适用的判断标准；
 - 自然语言和相机/相册饮食图片对话；
 - 体重、体脂、饮食、运动记录与趋势；
+- 饮食记录展示关联照片的缩略图，点击打开可滑动的大图；每条记录可直接修改菜名、增删菜品和调整餐次；
+- 教练对话只展示用户和教练；系统操作反馈在输入框上方显示，普通通知 10 秒后消失，需要回答的提示持续保留；
 - 目标和长期记忆的白话展示；
 - 本地称重、饮食、晚间复盘提醒；
 - 离线文字/图片队列，联网后用幂等键自动补发；
@@ -34,7 +36,7 @@ npm run start
 将 `.env.local` 的地址改为手机能访问的后端地址：
 
 ```dotenv
-EXPO_PUBLIC_API_BASE_URL=https://你的-api-域名
+EXPO_PUBLIC_API_BASE_URL=https://enceladus.online
 ```
 
 真机不能使用 `127.0.0.1` 访问电脑。生产包必须使用公网 HTTPS；本地调试可以使用同一局域网
@@ -61,7 +63,7 @@ MOBILE_TEST_ACCOUNT_PASSWORD=123456
 
 ## 静态校验
 
-React 与 React DOM 显式固定为 Expo SDK 57 要求的 `19.2.3`。即使只运行原生 App，
+React 与 React DOM 显式固定为 Expo SDK 58 使用的 `19.3.0`。即使只运行原生 App，
 `@expo/ui` 的依赖树也会涉及 React DOM；不要单独升级其中一个包，也不要用 `--force` 或
 `--legacy-peer-deps` 绕过版本冲突。修改依赖后应验证一次标准 `npm ci`，确认锁文件可以干净安装。
 
@@ -72,8 +74,21 @@ npm run bundle:ios
 npm run bundle:android
 ```
 
-`npm test` 当前覆盖日期字段的 JS 交互和日期序列化，使用原生视图替身；它不替代 iOS/Android
+`npm test` 覆盖日期字段、餐食编辑、大图打开关闭、系统提示去重与过期等 JS 交互，使用原生视图替身；它不替代 iOS/Android
 真机布局验收。iOS 日期选择在独立弹窗中完成，滚动后点“确定”才回填，“取消”不修改原值。
+
+## 餐食编辑与提示条契约
+
+餐食记录的 `content.photo_asset_ids` 保存图片引用，独立于当前字段证据；更正菜名不会丢失照片。
+记录历史只显示日期、餐次、菜品、份量和照片，不展示识别疑虑或邀请更正的对话文案。
+`PATCH /api/mobile/v1/records/meal/{record_id}` 接收操作 UUID、预期记录版本、餐次与菜品列表，
+直接复用记录修改逻辑，不调用模型。既有菜品须带 `item_id`，新增菜品不带 ID；既有份量与照片保留。
+相同操作可安全重试，版本冲突返回 409。迁移 `20261028_01_meal_media_and_editor` 新增照片字段与
+手动编辑来源表，并为证据明确的旧餐食回填照片；多餐来源不明确时保留为空。
+
+Conversation Agent 根据交流语义输出系统消息的 `notice_text` 和 `requires_response`，不使用关键词判断
+是否需要回答。完整系统文案仍保存供 Trace 和上下文使用。手机端按 Turn 合并系统文字和操作卡，
+防止重复通知；历史刷新不会重放已关闭的提示。规划失败时保留可手动关闭的提示，避免重要问题自动丢失。
 
 完整部署和 EAS 构建步骤见仓库根目录的
 [`MOBILE_APP_DEPLOYMENT.md`](../MOBILE_APP_DEPLOYMENT.md)。

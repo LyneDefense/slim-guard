@@ -7,6 +7,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { ApiError, mobileApi } from '../lib/api';
 import { enqueueChat, hydratePendingChat, listPendingChats, removePendingChat } from '../lib/offlineQueue';
 import { syncRoutineNotifications } from '../lib/notifications';
+import { useSystemNotices } from '../features/system-notices/useSystemNotices';
+import type { SystemNotice } from '../features/system-notices/noticeFeed';
 import type {
   AuthOptions,
   AuthTokens,
@@ -32,6 +34,8 @@ type AppContextValue = {
   online: boolean;
   loading: boolean;
   error: string | null;
+  notices: SystemNotice[];
+  dismissNotice: (id: string) => void;
   requestOtp: (phone: string) => Promise<OtpChallenge>;
   verifyOtp: (challengeId: string, code: string) => Promise<void>;
   loginWithPassword: (username: string, password: string) => Promise<void>;
@@ -69,6 +73,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [online, setOnline] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { notices, dismissNotice } = useSystemNotices(data?.messages, data?.user.id);
   const flushing = useRef(false);
   const queueRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queueRetryDelay = useRef(5_000);
@@ -357,6 +362,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     online,
     loading,
     error,
+    notices,
+    dismissNotice,
     requestOtp,
     verifyOtp,
     loginWithPassword,
@@ -370,7 +377,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getWeComBinding,
     deleteAccount,
     clearError: () => setError(null),
-  }), [booting, tokens, authOptions, data, pending, online, loading, error, requestOtp, verifyOtp, loginWithPassword, logout, refresh, sendMessage, updateProfile, saveCoachProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
+  }), [booting, tokens, authOptions, data, pending, online, loading, error, notices, dismissNotice, requestOtp, verifyOtp, loginWithPassword, logout, refresh, sendMessage, updateProfile, saveCoachProfile, updateRoutine, createWeComBinding, getWeComBinding, deleteAccount]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

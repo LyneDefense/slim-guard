@@ -18,7 +18,6 @@ import type {
   WeComBinding,
 } from '../types';
 import { clearRefreshToken, readRefreshToken, saveRefreshToken } from './session';
-import type { RecordKind, RecordPage } from '../features/record-history/types';
 
 const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 export const API_BASE_URL = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -41,10 +40,8 @@ export class ApiError extends Error {
 type ApiErrorBody = { detail?: string | { code?: string; message?: string } };
 
 class MobileApi {
-  recordHistory(kind: RecordKind, timezone: string, cursor?: string): Promise<RecordPage> {
-    const query = new URLSearchParams({ kind, timezone, limit: '20' });
-    if (cursor) query.set('cursor', cursor);
-    return this.authorized(`/api/mobile/v1/records?${query}`);
+  request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    return this.authorized<T>(path, init);
   }
   private accessToken: string | null = null;
   private refreshInFlight: Promise<AuthTokens> | null = null;
@@ -52,9 +49,10 @@ class MobileApi {
 
   imageSource(attachment: ChatAttachment): { uri: string; headers?: Record<string, string> } | null {
     if (attachment.uri) return { uri: attachment.uri };
-    if (!attachment.url) return null;
+    const path = attachment.url || (attachment.asset_id ? `/api/mobile/v1/chat/assets/${encodeURIComponent(attachment.asset_id)}` : null);
+    if (!path) return null;
     return {
-      uri: `${API_BASE_URL}${attachment.url}`,
+      uri: `${API_BASE_URL}${path}`,
       ...(this.accessToken ? { headers: { Authorization: `Bearer ${this.accessToken}` } } : {}),
     };
   }

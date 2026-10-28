@@ -71,7 +71,7 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
         <RecordHistory
           timezone={today.routine.timezone}
           refreshKey={data}
-          onCorrect={openCoach}
+          onChanged={() => void refresh()}
         />
 
       </ScrollView>
