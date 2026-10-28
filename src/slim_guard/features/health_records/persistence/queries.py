@@ -9,9 +9,12 @@ from sqlalchemy import String, and_, case, cast, event, func, or_, select
 
 from slim_guard.db.models import AgentItemRecord
 from slim_guard.db.session import Database
+from slim_guard.features.health_records.persistence.calendar import local_day, record_day
 from slim_guard.features.health_records.persistence.projection import RECORD_MODELS, to_view
+from slim_guard.features.health_records.persistence.statistics import record_statistics
 from slim_guard.features.health_records.queries import RecordPage, RecordQuery
 from slim_guard.features.health_records.references import RecordError
+from slim_guard.features.health_records.statistics import RecordPeriod, RecordPeriodStatistics
 
 
 def install_sqlite_dates(database: Database) -> None:
@@ -36,20 +39,15 @@ class HealthRecordQueries:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    async def statistics(self, user_id: str, period: RecordPeriod) -> RecordPeriodStatistics:
+        return await record_statistics(self.database, user_id, period)
+
     async def search(self, user_id: str, query: RecordQuery) -> RecordPage:
         model = RECORD_MODELS[query.kind]
         time = model.occurred_at if query.kind in {"meal", "exercise"} else model.measured_at
 
-        def local_day(column: Any) -> Any:
-            if self.database.engine.dialect.name == "sqlite":
-                return func.sg_local_date(column, query.timezone)
-            return cast(func.date(func.timezone(query.timezone, column)), String)
-
         day = func.coalesce(
-            case(
-                (model.time_precision == "date", cast(model.occurred_on, String)),
-                else_=local_day(time),
-            ),
+            record_day(model, query.kind, query.timezone, self.database.engine.dialect.name),
             "",
         )
         rank = case((model.time_precision == "datetime", 1), else_=0)
@@ -84,7 +82,9 @@ class HealthRecordQueries:
             )
         if query.source_from or query.source_to:
             stmt = stmt.join(AgentItemRecord, AgentItemRecord.id == model.source_item_id)
-            source_day = local_day(AgentItemRecord.created_at)
+            source_day = local_day(
+                AgentItemRecord.created_at, query.timezone, self.database.engine.dialect.name
+            )
             if query.source_from:
                 stmt = stmt.where(source_day >= query.source_from.isoformat())
             if query.source_to:

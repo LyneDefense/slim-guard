@@ -146,20 +146,10 @@ export type Today = {
   routine: Routine;
 };
 
-export type TrendPoint = { id: string; value: number; occurred_at: string };
-
-export type Progress = {
-  weights: TrendPoint[];
-  body_fat: TrendPoint[];
-  meals: Array<Record<string, unknown>>;
-  exercise: Array<Record<string, unknown>>;
-};
-
 export type DashboardData = {
   user: MobileUser;
   coach_profile: CoachProfileStatus;
   today: Today;
-  progress: Progress;
   memories: MemoryItem[];
   routine: Routine;
   messages: ChatMessage[];

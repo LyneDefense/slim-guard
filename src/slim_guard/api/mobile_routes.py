@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from datetime import UTC, datetime
-from typing import Annotated, TypeVar, cast
+from typing import Annotated, Literal, TypeVar, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 
@@ -39,6 +39,7 @@ from slim_guard.mobile.contracts import (
     TodayView,
     WeComBindingView,
 )
+from slim_guard.mobile.period_progress import PeriodProgressView, period_progress
 from slim_guard.mobile.platform import MobilePlatformError, MobilePlatformService
 from slim_guard.mobile.service import MobileApplicationService, MobileServiceError
 
@@ -280,6 +281,25 @@ async def progress(
     limit: int = Query(default=30, ge=1, le=100),
 ) -> ProgressView:
     return await _mobile_call(_mobile(request).progress(principal.user_id, limit=limit))
+
+
+@router.get("/progress/period", response_model=PeriodProgressView)
+async def progress_period(
+    principal: Principal, request: Request, days: int = Query(default=7, ge=1, le=30)
+) -> PeriodProgressView:
+    if days not in {7, 30}:
+        raise HTTPException(422, "统计周期只支持 7 天或 30 天")
+    service = _mobile(request)
+    routine = await _mobile_call(service.routine(principal.user_id))
+    return await _mobile_call(
+        period_progress(
+            service.records,
+            principal.user_id,
+            days=cast(Literal[7, 30], days),
+            timezone=routine.timezone,
+            now=datetime.now(UTC),
+        )
+    )
 
 
 @router.get("/memories", response_model=list[MemoryView])

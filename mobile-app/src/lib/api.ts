@@ -11,7 +11,6 @@ import type {
   MemoryItem,
   MobileUser,
   OtpChallenge,
-  Progress,
   Routine,
   Today,
   DeviceRegistration,
@@ -119,16 +118,15 @@ class MobileApi {
   }
 
   async dashboard(): Promise<DashboardData> {
-    const [user, coachProfile, today, progress, memories, routine, history] = await Promise.all([
+    const [user, coachProfile, today, memories, routine, history] = await Promise.all([
       this.authorized<MobileUser>('/api/mobile/v1/me'),
       this.authorized<CoachProfileStatus>('/api/mobile/v1/coach-profile'),
       this.authorized<Today>('/api/mobile/v1/today'),
-      this.authorized<Progress>('/api/mobile/v1/progress?limit=60'),
       this.authorized<MemoryItem[]>('/api/mobile/v1/memories'),
       this.authorized<Routine>('/api/mobile/v1/routine'),
       this.authorized<{ items: ChatMessage[] }>('/api/mobile/v1/chat/messages?limit=100'),
     ]);
-    return { user, coach_profile: coachProfile, today, progress, memories, routine, messages: history.items };
+    return { user, coach_profile: coachProfile, today, memories, routine, messages: history.items };
   }
 
   async sendChat(payload: ChatPayload): Promise<ChatResponse> {
