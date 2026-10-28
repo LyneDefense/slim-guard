@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -104,14 +105,14 @@ function RecordRow({ record, timezone, onEdit, opening }: {
   const content = record.content;
   return <View style={styles.row}>
     <View style={styles.rowHeader}>
-      <Text style={styles.hint}>{time}{content.kind === 'meal' ? ` · ${mealLabels[content.meal_type] || '其他'}` : ''}</Text>
+      <Text style={[styles.hint, styles.recordDate]}>{time}{content.kind === 'meal' ? ` · ${mealLabels[content.meal_type] || '其他'}` : ''}</Text>
       {content.kind === 'meal' && onEdit ? <Pressable
         accessibilityRole="button"
         accessibilityLabel="修改这条餐食记录"
         onPress={onEdit}
         disabled={opening}
-        hitSlop={8}
-      >{opening ? <ActivityIndicator color={colors.primary} /> : <Text style={styles.correctAction}>修改</Text>}</Pressable> : null}
+        style={styles.editButton}
+      >{opening ? <ActivityIndicator color={colors.primary} /> : <Ionicons name="pencil-outline" size={19} color={colors.primary} />}</Pressable> : null}
     </View>
     <Text style={styles.content}>{content.kind === 'meal'
       ? content.foods.map(food => `${food.name || '菜品未命名'}${food.portion ? `（${food.portion}）` : ''}`).join('、') || '暂无菜品'
@@ -123,8 +124,9 @@ function RecordRow({ record, timezone, onEdit, opening }: {
 const styles = StyleSheet.create({
   section: { paddingVertical: spacing.sm }, header: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm },
   rowHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+  recordDate: { flexShrink: 1 },
   title: { color: colors.ink, fontSize: 15, fontWeight: '600' }, hint: { color: colors.inkMuted, fontSize: 13 },
-  correctAction: { color: colors.primary, fontSize: 13, fontWeight: '700', paddingVertical: 4, paddingHorizontal: 8 },
+  editButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   row: { paddingVertical: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
   content: { color: colors.ink, fontSize: 14, marginVertical: spacing.sm }, more: { color: colors.primary, paddingVertical: spacing.md },
 });
