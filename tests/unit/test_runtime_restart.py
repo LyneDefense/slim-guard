@@ -92,6 +92,7 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
                             {
                                 "participant": "system_assistant",
                                 "text": core_draft,
+                                "requires_response": False,
                                 "source_refs": [],
                             }
                         ],
@@ -116,6 +117,7 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
                             {
                                 "participant": "system_assistant",
                                 "text": reply_after_restart,
+                                "requires_response": False,
                                 "source_refs": [],
                             }
                         ],

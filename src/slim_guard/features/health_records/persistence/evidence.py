@@ -2,8 +2,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from slim_guard.db.models import AgentItemRecord, AgentThreadRecord, ImageAssetRecord
+from slim_guard.features.health_records.content import MealContent
+from slim_guard.features.health_records.persistence.edit_sources import MealEditSource
 from slim_guard.features.health_records.provenance import FieldEvidence
 from slim_guard.features.health_records.references import RecordError
+from slim_guard.features.health_records.views import RecordContent
 
 
 async def validate_evidence(session: AsyncSession, user_id: str, evidence: FieldEvidence) -> None:
@@ -38,4 +41,16 @@ async def validate_evidence(session: AsyncSession, user_id: str, evidence: Field
                     "use image_recognized for facts sourced from an image"
                 )
             continue
+        edit = await session.get(MealEditSource, reference)
+        if edit is not None and edit.user_id == user_id and evidence.source_kind == "user_reported":
+            continue
         raise RecordError("Evidence reference is unavailable to this user")
+
+
+async def validate_meal_photos(session: AsyncSession, user_id: str, content: RecordContent) -> None:
+    if not isinstance(content, MealContent):
+        return
+    for asset_id in content.photo_asset_ids:
+        asset = await session.get(ImageAssetRecord, asset_id)
+        if asset is None or asset.user_id != user_id:
+            raise RecordError("Meal photo is unavailable to this user")

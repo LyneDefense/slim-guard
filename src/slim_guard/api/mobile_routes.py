@@ -386,6 +386,7 @@ async def _mobile_call(awaitable: Awaitable[T]) -> T:
         code_status = {
             "user_not_found": status.HTTP_404_NOT_FOUND,
             "request_not_found": status.HTTP_404_NOT_FOUND,
+            "image_not_found": status.HTTP_404_NOT_FOUND,
             "idempotency_key_reused": status.HTTP_409_CONFLICT,
             "coach_profile_required": status.HTTP_428_PRECONDITION_REQUIRED,
             "agent_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,

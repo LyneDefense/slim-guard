@@ -21,7 +21,10 @@ from slim_guard.features.health_records.commands import (
     UpdateRecord,
 )
 from slim_guard.features.health_records.mutations import apply_record_patch
-from slim_guard.features.health_records.persistence.evidence import validate_evidence
+from slim_guard.features.health_records.persistence.evidence import (
+    validate_evidence,
+    validate_meal_photos,
+)
 from slim_guard.features.health_records.persistence.projection import (
     RECORD_MODELS,
     row_values,
@@ -94,6 +97,7 @@ class HealthRecordStore:
                     raise RecordError("Source Turn does not belong to this thread")
                 now = datetime.now(UTC)
                 if isinstance(command, CreateRecord):
+                    await validate_meal_photos(session, context.user_id, command.content)
                     for evidence in command.field_provenance:
                         await validate_evidence(session, context.user_id, evidence)
                     record = RecordView(
@@ -151,6 +155,7 @@ class HealthRecordStore:
                         expected_revision=command.target.revision,
                         now=now,
                     )
+                    await validate_meal_photos(session, context.user_id, changed.record.content)
                     if changed.changed:
                         updated = await session.execute(
                             update(model)

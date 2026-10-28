@@ -273,6 +273,8 @@ class ChatMessageView(BaseModel):
     text: str | None
     card: dict[str, object] | None = None
     attachments: list[ChatAttachmentView] = Field(default_factory=list)
+    requires_response: bool = False
+    notice_text: str | None = None
     created_at: datetime
 
 

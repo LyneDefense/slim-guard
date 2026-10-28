@@ -24,7 +24,7 @@ def apply_meal_patch(
     new_id: Callable[[], str],
 ) -> MealContent:
     data = content.model_dump()
-    for name in ("meal_type", "note"):
+    for name in ("meal_type", "note", "photo_asset_ids"):
         change = getattr(patch, name)
         if change is not None:
             fields.change(name, data[name], change.value, change.evidence, change.concern)

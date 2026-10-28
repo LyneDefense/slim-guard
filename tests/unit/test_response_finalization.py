@@ -99,6 +99,7 @@ def conversation(system: str | None, *, coach: str | None) -> ModelResponse:
         {
             "participant": "system_assistant",
             "text": system or "已收到。",
+            "requires_response": False,
             "source_refs": [],
         }
     )
@@ -142,6 +143,7 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
                             {
                                 "participant": "system_assistant",
                                 "text": "今天这条晚餐处理好了。",
+                                "requires_response": False,
                                 "source_refs": [],
                             },
                         ],
@@ -246,6 +248,7 @@ async def test_multiple_coach_messages_keep_model_order_and_are_reviewed_individ
                         {
                             "participant": "system_assistant",
                             "text": "收到。",
+                            "requires_response": False,
                             "source_refs": [],
                         },
                         {

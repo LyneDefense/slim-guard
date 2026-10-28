@@ -83,4 +83,5 @@ class MealPatch(RecordPatch):
         FieldChange[Literal["breakfast", "lunch", "dinner", "snack", "unspecified"]] | None
     ) = None
     note: FieldChange[Annotated[str, Field(min_length=1, max_length=1000)] | None] | None = None
-    food_changes: tuple[MealItemChange, ...] = Field(default=(), max_length=40)
+    photo_asset_ids: FieldChange[Annotated[tuple[str, ...], Field(max_length=8)]] | None = None
+    food_changes: tuple[MealItemChange, ...] = Field(default=(), max_length=41)

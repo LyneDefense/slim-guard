@@ -187,6 +187,8 @@ class ResponseStageExecutor:
                         "participant": message.participant.value,
                         "text": message.text,
                         "source_refs": list(message.source_refs),
+                        "requires_response": message.requires_response,
+                        "notice_text": message.notice_text,
                     }
                     for message in result.routing.messages
                 ],

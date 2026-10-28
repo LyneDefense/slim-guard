@@ -18,6 +18,8 @@ class RoutedMessage:
     participant: ParticipantRole
     text: str
     source_refs: tuple[str, ...] = ()
+    requires_response: bool = False
+    notice_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +87,12 @@ class ConversationRouter:
                         participant=ParticipantRole.SYSTEM_ASSISTANT,
                         text=authoritative_system_text,
                         source_refs=system_refs,
+                        requires_response=proposal.requires_response,
+                        notice_text=(
+                            proposal.notice_text
+                            if proposal.text.strip() == authoritative_system_text
+                            else None
+                        ),
                     )
                 )
                 continue

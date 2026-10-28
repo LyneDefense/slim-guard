@@ -35,6 +35,7 @@ class SystemConversationScript:
                         "messages": [
                             {
                                 "participant": "system_assistant",
+                                "requires_response": False,
                                 "text": data["system_candidate"],
                                 "source_refs": [],
                             }

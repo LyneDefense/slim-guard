@@ -50,6 +50,8 @@ class ChatMessage(BaseModel):
     semantic_block_id: str | None = Field(default=None, max_length=128)
     source_refs: tuple[str, ...] = ()
     style_profile_version: str | None = Field(default=None, max_length=128)
+    requires_response: bool = False
+    notice_text: str | None = Field(default=None, max_length=800)
     created_at: datetime
 
     @model_validator(mode="after")
@@ -58,6 +60,10 @@ class ChatMessage(BaseModel):
             raise ValueError("User messages cannot render cards")
         if self.participant is ParticipantRole.COACH and self.kind is not RenderKind.TEXT:
             raise ValueError("Coach messages must be text")
+        if self.participant is not ParticipantRole.SYSTEM_ASSISTANT and (
+            self.requires_response or self.notice_text is not None
+        ):
+            raise ValueError("Notice metadata belongs to the system assistant")
         if self.kind is RenderKind.TEXT and not (self.text and self.text.strip()):
             raise ValueError("Text messages require non-empty text")
         if self.kind is RenderKind.CARD:

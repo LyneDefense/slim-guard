@@ -32,7 +32,12 @@ def to_view(kind: str, row: Any) -> RecordView:
         for index, food in enumerate(foods):
             if not food.get("item_id"):
                 food["item_id"] = str(uuid5(NAMESPACE_URL, f"slim-guard/meal/{row.id}/{index}"))
-        content = MealContent(meal_type=row.meal_type, foods=foods, note=row.note)
+        content = MealContent(
+            meal_type=row.meal_type,
+            foods=foods,
+            note=row.note,
+            photo_asset_ids=json.loads(row.photo_asset_ids_json),
+        )
     elif kind == "exercise":
         content = ExerciseContent(
             **{key: getattr(row, key) for key in ExerciseContent.model_fields if key != "kind"}
@@ -102,6 +107,7 @@ def row_values(record: RecordView) -> dict[str, Any]:
                 [food.model_dump() for food in content.foods], ensure_ascii=False
             ),
             note=content.note,
+            photo_asset_ids_json=json.dumps(content.photo_asset_ids),
         )
     elif isinstance(content, ExerciseContent):
         values.update(content.model_dump(exclude={"kind"}))

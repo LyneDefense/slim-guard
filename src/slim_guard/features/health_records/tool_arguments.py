@@ -31,7 +31,20 @@ class CreateMealArguments(CreateArguments):
     meal_type: Literal["breakfast", "lunch", "dinner", "snack", "unspecified"] = "unspecified"
     meal_type_evidence: FieldEvidence | None = None
     foods: list[FoodInput] = Field(min_length=1, max_length=20)
-    note: str | None = None
+    note: str | None = Field(
+        default=None,
+        description=(
+            "User-provided meal notes only; no recognition disclaimers, questions or instructions."
+        ),
+    )
+    photo_asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Image asset IDs belonging to this meal, including earlier photos when recording "
+            "after clarification. Choose relevant photos, not all images in the conversation."
+        ),
+    )
 
 
 class CreateExerciseArguments(CreateArguments):

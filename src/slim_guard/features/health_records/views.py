@@ -58,7 +58,7 @@ class RecordView(BaseModel):
     def field_names(self) -> set[str]:
         fields = {"occurrence", "status"}
         if isinstance(self.content, MealContent):
-            fields.update(("meal_type", "note", "foods/order"))
+            fields.update(("meal_type", "note", "photo_asset_ids", "foods/order"))
             for food in self.content.foods:
                 fields.update((f"foods/{food.item_id}/name", f"foods/{food.item_id}/portion"))
         elif isinstance(self.content, ExerciseContent):

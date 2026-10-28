@@ -23,11 +23,16 @@ class MealContent(BaseModel):
     meal_type: Literal["breakfast", "lunch", "dinner", "snack", "unspecified"] = "unspecified"
     foods: tuple[MealItem, ...] = Field(max_length=20)
     note: str | None = Field(default=None, max_length=1000)
+    photo_asset_ids: tuple[str, ...] = Field(default=(), max_length=8)
 
     @model_validator(mode="after")
     def unique_items(self) -> Self:
         if len({food.item_id for food in self.foods}) != len(self.foods):
             raise ValueError("Meal item identities must be unique")
+        if any(not photo.strip() for photo in self.photo_asset_ids):
+            raise ValueError("Photo asset IDs cannot be blank")
+        if len(set(self.photo_asset_ids)) != len(self.photo_asset_ids):
+            raise ValueError("Meal photos must be unique")
         return self
 
 

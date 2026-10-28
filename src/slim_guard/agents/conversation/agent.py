@@ -22,7 +22,7 @@ from slim_guard.group_chat.routing import ConversationRouter, RoutingResult
 from slim_guard.runtime.contracts import AgentInvocation, InvocationStatus
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 
-CONVERSATION_PROMPT_VERSION = "conversation-v3"
+CONVERSATION_PROMPT_VERSION = "conversation-v4"
 CONVERSATION_PROMPT = (
     "你是 SlimGuard 群聊中的 Conversation Agent，负责为用户、教练和系统助手组织本轮有序消息。"
     "你收到的是当前用户输入、近期对话、任务状态，以及 Core/Harness 已形成的系统回复和验证语义。"
@@ -35,6 +35,12 @@ CONVERSATION_PROMPT = (
     "教练可以不发言，也可以发送多条彼此必要且自然的消息，不要把每次工具成功机械变成教练发言。"
     "输出 messages 数组，按期望展示顺序排列；必须恰好包含一条 system_assistant 消息，"
     "其 text 必须逐字等于 system_candidate，source_refs 由 Harness 校验。"
+    "手机界面把系统助手内容显示为输入框上方的提示条，教练内容仍显示为聊天气泡。"
+    "为系统消息提供 notice_text：简短、忠实地概括执行结果或系统说明，保留重要失败与风险信息；"
+    "不重复列出整份菜品明细，不附加例行的‘如需更正请告诉我’话术，用户可在记录历史直接修改。"
+    "根据本轮交流语义判断系统是否确实需要用户回答或补充信息，填写 requires_response；"
+    "需要回答时 notice_text 必须完整保留问题和必要选项，提示会持续显示；"
+    "无需回答的操作通知会在10秒后消失。不要把礼貌性邀请更正或例行提示当成必须回答的问题。"
     "教练可在系统澄清期间回应已经确定的部分，但不能替系统确认不确定事实、回答系统提出的问题，"
     "也不能要求用户重复已提供的信息。"
     "不得改变工具状态、事实、数字、日期、不确定性或安全结论；不得让教练宣称工具成功，"
@@ -123,7 +129,11 @@ class ConversationAgent:
         )
         if result.output is None:
             fallback = ConversationMessageProposal(
-                participant="system_assistant", text=system_text.strip()
+                participant="system_assistant",
+                text=system_text.strip(),
+                # A failed planner cannot prove that the message is transient.
+                # Keep its authoritative content available until dismissed/replied.
+                requires_response=True,
             )
             return ConversationAgentResult(
                 status=InvocationStatus.DEGRADED,

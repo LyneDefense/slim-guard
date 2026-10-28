@@ -19,8 +19,6 @@ from slim_guard.agent.runtime import (
     AgentRuntimeResult,
 )
 from slim_guard.db.models import (
-    AgentItemRecord,
-    AgentThreadRecord,
     MobileAgentRequestRecord,
     MobileAuthIdentityRecord,
     MobileCoachProfileRecord,
@@ -35,11 +33,10 @@ from slim_guard.features.health_records.composition import (
     build_record_readers,
 )
 from slim_guard.group_chat.contracts import ChatMessage, ParticipantRole
-from slim_guard.harness.events import ItemType
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.memory.repository import MemoryRepository
+from slim_guard.mobile.chat_history import load_chat_history
 from slim_guard.mobile.contracts import (
-    ChatAttachmentView,
     ChatHistoryView,
     ChatMessageView,
     ChatRequest,
@@ -344,120 +341,7 @@ class MobileApplicationService:
         )
 
     async def history(self, user_id: str, *, limit: int = 50) -> ChatHistoryView:
-        async with self._database.session() as session:
-            rows = tuple(
-                await session.scalars(
-                    select(AgentItemRecord)
-                    .join(
-                        AgentThreadRecord,
-                        AgentThreadRecord.id == AgentItemRecord.thread_id,
-                    )
-                    .where(
-                        AgentThreadRecord.user_id == user_id,
-                        AgentItemRecord.item_type.in_(
-                            (
-                                ItemType.USER_MESSAGE.value,
-                                ItemType.IMAGE_ATTACHMENT.value,
-                                ItemType.AGENT_MESSAGE.value,
-                            )
-                        ),
-                    )
-                    .order_by(AgentItemRecord.created_at.desc(), AgentItemRecord.sequence.desc())
-                    .limit(limit)
-                )
-            )
-        items: list[ChatMessageView] = []
-        user_messages: dict[tuple[str, str], int] = {}
-        for row in reversed(rows):
-            payload = self._json(row.payload_json)
-            if payload.get("redacted") is True:
-                continue
-            item_type = ItemType(row.item_type)
-            text = payload.get("text")
-            if item_type is ItemType.AGENT_MESSAGE:
-                participant = payload.get("participant", "system_assistant")
-                if participant not in {"coach", "system_assistant"}:
-                    participant = "system_assistant"
-                role = "assistant"
-                kind = payload.get("kind", "text")
-                if kind not in {"text", "image", "card"}:
-                    kind = "text"
-                items.append(
-                    ChatMessageView(
-                        id=row.id,
-                        turn_id=row.turn_id,
-                        participant=participant,
-                        role=role,
-                        kind=kind,
-                        text=text if isinstance(text, str) else None,
-                        card=payload.get("card") if isinstance(payload.get("card"), dict) else None,
-                        created_at=self._aware(row.created_at),
-                    )
-                )
-                continue
-            else:
-                participant = "user"
-                role = "user"
-                source_message_id = payload.get("source_message_id")
-                source_key = (
-                    source_message_id if isinstance(source_message_id, str) and source_message_id
-                    else row.id
-                )
-                key = (row.turn_id, source_key)
-                if item_type is ItemType.USER_MESSAGE:
-                    index = user_messages.get(key)
-                    if index is None:
-                        user_messages[key] = len(items)
-                        items.append(
-                            ChatMessageView(
-                                id=row.id,
-                                turn_id=row.turn_id,
-                                participant=participant,
-                                role=role,
-                                kind="text",
-                                text=text if isinstance(text, str) else None,
-                                created_at=self._aware(row.created_at),
-                            )
-                        )
-                    else:
-                        existing = items[index]
-                        items[index] = existing.model_copy(
-                            update={"text": text if isinstance(text, str) else None}
-                        )
-                elif item_type is ItemType.IMAGE_ATTACHMENT:
-                    asset_id = payload.get("asset_id")
-                    mime_type = payload.get("mime_type")
-                    if not isinstance(asset_id, str) or not isinstance(mime_type, str):
-                        continue
-                    attachment = ChatAttachmentView(
-                        asset_id=asset_id,
-                        mime_type=mime_type,
-                        url=f"/api/mobile/v1/chat/assets/{asset_id}",
-                    )
-                    index = user_messages.get(key)
-                    if index is None:
-                        user_messages[key] = len(items)
-                        items.append(
-                            ChatMessageView(
-                                id=row.id,
-                                turn_id=row.turn_id,
-                                participant=participant,
-                                role=role,
-                                kind="image",
-                                text=None,
-                                attachments=[attachment],
-                                created_at=self._aware(row.created_at),
-                            )
-                        )
-                    else:
-                        existing = items[index]
-                        items[index] = existing.model_copy(
-                            update={
-                                "kind": "text" if existing.text else "image",
-                                "attachments": [*existing.attachments, attachment],
-                            }
-                        )
-        return ChatHistoryView(items=items)
+        return await load_chat_history(self._database, user_id, limit=limit)
 
     async def image_asset(self, user_id: str, asset_id: str) -> tuple[bytes, str]:
         image = await self._assets.get_for_user(asset_id, user_id=user_id, at=datetime.now(UTC))
@@ -748,6 +632,8 @@ class MobileApplicationService:
                 kind=message.kind.value,
                 text=message.text,
                 card=(message.card.model_dump(mode="json") if message.card is not None else None),
+                requires_response=message.requires_response,
+                notice_text=message.notice_text,
                 created_at=cls._aware(message.created_at),
             )
             for message in messages
@@ -803,14 +689,6 @@ class MobileApplicationService:
     @classmethod
     def _optional_scaled_integer(cls, value: Decimal | None, factor: int) -> int | None:
         return cls._scaled_integer(value, factor) if value is not None else None
-
-    @staticmethod
-    def _json(value: str) -> dict[str, object]:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _calendar_day(value: object, timezone: str) -> date:

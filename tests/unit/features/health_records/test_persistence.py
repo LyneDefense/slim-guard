@@ -35,49 +35,52 @@ async def records(tmp_path):
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'records.sqlite'}")
     await database.create_schema()
     async with database.session() as session, session.begin():
-        session.add_all(
-            [
-                SlimGuardUser(
-                    id="u1", first_seen_at=datetime.now(UTC), last_seen_at=datetime.now(UTC)
-                ),
-                SlimGuardUser(
-                    id="u2", first_seen_at=datetime.now(UTC), last_seen_at=datetime.now(UTC)
-                ),
-                AgentVersionRecord(id="v1", manifest_json="{}", code_revision="test"),
-                AgentThreadRecord(id="thread1", user_id="u1"),
-                AgentThreadRecord(id="thread2", user_id="u2"),
-                AgentTurnRecord(
-                    id="turn1",
-                    thread_id="thread1",
-                    agent_version_id="v1",
-                    trigger_type="user_message",
-                ),
-                AgentTurnRecord(
-                    id="turn2",
-                    thread_id="thread2",
-                    agent_version_id="v1",
-                    trigger_type="user_message",
-                ),
-                AgentItemRecord(
-                    id="message1",
-                    thread_id="thread1",
-                    turn_id="turn1",
-                    sequence=1,
-                    item_type="user_message",
-                    status="completed",
-                    payload_json='{"text":"午餐记错了"}',
-                ),
-                AgentItemRecord(
-                    id="message2",
-                    thread_id="thread2",
-                    turn_id="turn2",
-                    sequence=1,
-                    item_type="user_message",
-                    status="completed",
-                    payload_json='{"text":"这是另一位用户的消息"}',
-                ),
-            ]
-        )
+        rows = [
+            SlimGuardUser(id="u1", first_seen_at=datetime.now(UTC), last_seen_at=datetime.now(UTC)),
+            SlimGuardUser(id="u2", first_seen_at=datetime.now(UTC), last_seen_at=datetime.now(UTC)),
+            AgentVersionRecord(id="v1", manifest_json="{}", code_revision="test"),
+            AgentThreadRecord(id="thread1", user_id="u1"),
+            AgentThreadRecord(id="thread2", user_id="u2"),
+            AgentTurnRecord(
+                id="turn1",
+                thread_id="thread1",
+                agent_version_id="v1",
+                trigger_type="user_message",
+            ),
+            AgentTurnRecord(
+                id="turn2",
+                thread_id="thread2",
+                agent_version_id="v1",
+                trigger_type="user_message",
+            ),
+            AgentItemRecord(
+                id="message1",
+                thread_id="thread1",
+                turn_id="turn1",
+                sequence=1,
+                item_type="user_message",
+                status="completed",
+                payload_json='{"text":"午餐记错了"}',
+            ),
+            AgentItemRecord(
+                id="message2",
+                thread_id="thread2",
+                turn_id="turn2",
+                sequence=1,
+                item_type="user_message",
+                status="completed",
+                payload_json='{"text":"这是另一位用户的消息"}',
+            ),
+        ]
+        for model in (
+            SlimGuardUser,
+            AgentVersionRecord,
+            AgentThreadRecord,
+            AgentTurnRecord,
+            AgentItemRecord,
+        ):
+            session.add_all(row for row in rows if isinstance(row, model))
+            await session.flush()
     yield database, build_record_service(database)
     await database.close()
 
@@ -312,9 +315,7 @@ async def test_legacy_record_migration_preserves_unknown_time_and_marks_evidence
     food = migrated.content.foods[0]
     assert food.name == "米饭"
     assert food.item_id
-    assert {
-        entry.source_kind for entry in migrated.field_provenance
-    } == {"legacy"}
+    assert {entry.source_kind for entry in migrated.field_provenance} == {"legacy"}
     assert all(not entry.source_refs for entry in migrated.field_provenance)
     foreign_source = await service.get("u1", "meal", "legacy-meal-foreign-source")
     assert foreign_source.source_refs == ()

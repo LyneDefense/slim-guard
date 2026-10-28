@@ -40,6 +40,8 @@ class OutgoingTextMessage:
     text: str
     source_refs: tuple[str, ...] = ()
     style_profile_version: str | None = None
+    requires_response: bool = False
+    notice_text: str | None = None
 
 
 def compose_messages(
@@ -66,6 +68,8 @@ def compose_messages(
                 text=item.text.strip(),
                 source_refs=item.source_refs,
                 style_profile_version=item.style_profile_version,
+                requires_response=item.requires_response,
+                notice_text=item.notice_text,
                 created_at=now,
             )
         )

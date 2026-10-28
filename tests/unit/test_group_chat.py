@@ -3,10 +3,71 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from slim_guard.agents.conversation.contracts import ConversationMessageProposal
+import pytest
+from pydantic import ValidationError
+
+from slim_guard.agents.conversation.contracts import (
+    ConversationDecision,
+    ConversationMessageProposal,
+)
 from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages, project_cards
 from slim_guard.group_chat.contracts import ParticipantRole, RenderKind
 from slim_guard.group_chat.routing import ConversationRouter
+
+
+def test_planner_must_explicitly_decide_whether_system_notice_requires_response():
+    with pytest.raises(ValidationError, match="requires_response"):
+        ConversationDecision.model_validate(
+            {
+                "messages": [
+                    {
+                        "participant": "system_assistant",
+                        "text": "这道菜叫什么？",
+                    }
+                ]
+            }
+        )
+    result = ConversationDecision.model_validate(
+        {
+            "messages": [
+                {
+                    "participant": "system_assistant",
+                    "text": "这道菜叫什么？",
+                    "requires_response": True,
+                }
+            ]
+        }
+    )
+    assert result.messages[0].requires_response is True
+
+
+def test_system_question_presentation_survives_routing_and_composition():
+    routed = ConversationRouter().route(
+        system_text="请问这是哪一道菜？",
+        proposals=(
+            ConversationMessageProposal(
+                participant="system_assistant",
+                text="请问这是哪一道菜？",
+                notice_text="这道菜叫什么？",
+                requires_response=True,
+            ),
+        ),
+    )
+    message = routed.messages[0]
+    result = compose_messages(
+        turn_id="turn1",
+        text_messages=(
+            OutgoingTextMessage(
+                participant=message.participant,
+                text=message.text,
+                notice_text=message.notice_text,
+                requires_response=message.requires_response,
+            ),
+        ),
+    )
+    assert result[0].requires_response is True
+    assert result[0].notice_text == "这道菜叫什么？"
+    assert result[0].text == "请问这是哪一道菜？"
 
 
 def test_conversation_router_does_not_suppress_coach_during_clarification() -> None:

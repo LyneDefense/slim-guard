@@ -15,6 +15,16 @@ class ConversationMessageProposal(ContractModel):
     participant: Literal["system_assistant", "coach"]
     text: str = Field(min_length=1, max_length=4000)
     source_refs: tuple[str, ...] = Field(default=(), max_length=64)
+    requires_response: bool = False
+    notice_text: str | None = Field(default=None, min_length=1, max_length=800)
+
+    @model_validator(mode="after")
+    def system_notice_only(self) -> ConversationMessageProposal:
+        if self.participant == "coach" and (self.requires_response or self.notice_text is not None):
+            raise ValueError("Notice metadata belongs to the system assistant")
+        if self.notice_text is not None and not self.notice_text.strip():
+            raise ValueError("Notice text cannot be blank")
+        return self
 
     @field_validator("text")
     @classmethod
@@ -41,8 +51,11 @@ class ConversationDecision(ContractModel):
 
     @model_validator(mode="after")
     def require_system_assistant_message(self) -> ConversationDecision:
-        if sum(message.participant == "system_assistant" for message in self.messages) != 1:
+        system = [message for message in self.messages if message.participant == "system_assistant"]
+        if len(system) != 1:
             raise ValueError("Conversation plan must contain exactly one system assistant message")
+        if "requires_response" not in system[0].model_fields_set:
+            raise ValueError("System message must explicitly declare requires_response")
         return self
 
 

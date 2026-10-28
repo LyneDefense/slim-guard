@@ -275,6 +275,7 @@ class MealRecord(RecordMetadata, Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     meal_type: Mapped[str] = mapped_column(String(32), nullable=False)
     foods_json: Mapped[str] = mapped_column(Text, nullable=False)
+    photo_asset_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")

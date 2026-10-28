@@ -133,6 +133,8 @@ class GroupChatFinalizer:
                         participant=ParticipantRole.SYSTEM_ASSISTANT,
                         text=routed_message.text,
                         source_refs=routed_message.source_refs,
+                        requires_response=routed_message.requires_response,
+                        notice_text=routed_message.notice_text,
                     )
                 )
                 continue

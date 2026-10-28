@@ -996,6 +996,8 @@ async def test_runtime_saves_uncertain_image_meal_then_corrects_same_record_acro
         assert current_records.records[0].content.foods[1].name == "蒸蛋"
         assert current_records.records[0].recognition_issues == ()
         assert model.asset_id is not None
+        assert first_records.records[0].content.photo_asset_ids == (model.asset_id,)
+        assert current_records.records[0].content.photo_asset_ids == (model.asset_id,)
         assert "meal_photo" not in json.dumps(
             [request.model_dump(mode="json") for request in model.requests],
             ensure_ascii=False,

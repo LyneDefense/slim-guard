@@ -204,7 +204,22 @@ class RecordTools:
             field("meal_type", arguments.meal_type_evidence)
             field("note")
             content = MealContent(
-                meal_type=arguments.meal_type, foods=tuple(foods), note=arguments.note
+                meal_type=arguments.meal_type,
+                foods=tuple(foods),
+                note=arguments.note,
+                photo_asset_ids=tuple(
+                    dict.fromkeys(
+                        (
+                            *arguments.photo_asset_ids,
+                            *(
+                                ref
+                                for entry in provenance
+                                if entry.source_kind == "image_recognized"
+                                for ref in entry.source_refs
+                            ),
+                        )
+                    )
+                ),
             )
         elif isinstance(arguments, CreateExerciseArguments):
             values = arguments.model_dump(exclude={"occurrence", "evidence"})
@@ -242,7 +257,7 @@ def health_record_tool_definitions() -> tuple[RegisteredTool, ...]:
     return tuple(
         RegisteredTool(
             name=name,
-            version="record-v4",
+            version="record-v5",
             arguments_model=model,
             description=(
                 "Read authoritative health records with IDs, revisions, evidence and paginated "

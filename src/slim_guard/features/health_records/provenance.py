@@ -13,7 +13,8 @@ class FieldEvidence(BaseModel):
     source_kind: SourceKind = Field(
         description=(
             "Evidence origin. Use user_reported for facts stated in user text, and "
-            "image_recognized for facts inferred from an image."
+            "image_recognized for facts inferred from an image. Saved record-editor input "
+            "also uses user_reported; preserve its existing source reference."
         )
     )
     source_refs: tuple[Annotated[str, Field(min_length=1, max_length=256)], ...] = Field(

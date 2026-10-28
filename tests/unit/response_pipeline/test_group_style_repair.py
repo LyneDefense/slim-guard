@@ -115,6 +115,7 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
                     {
                         "participant": "system_assistant",
                         "text": "已记录今天体重77.6kg。",
+                        "requires_response": False,
                         "source_refs": [],
                     },
                 ],
@@ -136,6 +137,7 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
                             {
                                 "participant": "system_assistant",
                                 "text": "已记录今天体重77.6kg。",
+                                "requires_response": False,
                                 "source_refs": [],
                             },
                         ],

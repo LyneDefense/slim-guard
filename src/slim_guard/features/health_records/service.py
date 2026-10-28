@@ -8,11 +8,15 @@ from slim_guard.features.health_records.commands import (
     RecordWriteContext,
     UpdateRecord,
 )
+from slim_guard.features.health_records.meal.editing import MealEditRequest
 from slim_guard.features.health_records.queries import RecordPage, RecordQuery
 from slim_guard.features.health_records.views import RecordView
 
 
 class RecordService(Protocol):
+    async def edit_meal(
+        self, user_id: str, record_id: str, request: MealEditRequest
+    ) -> RecordView: ...
     async def get(self, user_id: str, kind: str, record_id: str) -> RecordView: ...
     async def search(self, user_id: str, query: RecordQuery) -> RecordPage: ...
     async def write(
