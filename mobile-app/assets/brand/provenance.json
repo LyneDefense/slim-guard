@@ -1,0 +1,18 @@
+{
+  "display_name": "称小二",
+  "selected_icon": {
+    "file": "cheng-xiao-er-icon.png",
+    "source": "../../../design/brand-concepts/2026-10-28/logo-a-apricot-scale.png",
+    "transformation": "Byte-for-byte copy of the user-selected original. No visual edits.",
+    "generator": "Built-in image_gen tool",
+    "prompt_source": "../../../design/brand-concepts/2026-10-28/prompts.json",
+    "concept": "A"
+  },
+  "foreground": {
+    "file": "cheng-xiao-er-foreground.png",
+    "generator": "Built-in image_gen tool",
+    "input": "cheng-xiao-er-icon.png",
+    "transparent_background": true,
+    "prompt": "Use case: background-extraction and precise-object-edit. Input is the original user-approved apricot square app icon. Prepare a production-quality transparent PNG foreground layer. Keep the ORIGINAL cream scale body, cocoa dial outline, two cocoa eyes and coral needle identical, without redesigning any feature. Remove the peach background entirely with actual alpha transparency. Make the entire scale character smaller and centered, with its longest dimension occupying exactly 52 percent of the square canvas; the large transparent margin is intentional for Android adaptive icon safe zones. The entire character must fit in the central 61-percent-diameter circle. Preserve the full scale and all its ivory interior. The alpha silhouette must be immaculate and smoothly antialiased: remove ALL isolated white flecks, alpha islands, fringe, dust and stray pixels outside the one continuous scale outline. No peach halo or rough edges. The scale body is a single opaque smooth shape with rounded corners; no transparency within it. No background, no shadow, no new text, no change to needle angle, no added shapes. A single square RGBA PNG."
+  }
+}

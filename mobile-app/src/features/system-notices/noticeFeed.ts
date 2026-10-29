@@ -1,14 +1,20 @@
 import type { ChatMessage } from '../../types';
 
-export type SystemNotice = { id: string; turnId: string; text: string; requiresResponse: boolean; createdAt: number; expiresAt: number | null };
+export type SystemNotice = { id: string; turnId: string; text: string; requiresResponse: boolean; createdAt: number; expiresAt: number | null; outcome?: 'success' | 'failed' | 'pending' };
 
 export function systemNoticeCandidates(messages: ChatMessage[]): Omit<SystemNotice, 'expiresAt'>[] {
   const byTurn = new Map<string, { message: ChatMessage; index: number }>();
+  const outcomes = new Map<string, SystemNotice['outcome']>();
   let lastUser = -1;
   messages.forEach((message, index) => {
     if (message.participant === 'user' || message.role === 'user') { lastUser = index; return; }
     if (message.participant !== 'system_assistant') return;
     const key = message.turn_id || message.id;
+    const status = message.card?.status;
+    // Mixed operations must not turn a failed/pending result into a success icon.
+    const previousOutcome = outcomes.get(key);
+    if (status === 'failed' || (status === 'pending' && previousOutcome !== 'failed')
+      || (status === 'success' && previousOutcome === undefined)) outcomes.set(key, status);
     const previous = byTurn.get(key);
     // A projected card and its system explanation describe the same operation.
     // Prefer the model's notice, preserving only one notification for the Turn.
@@ -18,7 +24,7 @@ export function systemNoticeCandidates(messages: ChatMessage[]): Omit<SystemNoti
     if (message.requires_response && index < lastUser) return [];
     const text = message.notice_text || message.text || (message.card ? '记录已更新，可在记录历史中查看。' : '');
     if (!text.trim()) return [];
-    return [{ id: `notice-${turnId}`, turnId, text: text.trim(), requiresResponse: message.requires_response === true, createdAt: Date.parse(message.created_at) }];
+    return [{ id: `notice-${turnId}`, turnId, text: text.trim(), requiresResponse: message.requires_response === true, createdAt: Date.parse(message.created_at), outcome: outcomes.get(turnId) }];
   });
 }
 

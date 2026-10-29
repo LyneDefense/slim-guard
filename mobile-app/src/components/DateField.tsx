@@ -5,7 +5,10 @@ import { Keyboard, Modal, Platform, Pressable, StyleSheet, Text, View } from 're
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { dateText, displayDate, initialPickerDate } from '../lib/dates';
-import { colors, radius, spacing } from '../theme';
+import { appearance as colors } from '../shared/ui/appearance';
+
+const radius = { md: 10, lg: 24 };
+const spacing = { sm: 6, md: 12, lg: 16 };
 
 type Props = {
   label: string;
@@ -13,13 +16,16 @@ type Props = {
   onChange: (value: string) => void;
   minimumDate?: Date;
   maximumDate?: Date;
+  compact?: boolean;
+  disabled?: boolean;
 };
 
-export function DateField({ label, value, onChange, minimumDate, maximumDate }: Props) {
+export function DateField({ label, value, onChange, minimumDate, maximumDate, compact = false, disabled = false }: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => initialPickerDate(value, minimumDate, maximumDate));
 
   function showPicker() {
+    if (disabled) return;
     Keyboard.dismiss();
     setDraft(initialPickerDate(value, minimumDate, maximumDate));
     setOpen(true);
@@ -36,14 +42,14 @@ export function DateField({ label, value, onChange, minimumDate, maximumDate }: 
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
-        accessibilityState={{ expanded: open }}
+        accessibilityState={{ expanded: open, disabled }} disabled={disabled}
         onPress={showPicker}
         style={styles.dateButton}
       >
         <Text style={[styles.dateText, !value && styles.datePlaceholder]}>
-          {value ? displayDate(value) : '请选择日期'}
+          {value ? compact ? value.replaceAll('-', '/') : displayDate(value) : '请选择日期'}
         </Text>
-        <Ionicons name="calendar-outline" size={19} color={colors.primary} />
+        <Ionicons name="calendar-outline" size={compact ? 16 : 19} color={colors.indigo} />
       </Pressable>
 
       {open && Platform.OS === 'ios' ? (
@@ -72,7 +78,7 @@ export function DateField({ label, value, onChange, minimumDate, maximumDate }: 
                 display="spinner"
                 locale="zh_CN"
                 themeVariant="light"
-                accentColor={colors.primary}
+                accentColor={colors.indigo}
                 minimumDate={minimumDate}
                 maximumDate={maximumDate}
                 style={styles.picker}
@@ -88,7 +94,7 @@ export function DateField({ label, value, onChange, minimumDate, maximumDate }: 
           presentation="dialog"
           minimumDate={minimumDate}
           maximumDate={maximumDate}
-          accentColor={colors.primary}
+          accentColor={colors.indigo}
           positiveButton={{ label: '确定' }}
           negativeButton={{ label: '取消' }}
           onDismiss={() => setOpen(false)}
@@ -100,18 +106,18 @@ export function DateField({ label, value, onChange, minimumDate, maximumDate }: 
 }
 
 const styles = StyleSheet.create({
-  fieldLabel: { color: colors.inkMuted, fontSize: 12, fontWeight: '700', marginBottom: spacing.sm },
-  dateButton: { minHeight: 49, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
-  dateText: { flex: 1, color: colors.ink, fontSize: 15, fontWeight: '700' },
+  fieldLabel: { color: colors.muted, fontSize: 12, lineHeight: 18, marginBottom: 5 },
+  dateButton: { minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.md, backgroundColor: '#F6F5FE', borderWidth: 1, borderColor: '#E5E6FA' },
+  dateText: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '500' },
   datePlaceholder: { color: '#949B96', fontWeight: '500' },
   modal: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(21, 36, 27, 0.35)' },
   sheet: { width: '100%', backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
   toolbar: { minHeight: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   action: { minWidth: 56, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  cancelText: { color: colors.inkMuted, fontSize: 15 },
-  confirmText: { color: colors.primary, fontSize: 15, fontWeight: '800' },
+  cancelText: { color: colors.muted, fontSize: 15 },
+  confirmText: { color: colors.indigo, fontSize: 15, fontWeight: '800' },
   title: { flex: 1, textAlign: 'center', color: colors.ink, fontSize: 16, fontWeight: '800' },
-  preview: { color: colors.inkMuted, fontSize: 14, textAlign: 'center', marginTop: spacing.md },
+  preview: { color: colors.muted, fontSize: 14, textAlign: 'center', marginTop: spacing.md },
   picker: { width: '100%', height: 216 },
 });

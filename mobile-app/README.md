@@ -1,6 +1,6 @@
-# SlimGuard Mobile
+# 称小二 Mobile
 
-SlimGuard Mobile 是同一套后端的 iOS/Android 客户端，使用 Expo SDK 58 和 React Native。
+称小二（原 SlimGuard Mobile）是同一套后端的 iOS/Android 客户端，使用 Expo SDK 58 和 React Native。
 业务语义仍由服务端 Harness Agent 与 model-first Memory 负责；客户端只负责交互、鉴权、
 安全保存刷新令牌、图片预处理和离线可靠投递。
 
@@ -24,6 +24,32 @@ SlimGuard Mobile 是同一套后端的 iOS/Android 客户端，使用 Expo SDK 5
 - 离线文字/图片队列，联网后用幂等键自动补发；
 - 一次性绑定码连接已有微信客服身份；
 - 双重确认的账号及服务端数据删除。
+
+## 连接状态与消息投递
+
+设备断网、后端暂时不可达和消息仍在处理是三种独立状态。NetInfo 只提供设备连接信息，
+不再使用默认 Google 探测结果阻止发送；真实 API 响应和自有 `/health/live` 辅助探测负责
+更新服务连接状态，旧探测结果不能覆盖更新的 API 响应。只有设备明确断网才显示“离线模式”。
+
+消息在首次请求前持久化，超时后沿用原幂等键核对结果或重试，不会当作新消息重新创建。
+队列会在回到前台、设备恢复连接及退避定时器触发时继续投递，不依赖重启 App；图片、原始
+发送时间和账号归属随队列保留。`正在处理` 不等于未提交，也不等于手机离线。
+
+## 品牌与启动画面
+
+展示名为「称小二」，以 `app.json` 的 `expo.name` 为准；页头、登录页和加载页共用
+`src/shared/brand/` 下的品牌组件。正式图标使用用户选定的杏橙色小秤原图，保存在
+`assets/brand/cheng-xiao-er-icon.png`；透明前景用于 Android 自适应图标和原生启动屏。
+素材来源与透明前景的生成提示词保存在 `assets/brand/provenance.json`。
+
+原生启动屏在首个 React 界面完成布局后隐藏，不额外等待接口，也不设置最短展示时间。
+App 内加载页使用同一小秤、杏橙背景与轻微呼吸动效，遵循系统“减少动态效果”设置。
+业务页面的主题和数据流程不变。
+
+Expo Go 内可以查看新页头和 App 内加载页，原生桌面图标、权限文案和启动屏需要重新构建的
+preview / production 安装包验收；Fast Refresh 不会修改手机上的 Expo Go 图标。
+`slug`、`scheme`、iOS bundle ID、Android package、登录凭证与离线队列存储键保持原值，
+本次显示名变更不迁移或清空用户数据。
 
 ## 本地运行
 

@@ -1,13 +1,13 @@
-import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BrandMark, SectionTitle } from '../components/ui';
-import { RecordHistory } from '../features/record-history/RecordHistory';
 import { useApp } from '../context/AppContext';
+import { RecordHistory } from '../features/record-history/RecordHistory';
+import { MetricCard, TodayActions } from '../features/today/TodayCards';
+import { BrandHeader } from '../shared/brand/BrandHeader';
 import { findGoal } from '../lib/memoryFormat';
-import { colors, radius, spacing } from '../theme';
+import { appearance as palette } from '../shared/ui/appearance';
 
 export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void }) {
   const { data, loading, refresh, online, pending } = useApp();
@@ -22,110 +22,31 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
     : findGoal(memories, 'goal.target_body_fat');
   const hour = new Date().getHours();
   const greeting = hour < 11 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
-  const displayName = user.nickname || '今天的你';
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        contentContainerStyle={styles.page}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.primary} />}
-      >
-        <View style={styles.header}>
-          <BrandMark compact />
-          <View style={[styles.statusDot, { backgroundColor: online ? colors.primarySoft : colors.accentSoft }]}>
-            <View style={[styles.dot, { backgroundColor: online ? colors.primary : colors.warning }]} />
-            <Text style={styles.statusText}>{online ? '已同步' : `${pending.length} 条待发送`}</Text>
-          </View>
-        </View>
-
-        <Text style={styles.eyebrow}>{greeting}，{displayName}</Text>
-        <Text style={styles.title}>不用完美，{`\n`}今天往前一点就好。</Text>
-
-        <View style={styles.metrics}>
-          <MetricCard
-            label="最近体重"
-            value={today.current_weight_kg?.toFixed(1) || '—'}
-            unit="kg"
-            target={targetWeight ? `目标 ${targetWeight}` : '还没设置目标'}
-            tone="green"
-            onPress={() => openCoach('我刚量了体重：')}
-          />
-          <MetricCard
-            label="最近体脂"
-            value={today.current_body_fat_percent?.toFixed(1) || '—'}
-            unit="%"
-            target={targetFat ? `目标 ${targetFat}` : '还没设置目标'}
-            tone="orange"
-            onPress={() => openCoach('我刚测了体脂：')}
-          />
-        </View>
-
-        <SectionTitle title="今天记一点" />
-        <View style={styles.quickGrid}>
-          <QuickAction icon="scale-outline" title="记体重" subtitle="看长期趋势" onPress={() => openCoach('我刚量了体重：')} />
-          <QuickAction icon="restaurant-outline" title="记饮食" subtitle="文字或拍照" onPress={() => openCoach('我刚吃了')} />
-          <QuickAction icon="walk-outline" title="记运动" subtitle="做了什么都算" onPress={() => openCoach('我刚运动了')} />
-          <QuickAction icon="chatbubble-ellipses-outline" title="聊一聊" subtitle="问教练任何事" onPress={() => openCoach()} />
-        </View>
-
-        <RecordHistory
-          timezone={today.routine.timezone}
-          refreshKey={data}
-          onChanged={() => void refresh()}
-        />
-
-      </ScrollView>
-    </SafeAreaView>
-  );
-}
-
-function MetricCard({ label, value, unit, target, tone, onPress }: { label: string; value: string; unit: string; target: string; tone: 'green' | 'orange'; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.metricCard, tone === 'orange' && styles.metricOrange]}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <View style={styles.metricValueRow}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricUnit}>{unit}</Text></View>
-      <Text numberOfLines={1} style={styles.metricTarget}>{target}</Text>
-    </Pressable>
-  );
-}
-
-function QuickAction({ icon, title, subtitle, onPress }: { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.quick, pressed && { opacity: 0.7 }]}>
-      <View style={styles.quickIcon}><Ionicons name={icon} size={22} color={colors.primary} /></View>
-      <View><Text style={styles.quickTitle}>{title}</Text><Text style={styles.quickSubtitle}>{subtitle}</Text></View>
-    </Pressable>
-  );
+  return <SafeAreaView style={styles.safe} edges={['top']}>
+    <BrandHeader status={online ? '已同步' : pending.length ? `${pending.length} 条待发送` : '未连接'} />
+    <ScrollView contentContainerStyle={styles.page}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.indigo} colors={[palette.indigo]} />}>
+      <Text style={styles.greeting}>{greeting}，{user.nickname || '今天的你'}</Text>
+      <Text style={styles.title}>不用完美，{'\n'}今天往前一点就好。</Text>
+      <View style={styles.metrics}>
+        <MetricCard label="最近体重" value={today.current_weight_kg?.toFixed(1) || '—'} unit="kg"
+          target={targetWeight ? `目标 ${targetWeight}` : '还没设置目标'} tone="indigo" onPress={() => openCoach('我刚量了体重：')} />
+        <MetricCard label="最近体脂" value={today.current_body_fat_percent?.toFixed(1) || '—'} unit="%"
+          target={targetFat ? `目标 ${targetFat}` : '还没设置目标'} tone="apricot" onPress={() => openCoach('我刚测了体脂：')} />
+      </View>
+      <Text accessibilityRole="header" style={styles.sectionTitle}>今天记一点</Text>
+      <TodayActions openCoach={openCoach} />
+      <RecordHistory timezone={today.routine.timezone} refreshKey={data} onChanged={() => void refresh()} />
+    </ScrollView>
+  </SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  page: { padding: spacing.lg, paddingBottom: 110 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.xxl },
-  statusDot: { borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { color: colors.inkMuted, fontSize: 12, fontWeight: '600' },
-  eyebrow: { color: colors.primary, fontSize: 14, fontWeight: '700', marginBottom: spacing.sm },
-  title: { color: colors.ink, fontSize: 32, lineHeight: 40, fontWeight: '800', letterSpacing: -1 },
-  metrics: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
-  metricCard: { flex: 1, minHeight: 150, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.primarySoft },
-  metricOrange: { backgroundColor: colors.accentSoft },
-  metricLabel: { color: colors.inkMuted, fontSize: 13, fontWeight: '600' },
-  metricValueRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: spacing.md },
-  metricValue: { color: colors.ink, fontSize: 34, fontWeight: '800', letterSpacing: -1 },
-  metricUnit: { color: colors.inkMuted, fontSize: 13, fontWeight: '600', marginLeft: 4 },
-  metricTarget: { color: colors.inkMuted, fontSize: 12, marginTop: 'auto' },
-  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  quick: { width: '48%', flexGrow: 1, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },
-  quickIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
-  quickTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
-  quickSubtitle: { color: colors.inkMuted, fontSize: 11, marginTop: 2 },
-  pulseRow: { flexDirection: 'row', alignItems: 'center', minHeight: 44 },
-  pulseIcon: { width: 32, height: 32, borderRadius: 12, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
-  pulseIconDone: { backgroundColor: colors.primary },
-  pulseTitle: { color: colors.ink, fontSize: 15, fontWeight: '600', marginLeft: spacing.md },
-  pulseValue: { color: colors.inkMuted, fontSize: 14, marginLeft: 'auto' },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginVertical: spacing.sm },
-  coachNote: { backgroundColor: colors.surfaceMuted, borderRadius: radius.md, padding: spacing.md, flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
-  coachText: { color: colors.inkMuted, fontSize: 13, lineHeight: 19, flex: 1 },
+  safe: { flex: 1, backgroundColor: palette.background },
+  page: { paddingHorizontal: 16, paddingTop: 5, paddingBottom: 16 },
+  greeting: { color: '#666E86', fontSize: 13, lineHeight: 20, fontWeight: '600', marginBottom: 8 },
+  title: { color: palette.ink, fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.6 },
+  metrics: { flexDirection: 'row', gap: 12, marginTop: 18 },
+  sectionTitle: { color: palette.ink, fontSize: 19, lineHeight: 27, fontWeight: '700', marginTop: 23, marginBottom: 10 },
 });

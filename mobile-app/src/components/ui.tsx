@@ -12,17 +12,6 @@ import {
 
 import { colors, radius, spacing } from '../theme';
 
-export function BrandMark({ compact = false }: { compact?: boolean }) {
-  return (
-    <View style={styles.brandRow}>
-      <View style={[styles.brandIcon, compact && styles.brandIconCompact]}>
-        <Ionicons name="leaf" size={compact ? 17 : 23} color={colors.white} />
-      </View>
-      <Text style={[styles.brandText, compact && styles.brandTextCompact]}>SlimGuard</Text>
-    </View>
-  );
-}
-
 export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle | ViewStyle[] }) {
   return <View style={[styles.card, style]}>{children}</View>;
 }
@@ -78,22 +67,7 @@ export function EmptyState({ icon, title, body }: { icon: keyof typeof Ionicons.
   );
 }
 
-export function LoadingScreen() {
-  return (
-    <View style={styles.loadingScreen}>
-      <BrandMark />
-      <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: spacing.xl }} />
-      <Text style={styles.loadingText}>正在整理你的减脂进度…</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  brandIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandIconCompact: { width: 34, height: 34, borderRadius: 12 },
-  brandText: { color: colors.ink, fontSize: 27, fontWeight: '800', letterSpacing: -0.8 },
-  brandTextCompact: { fontSize: 21 },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -120,6 +94,4 @@ const styles = StyleSheet.create({
   emptyIcon: { width: 48, height: 48, borderRadius: 18, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
   emptyTitle: { color: colors.ink, fontSize: 17, fontWeight: '700' },
   emptyBody: { color: colors.inkMuted, fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: spacing.xs },
-  loadingScreen: { flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
-  loadingText: { color: colors.inkMuted, marginTop: spacing.md, fontSize: 14 },
 });

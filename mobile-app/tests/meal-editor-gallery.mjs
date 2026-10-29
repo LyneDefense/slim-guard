@@ -61,6 +61,7 @@ function fixture(file, exportName, props, doubles) {
         PanResponder: { create: handlers => ({ panHandlers: handlers }) },
       };
       if (specifier === '@expo/vector-icons') return { Ionicons: 'Icon' };
+      if (specifier === 'react-native-svg') return { __esModule: true, default: 'Svg', Circle: 'Circle', Path: 'Path' };
       if (specifier === 'expo-status-bar') return { StatusBar: 'StatusBar' };
       if (specifier === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', SafeAreaProvider: 'SafeAreaProvider' };
       if (specifier.startsWith('.')) {
@@ -133,7 +134,7 @@ test('retrying an unchanged edit reuses its operation ID after an uncertain netw
 
 test('meal thumbnail opens its authenticated full-size image and can be closed', () => {
   const view = fixture('components/PhotoGallery.tsx', 'PhotoGallery', {
-    compact: true, photos: [{ asset_id: 'photo1', mime_type: 'image/png' }],
+    variant: 'record', photos: [{ asset_id: 'photo1', mime_type: 'image/png' }],
   }, { '../lib/api': { mobileApi: { imageSource: photo => ({ uri: `/assets/${photo.asset_id}`, headers: { Authorization: 'Bearer test' } }) } } });
   assert.equal(view.render().some(element => typeof element.type === 'function' && element.type.name === 'PhotoViewer'), false);
   view.press('查看第 1 张餐食照片');
@@ -146,6 +147,34 @@ test('meal thumbnail opens its authenticated full-size image and can be closed',
   assert.equal(fullImage.props.style.height, 640);
   viewer.press('关闭大图');
   assert.equal(view.render().some(element => typeof element.type === 'function' && element.type.name === 'PhotoViewer'), false);
+});
+
+test('record thumbnail has an expand affordance, retains all photos and authenticated sources', () => {
+  const view = fixture('components/PhotoGallery.tsx', 'PhotoGallery', {
+    variant: 'record', photos: [{ asset_id: 'photo1' }, { asset_id: 'photo2' }],
+  }, { '../lib/api': { mobileApi: { imageSource: photo => ({ uri: `/assets/${photo.asset_id}`, headers: { Authorization: 'Bearer test' } }) } } });
+  assert.equal(view.render().filter(node => node.type === 'Image').length, 1);
+  assert.equal(view.find('Image').props.source.headers.Authorization, 'Bearer test');
+  assert.ok(view.render().some(node => typeof node.type === 'function' && node.props.name === 'expand'));
+  view.press('查看第 1 张餐食照片，共 2 张');
+  const full = view.render().find(node => typeof node.type === 'function' && node.type.name === 'PhotoViewer');
+  assert.equal(full.props.photos.length, 2);
+  assert.equal(full.props.initialIndex, 0);
+  full.props.onClose();
+  assert.equal(view.render().some(node => typeof node.type === 'function' && node.type.name === 'PhotoViewer'), false);
+});
+
+test('chat photo fits the bubble width, retains all photos behind the preview and opens authenticated full-size images', () => {
+  const view = fixture('components/PhotoGallery.tsx', 'PhotoGallery', {
+    variant: 'chat', photos: [{ asset_id: 'photo1' }, { asset_id: 'photo2' }],
+  }, { '../lib/api': { mobileApi: { imageSource: photo => ({ uri: `/assets/${photo.asset_id}`, headers: { Authorization: 'Bearer test' } }) } } });
+  const photo = view.find('Image');
+  assert.equal(photo.props.style[1].width, '100%'); assert.equal(photo.props.style[1].aspectRatio, 1.55);
+  assert.equal(photo.props.source.headers.Authorization, 'Bearer test');
+  assert.equal(view.render().filter(node => node.type === 'Image').length, 1);
+  view.press('查看第 1 张餐食照片，共 2 张');
+  const full = view.render().find(node => typeof node.type === 'function' && node.type.name === 'PhotoViewer');
+  assert.equal(full.props.photos.length, 2);
 });
 
 test('editor uses a modal-local safe area and keeps large action buttons outside its scroll body', () => {
@@ -189,25 +218,19 @@ test('saving blocks every dismiss path to avoid abandoning an in-flight edit', (
   assert.equal(view.closed.length, 0);
 });
 
-test('history uses an accessible pencil icon with a 44-point touch area, not a text-only edit link', async () => {
-  const view = fixture('features/record-history/RecordHistory.tsx', 'RecordHistory', {
-    timezone: 'Asia/Shanghai', refreshKey: 0, onChanged() {},
+test('history uses an accessible pencil icon with a 44-point touch area, not a text-only edit link', () => {
+  const row = fixture('features/record-history/RecordRow.tsx', 'RecordRow', {
+    record, timezone: 'Asia/Shanghai', onEdit() {}, opening: false,
   }, {
     '../../components/ui': { Card: 'Card', SectionTitle: 'SectionTitle' },
     '../../components/PhotoGallery': { PhotoGallery: 'PhotoGallery' },
     './MealEditor': { MealEditor: 'MealEditor' },
     './api': { recordHistoryApi: { list: async () => ({ records: [record], has_more: false }) } },
   });
-  const section = view.mount(view.render().find(node => typeof node.type === 'function' && node.type.name === 'RecordSection' && node.props.kind === 'meal'));
-  section.press('饮食记录');
-  section.render();
-  await new Promise(setImmediate);
-  const row = section.mount(section.render().find(node => typeof node.type === 'function' && node.type.name === 'RecordRow'));
   const button = row.find('Pressable', props => props.accessibilityLabel === '修改这条餐食记录');
   assert.equal(button.props.style.width, 44);
   assert.equal(button.props.style.height, 44);
-  assert.equal(button.props.children.type, 'Icon');
-  assert.equal(button.props.children.props.name, 'pencil-outline');
+  assert.equal(tree(button).find(node => node.type === 'Icon').props.name, 'pencil-outline');
 });
 
 function photoViewer(initialIndex = 0) {

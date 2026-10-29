@@ -22,6 +22,19 @@ test('system text and its card produce one concise notice, never a second chat m
   assert.equal(candidates[0].text, '早餐已记录。');
 });
 
+test('notice outcome comes from verified card status, never from success-like prose', () => {
+  const result = systemNoticeCandidates([
+    message('text', { text: '这次没有成功' }),
+    message('card', { kind: 'card', card: { status: 'failed' } }),
+  ]);
+  assert.equal(result[0].outcome, 'failed');
+  assert.equal(systemNoticeCandidates([message('prose', { text: '成功' })])[0].outcome, undefined);
+  assert.equal(systemNoticeCandidates([
+    message('text'), message('failure', { kind: 'card', card: { status: 'failed' } }),
+    message('success', { kind: 'card', card: { status: 'success' } }),
+  ])[0].outcome, 'failed');
+});
+
 test('old history does not replay transient notices while unanswered questions survive reload', () => {
   const candidates = systemNoticeCandidates([
     message('old', { turn_id: 'old', created_at: new Date(now - 60_000).toISOString() }),

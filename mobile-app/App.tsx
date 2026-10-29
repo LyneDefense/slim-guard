@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { LoadingScreen } from './src/components/ui';
+import { LoadingScreen } from './src/shared/brand/LoadingScreen';
+import { brand } from './src/shared/brand/identity';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { CoachScreen } from './src/screens/CoachScreen';
@@ -12,26 +14,30 @@ import { CoachProfileScreen } from './src/screens/CoachProfileScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { ProgressScreen } from './src/screens/ProgressScreen';
 import { TodayScreen } from './src/screens/TodayScreen';
+import { BottomTabBar } from './src/shared/navigation/BottomTabBar';
+import { ProfileDetails } from './src/features/user-profile/ProfileDetails';
+import type { ProfilePage } from './src/features/user-profile/ProfileDetails';
+import type { Tab } from './src/shared/navigation/BottomTabBar';
 import { colors, radius, spacing } from './src/theme';
 
-type Tab = 'today' | 'coach' | 'progress' | 'profile';
 type ProfileGate = { intent: 'coach' | 'edit'; draft: string };
 
-const tabs: Array<{ id: Tab; title: string; icon: keyof typeof Ionicons.glyphMap; activeIcon: keyof typeof Ionicons.glyphMap }> = [
-  { id: 'today', title: '今天', icon: 'sunny-outline', activeIcon: 'sunny' },
-  { id: 'coach', title: '教练', icon: 'chatbubble-ellipses-outline', activeIcon: 'chatbubble-ellipses' },
-  { id: 'progress', title: '趋势', icon: 'analytics-outline', activeIcon: 'analytics' },
-  { id: 'profile', title: '我的', icon: 'person-outline', activeIcon: 'person' },
-];
+// Reveal the real first React surface, not a timed splash or a network request.
+void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function App() {
+  const reveal = useCallback(() => {
+    void SplashScreen.hideAsync().catch(() => undefined);
+  }, []);
   return (
-    <SafeAreaProvider>
-      <AppProvider>
-        <StatusBar style="dark" />
-        <AppShell />
-      </AppProvider>
-    </SafeAreaProvider>
+    <View style={styles.root} onLayout={reveal}>
+      <SafeAreaProvider>
+        <AppProvider>
+          <StatusBar style="dark" />
+          <AppShell />
+        </AppProvider>
+      </SafeAreaProvider>
+    </View>
   );
 }
 
@@ -40,7 +46,11 @@ function AppShell() {
   const [tab, setTab] = useState<Tab>('today');
   const [coachDraft, setCoachDraft] = useState('');
   const [profileGate, setProfileGate] = useState<ProfileGate | null>(null);
+  const [profilePage, setProfilePage] = useState<ProfilePage | null>(null);
   const insets = useSafeAreaInsets();
+  useEffect(() => {
+    setTab('today'); setCoachDraft(''); setProfileGate(null); setProfilePage(null);
+  }, [data?.user.id]);
 
   const openCoach = useCallback((draft = '') => {
     if (!data?.coach_profile.profile) {
@@ -81,13 +91,16 @@ function AppShell() {
     );
   }
 
+  if (profilePage) return <ProfileDetails page={profilePage} onClose={() => setProfilePage(null)}
+    openCoach={draft => { setProfilePage(null); openCoach(draft); }} />;
+
   return (
     <View style={styles.container}>
       <View style={styles.screen}>
         {tab === 'today' ? <TodayScreen openCoach={openCoach} /> : null}
         {tab === 'coach' ? <CoachScreen draft={coachDraft} consumeDraft={consumeDraft} /> : null}
         {tab === 'progress' ? <ProgressScreen openCoach={openCoach} /> : null}
-        {tab === 'profile' ? <ProfileScreen openCoach={openCoach} openCoachProfile={openCoachProfile} /> : null}
+        {tab === 'profile' ? <ProfileScreen openPage={setProfilePage} openCoachProfile={openCoachProfile} /> : null}
       </View>
       {error ? (
         <Pressable onPress={clearError} style={[styles.errorBanner, { bottom: 76 + insets.bottom }]}>
@@ -96,33 +109,18 @@ function AppShell() {
           <Ionicons name="close" size={17} color={colors.white} />
         </Pressable>
       ) : null}
-      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        {tabs.map((item) => {
-          const active = tab === item.id;
-          return (
-            <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: active }} onPress={() => item.id === 'coach' ? openCoach() : setTab(item.id)} style={styles.tab}>
-              <View style={[styles.tabIcon, active && styles.tabIconActive]}><Ionicons name={active ? item.activeIcon : item.icon} size={21} color={active ? colors.white : colors.inkMuted} /></View>
-              <Text style={[styles.tabText, active && styles.tabTextActive]}>{item.title}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <BottomTabBar selected={tab} bottomInset={insets.bottom} onSelect={next => next === 'coach' ? openCoach() : setTab(next)} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: brand.colors.background },
   container: {
     flex: 1,
     backgroundColor: colors.background,
   },
   screen: { flex: 1 },
-  tabBar: { flexDirection: 'row', paddingTop: 8, paddingHorizontal: spacing.md, backgroundColor: colors.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
-  tab: { flex: 1, alignItems: 'center', gap: 3 },
-  tabIcon: { width: 34, height: 30, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  tabIconActive: { backgroundColor: colors.primary },
-  tabText: { color: colors.inkMuted, fontSize: 10, fontWeight: '600' },
-  tabTextActive: { color: colors.primary, fontWeight: '800' },
   errorBanner: { position: 'absolute', left: spacing.lg, right: spacing.lg, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.danger, shadowColor: colors.shadow, shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 12, elevation: 8 },
   errorText: { color: colors.white, fontSize: 12, lineHeight: 17, flex: 1, fontWeight: '600' },
 });

@@ -3,7 +3,8 @@ import type { HistoryRecord, MealEdit, RecordKind, RecordPage } from './types';
 
 export const recordHistoryApi = {
   list(kind: RecordKind, timezone: string, cursor?: string): Promise<RecordPage> {
-    const query = new URLSearchParams({ kind, timezone, limit: '20' });
+    // The home preview shows two entries per section, then follows the server cursor.
+    const query = new URLSearchParams({ kind, timezone, limit: '2' });
     if (cursor) query.set('cursor', cursor);
     return mobileApi.request(`/api/mobile/v1/records?${query}`);
   },

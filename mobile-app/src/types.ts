@@ -109,6 +109,7 @@ export type ChatMessage = {
   notice_text?: string | null;
   created_at: string;
   pending?: boolean;
+  delivery_state?: 'queued' | 'sending' | 'processing';
   failed?: boolean;
 };
 
@@ -158,10 +159,13 @@ export type DashboardData = {
 export type PendingChat = {
   payload: Omit<ChatPayload, 'image_base64' | 'images'>;
   imageUris?: string[];
+  imageMimeTypes?: ('image/jpeg' | 'image/png' | 'image/webp')[];
   // Legacy offline queue item shape.
   imageUri?: string;
   previewUri?: string;
   createdAt: string;
+  ownerId?: string;
+  deliveryState?: 'queued' | 'processing';
 };
 
 export type DeviceRegistration = {

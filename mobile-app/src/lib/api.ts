@@ -17,6 +17,7 @@ import type {
   WeComBinding,
 } from '../types';
 import { clearRefreshToken, readRefreshToken, saveRefreshToken } from './session';
+import { connectionMonitor } from '../shared/network/connection';
 
 const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 export const API_BASE_URL = (configuredBaseUrl || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -304,6 +305,7 @@ class MobileApi {
         },
         signal: controller.signal,
       });
+      connectionMonitor.response(response.status);
       if (!response.ok) {
         let body: ApiErrorBody = {};
         try {
@@ -317,12 +319,14 @@ class MobileApi {
         throw new ApiError(response.status, code || 'request_failed', message || '请求没有成功');
       }
       if (response.status === 204) return undefined as T;
-      return (await response.json()) as T;
+      try { return (await response.json()) as T; }
+      catch { throw new ApiError(502, 'invalid_response', '服务器返回格式异常，请稍后再试'); }
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (error instanceof Error && error.name === 'AbortError') {
         throw new ApiError(0, 'request_timeout', '网络有点慢，请稍后再试');
       }
+      connectionMonitor.failure('network_unavailable');
       throw new ApiError(0, 'network_unavailable', '暂时连不上服务器');
     } finally {
       clearTimeout(timeout);

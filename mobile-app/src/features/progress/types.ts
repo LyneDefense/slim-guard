@@ -1,4 +1,5 @@
 export type PeriodDays = 7 | 30;
+export type MeasurementMetric = 'weight' | 'bodyFat';
 export type DailyMeasurement = { record_id: string; on: string; value: number; unit: 'kg' | '%' };
 export type PeriodProgress = {
   days: PeriodDays;

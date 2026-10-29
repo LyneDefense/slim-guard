@@ -7,6 +7,7 @@ import { Platform } from 'react-native';
 import type { Routine } from '../types';
 import { mobileApi } from './api';
 import { readInstallationId, saveInstallationId } from './session';
+import { brand } from '../shared/brand/identity';
 
 const ids = {
   weight: 'slimguard-routine-weight',
@@ -27,7 +28,7 @@ export async function syncRoutineNotifications(routine: Routine): Promise<boolea
   await Promise.all(Object.values(ids).map((id) => Notifications.cancelScheduledNotificationAsync(id)));
   const reminders = [
     { id: ids.weight, time: routine.weight_reminder_time, title: '量一下体重吧', body: '一分钟记下来，趋势比单次数字更重要。' },
-    { id: ids.meal, time: routine.meal_reminder_time, title: '今天吃得怎么样？', body: '拍张照或说一句，SlimGuard 帮你记。' },
+    { id: ids.meal, time: routine.meal_reminder_time, title: '今天吃得怎么样？', body: `拍张照或说一句，${brand.name}帮你记。` },
     { id: ids.daily, time: routine.daily_review_time, title: '今天辛苦了', body: '花半分钟复盘一下，不求完美，只看下一步。' },
   ].filter((item) => item.time !== null);
 

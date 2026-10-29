@@ -12,7 +12,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BrandMark, Button } from '../components/ui';
+import { Button } from '../components/ui';
+import { BrandIcon, BrandMark } from '../shared/brand/BrandMark';
+import { brand } from '../shared/brand/identity';
 import { useApp } from '../context/AppContext';
 import { API_BASE_URL } from '../lib/api';
 import { colors, radius, spacing } from '../theme';
@@ -116,8 +118,7 @@ export function AuthScreen() {
           <BrandMark />
           <View style={styles.hero}>
             <View style={styles.heroArt}>
-              <View style={styles.heroOrb}><Ionicons name="sparkles" size={34} color={colors.primaryDark} /></View>
-              <View style={styles.heroLeaf}><Ionicons name="leaf" size={24} color={colors.white} /></View>
+              <BrandIcon size={104} />
             </View>
             <Text style={styles.title}>一个真正记得你的{`\n`}减脂教练</Text>
             <Text style={styles.subtitle}>不评判，不套模板。你的记录、目标和习惯会慢慢连成一条清晰的路。</Text>
@@ -257,7 +258,7 @@ export function AuthScreen() {
             )}
             {(localError || error) ? <Text style={styles.error}>{localError || error}</Text> : null}
             <Button
-              title={loginMode === 'test' ? '登录测试账号' : challenge ? '进入 SlimGuard' : '获取验证码'}
+              title={loginMode === 'test' ? '登录测试账号' : challenge ? `进入${brand.name}` : '获取验证码'}
               icon={loginMode === 'test' || challenge ? 'arrow-forward' : 'chatbubble-ellipses-outline'}
               loading={loading}
               onPress={loginMode === 'test' ? signInWithPassword : challenge ? signIn : sendCode}
@@ -277,9 +278,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   page: { flexGrow: 1, paddingHorizontal: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.lg },
   hero: { flex: 1, justifyContent: 'center', minHeight: 280 },
-  heroArt: { width: 92, height: 82, marginBottom: spacing.lg },
-  heroOrb: { width: 72, height: 72, borderRadius: 28, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
-  heroLeaf: { position: 'absolute', right: 0, bottom: 0, width: 42, height: 42, borderRadius: 16, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '8deg' }] },
+  heroArt: { width: 104, height: 104, marginBottom: spacing.lg },
   title: { color: colors.ink, fontSize: 34, lineHeight: 43, letterSpacing: -1.1, fontWeight: '800' },
   subtitle: { color: colors.inkMuted, fontSize: 16, lineHeight: 25, marginTop: spacing.md, maxWidth: 360 },
   form: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line },

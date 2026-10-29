@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "SlimGuard",
+    "name": "称小二",
     "slug": "slim-guard",
     "version": "1.0.0",
     "scheme": "slimguard",
     "orientation": "portrait",
-    "icon": "./assets/icon-brand.png",
+    "icon": "./assets/brand/cheng-xiao-er-icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
@@ -17,13 +17,13 @@
     "android": {
       "package": "com.slimguard.app",
       "adaptiveIcon": {
-        "backgroundColor": "#2F6F52",
-        "foregroundImage": "./assets/adaptive-foreground-brand.png"
+        "backgroundColor": "#F3BE96",
+        "foregroundImage": "./assets/brand/cheng-xiao-er-foreground.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/brand/cheng-xiao-er-icon.png"
     },
     "plugins": [
       [
@@ -35,8 +35,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "SlimGuard 需要读取你选择的饮食照片，以便减脂教练帮助分析。",
-          "cameraPermission": "SlimGuard 需要使用相机拍摄饮食照片，以便减脂教练帮助分析。",
+          "photosPermission": "称小二需要读取你选择的饮食照片，以便减重教练帮助分析。",
+          "cameraPermission": "称小二需要使用相机拍摄饮食照片，以便减重教练帮助分析。",
           "microphonePermission": false
         }
       ],
@@ -44,10 +44,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/adaptive-foreground-brand.png",
-          "imageWidth": 180,
+          "image": "./assets/brand/cheng-xiao-er-foreground.png",
+          "imageWidth": 260,
           "resizeMode": "contain",
-          "backgroundColor": "#F6F3EC"
+          "backgroundColor": "#F3BE96"
         }
       ],
       "expo-font",

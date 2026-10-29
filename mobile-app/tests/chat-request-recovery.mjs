@@ -34,6 +34,7 @@ function loadMobileApi(fetchImpl, timeouts) {
     },
     clearTimeout() {},
     require(specifier) {
+      if (specifier === '../shared/network/connection') return { connectionMonitor: { response() {}, failure() {} } };
       if (specifier === './session') {
         return {
           clearRefreshToken: async () => {},
