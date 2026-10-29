@@ -21,12 +21,14 @@ from slim_guard.memory.errors import (
     MemorySourceMismatch,
     MemoryStaleEvidence,
 )
+from slim_guard.memory.grounding import ConstraintMemoryWriter, GroundingRejected
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import (
     ToolArguments,
     ToolContext,
     ToolEffectLevel,
     ToolEffectStatus,
+    ToolFieldError,
     ToolMutationKind,
     ToolResult,
 )
@@ -44,7 +46,7 @@ SET_WEIGHT_GOAL_TOOL_NAME = "set_weight_goal"
 SET_BODY_FAT_GOAL_TOOL_NAME = "set_body_fat_goal"
 SET_BEHAVIOR_GOAL_TOOL_NAME = "set_behavior_goal"
 RECORD_USER_CONSTRAINT_TOOL_NAME = "record_user_constraint"
-MEMORY_TOOL_VERSION = "v8"
+MEMORY_TOOL_VERSION = "v9"
 
 _GRAMS_PER_UNIT = {
     "kg": Decimal("1000"),
@@ -191,8 +193,10 @@ class MemoryToolHandlers:
     def __init__(
         self,
         repository: MemoryRepository,
+        constraint_writer: ConstraintMemoryWriter | None = None,
     ) -> None:
         self._repository = repository
+        self._constraint_writer = constraint_writer or ConstraintMemoryWriter(repository)
 
     async def set_coaching_profile(
         self,
@@ -403,11 +407,6 @@ class MemoryToolHandlers:
         context: ToolContext,
         arguments: RecordUserConstraintArguments,
     ) -> ToolResult:
-        if (
-            arguments.subject.strip() not in arguments.statement
-            or arguments.statement.strip() not in arguments.evidence_excerpt
-        ):
-            return self._value_not_in_evidence()
         key = {
             "dietary": MemoryKey.DIETARY_CONSTRAINT,
             "exercise": MemoryKey.EXERCISE_CONSTRAINT,
@@ -426,6 +425,7 @@ class MemoryToolHandlers:
             ),
             evidence_excerpt=arguments.evidence_excerpt,
             evidence_ref=arguments.evidence_ref,
+            constraint=True,
         )
 
     async def list_user_memories(
@@ -486,6 +486,7 @@ class MemoryToolHandlers:
         facts: tuple[MemoryFactInput, ...],
         evidence_excerpt: str,
         evidence_ref: str | None,
+        constraint: bool = False,
     ) -> ToolResult:
         if context.execution_idempotency_key is None or context.source_item_id is None:
             return ToolResult.failed(
@@ -503,23 +504,42 @@ class MemoryToolHandlers:
                 ),
             )
         try:
-            result = await self._repository.write(
-                MemoryWriteCommand(
-                    user_id=context.user_id,
-                    facts=facts,
-                    evidence_excerpt=evidence_excerpt,
-                    operation_id=context.execution_idempotency_key,
-                    source_turn_id=context.turn_id,
-                    source_item_id=context.source_item_id,
-                    evidence_item_id=evidence_ref,
-                    source_tool_call_id=context.tool_call_id,
-                )
+            command = MemoryWriteCommand(
+                user_id=context.user_id,
+                facts=facts,
+                evidence_excerpt=evidence_excerpt,
+                operation_id=context.execution_idempotency_key,
+                source_turn_id=context.turn_id,
+                source_item_id=context.source_item_id,
+                evidence_item_id=evidence_ref,
+                source_tool_call_id=context.tool_call_id,
+            )
+            review: dict[str, str] | None = None
+            if constraint:
+                grounded = await self._constraint_writer.write(command)
+                result, review = grounded.saved, grounded.review
+            else:
+                result = await self._repository.write(command)
+        except GroundingRejected as exc:
+            return ToolResult.failed(
+                effect_status=ToolEffectStatus.NOT_APPLIED,
+                code=exc.code,
+                message=str(exc),
+                field_errors=(ToolFieldError(path=(exc.field,), code=exc.code, message=str(exc)),),
             )
         except MemoryEvidenceMismatch:
             return ToolResult.failed(
                 effect_status=ToolEffectStatus.NOT_APPLIED,
                 code="memory_evidence_mismatch",
                 message="The memory must be grounded in an exact excerpt of this user message.",
+                field_errors=(
+                    ToolFieldError(
+                        path=("evidence_excerpt",),
+                        code="exact_quote_required",
+                        message=("Copy an exact excerpt from the referenced user message; "
+                                 "do not paraphrase evidence."),
+                    ),
+                ),
             )
         except MemorySourceMismatch:
             return ToolResult.failed(
@@ -553,6 +573,7 @@ class MemoryToolHandlers:
                 "memories": [self._output(fact) for fact in result.facts],
                 "changes": [change.model_dump(mode="json") for change in result.changes],
                 "created_count": result.created_count,
+                **({"grounding": review} if review else {}),
             },
             source_ids=tuple(fact.id for fact in result.facts),
         )
@@ -700,7 +721,9 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             name=RECORD_USER_CONSTRAINT_TOOL_NAME,
             description=(
                 "Save a dietary, exercise, or health constraint explicitly reported by the "
-                "user. statement must be copied exactly from user-authored evidence. For "
+                "user. evidence_excerpt must be an exact quote; statement must preserve its "
+                "meaning, degree and uncertainty. subject is a normalized topic label, not "
+                "a second user fact; semantic review resolves it against existing topics. For "
                 "historical evidence pass evidence_ref from working memory. Store it as "
                 "user-reported context, never as a diagnosis."
             ),
@@ -709,7 +732,7 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
             effect_level=ToolEffectLevel.REVERSIBLE_WRITE,
             mutation_kind=ToolMutationKind.USER_PROFILE,
             idempotent=True,
-            timeout_seconds=3,
+            timeout_seconds=18,
         ),
         RegisteredTool(
             name=LIST_USER_MEMORIES_TOOL_NAME,
@@ -743,8 +766,10 @@ def memory_tool_definitions() -> tuple[RegisteredTool, ...]:
 
 def memory_tool_executors(
     repository: MemoryRepository,
+    *,
+    constraint_writer: ConstraintMemoryWriter | None = None,
 ) -> Mapping[str, ToolExecutor[Any]]:
-    handlers = MemoryToolHandlers(repository)
+    handlers = MemoryToolHandlers(repository, constraint_writer)
     return {
         SET_COACHING_PROFILE_TOOL_NAME: ToolExecutor(
             arguments_model=SetCoachingProfileArguments,

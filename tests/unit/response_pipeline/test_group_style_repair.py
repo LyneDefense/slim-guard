@@ -15,6 +15,7 @@ from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelMessage,
     ModelPurpose,
+    ModelRequest,
     ModelResponse,
     ModelUsage,
     NormalizedToolCall,
@@ -25,6 +26,7 @@ from slim_guard.features.health_records.weight.repository import WeightRepositor
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.runtime.contracts import AgentRole
 from slim_guard.tools.contracts import ToolExecutionMode
+from slim_guard.usage.repository import UsageRepository
 
 
 def reply(value: str | dict[str, object]) -> ModelResponse:
@@ -46,6 +48,28 @@ def styled(text: str) -> ModelResponse:
             "style_profile_version": "doctor_builtin_v1",
         }
     )
+
+
+class ClaimAwareScript(ScriptedModelGateway):
+    """Keep receipt verification independent of the scripted style-repair steps."""
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        if request.output_schema_name != "MutationClaims":
+            return await super().complete(request)
+        self.requests.append(request)
+        payload = json.loads(request.messages[-1].content or "{}")
+        quote = "已记录今天体重77.6kg。"
+        claims = []
+        if quote in payload["candidate_text"]:
+            claims.append(
+                {
+                    "quote": quote,
+                    "mutation_kind": "health_record",
+                    "status": "succeeded",
+                    "operation_ids": [payload["receipts"][0]["operation_id"]],
+                }
+            )
+        return reply({"claims": claims})
 
 
 @pytest.mark.parametrize("repair_target", ["response_style", "core"])
@@ -162,7 +186,7 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
         )
     else:
         responses.append(reply({"verdict": "pass"}))
-    model = ScriptedModelGateway(responses)
+    model = ClaimAwareScript(responses)
     runtime = build_agent_runtime(
         database=database,
         model=model,
@@ -174,11 +198,11 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
     )
     try:
         result = await runtime.run_user_message(
-                AgentRuntimeRequest(
-                    user_id="user-1",
-                    text="今天体重77.6kg",
-                    source_message_id="weight-message-1",
-                    occurred_at=now,
+            AgentRuntimeRequest(
+                user_id="user-1",
+                text="今天体重77.6kg",
+                source_message_id="weight-message-1",
+                occurred_at=now,
                 execution_mode=ToolExecutionMode.EVALUATION,
                 isolated_write_environment=True,
             )
@@ -222,7 +246,15 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
         assert styles[0].output_artifact_id in styles[1].input_artifact_ids
         assert reviews[0].output_artifact_id in styles[1].input_artifact_ids
         assert sum(a.artifact_type == "style_resolution" for a in artifacts) == 1
-        assert sum(i.total_token_count for i in invocations) == len(model.requests) * 5
+        # Mutation verification is a response-processing service, not another
+        # agent invocation. Its calls still belong in the billed Turn usage.
+        agent_calls = [r for r in model.requests if r.output_schema_name != "MutationClaims"]
+        assert sum(i.total_token_count for i in invocations) == len(agent_calls) * 5
+        usage = await UsageRepository(database).detail(
+            user_id="user-1", request_id=result.turn_id, limit=100, offset=0
+        )
+        assert usage["summary"]["calls"] == len(model.requests)
+        assert usage["summary"]["total_tokens"] == len(model.requests) * 5
         rewrites = [r for r in model.requests if r.output_schema_name == "StyledResponse"]
         assert len(rewrites) == 2
         first_payload = json.loads(rewrites[0].messages[-1].content)

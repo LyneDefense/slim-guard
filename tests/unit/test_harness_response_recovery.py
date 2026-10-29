@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from slim_guard.agent_models.errors import InvalidModelResponse
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import (
@@ -22,8 +24,10 @@ from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import NullHarnessRunRecorder
 from slim_guard.tools.contracts import (
     ToolContext,
+    ToolEffectStatus,
     ToolExecution,
     ToolExecutionMode,
+    ToolFieldError,
     ToolResult,
 )
 from slim_guard.tools.policy import ToolAuthorization
@@ -142,6 +146,60 @@ class SuccessfulToolCall:
                 completed_at=None,
             ),
         )
+
+
+@pytest.mark.parametrize("field_error, expected_calls", [(True, 2), (False, 3)])
+async def test_only_field_rejections_are_cached_and_corrected_arguments_can_repair(
+    field_error, expected_calls
+):
+    class RejectingTool(SuccessfulToolCall):
+        async def execute(self, **kwargs):
+            outcome = await super().execute(**kwargs)
+            if kwargs["call"].arguments["weight_kg"] == 77.6:
+                outcome = ToolCallOutcome(
+                    execution=outcome.execution.model_copy(
+                        update={
+                            "result": ToolResult.failed(
+                                code="invalid_value",
+                                message="Correct weight_kg",
+                                effect_status=ToolEffectStatus.NOT_APPLIED,
+                                field_errors=(
+                                    ToolFieldError(
+                                        path=("weight_kg",),
+                                        code="invalid_value",
+                                        message="Correct value",
+                                    ),
+                                )
+                                if field_error
+                                else (),
+                            ),
+                        }
+                    ),
+                    turn=outcome.turn,
+                )
+            return outcome
+
+    corrected = call_response("third").model_copy(
+        update={
+            "message": ModelMessage(
+                role="assistant",
+                tool_calls=(
+                    NormalizedToolCall(
+                        id="third", name="record_weight", arguments={"weight_kg": 77.7}
+                    ),
+                ),
+            )
+        }
+    )
+    model = ScriptedModelGateway(
+        [call_response("first"), call_response("second"), corrected, text_response("完成")]
+    )
+    tools = RejectingTool()
+    result = await run(model, tools, model_request=request(with_tool=True))
+    assert len(tools.calls) == expected_calls
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    feedback = [item.content for item in result.messages if item.tool_call_id == "second"]
+    assert ("Identical arguments already failed" in feedback[0]) is field_error
 
 
 async def run(

@@ -23,6 +23,7 @@ from slim_guard.harness.state_repository import HarnessStateRepository, TurnRef
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
+from slim_guard.response_pipeline.mutation_review import ModelMutationClaimReviewer
 from slim_guard.response_pipeline.processor import ResponseProcessor
 from slim_guard.runtime.invocation.core import CoreInvocationRunner
 from slim_guard.runtime.turn import TurnGrants, TurnHarness
@@ -208,7 +209,15 @@ def build_runner(
             ),
             clock=lambda: current_time,
         ),
-        responses=ResponseProcessor(recorder=recorder, output_guard=SlimGuardOutputGuard()),
+        responses=ResponseProcessor(
+            recorder=recorder,
+            output_guard=SlimGuardOutputGuard(),
+            # These lifecycle tests declare no business claims. Claim semantics
+            # and receipt binding have dedicated production-reviewer tests.
+            claim_reviewer=ModelMutationClaimReviewer(
+                ScriptedModelGateway((final_response('{"claims":[]}'),)), "test"
+            ),
+        ),
         recorder=recorder,
         clock=lambda: current_time,
     )

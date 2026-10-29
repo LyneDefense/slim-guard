@@ -18,6 +18,7 @@ from slim_guard.db.models import (
     SlimGuardUser,
 )
 from slim_guard.main import create_app
+from tests.conversation_script import SystemConversationScript
 
 
 def reply(text: str) -> ModelResponse:
@@ -41,7 +42,7 @@ async def test_mobile_api_auth_chat_idempotency_and_dashboard(tmp_path) -> None:
         log_level="WARNING",
     )
     model = ScriptedModelGateway((reply("记下了，我们慢慢来。"),))
-    app = create_app(settings, model_gateway=model)
+    app = create_app(settings, model_gateway=SystemConversationScript(model))
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as http:
             unauthorized = await http.get("/api/mobile/v1/me")
@@ -248,7 +249,7 @@ async def test_mobile_coach_profile_rejects_invalid_dates_and_allows_minors(tmp_
         log_level="WARNING",
     )
     model = ScriptedModelGateway((reply("可以，我们先从今天这顿饭开始。"),))
-    app = create_app(settings, model_gateway=model)
+    app = create_app(settings, model_gateway=SystemConversationScript(model))
     async with app.router.lifespan_context(app):
         async with AsyncClient(
             transport=ASGITransport(app=app),

@@ -275,7 +275,22 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
             ),
         )
     )
-    app = create_app(harness_settings, client=fake, model_gateway=model)
+
+    def weight_claims(payload):
+        return [
+            {
+                "quote": "已记录空腹体重 77.6kg，这是你的第一条体重基线。",
+                "mutation_kind": "health_record",
+                "status": "succeeded",
+                "operation_ids": [payload["receipts"][0]["operation_id"]],
+            }
+        ]
+
+    app = create_app(
+        harness_settings,
+        client=fake,
+        model_gateway=SystemConversationScript(model, mutation_claims=weight_claims),
+    )
     crypto = WeComCallbackCrypto(
         harness_settings.wecom_callback_token,
         harness_settings.wecom_callback_aes_key,

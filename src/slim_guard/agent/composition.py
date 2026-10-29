@@ -33,6 +33,7 @@ from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine
 from slim_guard.orchestration.repository import OrchestrationRepository
+from slim_guard.response_pipeline.mutation_review import ModelMutationClaimReviewer
 from slim_guard.response_pipeline.processor import ResponseProcessor
 from slim_guard.runtime.invocation.core import CoreInvocationRunner
 from slim_guard.runtime.turn import TurnHarness
@@ -82,6 +83,7 @@ def build_agent_runtime(
         config=definition.memory,
         model_name=definition.models.text_model,
         extraction_model=memory_extraction_model,
+        grounding_model=model,
         recall_model=memory_recall_model,
         engine=memory_engine,
         recorder=recorder,
@@ -153,6 +155,7 @@ def build_agent_runtime(
         responses=ResponseProcessor(
             recorder=recorder,
             output_guard=SlimGuardOutputGuard(),
+            claim_reviewer=ModelMutationClaimReviewer(model, definition.models.text_model),
             finalizer=response_finalizer,
         ),
         recorder=recorder,

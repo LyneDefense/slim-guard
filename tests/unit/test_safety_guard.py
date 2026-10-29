@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import cast
 
+from slim_guard.agent_models.fake import ScriptedModelGateway
+from slim_guard.agent_models.gateway import ModelMessage, ModelResponse
 from slim_guard.features.health_records.tools import health_record_tool_definitions
 from slim_guard.harness.safety import (
     SlimGuardOutputGuard,
 )
 from slim_guard.harness.state_repository import TurnRef
 from slim_guard.harness.tool_calls import ToolCallOutcome
+from slim_guard.response_pipeline.mutation_review import (
+    ModelMutationClaimReviewer,
+    operation_evidence,
+)
 from slim_guard.tools.contracts import (
     ToolEffectLevel,
     ToolEffectStatus,
@@ -72,15 +79,47 @@ def test_output_guard_replaces_diagnosis_and_dangerous_advice() -> None:
     assert "不能提供疾病诊断" in diagnosis.text
 
 
-def test_output_guard_rejects_unverified_record_success() -> None:
-    result = SlimGuardOutputGuard().review(
+async def receipt_review(text, outcomes=(), *, kind="health_record", ids=None):
+    structural = SlimGuardOutputGuard().review(text=text, tool_outcomes=outcomes)
+    if structural.modified:
+        return structural
+    model = ScriptedModelGateway(
+        [
+            ModelResponse(
+                message=ModelMessage(
+                    role="assistant",
+                    content=json.dumps(
+                        {
+                            "claims": [
+                                {
+                                    "quote": text,
+                                    "mutation_kind": kind,
+                                    "status": "succeeded",
+                                    "operation_ids": ids
+                                    if ids is not None
+                                    else [
+                                        item["operation_id"]
+                                        for item in operation_evidence(outcomes)
+                                    ],
+                                }
+                            ]
+                        }
+                    ),
+                )
+            )
+        ]
+    )
+    return await ModelMutationClaimReviewer(model, "test").review(text=text, tool_outcomes=outcomes)
+
+
+async def test_output_guard_rejects_unverified_record_success() -> None:
+    result = await receipt_review(
         text="记上了，午餐是米饭和鸡蛋。",
-        tool_outcomes=(),
     )
 
     assert result.modified is True
-    assert result.code == "unverified_record_write_claim"
-    assert "没有找到本轮记录写入成功的回执" in result.text
+    assert result.code == "unverified_mutation_claim"
+    assert "没有可核验的成功回执" in result.text
 
 
 def test_output_guard_does_not_mistake_failure_statement_for_success_claim() -> None:
@@ -92,10 +131,10 @@ def test_output_guard_does_not_mistake_failure_statement_for_success_claim() -> 
     assert result.modified is False
 
 
-def test_output_guard_trusts_registered_write_category_not_tool_name() -> None:
-    result = SlimGuardOutputGuard().review(
+async def test_output_guard_trusts_registered_write_category_not_tool_name() -> None:
+    result = await receipt_review(
         text="午餐已记录。",
-        tool_outcomes=(outcome(status="succeeded"),),
+        outcomes=(outcome(status="succeeded"),),
     )
 
     assert result.modified is False
@@ -105,8 +144,7 @@ def test_all_health_record_update_tools_declare_record_mutation_category() -> No
     updates = {
         tool.name: tool
         for tool in health_record_tool_definitions()
-        if tool.name.startswith("update_")
-        and tool.effect_level is ToolEffectLevel.REVERSIBLE_WRITE
+        if tool.name.startswith("update_") and tool.effect_level is ToolEffectLevel.REVERSIBLE_WRITE
     }
 
     assert {
@@ -115,18 +153,14 @@ def test_all_health_record_update_tools_declare_record_mutation_category() -> No
         "update_weight_record",
         "update_body_fat_record",
     } <= updates.keys()
-    assert all(
-        tool.mutation_kind is ToolMutationKind.HEALTH_RECORD for tool in updates.values()
-    )
+    assert all(tool.mutation_kind is ToolMutationKind.HEALTH_RECORD for tool in updates.values())
 
 
-def test_output_guard_distinguishes_definite_non_application_from_unknown() -> None:
+async def test_output_guard_distinguishes_definite_non_application_from_unknown() -> None:
     guard = SlimGuardOutputGuard()
-    not_applied = guard.review(
+    not_applied = await receipt_review(
         text="午餐已经记上了。",
-        tool_outcomes=(
-            outcome(status="failed", effect_status=ToolEffectStatus.NOT_APPLIED),
-        ),
+        outcomes=(outcome(status="failed", effect_status=ToolEffectStatus.NOT_APPLIED),),
     )
     unknown = guard.review(
         text="午餐已经记上了。",
@@ -139,7 +173,7 @@ def test_output_guard_distinguishes_definite_non_application_from_unknown() -> N
         ),
     )
 
-    assert not_applied.code == "failed_record_write_claim"
+    assert not_applied.code == "mutation_status_mismatch"
     assert "没有保存成功" in not_applied.text
     assert "重发" not in not_applied.text
     assert unknown.code == "unknown_record_write_claim"
@@ -147,10 +181,10 @@ def test_output_guard_distinguishes_definite_non_application_from_unknown() -> N
     assert "不要重复提交" in unknown.text
 
 
-def test_output_guard_reports_partial_success() -> None:
-    result = SlimGuardOutputGuard().review(
+async def test_output_guard_reports_partial_success() -> None:
+    result = await receipt_review(
         text="饮食和运动都记录好了。",
-        tool_outcomes=(
+        outcomes=(
             outcome(status="succeeded", tool_name="record_meal"),
             outcome(
                 status="failed",
@@ -160,8 +194,8 @@ def test_output_guard_reports_partial_success() -> None:
         ),
     )
 
-    assert result.code == "partial_record_write_claim"
-    assert "部分记录操作完成" in result.text
+    assert result.code == "mutation_status_mismatch"
+    assert "部分更改完成" in result.text
 
 
 def test_output_guard_does_not_ask_to_repeat_unknown_write_even_if_another_succeeded() -> None:
@@ -199,7 +233,7 @@ def test_output_guard_blocks_resending_unknown_operation_even_without_success_cl
     assert "不要重复提交" in result.text
 
 
-def test_output_guard_treats_inspected_not_applied_operation_as_definite_failure() -> None:
+async def test_output_guard_treats_inspected_not_applied_operation_as_definite_failure() -> None:
     unresolved = outcome(
         status="failed",
         effect_status=ToolEffectStatus.UNKNOWN,
@@ -208,16 +242,14 @@ def test_output_guard_treats_inspected_not_applied_operation_as_definite_failure
     inspected = outcome(
         status="succeeded",
         tool_name="get_tool_operation",
-        output={
-            "operation": {"operation_id": "operation-not-applied", "status": "not_applied"}
-        },
+        output={"operation": {"operation_id": "operation-not-applied", "status": "not_applied"}},
     ).execution.model_copy(update={"mutation_kind": ToolMutationKind.SYSTEM_OPERATION})
-    result = SlimGuardOutputGuard().review(
+    result = await receipt_review(
         text="这条记录已经保存成功。",
-        tool_outcomes=(unresolved, ToolCallOutcome(execution=inspected, turn=unresolved.turn)),
+        outcomes=(unresolved, ToolCallOutcome(execution=inspected, turn=unresolved.turn)),
     )
 
-    assert result.code == "failed_record_write_claim"
+    assert result.code == "mutation_status_mismatch"
     assert "没有保存成功" in result.text
     assert "不要重复提交" not in result.text
 
@@ -231,9 +263,7 @@ def test_output_guard_accepts_unknown_write_after_same_operation_is_verified() -
     verified = outcome(
         status="succeeded",
         tool_name="get_tool_operation",
-        output={
-            "operation": {"operation_id": "operation-3", "status": "succeeded"}
-        },
+        output={"operation": {"operation_id": "operation-3", "status": "succeeded"}},
     ).execution.model_copy(update={"mutation_kind": ToolMutationKind.SYSTEM_OPERATION})
     result = SlimGuardOutputGuard().review(
         text="这条记录已经保存成功。",

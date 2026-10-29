@@ -7,16 +7,18 @@ from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.loop import HarnessLoopResult
-from slim_guard.harness.safety import OutputGuard, PermissiveOutputGuard
+from slim_guard.harness.safety import OutputGuard, OutputGuardResult, PermissiveOutputGuard
 from slim_guard.harness.termination import HarnessTermination
+from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
     ResponseFinalizationResult,
     ResponseFinalizer,
 )
+from slim_guard.response_pipeline.mutation_review import MutationClaimReviewer
 from slim_guard.runtime.contracts import AgentInvocation
-from slim_guard.usage.context import usage_scope
+from slim_guard.usage.context import usage_operation, usage_scope
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +41,22 @@ class ResponseProcessor:
         recorder: HarnessRunRecorder,
         finalizer: ResponseFinalizer | None = None,
         output_guard: OutputGuard | None = None,
+        claim_reviewer: MutationClaimReviewer | None = None,
     ) -> None:
         self._recorder = recorder
         self._finalizer = finalizer
+        if getattr(output_guard, "requires_claim_review", False) and claim_reviewer is None:
+            raise ValueError("This output guard requires a receipt-bound semantic claim reviewer")
         self._guard = output_guard or PermissiveOutputGuard()
+        self._claim_reviewer = claim_reviewer
 
+    async def _review(self, text: str, outcomes: tuple[ToolCallOutcome, ...]) -> OutputGuardResult:
+        result = self._guard.review(text=text, tool_outcomes=outcomes)
+        if result.modified or self._claim_reviewer is None:
+            return result
+        return await self._claim_reviewer.review(text=text, tool_outcomes=outcomes)
+
+    @usage_operation("response_processing", source="invocation")
     async def process(
         self,
         *,
@@ -55,7 +68,7 @@ class ResponseProcessor:
         if result.termination is not HarnessTermination.FINAL_RESPONSE:
             return ProcessedResponse(result, final_text=None)
         assert result.final_text is not None
-        guarded = self._guard.review(text=result.final_text, tool_outcomes=result.tool_outcomes)
+        guarded = await self._review(result.final_text, result.tool_outcomes)
         if guarded.modified:
             await self._recorder.record_output_guard(turn_id=invocation.turn_id, code=guarded.code)
             return ProcessedResponse(result, final_text=guarded.text)
@@ -84,7 +97,13 @@ class ResponseProcessor:
                         conversation_context=conversation_context or {},
                     )
                 )
-            checked = self._guard.review(text=finalization.text, tool_outcomes=result.tool_outcomes)
+            # Identical text over the same immutable receipt set already has a
+            # verdict. Styling/new text still receives its own semantic review.
+            checked = (
+                guarded
+                if finalization.text == guarded.text
+                else await self._review(finalization.text, result.tool_outcomes)
+            )
             if checked.modified:
                 # Preserve the existing fallback policy; role-preserving repair is
                 # a separate behavior change, not part of lifecycle extraction.

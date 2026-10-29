@@ -225,6 +225,15 @@ class MemoryRepository:
             except IntegrityError as exc:
                 raise MemoryCollision("Memory write conflicted with another operation") from exc
 
+    async def validate_evidence(self, command: MemoryWriteCommand) -> None:
+        """Public read-only source check for pre-write semantic review.
+
+        write() repeats this check inside its transaction; this does not grant a
+        reusable authorization or bypass recency checks.
+        """
+        async with self._database.session() as session:
+            await self._validate_evidence(session, command)
+
     async def active(
         self,
         user_id: str,

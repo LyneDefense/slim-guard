@@ -380,9 +380,9 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         usage = await UsageRepository(database).detail(
             user_id="user-1", request_id=result.turn_id, limit=20, offset=0
         )
-        assert usage["summary"]["calls"] == 4
+        assert usage["summary"]["calls"] == 5
         assert {row["agent_role"]: row["calls"] for row in usage["agents"]} == {
-            "core": 3,
+            "core": 4,
             "conversation": 1,
         }
         core_calls = [row for row in usage["items"] if row["agent_role"] == "core"]
@@ -733,9 +733,26 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
             final_reply("已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"),
         )
     )
+
+    def claims(payload):
+        return [
+            {
+                "quote": "已记住你目前不运动",
+                "mutation_kind": "user_profile",
+                "status": "succeeded",
+                "operation_ids": [payload["receipts"][0]["operation_id"]],
+            },
+            {
+                "quote": "目标体重没有保存成功",
+                "mutation_kind": "user_profile",
+                "status": "not_applied",
+                "operation_ids": [payload["receipts"][1]["operation_id"]],
+            },
+        ]
+
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=SystemConversationScript(model, mutation_claims=claims),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -757,9 +774,8 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == "这次只有部分更改完成，其他操作没有确认成功。"
-        guard = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
-        assert guard.payload["code"] == "partial_mutation_claim"
+        assert result.final_text == "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
+        assert not any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
     finally:
         await model.close()
         await database.close()
@@ -780,9 +796,20 @@ async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Pa
             final_reply("记住了，以后叫你阿杰。"),
         )
     )
+
+    def claims(payload):
+        return [
+            {
+                "quote": payload["candidate_text"],
+                "mutation_kind": "user_profile",
+                "status": "succeeded",
+                "operation_ids": [payload["receipts"][0]["operation_id"]],
+            }
+        ]
+
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=SystemConversationScript(model, mutation_claims=claims),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -804,9 +831,9 @@ async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Pa
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == "这项更改没有确认成功。"
+        assert result.final_text == "这项更改没有保存成功。"
         guard = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
-        assert guard.payload["code"] == "failed_mutation_claim"
+        assert guard.payload["code"] == "mutation_status_mismatch"
     finally:
         await model.close()
         await database.close()

@@ -11,6 +11,7 @@ from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.memory.config import MemoryRuntimeConfig
 from slim_guard.memory.engine import MemoryEngine
 from slim_guard.memory.extraction import MemoryExtractionJobRepository
+from slim_guard.memory.grounding import ConstraintMemoryWriter, ModelGroundingReviewer
 from slim_guard.memory.long_term import LongTermMemoryRepository
 from slim_guard.memory.recall import LongTermMemoryRecaller
 from slim_guard.memory.registry import MemorySchemaRegistry
@@ -37,6 +38,7 @@ def build_memory_components(
     database: Database,
     config: MemoryRuntimeConfig,
     model_name: str,
+    grounding_model: ModelGateway,
     extraction_model: ModelGateway | None,
     recall_model: ModelGateway | None,
     engine: MemoryEngine | None,
@@ -60,7 +62,12 @@ def build_memory_components(
         profiles=profiles,
         conversation=conversation,
         executors={
-            **memory_tool_executors(profiles),
+            **memory_tool_executors(
+                profiles,
+                constraint_writer=ConstraintMemoryWriter(
+                    profiles, ModelGroundingReviewer(grounding_model, model_name)
+                ),
+            ),
             **long_term_memory_tool_executors(long_term),
         },
         recaller=(

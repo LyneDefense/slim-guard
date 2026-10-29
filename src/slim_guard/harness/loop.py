@@ -35,6 +35,7 @@ from slim_guard.usage.context import usage_operation
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True, slots=True)
 class HarnessTurnContext:
     thread_id: str
@@ -101,6 +102,7 @@ class LoopProgress:
     model_request_attempts: int = 0
     format_repair_attempts: int = 0
     successful_tool_signatures: set[str] = field(default_factory=set)
+    rejected_tool_signatures: dict[str, str] = field(default_factory=dict)
 
     def interrupted(self, error: BaseException, *, cancelled: bool = False) -> HarnessLoopResult:
         return HarnessLoopResult(
@@ -168,8 +170,7 @@ class HarnessLoop:
             except ModelGatewayError as exc:
                 if isinstance(exc, InvalidModelResponse):
                     repair_attempted = (
-                        exc.repairable
-                        and state.format_repair_attempts < MAX_FORMAT_REPAIR_ATTEMPTS
+                        exc.repairable and state.format_repair_attempts < MAX_FORMAT_REPAIR_ATTEMPTS
                     )
                     await self._recorder.record_invalid_model_response(
                         turn_id=context.turn_id,
@@ -266,10 +267,29 @@ class HarnessLoop:
                         tool_outcomes=tool_outcomes,
                     )
                 signature = self._tool_call_signature(call)
-                if (
-                    state.format_repair_attempts
-                    and signature in state.successful_tool_signatures
-                ):
+                if signature in state.rejected_tool_signatures:
+                    messages.append(
+                        ModelMessage(
+                            role=MessageRole.TOOL,
+                            tool_call_id=call.id,
+                            content=state.rejected_tool_signatures[signature],
+                        )
+                    )
+                    await self._recorder.record_workflow_event(
+                        turn_id=context.turn_id,
+                        event_type="workflow_transition",
+                        payload={
+                            "tool_name": call.name,
+                            "tool_call_id": call.id,
+                            "reason_code": "duplicate_rejected_tool_suppressed",
+                            "from_node": "tool_validation",
+                            "to_node": "core",
+                            "transition_type": "repair",
+                            "attempt": state.model_request_attempts,
+                        },
+                    )
+                    continue
+                if state.format_repair_attempts and signature in state.successful_tool_signatures:
                     messages.append(
                         ModelMessage(
                             role=MessageRole.TOOL,
@@ -308,6 +328,26 @@ class HarnessLoop:
                 tool_outcomes.append(outcome)
                 if outcome.execution.result.failure is None:
                     state.successful_tool_signatures.add(signature)
+                elif (
+                    outcome.execution.result.failure.effect_status is ToolEffectStatus.NOT_APPLIED
+                    and not outcome.execution.result.failure.retryable
+                    and outcome.execution.result.failure.field_errors
+                ):
+                    previous = outcome.execution.result
+                    assert previous.failure is not None
+                    state.rejected_tool_signatures[signature] = previous.model_copy(
+                        update={
+                            "failure": previous.failure.model_copy(
+                                update={
+                                    "message": previous.failure.message
+                                    + " Identical arguments already "
+                                    "failed and were not executed again. "
+                                    "Correct the indicated fields "
+                                    "or report that the operation did not complete.",
+                                }
+                            ),
+                        }
+                    ).to_model_content()
                 messages.append(
                     ModelMessage(
                         role=MessageRole.TOOL,
