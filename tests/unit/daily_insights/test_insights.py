@@ -347,6 +347,27 @@ async def test_snapshot_fingerprint_and_evidence_are_stable_across_json_round_tr
     ).fingerprint == snapshot.fingerprint
 
 
+@pytest.mark.parametrize("change", ["edit", "delete"])
+async def test_unreported_headline_dependencies_cannot_survive_changed_source_facts(env, change):
+    _, records, _, _, _, service, _ = env
+    records.items = [record(name="蒸蛋")]
+    old = await service.snapshots.read("u1", NOW)
+    previous = draft(old).model_copy(
+        update={
+            "headline": InsightText(text="蒸蛋配米饭，简单一餐。", claims=()),
+        }
+    )
+    records.items.append(record("meal2", name="白菜"))
+    added = await service.snapshots.read("u1", NOW)
+    assert reusable_headline(job(old, previous, old), added) == previous.headline
+    if change == "edit":
+        records.items[0] = record(revision=2, name="豆腐")
+    else:
+        records.items.pop(0)
+    changed = await service.snapshots.read("u1", NOW)
+    assert reusable_headline(job(old, previous, old), changed) is None
+
+
 async def test_deleting_the_owner_cascades_cached_profile_and_assessment_data(env):
     db, _, _, _, _, service, _ = env
     await service.get("u1")

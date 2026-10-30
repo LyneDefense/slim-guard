@@ -163,6 +163,10 @@ async def test_insight_api_auth_real_record_sources_edit_invalidation_and_accoun
             regenerated = (await http.get("/api/mobile/v1/daily-insights", headers=headers)).json()
             assert regenerated["summary"] == "今天记录了鸡蛋。"
             assert regenerated["evidence"][0]["id"].endswith(":r2")
+            latest_composition = next(
+                r for r in reversed(model.requests) if r.output_schema_name == "InsightDraft"
+            )
+            assert json.loads(latest_composition.messages[-1].content)["headline_for_reuse"] is None
             await app.state.mobile_platform.delete_account(owner)
             async with app.state.database.session() as session:
                 assert await session.get(DailyInsightRecord, (owner, NOW.date())) is None

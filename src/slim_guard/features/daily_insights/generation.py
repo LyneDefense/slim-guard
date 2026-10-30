@@ -91,6 +91,13 @@ def reusable_headline(job: InsightJob, current: InsightSnapshot) -> InsightText 
         return None
     old_facts = {e.id: e for e in old.evidence}
     current_facts = {e.id: e for e in current.evidence}
+    # Self-declared claims are not a complete cache dependency manifest. A
+    # model can omit a reference while still mentioning a dish in its title.
+    # Preserve titles across additions, but never across removal/replacement
+    # of an original input fact. The day-scope set itself changes on additions;
+    # titles that explicitly cite that set are still invalidated below.
+    if any(e.kind != "day_scope" and current_facts.get(e.id) != e for e in old.evidence):
+        return None
     refs = {ref for claim in previous.headline.claims for ref in claim.source_refs}
     if any(ref not in current_facts or current_facts[ref] != old_facts.get(ref) for ref in refs):
         return None

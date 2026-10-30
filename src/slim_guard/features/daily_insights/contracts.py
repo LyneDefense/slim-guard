@@ -6,7 +6,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-INSIGHT_POLICY_VERSION = "daily-insights-v2"
+INSIGHT_POLICY_VERSION = "daily-insights-v3"
 
 
 class InsightEvidence(BaseModel):
