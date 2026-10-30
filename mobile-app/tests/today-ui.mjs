@@ -16,6 +16,7 @@ test('home keeps the sticky brand outside scrolling, real values, missing values
   const data = { user: { nickname: '小林' }, memories: [], coach_profile: { profile: { target_weight_kg: 73, target_body_fat_percent: null } }, today: { current_weight_kg: 79.2, current_body_fat_percent: null, routine: { timezone: 'Asia/Shanghai' } } };
   const view = fixture('screens/TodayScreen.tsx', 'TodayScreen', { openCoach() {} }, {
     '../context/AppContext': { useApp: () => ({ data, loading: false, online: true, pending: [], refresh: () => refreshed++ }) },
+    '../features/daily-insights/useDailyInsights': { useDailyInsights: () => ({ view: null, busy: false, verifying: false, error: null, retry() {} }) },
     '../features/record-history/RecordHistory': { RecordHistory: 'RecordHistory' },
   });
   const scroll = view.find('ScrollView');

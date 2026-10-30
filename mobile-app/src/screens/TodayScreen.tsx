@@ -5,12 +5,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '../context/AppContext';
 import { RecordHistory } from '../features/record-history/RecordHistory';
 import { MetricCard, TodayActions } from '../features/today/TodayCards';
+import { DailySummaryCard } from '../features/daily-insights/DailySummaryCard';
+import { useDailyInsights } from '../features/daily-insights/useDailyInsights';
 import { BrandHeader } from '../shared/brand/BrandHeader';
 import { findGoal } from '../lib/memoryFormat';
 import { appearance as palette } from '../shared/ui/appearance';
 
 export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void }) {
   const { data, loading, refresh, online, pending } = useApp();
+  const insights = useDailyInsights(data?.user.id, data?.today.routine.timezone || 'Asia/Shanghai', data?.today);
   if (!data) return null;
   const { today, memories, user } = data;
   const targetWeight = data.coach_profile.profile
@@ -20,7 +23,8 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
     && data.coach_profile.profile?.target_body_fat_percent !== undefined
     ? `${data.coach_profile.profile.target_body_fat_percent}%`
     : findGoal(memories, 'goal.target_body_fat');
-  const hour = new Date().getHours();
+  const hour = Number(new Intl.DateTimeFormat('en', { hour: 'numeric', hourCycle: 'h23',
+    timeZone: today.routine.timezone }).format(new Date()));
   const greeting = hour < 11 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
 
   return <SafeAreaView style={styles.safe} edges={['top']}>
@@ -28,7 +32,7 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
     <ScrollView contentContainerStyle={styles.page}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.indigo} colors={[palette.indigo]} />}>
       <Text style={styles.greeting}>{greeting}，{user.nickname || '今天的你'}</Text>
-      <Text style={styles.title}>不用完美，{'\n'}今天往前一点就好。</Text>
+      <Text style={styles.title} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7}>{!insights.verifying && !insights.error && insights.view?.headline || '今天，吃点什么？'}</Text>
       <View style={styles.metrics}>
         <MetricCard label="最近体重" value={today.current_weight_kg?.toFixed(1) || '—'} unit="kg"
           target={targetWeight ? `目标 ${targetWeight}` : '还没设置目标'} tone="indigo" onPress={() => openCoach('我刚量了体重：')} />
@@ -37,7 +41,11 @@ export function TodayScreen({ openCoach }: { openCoach: (draft?: string) => void
       </View>
       <Text accessibilityRole="header" style={styles.sectionTitle}>今天记一点</Text>
       <TodayActions openCoach={openCoach} />
-      <RecordHistory timezone={today.routine.timezone} refreshKey={data} onChanged={() => void refresh()} />
+      <DailySummaryCard view={insights.view} busy={insights.busy} verifying={insights.verifying}
+        error={insights.error} onRetry={() => { void insights.retry(); }} />
+      <RecordHistory timezone={today.routine.timezone} refreshKey={data} onChanged={() => {
+        void insights.refresh(); void refresh();
+      }} />
     </ScrollView>
   </SafeAreaView>;
 }
