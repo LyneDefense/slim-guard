@@ -17,6 +17,7 @@ class ModelPurpose(StrEnum):
     HARNESS_TURN = "harness_turn"
     NUTRITION = "nutrition"
     CONVERSATION = "conversation"
+    DAILY_INSIGHT = "daily_insight"
     RESPONSE_STYLE = "response_style"
     RESPONSE_REVIEWER = "response_reviewer"
     MEMORY_INGESTION = "memory_ingestion"

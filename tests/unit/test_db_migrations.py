@@ -25,6 +25,18 @@ from slim_guard.nutrition_rag.profiles import (
 )
 
 
+async def test_sqlite_foreign_keys_are_enabled_on_every_pooled_connection(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'foreign-keys.sqlite3'}")
+    try:
+        for _ in range(2):
+            async with database.engine.connect() as first, database.engine.connect() as second:
+                assert await first.scalar(text("PRAGMA foreign_keys")) == 1
+                assert await second.scalar(text("PRAGMA foreign_keys")) == 1
+            await database.migrate()
+    finally:
+        await database.close()
+
+
 async def test_existing_database_receives_body_fat_table_additively(tmp_path) -> None:
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'upgrade.sqlite3'}")
     try:
@@ -94,6 +106,7 @@ async def test_existing_database_receives_body_fat_table_additively(tmp_path) ->
             "20260924_02_retire_approval_waits",
             "20261026_01_agent_invocation_sequence",
             "20261028_01_meal_media_and_editor",
+            "20261030_01_daily_insights",
         )
         assert "body_fat_records" in table_names
         assert {
@@ -256,6 +269,7 @@ async def test_existing_memory_rows_backfill_their_original_evidence_item(tmp_pa
             "20260924_02_retire_approval_waits",
             "20261026_01_agent_invocation_sequence",
             "20261028_01_meal_media_and_editor",
+            "20261030_01_daily_insights",
         )
         assert "evidence_item_id" in columns
         assert evidence_item_id == "item-1"

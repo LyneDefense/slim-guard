@@ -24,6 +24,7 @@ from slim_guard.db.models import (
     new_uuid,
 )
 from slim_guard.domain.assets.migration import retain_chat_attachments
+from slim_guard.features.daily_insights.migration import migrate_daily_insights
 from slim_guard.features.health_records.persistence.meal_media_migration import migrate_meal_media
 from slim_guard.features.health_records.persistence.migration import migrate_health_records
 from slim_guard.nutrition_rag.profiles import (
@@ -617,6 +618,7 @@ MIGRATIONS = (
     SchemaMigration("20260924_02_retire_approval_waits", retire_approval_waits),
     SchemaMigration("20261026_01_agent_invocation_sequence", _add_agent_invocation_sequence),
     SchemaMigration("20261028_01_meal_media_and_editor", migrate_meal_media),
+    SchemaMigration("20261030_01_daily_insights", migrate_daily_insights),
 )
 
 

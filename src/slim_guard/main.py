@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from fastapi import FastAPI, Request, Response
 
@@ -20,10 +20,12 @@ from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agent_models.zhipu import ZhipuModelGateway
 from slim_guard.agent_models.zhipu_vision import ZhipuVisionModelGateway
 from slim_guard.api.admin_routes import router as admin_router
+from slim_guard.api.mobile_insight_routes import router as mobile_insight_router
 from slim_guard.api.mobile_record_routes import router as mobile_record_router
 from slim_guard.api.mobile_routes import router as mobile_router
 from slim_guard.api.nutrition_knowledge_routes import router as nutrition_knowledge_router
 from slim_guard.api.routes import router
+from slim_guard.app.mobile import build_mobile_components
 from slim_guard.config import Settings
 from slim_guard.db.repositories import MessageRepository
 from slim_guard.db.session import Database
@@ -46,13 +48,6 @@ from slim_guard.memory.index_sync import (
 )
 from slim_guard.memory.lifecycle import MemoryLifecycleRepository
 from slim_guard.memory.long_term import LongTermMemoryRepository
-from slim_guard.mobile.auth import (
-    MobileAuthService,
-    NullMobileOtpSender,
-    WebhookMobileOtpSender,
-)
-from slim_guard.mobile.platform import MobilePlatformService
-from slim_guard.mobile.service import MobileApplicationService
 from slim_guard.nutrition_knowledge import NutritionKnowledgeRepository, NutritionKnowledgeService
 from slim_guard.nutrition_rag.answerability import ModelAnswerabilityGateway
 from slim_guard.nutrition_rag.evaluation import NutritionEvaluationService
@@ -286,44 +281,14 @@ def create_app(
             logger.warning("zhipu_not_configured_using_fallback_reply")
             active_reply_agent = StaticReplyAgent(app_settings.agent_fallback_reply_text)
 
-        mobile_auth: MobileAuthService | None = None
-        mobile_service: MobileApplicationService | None = None
-        mobile_platform: MobilePlatformService | None = None
-        if app_settings.mobile_is_configured:
-            otp_sender = (
-                WebhookMobileOtpSender(
-                    url=app_settings.mobile_sms_webhook_url,
-                    token=app_settings.mobile_sms_webhook_token,
-                    timeout_seconds=app_settings.wecom_http_timeout_seconds,
-                )
-                if app_settings.mobile_sms_webhook_url
-                else NullMobileOtpSender()
-            )
-            mobile_auth = MobileAuthService(
-                database=database,
-                secret=app_settings.mobile_auth_secret,
-                sender=otp_sender,
-                access_ttl=timedelta(minutes=app_settings.mobile_access_token_ttl_minutes),
-                refresh_ttl=timedelta(days=app_settings.mobile_refresh_token_ttl_days),
-                otp_ttl=timedelta(seconds=app_settings.mobile_otp_ttl_seconds),
-                resend_after=timedelta(seconds=app_settings.mobile_otp_resend_seconds),
-                hourly_limit=app_settings.mobile_otp_hourly_limit,
-                test_accounts_enabled=app_settings.mobile_test_accounts_enabled,
-                test_account_password=app_settings.mobile_test_account_password,
-            )
-            await mobile_auth.ensure_test_accounts(now=datetime.now(UTC))
-            mobile_service = MobileApplicationService(
-                database=database,
-                runtime=active_runtime,
-                traces=traces,
-                max_image_bytes=app_settings.wecom_media_max_bytes,
-            )
-            mobile_platform = MobilePlatformService(
-                database=database,
-                secret=app_settings.mobile_auth_secret,
-                binding_ttl=timedelta(minutes=app_settings.mobile_wecom_binding_ttl_minutes),
-                memory_engine=active_memory_engine,
-            )
+        mobile = await build_mobile_components(
+            app_settings,
+            database,
+            active_runtime,
+            traces,
+            active_memory_engine,
+            active_model_for_services,
+        )
 
         crypto: WeComCallbackCrypto | None = None
         sync_service: AgentReplySyncService | None = None
@@ -375,7 +340,7 @@ def create_app(
                 ),
                 outbox_send_stale_seconds=app_settings.wecom_outbox_send_stale_seconds,
                 traces=traces,
-                mobile_platform=mobile_platform,
+                mobile_platform=mobile.platform,
             )
             watchdog_stop = asyncio.Event()
             watchdog_task = asyncio.create_task(
@@ -549,17 +514,20 @@ def create_app(
         app.state.traces = traces
         app.state.agent_runtime = active_runtime
         app.state.memory_engine = active_memory_engine
-        app.state.mobile_auth = mobile_auth
-        app.state.mobile_service = mobile_service
-        app.state.mobile_platform = mobile_platform
+        app.state.mobile_auth = mobile.auth
+        app.state.mobile_service = mobile.service
+        app.state.mobile_platform = mobile.platform
+        app.state.daily_insights = mobile.insights
         app.state.nutrition_rag = nutrition_control
         app.state.nutrition_object_store = nutrition_object_store
         app.state.nutrition_knowledge = active_nutrition_knowledge
         app.state.wecom_crypto = crypto
         app.state.sync_service = sync_service
+        mobile.start()
         try:
             yield
         finally:
+            await mobile.close()
             if watchdog_stop is not None:
                 watchdog_stop.set()
             if routine_stop is not None:
@@ -638,12 +606,14 @@ def create_app(
     application.include_router(nutrition_knowledge_router)
     application.include_router(mobile_router)
     application.include_router(mobile_record_router)
+    application.include_router(mobile_insight_router)
     application.state.agent_manifest = agent_manifest
     application.state.agent_runtime = None
     application.state.agent_runtime_mode = app_settings.agent_runtime_mode
     application.state.mobile_auth = None
     application.state.mobile_service = None
     application.state.mobile_platform = None
+    application.state.daily_insights = None
     application.state.nutrition_rag = None
     application.state.nutrition_object_store = None
     application.state.nutrition_knowledge = None
