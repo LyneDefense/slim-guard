@@ -254,7 +254,9 @@ async def usage_db(tmp_path):
                 AgentVersionRecord(id="v", code_revision="test", manifest_json="{}"),
             ]
         )
+        await s.flush()
         s.add(AgentThreadRecord(id="thread", user_id="a"))
+        await s.flush()
         s.add_all(
             [
                 AgentTurnRecord(
@@ -330,7 +332,11 @@ async def test_old_budget_columns_are_removed_and_migration_is_repeatable(usage_
         s.add(invocation_record("parent", "core"))
         s.add(invocation_record("child", "nutrition_expert", "parent"))
 
-    async with usage_db.engine.begin() as conn:
+    # The migration runner explicitly disables FKs outside a transaction while
+    # rebuilding legacy SQLite tables. Reproduce that contract here too.
+    async with usage_db.engine.connect() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        await conn.commit()
         for column in ("max_model_calls", "max_tool_calls", "max_total_tokens"):
             await conn.execute(
                 text(
@@ -351,6 +357,9 @@ async def test_old_budget_columns_are_removed_and_migration_is_repeatable(usage_
         assert (
             await conn.execute(text("SELECT COUNT(*) FROM agent_invocations"))
         ).scalar_one() == 2
+        await conn.commit()
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        await conn.commit()
 
 
 def invocation_record(identifier, role, parent=None):

@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,6 +21,10 @@ class Database:
         self.url = url
         self._ensure_sqlite_parent_exists(url)
         self.engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
+        if self.engine.dialect.name == "sqlite":
+            # Foreign-key enforcement is per connection, not per database.
+            # Account erasure must also cascade on connections opened after migrate().
+            event.listen(self.engine.sync_engine, "connect", _enable_sqlite_foreign_keys)
         # Register the date projection before the first connection enters the pool.
         from slim_guard.features.health_records.persistence.queries import install_sqlite_dates
 
@@ -62,3 +68,11 @@ class Database:
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+
+def _enable_sqlite_foreign_keys(connection: Any, _record: Any) -> None:
+    cursor = connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()

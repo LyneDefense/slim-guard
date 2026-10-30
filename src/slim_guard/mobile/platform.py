@@ -46,6 +46,7 @@ from slim_guard.db.models import (
     WeightRecord,
 )
 from slim_guard.db.session import Database
+from slim_guard.harness.privacy import delete_user_execution_graph
 from slim_guard.memory.engine import MemoryEngine
 from slim_guard.mobile.contracts import (
     DeviceRegistrationRequest,
@@ -409,6 +410,7 @@ class MobilePlatformService:
                 )
             if turn_ids:
                 await delete_user_operations(session, user_id)
+                await delete_user_execution_graph(session, user_id)
                 await session.execute(
                     delete(ToolExecutionRecord).where(ToolExecutionRecord.turn_id.in_(turn_ids))
                 )
