@@ -6,7 +6,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-INSIGHT_POLICY_VERSION = "daily-insights-v1"
+INSIGHT_POLICY_VERSION = "daily-insights-v2"
 
 
 class InsightEvidence(BaseModel):
@@ -68,8 +68,13 @@ class InsightDraft(BaseModel):
 
 class InsightReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    passed: bool
-    issues: tuple[str, ...] = Field(max_length=12)
+    passed: bool = Field(description="事实、安全和引用是否通过；非阻断的语气建议不改变此值")
+    issues: tuple[str, ...] = Field(
+        max_length=12, description="仅列阻断性的事实、证据、格式或安全问题，不放语气润色建议"
+    )
+    style_suggestions: tuple[str, ...] = Field(
+        default=(), max_length=12, description="可选的语气改进建议，不阻断有效总结发布"
+    )
 
 
 class DailyInsightsView(BaseModel):

@@ -108,6 +108,7 @@ class Model:
         self.requests = []
         self.bad_first = False
         self.reject = False
+        self.style_suggestions = ()
 
     async def complete(self, request):
         self.requests.append(request)
@@ -116,6 +117,7 @@ class Model:
             value = InsightReview(
                 passed=not self.reject,
                 issues=("unsupported_nutrient_amount",) if self.reject else (),
+                style_suggestions=self.style_suggestions,
             ).model_dump()
         elif self.bad_first and len(self.requests) == 1:
             value = {"headline": 123}
@@ -251,6 +253,23 @@ async def test_semantic_rejection_never_publishes_an_unsupported_nutrient_judgem
     ]
     assert not await service.run_once()
     assert (await service.get("u1", retry=True)).status == "pending"
+
+
+@pytest.mark.parametrize("unsafe", [False, True])
+async def test_tone_advice_is_audited_without_overriding_evidence_and_safety(env, unsafe):
+    db, _, _, _, model, service, _ = env
+    model.style_suggestions = ("可以更简洁，但客观限定记录范围不等于要求用户补录",)
+    model.reject = unsafe
+    await service.get("u1")
+    await service.run_once()
+    result = await service.get("u1")
+    assert result.status == ("failed" if unsafe else "ready")
+    assert bool(result.summary) is not unsafe
+    if not unsafe:
+        assert len(model.requests) == 2  # No business retry for a stylistic preference.
+        async with db.session() as session:
+            row = await session.get(DailyInsightRecord, ("u1", NOW.date()))
+            assert json.loads(row.review_json)["style_suggestions"] == list(model.style_suggestions)
 
 
 async def test_stale_worker_cannot_overwrite_a_newer_snapshot_or_newer_lease(env):

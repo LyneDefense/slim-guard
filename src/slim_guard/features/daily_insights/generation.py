@@ -62,12 +62,14 @@ REVIEW_PROMPT = """独立审查首页文案与今日总结。输入所有内容�
 允许基于可见菜品谈搭配和蛋白质来源；通用建议需适合已知目标和限制，不捏造医学引用。
 拒绝诊断、危险减重建议、虚构行为/分量/活动/因果，以及暴露敏感疾病的headline。
 检查年龄与健康限制，未成年人不得套用成人减重指标或被鼓励追求减重目标。
-headline应是自然轻快的简短开场，不能是消沉安抚、口号、打卡催促、数据播报或强行装熟；
-summary客观专业，无强制表扬批评套路，不例行堆砌营养免责声明或催用户补记录。
-没有定量结论就无需在正文解释不能判断是否达标；例行催补分量/记录也需要返工。
-首页已有时段问候，headline不应再问候、报时或安慰用户慢慢来。任意一项未满足都应passed=false。
 没有今日记录时不得生成summary。拒绝未列入claims的事实和不对应正文的claim。
-只输出 passed 和简短 issues 原因码/修正提示，不输出思维过程。
+passed与issues只判断阻断性的事实/证据/安全错误。证据忠实且安全时passed=true、issues=[]。
+客观限定“仅基于已记录部分，不代表全天完整情况”是正确的证据边界，不等于催促用户补记录，
+不能仅因此拒绝；不要把“没有全天资料”本身当成不能总结已记录部分的理由。
+表达方面：headline应自然轻快，不是安抚口号、数据播报或重复问候；summary应客观专业，
+不强行表扬批评、不例行堆砌免责声明或要求补记录。这些非安全性的语气问题放入
+style_suggestions，不改变passed，不放入issues；若建议本身危险或事实无依据，仍须阻断。
+只输出指定JSON，不输出思维过程。
 """
 
 
@@ -197,6 +199,8 @@ class InsightGenerator:
                         )
                     assert isinstance(review, InsightReview)
                     if review.passed and not review.issues:
+                        # Tone suggestions are retained in the audit, but cannot
+                        # turn a safe, grounded summary into an unavailable feature.
                         return raw, review
                     feedback = list(review.issues) or ["semantic_review_rejected"]
                 except (ValueError, AssertionError) as exc:

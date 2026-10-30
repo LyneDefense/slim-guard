@@ -33,13 +33,23 @@ def snapshot(name: str, records: tuple[InsightEvidence, ...]) -> InsightSnapshot
         label="合成资料",
         data={"target": "温和减重", "nickname": "小林", "preference": "不太能吃辣"},
     )
+    scope = InsightEvidence(
+        id="today:synthetic",
+        kind="day_scope",
+        label="本日已记录范围",
+        data={
+            "date": "2026-10-30",
+            "timezone": "Asia/Shanghai",
+            "record_refs": [r.id for r in records],
+        },
+    )
     return InsightSnapshot(
         user_id="synthetic-evaluation-only",
         day=date(2026, 10, 30),
         timezone="Asia/Shanghai",
         as_of=datetime(2026, 10, 30, 10, tzinfo=UTC),
         context_key="synthetic",
-        evidence=(profile, *records),
+        evidence=(profile, *records, scope),
         style={},
         today_record_count=len(records),
         fingerprint=name,
@@ -145,12 +155,39 @@ async def main() -> None:
         assert isinstance(review, InsightReview) and not review.passed
         print({"case": "unsupported-protein-rejected", "issues": review.issues}, flush=True)
 
+    async def accepts_qualified_scope() -> None:
+        first = "目前已记录午餐为米饭、白菜和蒸蛋。"
+        second = "这些记录不代表全天的完整摄入。"
+        candidate = InsightDraft(
+            headline=InsightText(text="今天想吃点什么？", claims=()),
+            summary=InsightText(
+                text=first + second,
+                claims=(
+                    InsightClaim(text=first, kind="observation", source_refs=(meal.id,)),
+                    InsightClaim(text=second, kind="observation", source_refs=("today:synthetic",)),
+                ),
+            ),
+        )
+        review = await generator._call(
+            REVIEW_PROMPT,
+            {
+                "snapshot": snapshot("scope-qualification", (meal,)).model_dump(mode="json"),
+                "candidate": candidate.model_dump(mode="json"),
+            },
+            InsightReview,
+        )
+        assert isinstance(review, InsightReview) and review.passed and not review.issues, review
+        print(
+            {"case": "qualified-scope-not-a-recording-demand", "passed": review.passed}, flush=True
+        )
+
     try:
         results = await asyncio.gather(
             check("meal-and-walk", (meal, walk)),
             check("no-records", ()),
             check("uncertain-recognition", (uncertain,)),
             rejects_unsupported_nutrition(),
+            accepts_qualified_scope(),
             return_exceptions=True,
         )
         assert not any(isinstance(value, BaseException) for value in results), results
