@@ -55,7 +55,7 @@ class RewriteReviewResult:
     responses: tuple[ModelResponse, ...] = ()
     total_token_count: int = 0
     integrity: StyleValidationReport = StyleValidationReport()
-    policy_version: str = "style-review-v2"
+    policy_version: str = "style-review-v3-advisory-expression"
     verdict: str = "inconclusive"
     details: tuple[dict[str, object], ...] = ()
     signature: str = ""

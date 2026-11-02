@@ -6,10 +6,17 @@ from sqlalchemy import func, select
 
 from slim_guard.db.models import new_uuid, utc_now
 from slim_guard.db.session import Database
-from slim_guard.expression_style.package import content_hash
+from slim_guard.expression_style.package import StylePackage, content_hash
 from slim_guard.expression_style.review.policy import review_signature
-from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig, Material
+from slim_guard.expression_style.trainer.contracts import (
+    WORKFLOW_VERSION,
+    BuildExecutionConfig,
+    Material,
+)
+from slim_guard.expression_style.trainer.guide_edit import revise_guide
+from slim_guard.expression_style.trainer.preview import fixed_suite
 
+from .contracts import BuildInput
 from .models import BuildRun, Example, ReviewCase, Style, Version
 from .views import build_summary
 
@@ -26,6 +33,7 @@ class BuildRepository:
         model: str,
         request_key: str | None = None,
         config: BuildExecutionConfig | None = None,
+        payload: BuildInput | None = None,
     ) -> dict[str, Any]:
         key = content_hash({"style_id": style_id, "request_key": request_key or new_uuid()})
         async with self.db.session() as s, s.begin():
@@ -46,7 +54,8 @@ class BuildRepository:
                     select(Example).where(Example.style_id == style_id).order_by(Example.id)
                 )
             )
-            if not materials:
+            payload = payload or BuildInput()
+            if not materials and payload.guide is None:
                 raise ValueError("请先追加纠正素材")
             cases = list(
                 await s.scalars(
@@ -72,8 +81,10 @@ class BuildRepository:
                 for c in output_feedback
                 if c.review and (c.review.get("desired_response") or c.review.get("reason"))
             ]
-            snapshot = {
-                "schema_version": "1",
+            snapshot: dict[str, Any] = {
+                "schema_version": "2",
+                "workflow_version": WORKFLOW_VERSION,
+                "preview_suite": fixed_suite().model_dump(mode="json"),
                 "style_id": style_id,
                 "style_name": style.name,
                 "materials": [
@@ -96,12 +107,38 @@ class BuildRepository:
                     for c in cases
                     if c.review and c.review.get("concern", "output") != "output"
                 ],
-                "consumed_tests": [c.test_case for c in cases],
                 "baseline": baseline.package if baseline else {},
                 "model": model,
                 "review_signature": review_signature(model),
                 "execution": (config or BuildExecutionConfig()).model_dump(mode="json"),
             }
+            if payload.guide is not None:
+                source = await s.get(Version, payload.source_version_id)
+                if source is None or source.style_id != style_id:
+                    raise LookupError("来源风格版本不存在")
+                source_package = StylePackage.model_validate(source.package)
+                if source_package.style_id != style_id or source_package.version_id != source.id:
+                    raise ValueError("来源风格包归属错误")
+                package, edited, analyses = revise_guide(
+                    source_package,
+                    payload.guide,
+                    run_id,
+                )
+                # Direct human edits remain reusable feedback, unlike generated answers.
+                for m in edited:
+                    s.add(
+                        Example(
+                            style_id=style_id, actor=actor, source="guide_edit", **m.model_dump()
+                        )
+                    )
+                snapshot.update(
+                    source_version_id=source.id,
+                    edited_package=package.model_dump(mode="json"),
+                    materials=[m.model_dump(mode="json") for m in edited],
+                    analyses=[a.model_dump(mode="json") for a in analyses],
+                    library_count=len(materials) + len(edited),
+                    unused_count=0,
+                )
             row = BuildRun(
                 id=run_id,
                 style_id=style_id,
@@ -109,14 +146,19 @@ class BuildRepository:
                 request_key=key,
                 name=f"{style.name}-{utc_now():%Y%m%d%H%M%S}-{run_id[:6]}",
                 snapshot=snapshot,
-                activity={"state": "queued", "message": f"已冻结 {len(materials)} 条素材"},
+                activity={
+                    "state": "queued",
+                    "message": f"已冻结 {len(snapshot['materials'])} 条素材／人工要求",
+                },
                 progress_at=utc_now(),
                 events=[
                     {
                         "sequence": 1,
                         "stage": "freeze",
                         "state": "completed",
-                        "message": f"已冻结全库 {len(materials)} 条素材",
+                        "message": (
+                            f"已冻结 {len(snapshot['materials'])} 条素材／人工要求及固定试答集"
+                        ),
                         "time": utc_now().isoformat(),
                     }
                 ],
@@ -201,6 +243,10 @@ class BuildRepository:
             if action == "cancel" and row.status in {"queued", "running"}:
                 row.status, row.finished_at = "cancelled", utc_now()
             elif action == "resume" and row.status in {"failed", "cancelled"}:
+                if row.snapshot.get("workflow_version") != WORKFLOW_VERSION:
+                    raise ValueError("旧构建流程已停用，请新建构建；素材和评审反馈仍保留")
+                if row.status == "failed" and row.activity.get("retryable") is False:
+                    raise ValueError("本次输入或产物需修订，请调整素材／指引后新建构建")
                 if await s.scalar(
                     select(BuildRun.id).where(
                         BuildRun.style_id == style_id,

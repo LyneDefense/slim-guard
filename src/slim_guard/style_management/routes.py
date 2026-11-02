@@ -10,7 +10,7 @@ from slim_guard.api.admin_routes import AdminPrincipal, _authenticate
 from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 
 from .builds import BuildRepository
-from .contracts import ExampleInput, ReviewInput, StyleInput
+from .contracts import BuildInput, ExampleInput, ReviewInput, StyleInput
 from .corpus import CorpusRepository
 from .versions import VersionRepository
 
@@ -106,7 +106,10 @@ async def builds(
 
 @router.post("/{style_id}/builds", status_code=202)
 async def build(
-    request: Request, style_id: str, principal: Annotated[AdminPrincipal, Depends(access)]
+    request: Request,
+    style_id: str,
+    principal: Annotated[AdminPrincipal, Depends(access)],
+    payload: BuildInput | None = None,
 ) -> dict[str, Any]:
     settings = request.app.state.settings
     if not settings.style_iteration_worker_enabled or not settings.zhipu_is_configured:
@@ -121,9 +124,9 @@ async def build(
             model=settings.zhipu_text_model,
             request_key=key,
             config=BuildExecutionConfig(
-                max_rounds=settings.style_training_max_rounds,
                 max_seconds=settings.style_training_max_seconds,
             ),
+            payload=payload,
         )
     )
 

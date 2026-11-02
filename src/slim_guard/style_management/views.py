@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION
+
 from .models import BuildRun
 
 
@@ -18,8 +20,11 @@ def build_summary(row: BuildRun) -> dict[str, Any]:
     data["human_feedback_count"] = row.snapshot.get("human_feedback_count", 0)
     data["unused_count"] = row.snapshot.get("unused_count", 0)
     data["analyzed_count"] = len(row.checkpoints.get("materials", []))
-    data["round_count"] = len(row.checkpoints.get("rounds", []))
-    data["max_rounds"] = row.snapshot.get("execution", {}).get("max_rounds", 0)
+    data["workflow_version"] = row.snapshot.get("workflow_version", "legacy")
+    data["can_resume"] = data["workflow_version"] == WORKFLOW_VERSION and (
+        row.status != "failed" or row.activity.get("retryable") is not False
+    )
+    data["preview_count"] = len(row.checkpoints.get("preview_suite", {}).get("cases", []))
     data["baseline_version"] = row.snapshot.get("baseline", {}).get("version_id")
     data["last_event_sequence"] = len(row.events)
     return data

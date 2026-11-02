@@ -24,7 +24,7 @@ export function ReviewPanel({ style }: { style: Style }) {
       <section className="expression-card">
         <h2>评审版本</h2>
         <p>
-          这里评审独立测试的实际输出，不是重新审核原素材。接受不会把模型回答加入素材库。
+          这里查看固定用例与人工样例回放的实际输出，不宣称独立盲测。接受当前回答代表认可它的语气；填写期望回答并拒绝，可用于下次构建。
         </p>
         <label>
           风格版本
@@ -112,6 +112,7 @@ function ReviewCard({
     },
   );
   const [rejecting, setRejecting] = useState(false);
+  const [saved, setSaved] = useState(false);
   const save = useMutation({
     mutationFn: (decision: "accept" | "reject") =>
       stylesApi.review(styleId, value.id, {
@@ -121,6 +122,7 @@ function ReviewCard({
       }),
     onSuccess: () => {
       setRejecting(false);
+      setSaved(true);
       void client.invalidateQueries({
         queryKey: ["expression-cases", styleId],
       });
@@ -161,7 +163,7 @@ function ReviewCard({
       )}
       {!value.automated.passed && (
         <p role="alert">
-          自动审查未通过或使用了原稿兜底，不能作为风格成功发布。
+          语义或执行检查未通过，或使用了原稿兜底；本条暂不可发布，不是对你语气偏好的否定。
         </p>
       )}
       {value.review?.concern && value.review.concern !== "output" && (
@@ -188,6 +190,7 @@ function ReviewCard({
             </h4>
             <p>{check.output}</p>
             <p>{check.issues.join("；")}</p>
+            {check.details?.filter(d => d.dimension === "expression").map((d, i) => <p key={i}>表达建议（仅供参考）：{d.explanation}</p>)}
           </section>
         ))}
       </details>
@@ -234,19 +237,21 @@ function ReviewCard({
         />
       </label>
       {save.error && <p role="alert">{save.error.message}</p>}
+      {save.isPending && <p role="status">正在保存评审…</p>}
+      {(saved || value.review) && <p role="status">评审已保存。接受的是当前医生回答；期望回答用于下次构建。编辑后需再次提交。</p>}
       <div className="expression-actions">
         <button
           disabled={readOnly || save.isPending}
           onClick={() => save.mutate("accept")}
         >
-          接受
+          {save.isPending ? "保存中…" : "接受当前回答"}
         </button>
         <button
           className="danger"
           disabled={readOnly || save.isPending}
           onClick={() => setRejecting(true)}
         >
-          拒绝
+          拒绝并提供修改意见
         </button>
       </div>
       {readOnly && <small>已发布版本仅供查看。</small>}

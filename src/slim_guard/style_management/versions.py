@@ -98,12 +98,14 @@ class VersionRepository:
                 cases = list(
                     await s.scalars(select(ReviewCase).where(ReviewCase.version_id == version_id))
                 )
+                is_preview = row.report.get("schema_version") == "2"
+                metrics = row.report.get("preview_metrics" if is_preview else "metrics", {})
                 if (
                     row.status != "ready_for_review"
                     or not row.report.get("release_eligible")
                     or row.report.get("package_hash") != package.package_hash
-                    or row.report.get("metrics", {}).get("total") != len(cases)
-                    or len(cases) < 10
+                    or metrics.get("total") != len(cases)
+                    or (len(cases) < (1 if is_preview else 10))
                     or any(
                         not c.automated.get("passed")
                         or c.automated.get("package_hash") != package.package_hash
@@ -112,7 +114,7 @@ class VersionRepository:
                         for c in cases
                     )
                 ):
-                    raise ValueError("需有效独立验收、自动检查及回归通过，且人评全部接受")
+                    raise ValueError("需完整试答及语义检查通过，且人工逐条确认语气后发布")
                 row.status = "published"
             elif action == "activate":
                 if row.status != "published":

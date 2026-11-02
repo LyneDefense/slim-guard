@@ -84,7 +84,7 @@ async def test_freeze_all_revisions_idempotency_and_cancel(style_db):
     await builds.action("doctor", run["id"], "resume")
 
 
-async def test_full_build_uses_independent_cases_then_review_publish(style_db):
+async def test_full_build_uses_fixed_previews_then_review_publish(style_db):
     corpus, builds, versions = (
         CorpusRepository(style_db),
         BuildRepository(style_db),
@@ -96,12 +96,13 @@ async def test_full_build_uses_independent_cases_then_review_publish(style_db):
     assert await StyleWorker(style_db, gateway, "test-model").run_once()
     detail = await builds.detail("doctor", run["id"])
     assert detail["status"] == "completed", detail["error"]
-    assert detail["report"]["conclusion"] == "无明确提升"
+    assert detail["report"]["conclusion"] == "试答完成，请人工确认语气"
     assert detail["usage"]["calls"] == len(gateway.requests)
     assert (await corpus.examples("doctor", participation="used"))["total"] == 1
     cases = await versions.cases("doctor", run["id"])
-    assert cases["total"] == 12  # Independent of the single input material.
-    assert all(c["user_input"] != first["user_input"] for c in cases["items"])
+    assert cases["total"] == 9  # Eight fixed fixtures plus the human example replay.
+    assert any(c["user_input"] == first["user_input"] for c in cases["items"])
+    assert not {"TestSuite", "Comparison"} & {r.output_schema_name for r in gateway.requests}
     events = await builds.events("doctor", run["id"], limit=10000)
     assert [e["sequence"] for e in events["items"]] == list(range(1, events["total"] + 1))
     assert any(e.get("state") == "waiting_model" for e in events["items"])
@@ -145,7 +146,7 @@ async def test_failed_build_does_not_mark_material_used_and_resume_reuses_cache(
     builds = BuildRepository(style_db)
     run = await builds.build("doctor", "admin", model="test-model")
     gateway = TrainerGateway()
-    gateway.fail_schema = "TestSuite"
+    gateway.fail_schema = "CandidateProposal"
     worker = StyleWorker(style_db, gateway, "test-model")
     await worker.run_once()
     assert (await builds.detail("doctor", run["id"]))["status"] == "failed"
@@ -164,9 +165,7 @@ async def test_build_completes_past_former_budget_and_keeps_style_scoping(style_
     corpus, builds = CorpusRepository(style_db), BuildRepository(style_db)
     first = await material(style_db)
     other = await corpus.create_style(StyleInput(name="另一风格"))
-    run = await builds.build(
-        "doctor", "admin", model="test-model", config=BuildExecutionConfig()
-    )
+    run = await builds.build("doctor", "admin", model="test-model", config=BuildExecutionConfig())
     with pytest.raises(LookupError):
         await builds.detail(other["id"], run["id"])
     with pytest.raises(LookupError):
@@ -217,4 +216,4 @@ async def test_bad_test_objection_never_becomes_style_material_or_regression(sty
     assert snapshot["feedback"] == []
     assert snapshot["human_feedback_count"] == 0
     assert len(snapshot["evaluation_objections"]) == 1
-    assert snapshot["consumed_tests"] == [case]
+    assert "consumed_tests" not in snapshot

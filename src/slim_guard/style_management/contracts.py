@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from slim_guard.expression_style.trainer.guide_edit import EditableGuide
+
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -12,6 +14,17 @@ class Input(BaseModel):
 class StyleInput(Input):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
+
+
+class BuildInput(Input):
+    source_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+    guide: EditableGuide | None = None
+
+    @model_validator(mode="after")
+    def edit_pair(self) -> "BuildInput":
+        if (self.source_version_id is None) != (self.guide is None):
+            raise ValueError("编辑指引必须同时提供来源版本和完整表达指引")
+        return self
 
 
 class ExampleInput(Input):

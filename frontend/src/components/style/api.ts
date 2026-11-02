@@ -46,6 +46,10 @@ export interface Guide {
   rules: GuideRule[];
   prohibited_phrases: string[];
 }
+export interface BuildInput {
+  source_version_id?: string;
+  guide?: { summary: string; rules: Array<Pick<GuideRule, "rule_id" | "text" | "boundary">>; prohibited_phrases: string[] };
+}
 export interface StylePackage {
   version_id: string;
   guide: Guide;
@@ -86,6 +90,8 @@ export interface Round {
   difference: PackageDiff;
 }
 export interface Report {
+  schema_version?: string;
+  preview_metrics?: { total: number; content_failed: number; changed: number; expression_advisories: number };
   conclusion?: string;
   metrics?: Metrics;
   development?: Metrics;
@@ -133,8 +139,9 @@ export interface BuildRun {
   human_feedback_count: number;
   unused_count: number;
   analyzed_count: number;
-  round_count: number;
-  max_rounds: number;
+  workflow_version: string;
+  can_resume: boolean;
+  preview_count: number;
   baseline_version: string | null;
   report: Report;
   usage: { calls?: number; tokens?: number; seconds?: number };
@@ -159,6 +166,7 @@ export interface TestCase {
   user_input: string;
   source_text: string;
   context: string[];
+  origin?: "fixed" | "material" | "feedback";
 }
 export interface ReviewCheck {
   attempt: number;
@@ -167,6 +175,7 @@ export interface ReviewCheck {
   issues: string[];
   verdict?: string;
   policy_version?: string;
+  details?: Array<{ dimension: string; explanation: string }>;
 }
 export interface RewriteOutcome {
   text?: string;
@@ -227,8 +236,8 @@ export const stylesApi = {
     send<Style>("/styles", { name, description }),
   versions: (id: string) =>
     request<{ items: Version[] }>(`${base(id)}/versions`),
-  build: (id: string, key: string) =>
-    send<BuildRun>(`${base(id)}/builds`, {}, "POST", {
+  build: (id: string, key: string, value: BuildInput = {}) =>
+    send<BuildRun>(`${base(id)}/builds`, value, "POST", {
       "Idempotency-Key": key,
     }),
   builds: (id: string, offset = 0) =>

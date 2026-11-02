@@ -59,12 +59,10 @@ def test_agent_runtime_defaults_to_harness() -> None:
 
 
 def test_style_training_execution_config_accepts_environment_strings(monkeypatch):
-    monkeypatch.setenv("STYLE_TRAINING_MAX_ROUNDS", "3")
     monkeypatch.setenv("STYLE_TRAINING_MAX_SECONDS", "1200")
     settings = Settings(_env_file=None)
-    assert settings.style_training_max_rounds == 3
     assert settings.style_training_max_seconds == 1200
-    monkeypatch.setenv("STYLE_TRAINING_MAX_ROUNDS", "100")
+    monkeypatch.setenv("STYLE_TRAINING_MAX_SECONDS", "100")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
 

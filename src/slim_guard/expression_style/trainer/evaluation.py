@@ -12,7 +12,7 @@ from slim_guard.expression_style.review.policy import review_signature
 from slim_guard.runtime.invocation import InvocationRunner
 
 from .client import TrainingClient
-from .contracts import Comparison, TestCase
+from .contracts import TestCase
 
 
 async def rewrite_case(
@@ -90,60 +90,23 @@ async def evaluate(
     candidate: StylePackage,
     baseline: StylePackage,
     cases: tuple[TestCase, ...],
-    references: list[dict[str, Any]],
-    *,
-    stage: str,
-    label: str,
 ) -> list[dict[str, Any]]:
     results = []
     for index, case in enumerate(cases):
-        before = await rewrite_case(client, baseline, case, stage)
-        after = await rewrite_case(client, candidate, case, stage)
-        # Swap ordering deterministically; the judge sees no version or candidate labels.
-        swapped = int(content_hash(case.id)[0], 16) % 2 == 0
-        left, right = (after, before) if swapped else (before, after)
-        judge = await client.ask(
-            Comparison,
-            "匿名比较两个表达。依据共同的人工表达参考而非候选自己的 Guide。"
-            "优先忠实原文，再比较风格匹配、自然程度和交流分寸。"
-            "四个维度各给1-5分，1表示明显不满足、3表示部分满足、5表示充分满足。"
-            "不能因更短就认为更好，也不能用高风格分抵消语义错误；证据不足则 uncertain。"
-            "给出具体差异，不声称完整克隆真人；不要猜测哪个是新版本。",
-            {
-                "user_input": case.user_input,
-                "source": case.source_text,
-                "context": case.context,
-                "left": left["text"],
-                "right": right["text"],
-                "human_references": references,
-            },
-            stage=stage,
-        )
-        winner = judge.winner
-        preference = (
-            ("candidate" if (winner == "left") == swapped else "baseline")
-            if (winner in {"left", "right"})
-            else winner
-        )
-        if not after["passed"]:
-            preference = "baseline" if before["passed"] else "uncertain"
+        before = await rewrite_case(client, baseline, case, "preview")
+        after = await rewrite_case(client, candidate, case, "preview")
         item = {
             "case": case.model_dump(mode="json"),
             "baseline": before,
             "candidate": after,
-            "preference": preference,
-            "reason": judge.reason,
-            "scores": {
-                "candidate": (judge.left_scores if swapped else judge.right_scores).model_dump(),
-                "baseline": (judge.right_scores if swapped else judge.left_scores).model_dump(),
-            },
+            "reason": "语义检查通过，语气请人工确认" if after["passed"] else "语义或执行检查未通过",
         }
         results.append(item)
         await client.port.save(
-            f"evaluation:{label}",
+            "evaluation:preview",
             results,
-            stage=stage,
-            message=f"{label}：已评测 {index + 1}／{len(cases)}",
+            stage="preview",
+            message=f"试答：{index + 1}／{len(cases)}，不进行自动排名或调参",
         )
     return results
 
@@ -151,25 +114,14 @@ async def evaluate(
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total": len(results),
-        "candidate_better": sum(r["preference"] == "candidate" for r in results),
-        "baseline_better": sum(r["preference"] == "baseline" for r in results),
-        "tie": sum(r["preference"] == "tie" for r in results),
-        "uncertain": sum(r["preference"] == "uncertain" for r in results),
-        "candidate_failed": sum(not r["candidate"]["passed"] for r in results),
-        "baseline_failed": sum(not r["baseline"]["passed"] for r in results),
-        "regressions": sum(
-            r["baseline"]["passed"] and not r["candidate"]["passed"] for r in results
+        "content_failed": sum(not r["candidate"]["passed"] for r in results),
+        "changed": sum(r["candidate"]["text"] != r["case"]["source_text"] for r in results),
+        "expression_advisories": sum(
+            any(
+                d.get("dimension") == "expression"
+                for check in r["candidate"]["checks"]
+                for d in check.get("details", [])
+            )
+            for r in results
         ),
-        "repairs": sum(len(r["candidate"].get("checks", [])) > 1 for r in results),
-        "fallbacks": sum(r["candidate"].get("fallback", False) for r in results),
-        "dimensions": {
-            side: {
-                dimension: {
-                    str(score): sum(r["scores"][side][dimension] == score for r in results)
-                    for score in range(1, 6)
-                }
-                for dimension in ("fidelity", "style_match", "naturalness", "appropriateness")
-            }
-            for side in ("baseline", "candidate")
-        },
     }

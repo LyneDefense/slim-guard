@@ -37,6 +37,7 @@ const version = {
   status: "ready_for_review",
   build_run_id: "run-1",
   package: {
+    version_id: "test-v1",
     guide: { summary: "简洁", rules: [], prohibited_phrases: [] },
     examples: [],
   },
@@ -59,8 +60,9 @@ const baseRun = {
   human_feedback_count: 1,
   unused_count: 2,
   analyzed_count: 21,
-  round_count: 0,
-  max_rounds: 2,
+  workflow_version: "style-preview-v2",
+  can_resume: true,
+  preview_count: 8,
   baseline_version: "builtin",
   last_event_sequence: 1,
   report: {},
@@ -77,13 +79,13 @@ const baseRun = {
   artifacts: ["input_materials", "materials"],
   error: null,
 };
-function render(path, runOverrides = {}) {
+function render(path, runOverrides = {}, versionOverrides = {}) {
   const run = { ...baseRun, ...runOverrides };
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   client.setQueryData(["expression-styles"], { items: [style] });
-  client.setQueryData(["expression-versions", "doctor"], { items: [version] });
+  client.setQueryData(["expression-versions", "doctor"], { items: [{ ...version, ...versionOverrides }] });
   client.setQueryData(["expression-builds", "doctor", 0], {
     items: [run],
     total: 1,
@@ -200,7 +202,7 @@ test("build page has three nested tabs and publication waits for review", () => 
     "评审版本",
     "追加纠正素材",
     "构建新版本",
-    "训练过程",
+    "风格构建过程",
     "等待模型",
     "最后产物更新",
     "查看阶段产物",
@@ -225,6 +227,49 @@ test("review shows three real texts and three scores without technical hashes", 
   ])
     assert.ok(html.includes(text));
   assert.ok(!html.includes("ResponsePlan"));
+});
+
+test("fixed preview report has no automatic taste ranking and offers guide edits", async () => {
+  const { ReportView } = await server.ssrLoadModule("/src/components/style/TrainingReport.tsx");
+  const html = renderToStaticMarkup(createElement(ReportView, { report: {
+    schema_version: "2", conclusion: "试答完成，请人工确认语气",
+    preview_metrics: { total: 8, content_failed: 0, changed: 6, expression_advisories: 3 },
+  } }));
+  assert.ok(html.includes("表达建议（仅供参考）"));
+  assert.ok(!html.includes("候选更好"));
+  const build = render("/styles/doctor/build", {}, { review_summary: {
+    total: 8, accept: 8, pending: 0, reject: 0, auto_failed: 0,
+  } });
+  assert.ok(build.includes("编辑表达指引并重新试答"));
+  assert.ok(build.includes("保存为新版本并试答"));
+  assert.match(build, /<button>采纳并发布<\/button>/);
+  assert.ok(!build.includes("独立测试准备"));
+});
+
+test("old workflow failures cannot be endlessly resumed", () => {
+  const html = render("/styles/doctor/build", {
+    status: "failed", workflow_version: "legacy", can_resume: false,
+    error: "开发题与最终验收题题族重叠",
+  });
+  assert.ok(!html.includes("恢复本次构建"));
+  assert.ok(html.includes("旧流程也需新建构建"));
+});
+
+test("manual guide revisions send a new build input, not a mutation of a released version", async () => {
+  const original = globalThis.fetch;
+  let submitted;
+  globalThis.fetch = async (url, options) => {
+    submitted = { url, options };
+    return new Response(JSON.stringify({ id: "new-run" }), { status: 202 });
+  };
+  const value = { source_version_id: "released", guide: { summary: "直接自然", rules: [], prohibited_phrases: [] } };
+  try {
+    await stylesApi.build("doctor", "unique-key", value);
+    assert.ok(submitted.url.endsWith("/styles/doctor/builds"));
+    assert.deepEqual(JSON.parse(submitted.options.body), value);
+    assert.equal(submitted.options.headers.get("X-SlimGuard-CSRF"), "1");
+    assert.equal(submitted.options.headers.get("Idempotency-Key"), "unique-key");
+  } finally { globalThis.fetch = original; }
 });
 test("corrections contains full searchable paginated library and escapes input", () => {
   const html = render("/styles/doctor/corrections");

@@ -5,7 +5,7 @@ from typing import Any
 from slim_guard.expression_style.package import FixedExample, Guide, StylePackage, make_package
 
 from .client import TrainingClient
-from .contracts import CandidateProposal, ConsistencyCheck, Material, MaterialAnalysis
+from .contracts import CandidateProposal, Material, MaterialAnalysis
 
 
 def validate_proposal(
@@ -71,8 +71,6 @@ async def construct(
     version_id: str,
     name: str,
     feedback: list[dict[str, Any]],
-    previous: StylePackage | None = None,
-    failures: list[dict[str, Any]] | None = None,
 ) -> tuple[StylePackage, str]:
     # Map/reduce consumes all material without sending a 300-record prompt.
     guide_parts = []
@@ -107,8 +105,6 @@ async def construct(
         "guide": guide_parts[0],
         "eligible_examples": [m.model_dump(mode="json") for m in materials if m.id in eligible],
         "feedback": feedback,
-        "previous": previous.model_dump(mode="json") if previous else None,
-        "development_failures": failures or [],
     }
     repair_issues: list[str] = []
     for attempt in range(1, 3):
@@ -116,10 +112,10 @@ async def construct(
             CandidateProposal,
             "联合确定 Guide 和固定表达示例。不固定示例数量，选最小互补集合，所有示例ID"
             "都必须是 Guide 的支持证据。不要加入意图分类、用户事实或专业意见。"
-            "纠正意见优先用于解决具体问题；不能为提高评测分数修改测试题或审查策略。"
+            "纠正意见优先用于解决具体表达问题；不以自动评分替代用户的语气偏好。"
             "若存在无法隔离的冲突，不伪造一致。explanation 说明实际调整及理由。",
             {**payload, "repair_issues": repair_issues},
-            stage="optimization" if previous else "construction",
+            stage="construction",
         )
         try:
             package = validate_proposal(proposal, materials, analyses, style_id, version_id, name)
@@ -130,49 +126,15 @@ async def construct(
                 "draft",
                 package.model_dump(mode="json"),
                 stage="construction",
-                message=f"联合风格包第 {attempt} 次生成，等待独立一致性审查",
+                message=f"风格包第 {attempt} 次生成，规则证据已通过校验",
             )
-            repair_issues = await audit_package(client, package, materials, analysis_by_id)
-            if not repair_issues:
-                return package, proposal.explanation
+            return package, proposal.explanation
         await client.port.event(
-            "consistency",
-            "联合构建未通过：" + "；".join(repair_issues),
+            "construction",
+            "风格包结构／证据校验未通过：" + "；".join(repair_issues),
             attempt=attempt,
         )
         payload["rejected_proposal"] = proposal.model_dump(mode="json")
-    raise ValueError("联合构建两次审查仍未通过，请修订素材后新建任务：" + "；".join(repair_issues))
-
-
-async def audit_package(
-    client: TrainingClient,
-    package: StylePackage,
-    materials: tuple[Material, ...],
-    analysis_by_id: dict[str, Any],
-) -> list[str]:
-    # Audit ALL material batches, including excluded/unselected examples, against the bundle.
-    consistency_results = []
-    issues: list[str] = []
-    for start in range(0, len(materials), 16):
-        check = await client.ask(
-            ConsistencyCheck,
-            "审查 Guide 和固定示例是否有证据、是否互相冲突、是否过度泛化。"
-            "检查本批的反例及纠正意见是否被掩盖；已明确隔离的坏素材不必阻止构建。"
-            "passed=true 必须 issues=[]；不可解决且影响使用的问题要求失败。",
-            {
-                "package": package.model_dump(mode="json"),
-                "materials": [m.model_dump(mode="json") for m in materials[start : start + 16]],
-                "analyses": [analysis_by_id[m.id] for m in materials[start : start + 16]],
-            },
-            stage="consistency",
-        )
-        consistency_results.append({"batch": start // 16 + 1, **check.model_dump(mode="json")})
-        await client.port.save(
-            "consistency",
-            consistency_results,
-            stage="consistency",
-            message=f"一致性审查：第 {start // 16 + 1} 批",
-        )
-        if not check.passed or check.issues:
-            issues.extend(check.issues or [f"第 {start // 16 + 1} 批一致性审查未通过"])
-    return issues
+    raise ValueError(
+        "风格包两次生成仍未通过结构／证据校验，请修订素材后新建构建：" + "；".join(repair_issues)
+    )

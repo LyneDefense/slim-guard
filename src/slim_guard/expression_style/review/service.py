@@ -99,18 +99,19 @@ class StyleReviewService:
             for i in decision.issues
         ):
             decision = None
-        passed = bool(decision and decision.fidelity_passed and decision.expression_passed)
+        # Taste is advisory; only integrity/fidelity can reject a style-only rewrite.
+        passed = bool(decision and decision.fidelity_passed)
         verdict = "passed" if passed else "needs_repair"
         if decision is None:
             verdict = "inconclusive"
-        elif any(i.severity == "blocking" for i in decision.issues):
+        elif any(i.dimension == "fidelity" and i.severity == "blocking" for i in decision.issues):
             verdict = "blocked"
         return RewriteReviewResult(
             passed=passed,
             issues=tuple(
                 f"{i.explanation}；修复：{i.repair_requirement}"
                 for i in decision.issues
-                if i.severity != "warning"
+                if i.dimension == "fidelity" and i.severity != "warning"
             )
             if decision
             else (check.failure_code or "review_result_invalid",),
@@ -131,7 +132,7 @@ class StyleReviewService:
                 },
                 {
                     "name": "expression",
-                    "status": ("passed" if decision.expression_passed else "failed")
+                    "status": ("passed" if decision.expression_passed else "advisory")
                     if decision
                     else "error",
                 },

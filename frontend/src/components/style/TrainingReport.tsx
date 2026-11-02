@@ -90,6 +90,14 @@ export function ReportView({ report }: { report: Report }) {
   return (
     <>
       <h3>{report.conclusion ?? "尚无最终报告"}</h3>
+      {report.preview_metrics && <div className="style-overview-grid">
+        {[
+          ["试答用例", report.preview_metrics.total],
+          ["语义或执行检查失败", report.preview_metrics.content_failed],
+          ["原稿发生改写", report.preview_metrics.changed],
+          ["表达建议（仅供参考）", report.preview_metrics.expression_advisories],
+        ].map(([label, count]) => <article key={label}><strong>{count}</strong><span>{label}</span></article>)}
+      </div>}
       {report.metrics && <MetricView value={report.metrics} />}
       {report.difference && <DiffView value={report.difference} />}
       {!!report.regression?.total && (

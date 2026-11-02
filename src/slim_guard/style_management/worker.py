@@ -14,7 +14,7 @@ from slim_guard.db.models import new_uuid, utc_now
 from slim_guard.db.session import Database
 from slim_guard.expression_style.review.policy import review_signature
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
-from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
+from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION, BuildExecutionConfig
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
 from slim_guard.expression_style.trainer.service import StyleTrainer
 from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
@@ -63,6 +63,8 @@ class StyleWorker:
         store = JobStore(self.db, run_id, token)
         started = monotonic()
         try:
+            if snapshot.get("workflow_version") != WORKFLOW_VERSION:
+                raise ValueError("旧构建流程已停用，请新建构建；素材和评审反馈仍保留")
             if snapshot["model"] != self.model or snapshot["review_signature"] != review_signature(
                 self.model
             ):
@@ -120,7 +122,14 @@ class StyleWorker:
                 error = "模型请求或构建总时限超时；已保存结果可恢复"
             else:
                 error = f"{type(exc).__name__}：构建未完成，请检查模型服务或配置"
-            await store.fail(error)
+            retryable = isinstance(exc, StructuredOutputError) or not isinstance(
+                exc, (ValueError, ValidationError)
+            )
+            if elapsed_before + monotonic() - started >= snapshot.get("execution", {}).get(
+                "max_seconds", 3600
+            ):
+                retryable = False
+            await store.fail(error, retryable=retryable)
             logger.warning(
                 "style_build_failed", extra={"run_id": run_id, "failure_type": type(exc).__name__}
             )

@@ -89,12 +89,11 @@ async def test_shared_review_can_run_without_trainer_or_agent():
     assert not gateway.requests[0].tools
 
 
-@pytest.mark.parametrize("dimension", ["fidelity", "expression"])
-async def test_agent_repairs_with_previous_output_and_specific_reason(dimension):
+async def test_agent_repairs_with_previous_output_and_specific_reason():
     gateway = ScriptedModelGateway(
         [
             response(styled("不错，要保持。").model_dump()),
-            response(decision(passed=False, dimension=dimension)),
+            response(decision(passed=False)),
             response(styled("叫我 SlimGuard 就行。").model_dump()),
             response(decision()),
         ]

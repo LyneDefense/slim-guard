@@ -15,12 +15,7 @@ from slim_guard.expression_style.trainer.contracts import (
     Material,
     MaterialAnalysis,
 )
-from slim_guard.expression_style.trainer.contracts import (
-    TestSuite as FrozenTestSuite,
-)
-from slim_guard.expression_style.trainer.datasets import validate_suite
-
-from .fakes import suite_payload
+from slim_guard.expression_style.trainer.preview import fixed_suite, replay_suite
 
 
 def guide():
@@ -97,32 +92,27 @@ def test_evidence_must_reference_actual_revision_and_verbatim_text():
         )
 
 
-def test_independent_suite_excludes_material_and_consumed_test_families():
-    suite = FrozenTestSuite.model_validate(suite_payload())
-    validate_suite(suite, (), [])
-    with pytest.raises(ValueError, match="题族"):
-        validate_suite(suite, (), [suite.acceptance[0].model_dump()])
+def test_fixed_previews_are_stable_and_known_material_is_labelled_as_replay():
+    suite = fixed_suite()
+    assert suite == fixed_suite()
     m = Material(
         id="m",
         revision=1,
-        user_input=suite.development[0].user_input,
+        user_input="谢谢你的说明",
         original_response="原文",
         desired_response="期望",
     )
-    with pytest.raises(ValueError, match="复述"):
-        validate_suite(suite, (m,), [])
+    analyses = (MaterialAnalysis(example_id="m", role="positive", reason="表达对"),)
+    result = replay_suite(suite, (m,), analyses, [])
+    assert len(result.cases) == len(suite.cases) + 1
+    assert result.cases[-1].origin == "material"
 
 
-def test_dev_and_holdout_family_overlap_and_number_swaps_are_rejected():
-    raw = suite_payload()
-    raw["acceptance"][0]["family"] = raw["development"][0]["family"]
-    with pytest.raises(ValueError, match="题族重叠"):
-        validate_suite(FrozenTestSuite.model_validate(raw), (), [])
-    raw = suite_payload()
-    raw["acceptance"][0]["user_input"] = "我的体重是 75kg"
-    raw["development"][0]["user_input"] = "我的体重是 78kg"
-    with pytest.raises(ValueError, match="替换数字"):
-        validate_suite(FrozenTestSuite.model_validate(raw), (), [])
+def test_reusing_a_family_is_allowed_and_exact_replays_are_deduplicated():
+    case = fixed_suite().cases[0].model_dump(mode="json")
+    feedback = [{"case": case, "review": {"decision": "reject"}}] * 2
+    result = replay_suite(fixed_suite(), (), (), feedback)
+    assert len(result.cases) == len(fixed_suite().cases)
 
 
 def test_oversized_fixed_prompt_is_rejected_not_silently_truncated():

@@ -118,10 +118,6 @@ class TrainerGateway:
                 "example_ids": ids[:1],
                 "explanation": "选择一条有证据且互补的表达",
             }
-        elif schema == "ConsistencyCheck":
-            value = {"passed": True, "issues": []}
-        elif schema == "TestSuite":
-            value = suite_payload()
         elif schema == "StyledResponse":
             plan = payload["style_context"]["response_plan"]
             value = {
@@ -133,14 +129,6 @@ class TrainerGateway:
             }
         elif schema == "ReplyCheck":
             value = {"fidelity_passed": True, "expression_passed": True, "issues": []}
-        elif schema == "Comparison":
-            scores = {"fidelity": 5, "style_match": 4, "naturalness": 4, "appropriateness": 4}
-            value = {
-                "winner": "tie",
-                "reason": "两者同样忠实且自然，没有明确提升",
-                "left_scores": scores,
-                "right_scores": scores,
-            }
         else:
             raise AssertionError(schema)
         return ModelResponse(

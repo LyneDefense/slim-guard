@@ -127,3 +127,62 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
             assert (
                 await client.post(base + "/resume", headers={"X-SlimGuard-CSRF": "1"})
             ).status_code == 200
+
+
+async def test_manual_guide_build_api_validates_input_and_freezes_new_version(test_settings):
+    app = create_app(
+        test_settings.model_copy(
+            update={
+                "admin_username": "tester",
+                "admin_password": "test-style-password",
+                "style_iteration_worker_enabled": False,
+            }
+        )
+    )
+    async with app.router.lifespan_context(app):
+        # Enable the endpoint after startup, without starting a real model worker.
+        app.state.settings = app.state.settings.model_copy(
+            update={
+                "style_iteration_worker_enabled": True,
+                "zhipu_api_key": "test-only",
+            }
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/admin/auth/login",
+                json={
+                    "username": "tester",
+                    "password": "test-style-password",
+                },
+            )
+            url = "/api/admin/styles/doctor/builds"
+            payload = {
+                "source_version_id": "doctor_builtin_v1",
+                "guide": {
+                    "summary": "直接自然",
+                    "rules": [
+                        {
+                            "rule_id": "plain",
+                            "text": "不加客套开场",
+                            "boundary": "不删事实",
+                        }
+                    ],
+                    "prohibited_phrases": [],
+                },
+            }
+            assert (await client.post(url, json=payload)).status_code == 403
+            headers = {"X-SlimGuard-CSRF": "1", "Idempotency-Key": "manual-guide"}
+            bad = await client.post(url, headers=headers, json={"guide": payload["guide"]})
+            assert bad.status_code == 422
+            response = await client.post(url, headers=headers, json=payload)
+            assert response.status_code == 202
+            run = response.json()
+            replay = await client.post(url, headers=headers, json=payload)
+            assert replay.json()["id"] == run["id"]
+            assert (await CorpusRepository(app.state.database).examples("doctor"))["total"] == 2
+            async with app.state.database.session() as session:
+                snapshot = (await session.get(BuildRun, run["id"])).snapshot
+            assert snapshot["edited_package"]["version_id"] == run["id"]
+            assert snapshot["source_version_id"] == "doctor_builtin_v1"
+            assert snapshot["preview_suite"]["cases"]
+            assert snapshot["baseline"]["version_id"] == "doctor_builtin_v1"

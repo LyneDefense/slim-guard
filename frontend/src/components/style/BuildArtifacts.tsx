@@ -53,6 +53,7 @@ function EvaluationView({ row }: { row: EvaluationRow }) {
             </h4>
             <p>{c.output ?? "未生成有效输出"}</p>
             <p>{c.issues.join("；")}</p>
+            {c.details?.filter(d => d.dimension === "expression").map((d, i) => <p key={i}>表达建议（仅供参考）：{d.explanation}</p>)}
           </section>
         ))}
         <p>
@@ -105,6 +106,13 @@ export function BuildArtifact({
       {artifactKey === "suite" && data.value != null && (
         <TestSuiteView suite={data.value as FrozenSuite} />
       )}
+      {artifactKey === "preview_suite" && data.value != null && <section>
+        <p>固定试答与人工样例回放，不是独立盲测；不会用于自动调参。</p>
+        {(data.value as { cases: import("./api").TestCase[] }).cases.map(c => <article key={c.id} className="style-material">
+          <h4>{c.user_input}</h4><p>中性原稿：{c.source_text}</p>
+          <small>{c.origin === "material" ? "人工素材回放" : c.origin === "feedback" ? "历史纠正回放" : "固定合成用例"}</small>
+        </article>)}
+      </section>}
       {artifactKey === "dataset_audit" && data.value != null && (
         <DatasetAudit
           value={

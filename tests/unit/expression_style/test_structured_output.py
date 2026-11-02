@@ -1,7 +1,9 @@
 import copy
 import json
+from typing import Literal
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from slim_guard.agent_models.errors import ModelTransportError
 from slim_guard.agent_models.fake import ScriptedModelGateway
@@ -13,12 +15,29 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.expression_style.package import content_hash
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
-from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig, Comparison
+from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
 from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
 
 SCORES = {"fidelity": 5, "style_match": 4, "naturalness": 4, "appropriateness": 4}
 VALID = {"winner": "tie", "reason": "无明确差异", "left_scores": SCORES, "right_scores": SCORES}
+
+
+class Scores(BaseModel):
+    fidelity: int = Field(ge=1, le=5)
+    style_match: int
+    naturalness: int
+    appropriateness: int
+
+
+class Comparison(BaseModel):
+    """Test-only schema; the style workflow no longer ranks candidates."""
+
+    model_config = ConfigDict(extra="forbid")
+    winner: Literal["left", "right", "tie"]
+    reason: str
+    left_scores: Scores
+    right_scores: Scores
 
 
 class MemoryPort:

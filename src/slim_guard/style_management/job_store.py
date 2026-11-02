@@ -123,13 +123,7 @@ class JobStore:
                         original_response=case["source_text"],
                         doctor_response=item["candidate"]["text"],
                         baseline_response=item["baseline"]["text"],
-                        automated={
-                            **item["candidate"],
-                            "comparison": {
-                                "preference": item["preference"],
-                                "reason": item["reason"],
-                            },
-                        },
+                        automated=item["candidate"],
                     )
                 )
             material_results = {m["example_id"]: m for m in result["materials"]}
@@ -154,11 +148,11 @@ class JobStore:
             row.status, row.finished_at = "completed", utc_now()
             row.worker_token, row.lease_until = None, None
 
-    async def fail(self, error: str) -> None:
+    async def fail(self, error: str, *, retryable: bool = True) -> None:
         async with self.db.session() as s, s.begin():
             row = await s.scalar(self.owned())
             if row is None:
                 return
-            self.add_event(row, row.stage, error, state="failed")
+            self.add_event(row, row.stage, error, state="failed", retryable=retryable)
             row.status, row.error, row.finished_at = "failed", error, utc_now()
             row.worker_token, row.lease_until = None, None

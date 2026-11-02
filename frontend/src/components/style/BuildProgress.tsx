@@ -7,11 +7,8 @@ import { ReportView } from "./TrainingReport";
 const stages: Record<string, string> = {
   freeze: "冻结全库",
   materials: "素材审查",
-  datasets: "独立测试准备",
   construction: "提炼并联合构建",
-  consistency: "Guide 与示例审查",
-  optimization: "自动优化",
-  acceptance: "最终验收",
+  preview: "固定用例试答",
   complete: "构建结论",
 };
 const states: Record<string, string> = {
@@ -37,6 +34,7 @@ const artifactLabel = (key: string) => {
     draft: "待审查风格草案",
     consistency: "一致性审查结果",
     dataset_audit: "造题审查与修复",
+    preview_suite: "固定用例与样例回放",
   };
   return (
     names[key] ??
@@ -147,8 +145,7 @@ export function BuildProgress({
       </p>
       <p>
         其中新素材／修订 {run.unused_count} 条 · 已分析 {run.analyzed_count} /{" "}
-        {run.material_count} · 已评测候选 {run.round_count} 轮（最多{" "}
-        {run.max_rounds} 轮，不必跑满）
+        {run.material_count} · 试答用例 {run.preview_count ?? 0} 条
       </p>
       {waiting && (
         <p role="status">
@@ -173,7 +170,9 @@ export function BuildProgress({
       )}
       {run.error && (
         <p role="alert">
-          {run.error}。已有阶段产物保留在下方；恢复沿用快照和累计执行时间，不受 Token 或调用次数预算限制。
+          {run.error}。已有阶段产物保留。{run.can_resume
+            ? "恢复沿用已保存结果和累计运行时间；修改素材或指引后请新建构建。"
+            : "请调整素材／指引后新建构建；旧流程也需新建构建，已有素材与反馈不会丢失。"}
         </p>
       )}
       <div className="expression-actions">
@@ -195,7 +194,7 @@ export function BuildProgress({
             取消构建
           </button>
         )}
-        {["failed", "cancelled"].includes(run.status) && (
+        {run.can_resume && ["failed", "cancelled"].includes(run.status) && (
           <button
             disabled={action.isPending}
             onClick={() => action.mutate("resume")}
