@@ -53,7 +53,9 @@ def test_package_is_deterministic_and_does_not_have_a_fixed_example_count():
         StylePackage.model_validate(tampered)
 
 
-@pytest.mark.parametrize("role", ["negative", "content_change", "semantic_drift", "unusable"])
+@pytest.mark.parametrize(
+    "role", ["negative", "content_change", "semantic_drift", "unusable", "out_of_scope"]
+)
 def test_only_positive_material_can_be_a_fixed_example(role):
     m = Material(
         id="e",

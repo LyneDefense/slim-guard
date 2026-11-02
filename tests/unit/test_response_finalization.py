@@ -21,6 +21,7 @@ from slim_guard.db.session import Database
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.runtime.contracts import AgentRole
 from slim_guard.tools.contracts import ToolExecutionMode
+from tests.conversation_script import MutationReviewScript
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
@@ -66,7 +67,7 @@ async def test_system_response_does_not_enter_style_or_review(tmp_path) -> None:
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision"),
             code_revision="single-path-test",
@@ -152,13 +153,15 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
                 )
             ),
             response(json.dumps(styled, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response('{"verdict":"pass"}'),
         )
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -275,14 +278,16 @@ async def test_multiple_coach_messages_keep_model_order_and_are_reviewed_individ
         model_responses.extend(
             [
                 response(json.dumps(styled, ensure_ascii=False)),
-                response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+                response(
+                    '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+                ),
                 response('{"verdict":"pass"}'),
             ]
         )
     model = ScriptedModelGateway(tuple(model_responses))
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision"),
             code_revision="multiple-coach-message-test",
@@ -338,13 +343,15 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
             response("目前信息还不够，请告诉我晚餐具体吃什么和大概份量。"),
             conversation(None, coach=str(styled["text"])),
             response(json.dumps(styled, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response('{"verdict":"pass"}'),
         )
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -433,7 +440,9 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
             response("请先告诉我今晚准备吃什么和大概份量。"),
             conversation(None, coach=str(first_style["text"])),
             response(json.dumps(first_style, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response(
                 json.dumps(
                     {
@@ -446,13 +455,15 @@ async def test_reviewer_routes_style_drift_back_to_same_profile_for_one_repair(
                 )
             ),
             response(json.dumps(repaired_style, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response('{"verdict":"pass"}'),
         )
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -532,7 +543,9 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             response("当前内容稿认为晚餐这样搭配就行。"),
             conversation(None, coach=str(first_style["text"])),
             response(json.dumps(first_style, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response(
                 json.dumps(
                     {
@@ -552,13 +565,15 @@ async def test_reviewer_routes_missing_user_evidence_back_to_core_agent(
             ),
             conversation(None, coach=str(repaired_style["text"])),
             response(json.dumps(repaired_style, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response('{"verdict":"pass"}'),
         )
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -641,7 +656,9 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             response("当前内容稿认为照旧吃就可以。"),
             conversation(None, coach=str(first_style["text"])),
             response(json.dumps(first_style, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response(
                 json.dumps(
                     {
@@ -662,13 +679,15 @@ async def test_reviewer_routes_professional_issue_to_nutrition_then_core(
             ),
             conversation(None, coach=str(repaired_style["text"])),
             response(json.dumps(repaired_style, ensure_ascii=False)),
-            response('{"fidelity_passed":true,"expression_passed":true,"issues":[]}'),
+            response(
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
+            ),
             response('{"verdict":"pass"}'),
         )
     )
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",

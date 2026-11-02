@@ -3,6 +3,7 @@
 from typing import Any
 
 from slim_guard.expression_style.package import Guide, StylePackage, make_package
+from slim_guard.group_chat import ROLE_POLICY_VERSION
 
 from .client import TrainingClient
 from .construction import construct
@@ -10,6 +11,7 @@ from .contracts import WORKFLOW_VERSION, Material, MaterialAnalysis, PreviewSuit
 from .evaluation import evaluate, summarize
 from .materials import analyze_materials
 from .preview import replay_suite
+from .role_scope import scope_preview
 
 
 def difference(baseline: StylePackage, candidate: StylePackage) -> dict[str, Any]:
@@ -67,17 +69,18 @@ class StyleTrainer:
                 name=snapshot["style_name"],
                 feedback=snapshot.get("feedback", []),
             )
-        await client.port.save(
-            "selected",
-            package.model_dump(mode="json"),
-            stage="construction",
-            message=explanation + "；试答不会自动改写或挑选风格包",
-        )
         suite = replay_suite(
             PreviewSuite.model_validate(snapshot["preview_suite"]),
             materials,
             analyses,
             snapshot.get("feedback", []),
+        )
+        package, suite, scope = await scope_preview(client, package, suite)
+        await client.port.save(
+            "selected",
+            package.model_dump(mode="json"),
+            stage="construction",
+            message=explanation + "；已按固定教练职责筛选示例，不改变原稿含义",
         )
         await client.port.save(
             "preview_suite",
@@ -102,7 +105,7 @@ class StyleTrainer:
             "workflow_version": WORKFLOW_VERSION,
             "package_hash": package.package_hash,
             "suite_version": suite.version,
-            "conclusion": "存在语义或执行问题，暂不可发布"
+            "conclusion": "存在语义、职责或执行问题，暂不可发布"
             if metrics["content_failed"]
             else "试答完成，请人工确认语气",
             "preview_metrics": metrics,
@@ -110,6 +113,8 @@ class StyleTrainer:
             "difference": difference(baseline, package),
             "baseline_version": baseline.version_id,
             "source_version_id": snapshot.get("source_version_id"),
+            "role_policy_version": ROLE_POLICY_VERSION,
+            "role_excluded_count": sum(not d["allowed"] for d in scope),
             "feedback_outcomes": [
                 m for m in material_results if m["example_id"].startswith("review:")
             ],

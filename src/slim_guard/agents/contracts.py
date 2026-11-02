@@ -84,6 +84,7 @@ class ReviewerVerdictStatus(StrEnum):
 
 
 class ReviewerIssueType(StrEnum):
+    COACH_ROLE_VIOLATION = "coach_role_violation"
     # Semantic-review issue types from the architecture.
     UNSUPPORTED_CLAIM = "unsupported_claim"
     CHANGED_UNCERTAINTY = "changed_uncertainty"

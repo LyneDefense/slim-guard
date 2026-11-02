@@ -26,6 +26,14 @@ export function ReviewPanel({ style }: { style: Style }) {
         <p>
           这里查看固定用例与人工样例回放的实际输出，不宣称独立盲测。接受当前回答代表认可它的语气；填写期望回答并拒绝，可用于下次构建。
         </p>
+        <p>
+          医生只负责点评和对话，记录事项及其成功／失败反馈属于系统助手，不靠风格训练改变职责。
+        </p>
+        {!readOnly && !available.find((v) => v.id === version)?.role_policy_current && (
+          <p role="alert">
+            此版本未按当前教练职责检查，不能发布。可继续保存反馈，然后重新构建。
+          </p>
+        )}
         <label>
           风格版本
           <select
@@ -163,7 +171,7 @@ function ReviewCard({
       )}
       {!value.automated.passed && (
         <p role="alert">
-          语义或执行检查未通过，或使用了原稿兜底；本条暂不可发布，不是对你语气偏好的否定。
+          语义、职责或执行检查未通过，或使用了原稿兜底；本条暂不可发布，不是对你语气偏好的否定。
         </p>
       )}
       {value.review?.concern && value.review.concern !== "output" && (

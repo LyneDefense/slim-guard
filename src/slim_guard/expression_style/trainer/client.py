@@ -11,6 +11,7 @@ from slim_guard.expression_style.package import canonical, content_hash
 from slim_guard.usage.context import usage_scope
 
 from .contracts import BuildExecutionConfig
+from .output_validation import OutputValidation
 from .ports import BuildPort
 from .structured_output import complete_structured
 
@@ -71,6 +72,7 @@ class TrainingClient:
         payload: Any,
         *,
         stage: str,
+        validation: OutputValidation[T] | None = None,
     ) -> T:
         key = "model:" + content_hash(
             {
@@ -78,6 +80,7 @@ class TrainingClient:
                 "schema": schema.model_json_schema(),
                 "prompt": instruction,
                 "payload": payload,
+                **({"validation": validation.descriptor()} if validation else {}),
             }
         )
         self.gateway.stage = stage
@@ -106,4 +109,5 @@ class TrainingClient:
             schema=schema,
             key=key,
             stage=stage,
+            validation=validation,
         )

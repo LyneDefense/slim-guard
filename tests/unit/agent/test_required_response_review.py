@@ -17,6 +17,7 @@ from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.runtime.contracts import AgentRole
+from tests.conversation_script import MutationReviewScript
 
 
 def reply(value: str | dict[str, object]) -> ModelResponse:
@@ -95,7 +96,14 @@ async def test_group_chat_only_sends_coach_after_successful_review(tmp_path, sce
                         "style_profile_version": "doctor_builtin_v1",
                     }
                 ),
-                reply({"fidelity_passed": True, "expression_passed": True, "issues": []}),
+                reply(
+                    {
+                        "fidelity_passed": True,
+                        "role_passed": True,
+                        "expression_passed": True,
+                        "issues": [],
+                    }
+                ),
             ]
         )
         if scenario == "review_rejects":
@@ -113,7 +121,7 @@ async def test_group_chat_only_sends_coach_after_successful_review(tmp_path, sce
     model = ScriptedModelGateway(responses)
     runtime = build_agent_runtime(
         database=database,
-        model=model,
+        model=MutationReviewScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision"),
             code_revision="required-review-test",

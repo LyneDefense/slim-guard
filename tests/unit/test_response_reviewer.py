@@ -125,6 +125,18 @@ async def test_pass_receives_minimal_facts_and_plan_without_tools() -> None:
     assert "payload" not in data
 
 
+@pytest.mark.parametrize("target", ["core", "response_style", "nutrition_expert"])
+def test_coach_duties_cannot_be_redefined_by_style_or_content_repair(target):
+    verdict = {
+        "verdict": "reject",
+        "issue_type": "coach_role_violation",
+        "reason_summary": "记录状态属于系统助手，不是医生的表达任务。",
+    }
+    assert ReviewerVerdict.model_validate(verdict).verdict == "reject"
+    with pytest.raises(ValidationError):
+        ReviewerVerdict.model_validate({**verdict, "verdict": "repair", "repair_target": target})
+
+
 @pytest.mark.parametrize(
     ("issue", "target"),
     [
@@ -196,9 +208,7 @@ async def test_invalid_schema_gets_one_repair_with_original_context() -> None:
 
 async def test_failed_schema_repair_is_finite() -> None:
     gateway = ScriptedModelGateway([response("invalid")] * 3)
-    result = await agent(gateway).run(
-        invocation=invocation(), context=context()
-    )
+    result = await agent(gateway).run(invocation=invocation(), context=context())
     assert result.status is InvocationStatus.DEGRADED
     assert result.verdict.verdict == "reject"
     assert result.verdict.repair_target is None
@@ -428,9 +438,7 @@ def test_dish_guidance_guards_detect_numeric_estimates_and_new_avoidance(
     )
     styled = review_context.styled_response.model_copy(update={"text": text})
     report = ReviewerVerdictValidator().validate(
-        review_context.model_copy(
-            update={"response_plan": plan, "styled_response": styled}
-        ),
+        review_context.model_copy(update={"response_plan": plan, "styled_response": styled}),
         ReviewerVerdict(verdict="pass"),
     )
     assert issue in report.detected_issue_types

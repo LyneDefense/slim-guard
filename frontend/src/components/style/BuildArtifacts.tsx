@@ -148,6 +148,22 @@ export function BuildArtifact({
             </article>
           ),
         )}
+      {artifactKey === "coach_scope" && (
+        data.items as Array<{
+          source_id: string;
+          source_text: string;
+          desired_text?: string;
+          allowed: boolean;
+          reason: string;
+        }> | undefined
+      )?.map((r) => (
+        <article className="style-material" key={r.source_id}>
+          <strong>{r.allowed ? "符合教练职责" : "已排除：非教练职责"}</strong>
+          <p>原稿：{r.source_text}</p>
+          {r.desired_text && <p>期望表达：{r.desired_text}</p>}
+          <p>{r.reason}</p>
+        </article>
+      ))}
       {artifactKey === "consistency" &&
         (
           data.items as

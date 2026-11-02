@@ -8,6 +8,7 @@ const stages: Record<string, string> = {
   freeze: "冻结全库",
   materials: "素材审查",
   construction: "提炼并联合构建",
+  scope: "教练职责检查",
   preview: "固定用例试答",
   complete: "构建结论",
 };
@@ -21,7 +22,7 @@ const states: Record<string, string> = {
 const artifactLabel = (key: string) => {
   if (key.startsWith("validation:")) {
     const [, schema, identifier] = key.split(":");
-    return `结构校验详情：${schema} · ${identifier.slice(0, 6)}`;
+    return `输出校验详情：${schema} · ${identifier.slice(0, 6)}`;
   }
   const names: Record<string, string> = {
     input_materials: "本次全部素材",
@@ -35,6 +36,7 @@ const artifactLabel = (key: string) => {
     consistency: "一致性审查结果",
     dataset_audit: "造题审查与修复",
     preview_suite: "固定用例与样例回放",
+    coach_scope: "教练职责筛选结果",
   };
   return (
     names[key] ??
@@ -171,14 +173,16 @@ export function BuildProgress({
       {run.error && (
         <p role="alert">
           {run.error}。已有阶段产物保留。{run.can_resume
-            ? "恢复沿用已保存结果和累计运行时间；修改素材或指引后请新建构建。"
-            : "请调整素材／指引后新建构建；旧流程也需新建构建，已有素材与反馈不会丢失。"}
+            ? "可恢复本次构建；已通过的批次不重跑，失败批次会携带具体错误重新请求模型，累计执行时间不重置。"
+            : run.resume_block_reason === "workflow_changed"
+              ? "构建流程已更新，请新建构建；已有素材与反馈保留。"
+              : "本次不能直接恢复，请根据上方具体原因处理后新建构建；已有素材与反馈保留。"}
         </p>
       )}
       <div className="expression-actions">
         {diagnostics.length > 0 && (
           <button onClick={() => setSelected(diagnostics.at(-1)!)}>
-            查看结构校验详情
+            查看输出校验详情
           </button>
         )}
         {["queued", "running"].includes(run.status) && (

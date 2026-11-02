@@ -3,6 +3,7 @@
 from typing import Any
 
 from slim_guard.expression_style.package import FixedExample, Guide, StylePackage, make_package
+from slim_guard.group_chat import COACH_ROLE_POLICY
 
 from .client import TrainingClient
 from .contracts import CandidateProposal, Material, MaterialAnalysis
@@ -79,7 +80,8 @@ async def construct(
         batch = materials[start : start + 16]
         part = await client.ask(
             Guide,
-            "从本批素材提炼有边界的表达规律，证据必须带素材ID、revision和逐字片段。"
+            COACH_ROLE_POLICY
+            + "从本批素材提炼有边界的表达规律，证据必须带素材ID、revision和逐字片段。"
             "不要按数量投票，负面意见可以限制规则但不得伪造期望回答。"
             "只从 positive/negative 素材产生规则，其他素材保留为反例，不强行统一冲突。"
             "一条明确意见可产生局部规则，不冒充全局规律。相同规则用同一 rule_id。",
@@ -110,7 +112,8 @@ async def construct(
     for attempt in range(1, 3):
         proposal = await client.ask(
             CandidateProposal,
-            "联合确定 Guide 和固定表达示例。不固定示例数量，选最小互补集合，所有示例ID"
+            COACH_ROLE_POLICY
+            + "联合确定 Guide 和固定表达示例。不固定示例数量，选最小互补集合，所有示例ID"
             "都必须是 Guide 的支持证据。不要加入意图分类、用户事实或专业意见。"
             "纠正意见优先用于解决具体表达问题；不以自动评分替代用户的语气偏好。"
             "若存在无法隔离的冲突，不伪造一致。explanation 说明实际调整及理由。",

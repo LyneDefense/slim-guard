@@ -90,6 +90,8 @@ export interface Round {
   difference: PackageDiff;
 }
 export interface Report {
+  role_policy_version?: string;
+  role_excluded_count?: number;
   schema_version?: string;
   preview_metrics?: { total: number; content_failed: number; changed: number; expression_advisories: number };
   conclusion?: string;
@@ -103,6 +105,7 @@ export interface Report {
   limitations?: string[];
 }
 export interface Version {
+  role_policy_current: boolean;
   id: string;
   name: string;
   status: string;
@@ -141,6 +144,7 @@ export interface BuildRun {
   analyzed_count: number;
   workflow_version: string;
   can_resume: boolean;
+  resume_block_reason?: "workflow_changed" | "not_retryable" | null;
   preview_count: number;
   baseline_version: string | null;
   report: Report;

@@ -156,7 +156,7 @@ def semantic_pass() -> ModelResponse:
     return ModelResponse(
         message=ModelMessage(
             role=MessageRole.ASSISTANT,
-            content='{"fidelity_passed":true,"expression_passed":true,"issues":[]}',
+            content='{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}',
         )
     )
 

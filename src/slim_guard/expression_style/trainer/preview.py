@@ -6,11 +6,11 @@ from slim_guard.expression_style.package import content_hash
 
 from .contracts import Material, MaterialAnalysis, PreviewSuite, TestCase
 
-SUITE_VERSION = "expression-preview-v1"
+SUITE_VERSION = "coach-commentary-preview-v2"
 
 # These are synthetic rewrite inputs, not scenario routing rules or medical evidence.
 _FIXTURES = (
-    ("greeting", "你好", "你好，我是称小二，可以帮你记录饮食、运动和体重。", ()),
+    ("greeting", "你好", "你好，可以和我聊聊饮食、运动和体重变化。", ()),
     ("thanks", "谢谢你", "不用客气，很高兴能帮到你。", ()),
     ("balanced", "看看这顿搭配", "这顿包含主食、蔬菜和蛋白质来源，搭配比较完整。", ()),
     ("uncertain", "照片里是什么菜", "看起来像炒菌菇，但仅凭图片还不能确定具体种类。", ()),
@@ -18,10 +18,10 @@ _FIXTURES = (
     (
         "number",
         "我今天称了体重",
-        "今天记录的体重是 79.0 kg，单次变化还不能说明长期趋势。",
+        "今天的体重是 79.0 kg，单次变化还不能说明长期趋势。",
         ("79.0 kg",),
     ),
-    ("failure", "刚才记录成功了吗", "这次记录没有保存成功，目前还不能确认已记录。", ()),
+    ("quantity_check", "我今天喝了50升水。", "你确定今天喝了50升水吗？", ("50升",)),
     (
         "boundary",
         "这能诊断出问题吗",

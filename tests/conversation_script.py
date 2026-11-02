@@ -58,3 +58,30 @@ class SystemConversationScript:
 
     async def close(self) -> None:
         await self.core.close()
+
+
+class MutationReviewScript:
+    """Separate receipt-claim decisions from scripted conversation/style responses.
+
+    Response lifecycle tests contain no business writes and declare no mutation
+    assertions. Receipt-fidelity tests must supply their own golden declarations.
+    This adapter never bypasses the real production receipt validator.
+    """
+
+    def __init__(self, model: ModelGateway, *, mutation_claims: Callable | None = None) -> None:
+        self.model = model
+        self.requests: list[ModelRequest] = []
+        self._mutation_claims = mutation_claims
+
+    async def complete(self, request: ModelRequest) -> ModelResponse:
+        if request.output_schema_name != "MutationClaims":
+            return await self.model.complete(request)
+        self.requests.append(request)
+        payload = json.loads(request.messages[-1].content or "{}")
+        claims = self._mutation_claims(payload) if self._mutation_claims else []
+        return ModelResponse(
+            message=ModelMessage(role="assistant", content=json.dumps({"claims": claims}))
+        )
+
+    async def close(self) -> None:
+        await self.model.close()

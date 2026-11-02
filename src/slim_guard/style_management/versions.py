@@ -7,6 +7,7 @@ from sqlalchemy import select
 from slim_guard.db.models import utc_now
 from slim_guard.db.session import Database
 from slim_guard.expression_style.package import StylePackage
+from slim_guard.group_chat import ROLE_POLICY_VERSION
 
 from .contracts import ReviewInput
 from .models import ReviewCase, Style, Version
@@ -38,7 +39,14 @@ class VersionRepository:
                 cases = list(
                     await s.scalars(select(ReviewCase).where(ReviewCase.version_id == row.id))
                 )
-                result.append({**row_data(row), "review_summary": review_counts(cases)})
+                result.append(
+                    {
+                        **row_data(row),
+                        "review_summary": review_counts(cases),
+                        "role_policy_current": row.report.get("role_policy_version")
+                        == ROLE_POLICY_VERSION,
+                    }
+                )
             return result
 
     async def cases(
@@ -95,6 +103,8 @@ class VersionRepository:
             if package.style_id != style_id or package.version_id != version_id:
                 raise ValueError("风格产物归属不匹配")
             if action == "publish":
+                if row.report.get("role_policy_version") != ROLE_POLICY_VERSION:
+                    raise ValueError("此版本尚未按当前教练职责检查，请重新构建后评审")
                 cases = list(
                     await s.scalars(select(ReviewCase).where(ReviewCase.version_id == version_id))
                 )

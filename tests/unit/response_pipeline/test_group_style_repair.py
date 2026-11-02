@@ -102,7 +102,7 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
                 "issues": [{"type": "missing_user_evidence", "explanation": "测量条件未提供。"}],
             }
         )
-    check = {"fidelity_passed": True, "expression_passed": True, "issues": []}
+    check = {"fidelity_passed": True, "role_passed": True, "expression_passed": True, "issues": []}
     responses = [
         ModelResponse(
             message=ModelMessage(

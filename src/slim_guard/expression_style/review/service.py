@@ -10,6 +10,7 @@ from slim_guard.agents.contracts import AgentInvocation, StyledResponse
 from slim_guard.expression_style.review.contracts import ReplyCheck, RewriteReviewResult
 from slim_guard.expression_style.review.integrity import StyleResponseValidator
 from slim_guard.expression_style.review.policy import REVIEW_PROMPT, review_signature
+from slim_guard.group_chat import COACH_ROLE_VIOLATION
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 from slim_guard.usage.context import usage_operation
 
@@ -51,6 +52,7 @@ class StyleReviewService:
                 checks=(
                     {"name": "integrity", "status": "failed"},
                     {"name": "fidelity", "status": "not_run"},
+                    {"name": "role", "status": "not_run"},
                     {"name": "expression", "status": "not_run"},
                 ),
             )
@@ -99,23 +101,26 @@ class StyleReviewService:
             for i in decision.issues
         ):
             decision = None
-        # Taste is advisory; only integrity/fidelity can reject a style-only rewrite.
-        passed = bool(decision and decision.fidelity_passed)
+        # Taste is advisory; integrity, fidelity and speaker duties remain mandatory.
+        passed = bool(decision and decision.fidelity_passed and decision.role_passed)
         verdict = "passed" if passed else "needs_repair"
         if decision is None:
             verdict = "inconclusive"
-        elif any(i.dimension == "fidelity" and i.severity == "blocking" for i in decision.issues):
+        elif any(i.dimension != "expression" and i.severity == "blocking" for i in decision.issues):
             verdict = "blocked"
+        failure_code = None if passed else "style_review_failed"
+        if decision and not decision.role_passed:
+            failure_code = COACH_ROLE_VIOLATION
         return RewriteReviewResult(
             passed=passed,
             issues=tuple(
                 f"{i.explanation}；修复：{i.repair_requirement}"
                 for i in decision.issues
-                if i.dimension == "fidelity" and i.severity != "warning"
+                if i.dimension != "expression" and i.severity != "warning"
             )
             if decision
             else (check.failure_code or "review_result_invalid",),
-            failure_code=None if passed else "style_review_failed",
+            failure_code=failure_code,
             responses=check.responses,
             total_token_count=check.total_token_count,
             integrity=integrity,
@@ -127,6 +132,12 @@ class StyleReviewService:
                 {
                     "name": "fidelity",
                     "status": ("passed" if decision.fidelity_passed else "failed")
+                    if decision
+                    else "error",
+                },
+                {
+                    "name": "role",
+                    "status": ("passed" if decision.role_passed else "failed")
                     if decision
                     else "error",
                 },

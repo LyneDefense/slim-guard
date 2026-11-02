@@ -24,6 +24,13 @@ def build_summary(row: BuildRun) -> dict[str, Any]:
     data["can_resume"] = data["workflow_version"] == WORKFLOW_VERSION and (
         row.status != "failed" or row.activity.get("retryable") is not False
     )
+    data["resume_block_reason"] = (
+        "workflow_changed"
+        if data["workflow_version"] != WORKFLOW_VERSION
+        else "not_retryable"
+        if not data["can_resume"]
+        else None
+    )
     data["preview_count"] = len(row.checkpoints.get("preview_suite", {}).get("cases", []))
     data["baseline_version"] = row.snapshot.get("baseline", {}).get("version_id")
     data["last_event_sequence"] = len(row.events)

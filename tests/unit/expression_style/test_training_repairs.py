@@ -112,3 +112,65 @@ async def test_schema_failure_resume_reuses_analysis_and_retains_diagnostics(sty
     assert detail["usage"]["tokens"] == len(gateway.requests) * 10
     repaired = (await builds.artifact("doctor", run["id"], key))["value"]
     assert repaired["status"] == "repaired" and len(repaired["failures"]) == 3
+
+
+async def test_material_identity_failure_is_resumable_and_completed_batches_are_not_recalled(
+    style_db,
+):
+    class WrongIdentityGateway(TrainerGateway):
+        broken = True
+
+        async def complete(self, request):
+            result = await super().complete(request)
+            if request.output_schema_name == "AnalysisBatch":
+                payload = json.loads(request.messages[1].content)
+                if self.broken and len(payload) == 1:
+                    value = json.loads(result.message.content)
+                    value["items"][0]["example_id"] = "m0"
+                    return result.model_copy(
+                        update={
+                            "message": ModelMessage(
+                                role="assistant",
+                                content=json.dumps(value),
+                            )
+                        }
+                    )
+            return result
+
+    for i in range(9):
+        await CorpusRepository(style_db).append(
+            "doctor",
+            ExampleInput(
+                user_input=f"谢谢{i}",
+                original_response=f"你好{i}，很高兴帮到你。",
+                desired_response=f"你好{i}。",
+            ),
+            "admin",
+        )
+    builds = BuildRepository(style_db)
+    run = await builds.build("doctor", "admin", model="test-model")
+    gateway = WrongIdentityGateway()
+    worker = StyleWorker(style_db, gateway, "test-model")
+    await worker.run_once()
+    failed = await builds.detail("doctor", run["id"])
+    assert failed["status"] == "failed" and failed["can_resume"]
+    assert failed["resume_block_reason"] is None and failed["analyzed_count"] == 8
+    assert "输出校验失败" in failed["error"]
+    key = next(k for k in failed["artifacts"] if k.startswith("validation:AnalysisBatch:"))
+    diagnostic = (await builds.artifact("doctor", run["id"], key))["value"]
+    assert len(diagnostic["failures"]) == 3 and diagnostic["contract"]["references"]
+    assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"
+    before = len(gateway.requests)
+    gateway.broken = False
+    await builds.action("doctor", run["id"], "resume")
+    await worker.run_once()
+    completed = await builds.detail("doctor", run["id"])
+    assert completed["status"] == "completed", completed["error"]
+    new_analysis = [r for r in gateway.requests[before:] if r.output_schema_name == "AnalysisBatch"]
+    assert len(new_analysis) == 1 and len(json.loads(new_analysis[0].messages[1].content)) == 1
+    assert "unknown_reference" in new_analysis[0].messages[-1].content
+    assert completed["usage"]["calls"] == len(gateway.requests)
+    assert completed["usage"]["seconds"] >= failed["usage"]["seconds"]
+    repaired = (await builds.artifact("doctor", run["id"], key))["value"]
+    assert repaired["status"] == "repaired" and len(repaired["failures"]) == 3
+    assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"

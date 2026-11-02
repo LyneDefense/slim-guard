@@ -6,7 +6,7 @@ from pydantic import Field
 
 from slim_guard.expression_style.package import Artifact, Guide
 
-WORKFLOW_VERSION = "style-preview-v2"
+WORKFLOW_VERSION = "style-preview-v3-coach-scope"
 
 
 class Material(Artifact):
@@ -29,6 +29,7 @@ class MaterialAnalysis(Artifact):
         "conflict",
         "missing_context",
         "unusable",
+        "out_of_scope",
     ]
     reason: str = Field(min_length=1, max_length=1000)
     expression_rule: str = Field(default="", max_length=500)

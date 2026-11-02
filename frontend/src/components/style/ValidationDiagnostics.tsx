@@ -2,6 +2,7 @@ export interface ValidationDiagnostic {
   schema_name: string;
   status: "unresolved" | "repaired";
   max_attempts_per_execution: number;
+  contract?: { version: string; references: Record<string, string> };
   failures: Array<{
     number: number;
     time: string;
@@ -20,12 +21,23 @@ export function ValidationDiagnostics({
 }) {
   return (
     <section className="validation-diagnostics">
-      <h3>结构校验详情 · {value.schema_name}</h3>
+      <h3>输出校验详情 · {value.schema_name}</h3>
       <p>
         {value.status === "repaired" ? "已修复，失败记录仍保留" : "尚未修复"}
         。单次执行最多尝试 {value.max_attempts_per_execution} 次（含首次请求）；
         手动恢复仍沿用原任务快照、累计执行时间和上次错误。
       </p>
+      {value.contract && (
+        <details>
+          <summary>查看本批短编号与原始来源映射</summary>
+          <table>
+            <thead><tr><th>模型编号</th><th>原始来源 ID</th></tr></thead>
+            <tbody>{Object.entries(value.contract.references).map(([ref, id]) => (
+              <tr key={ref}><td>{ref}</td><td>{id}</td></tr>
+            ))}</tbody>
+          </table>
+        </details>
+      )}
       {value.failures.map((failure) => (
         <article className="style-material" key={failure.number}>
           <h4>

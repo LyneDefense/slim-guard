@@ -23,16 +23,18 @@ from slim_guard.agents.reviewer.contracts import (
     ReviewerValidationReport,
 )
 from slim_guard.agents.reviewer.validation import ReviewerVerdictValidator
+from slim_guard.group_chat import COACH_ROLE_POLICY
 from slim_guard.runtime.invocation import (
     InvocationAuthorizationError,
     InvocationGrant,
     InvocationRunner,
 )
 
-RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v5"
+RESPONSE_REVIEWER_PROMPT_VERSION = "response-reviewer-v6-coach-scope"
 RESPONSE_REVIEWER_PROMPT = (
-    "You are SlimGuard's response fidelity reviewer. Judge only whether the styled "
-    "response is faithful to the supplied ResponsePlan, assessment, evidence "
+    "You are SlimGuard's response fidelity and speaker-duty reviewer. Judge whether the styled "
+    "response respects the coach's fixed duties and is faithful to the supplied ResponsePlan, "
+    "assessment, evidence "
     "summaries, uncertainty, risks, and citations. Read the actual response text: its "
     "declared preserved references alone do not prove fidelity. Evidence summaries are "
     "the selected factual content; IDs alone never prove a claim. Missing summaries do "
@@ -59,6 +61,10 @@ RESPONSE_REVIEWER_PROMPT = (
     "repair direction cannot be established. Keep reason_summary short and suitable for "
     "an administrator; never include chain-of-thought. For a coach-only social_act plan, "
     "a short pass reason is harmless, but do not invent factual or nutritional claims."
+    + COACH_ROLE_POLICY
+    + "本节点审查的是教练气泡；若候选承担记录事项或播报操作状态，即使原稿也如此，"
+    "仍必须 reject，issue_type=coach_role_violation，不设置 repair_target。"
+    "不要要求风格模块通过删改业务状态来修复错误说话人，系统助手的权威说明会独立保留。"
 )
 
 

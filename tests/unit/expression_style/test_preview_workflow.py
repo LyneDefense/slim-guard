@@ -9,7 +9,7 @@ from slim_guard.expression_style.trainer.guide_edit import EditableGuide
 from slim_guard.style_management.builds import BuildRepository
 from slim_guard.style_management.contracts import BuildInput, ExampleInput, ReviewInput, StyleInput
 from slim_guard.style_management.corpus import CorpusRepository
-from slim_guard.style_management.models import BuildRun
+from slim_guard.style_management.models import BuildRun, Version
 from slim_guard.style_management.runtime import RuntimeStyles
 from slim_guard.style_management.versions import VersionRepository
 from slim_guard.style_management.worker import StyleWorker
@@ -62,6 +62,7 @@ class ReviewGateway(TrainerGateway):
             payload = json.loads(request.messages[1].content)
             value = {
                 "fidelity_passed": self.dimension != "fidelity",
+                "role_passed": self.dimension != "role",
                 "expression_passed": self.dimension != "expression",
                 "issues": [
                     {
@@ -106,6 +107,30 @@ async def test_fidelity_failure_still_blocks_even_if_human_accepts(style_db):
     await accept_all(style_db, run["id"])
     with pytest.raises(ValueError, match="语义检查"):
         await VersionRepository(style_db).action("doctor", run["id"], "publish")
+
+
+async def test_role_failure_blocks_publication_even_with_fidelity_and_human_acceptance(style_db):
+    run = await build(style_db, ReviewGateway("role"))
+    report = (await BuildRepository(style_db).detail("doctor", run["id"]))["report"]
+    assert not report["release_eligible"] and report["preview_metrics"]["content_failed"] == 9
+    await accept_all(style_db, run["id"])
+    with pytest.raises(ValueError, match="语义检查"):
+        await VersionRepository(style_db).action("doctor", run["id"], "publish")
+    assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"
+
+
+async def test_legacy_pending_version_needs_new_role_check_without_losing_feedback(style_db):
+    run = await build(style_db)
+    await accept_all(style_db, run["id"])
+    async with style_db.session() as session, session.begin():
+        row = await session.get(Version, run["id"])
+        row.report = {k: v for k, v in row.report.items() if k != "role_policy_version"}
+    versions = VersionRepository(style_db)
+    assert not (await versions.versions("doctor"))[0]["role_policy_current"]
+    with pytest.raises(ValueError, match="重新构建"):
+        await versions.action("doctor", run["id"], "publish")
+    assert (await versions.cases("doctor", run["id"]))["counts"]["accept"] == 9
+    assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"
 
 
 async def test_repeated_builds_reuse_fixed_cases_and_preserve_output_feedback(style_db):
@@ -180,7 +205,10 @@ async def test_guide_edit_creates_new_preview_without_mutating_source_or_online(
     assert package.examples and package.version_id == revised["id"]
     assert (await builds.artifact("doctor", first["id"], "selected"))["value"] == source
     assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"
-    assert all(r.output_schema_name in {"StyledResponse", "ReplyCheck"} for r in gateway.requests)
+    assert all(
+        r.output_schema_name in {"CoachScopeBatch", "StyledResponse", "ReplyCheck"}
+        for r in gateway.requests
+    )
     with pytest.raises(ValueError):
         await versions.action("doctor", revised["id"], "publish")
     await accept_all(style_db, revised["id"])

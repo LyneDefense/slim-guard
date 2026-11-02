@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 class ReviewIssue(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    dimension: Literal["fidelity", "expression"]
+    dimension: Literal["fidelity", "role", "expression"]
     severity: Literal["repairable", "blocking", "warning"]
     code: str = Field(min_length=1, max_length=100)
     explanation: str = Field(min_length=1, max_length=1000)
@@ -30,6 +30,7 @@ class ReviewIssue(BaseModel):
 class ReplyCheck(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fidelity_passed: bool = Field(strict=True)
+    role_passed: bool = Field(strict=True)
     expression_passed: bool = Field(strict=True)
     issues: list[ReviewIssue] = Field(max_length=12)
 
@@ -37,6 +38,7 @@ class ReplyCheck(BaseModel):
     def consistent(self) -> ReplyCheck:
         for dimension, passed in (
             ("fidelity", self.fidelity_passed),
+            ("role", self.role_passed),
             ("expression", self.expression_passed),
         ):
             failures = [
@@ -55,7 +57,7 @@ class RewriteReviewResult:
     responses: tuple[ModelResponse, ...] = ()
     total_token_count: int = 0
     integrity: StyleValidationReport = StyleValidationReport()
-    policy_version: str = "style-review-v3-advisory-expression"
+    policy_version: str = "style-review-v4-coach-scope"
     verdict: str = "inconclusive"
     details: tuple[dict[str, object], ...] = ()
     signature: str = ""

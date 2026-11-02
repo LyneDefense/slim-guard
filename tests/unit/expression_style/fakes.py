@@ -118,6 +118,17 @@ class TrainerGateway:
                 "example_ids": ids[:1],
                 "explanation": "选择一条有证据且互补的表达",
             }
+        elif schema == "CoachScopeBatch":
+            value = {
+                "items": [
+                    {
+                        "source_id": s["source_id"],
+                        "allowed": True,
+                        "reason": "测试源属于教练点评或对话",
+                    }
+                    for s in payload["sources"]
+                ]
+            }
         elif schema == "StyledResponse":
             plan = payload["style_context"]["response_plan"]
             value = {
@@ -128,7 +139,12 @@ class TrainerGateway:
                 "used_block_ids": [b["block_id"] for b in plan["content_blocks"]],
             }
         elif schema == "ReplyCheck":
-            value = {"fidelity_passed": True, "expression_passed": True, "issues": []}
+            value = {
+                "fidelity_passed": True,
+                "role_passed": True,
+                "expression_passed": True,
+                "issues": [],
+            }
         else:
             raise AssertionError(schema)
         return ModelResponse(

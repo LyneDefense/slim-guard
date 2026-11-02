@@ -11,6 +11,7 @@ from slim_guard.agents.contracts import (
     RepairTarget,
     ReviewerVerdictStatus,
 )
+from slim_guard.group_chat import COACH_ROLE_VIOLATION
 from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages
 from slim_guard.group_chat.contracts import ParticipantRole
 from slim_guard.group_chat.routing import RoutedMessage
@@ -186,6 +187,7 @@ class GroupChatFinalizer:
             if coach_result.outgoing is None:
                 failure_codes.append(
                     review.failure_code
+                    or coach_result.style.failure_code
                     or (
                         "coach_message_rejected_after_style_repair"
                         if coach_result.style_repaired
@@ -315,6 +317,7 @@ class GroupChatFinalizer:
         if (
             review.status is InvocationStatus.SUCCEEDED
             and review.verdict.verdict is ReviewerVerdictStatus.PASS
+            and style.failure_code != COACH_ROLE_VIOLATION
         ):
             outgoing = OutgoingTextMessage(
                 participant=ParticipantRole.COACH,

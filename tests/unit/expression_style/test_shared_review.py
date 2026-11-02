@@ -57,6 +57,7 @@ def response(value):
 def decision(*, passed=True, dimension="fidelity", severity="repairable", excerpt="不错"):
     return {
         "fidelity_passed": passed if dimension == "fidelity" else True,
+        "role_passed": passed if dimension == "role" else True,
         "expression_passed": passed if dimension == "expression" else True,
         "issues": []
         if passed
@@ -83,7 +84,7 @@ async def test_shared_review_can_run_without_trainer_or_agent():
         source_text="叫我 SlimGuard。",
     )
     assert result.passed and result.verdict == "passed"
-    assert {c["name"] for c in result.checks} == {"integrity", "fidelity", "expression"}
+    assert {c["name"] for c in result.checks} == {"integrity", "fidelity", "role", "expression"}
     assert all(c["status"] == "passed" for c in result.checks)
     assert result.signature
     assert not gateway.requests[0].tools
@@ -112,10 +113,17 @@ async def test_agent_repairs_with_previous_output_and_specific_reason():
 @pytest.mark.parametrize(
     "bad",
     [
-        {"fidelity_passed": True, "issues": []},
-        {"fidelity_passed": "true", "expression_passed": True, "issues": []},
-        {"fidelity_passed": False, "expression_passed": True, "issues": []},
-        {"fidelity_passed": True, "expression_passed": True, "issues": [], "properties": {}},
+        {"fidelity_passed": True, "role_passed": True, "issues": []},
+        {"fidelity_passed": "true", "role_passed": True, "expression_passed": True, "issues": []},
+        {"fidelity_passed": False, "role_passed": True, "expression_passed": True, "issues": []},
+        {
+            "fidelity_passed": True,
+            "role_passed": True,
+            "expression_passed": True,
+            "issues": [],
+            "properties": {},
+        },
+        {"fidelity_passed": True, "expression_passed": True, "issues": []},
     ],
 )
 def test_missing_checks_schema_echo_and_inconsistent_verdicts_are_rejected(bad):

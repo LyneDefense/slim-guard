@@ -99,7 +99,9 @@ async def evaluate(
             "case": case.model_dump(mode="json"),
             "baseline": before,
             "candidate": after,
-            "reason": "语义检查通过，语气请人工确认" if after["passed"] else "语义或执行检查未通过",
+            "reason": "语义与职责检查通过，语气请人工确认"
+            if after["passed"]
+            else "语义、职责或执行检查未通过",
         }
         results.append(item)
         await client.port.save(

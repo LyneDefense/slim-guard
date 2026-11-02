@@ -32,6 +32,7 @@ const style = {
   active_version: "基础版本",
 };
 const version = {
+  role_policy_current: true,
   id: "test-v1",
   name: "测试风格 v1",
   status: "ready_for_review",
@@ -60,7 +61,7 @@ const baseRun = {
   human_feedback_count: 1,
   unused_count: 2,
   analyzed_count: 21,
-  workflow_version: "style-preview-v2",
+  workflow_version: "style-preview-v3-coach-scope",
   can_resume: true,
   preview_count: 8,
   baseline_version: "builtin",
@@ -248,11 +249,57 @@ test("fixed preview report has no automatic taste ranking and offers guide edits
 
 test("old workflow failures cannot be endlessly resumed", () => {
   const html = render("/styles/doctor/build", {
-    status: "failed", workflow_version: "legacy", can_resume: false,
+    status: "failed", workflow_version: "legacy", can_resume: false, resume_block_reason: "workflow_changed",
     error: "开发题与最终验收题题族重叠",
   });
   assert.ok(!html.includes("恢复本次构建"));
-  assert.ok(html.includes("旧流程也需新建构建"));
+  assert.ok(html.includes("构建流程已更新，请新建构建"));
+});
+
+test("model output failures offer batch recovery without blaming user materials", () => {
+  const html = render("/styles/doctor/build", {
+    status: "failed", can_resume: true, resume_block_reason: null,
+    error: "AnalysisBatch 输出校验失败，本次 3 次尝试已用尽",
+    artifacts: ["input_materials", "validation:AnalysisBatch:abcdef1234"],
+  });
+  assert.ok(html.includes("失败批次会携带具体错误重新请求模型"));
+  assert.ok(html.includes("已通过的批次不重跑"));
+  assert.ok(html.includes("恢复本次构建"));
+  assert.ok(!html.includes("请调整素材／指引"));
+  assert.ok(!html.includes("旧流程也需"));
+  const terminal = render("/styles/doctor/build", {
+    status: "failed", can_resume: false, resume_block_reason: "not_retryable", error: "运行时限已耗尽",
+  });
+  assert.ok(!terminal.includes("构建流程已更新"));
+  assert.ok(!terminal.includes("请调整素材／指引"));
+});
+
+test("legacy pending versions keep feedback but cannot bypass the coach duty check", () => {
+  const html = render("/styles/doctor/build", {}, {
+    role_policy_current: false,
+    review_summary: { total: 8, accept: 8, pending: 0, reject: 0, auto_failed: 0 },
+  });
+  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
+  assert.ok(html.includes("当前教练职责"));
+  const review = render("/styles/doctor/review", {}, { role_policy_current: false });
+  assert.ok(review.includes("记录事项及其成功／失败反馈属于系统助手"));
+  assert.ok(review.includes("可继续保存反馈，然后重新构建"));
+});
+
+test("excluded role sources remain inspectable and escaped in build artifacts", async () => {
+  const { BuildArtifact } = await server.ssrLoadModule("/src/components/style/BuildArtifacts.tsx");
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+  client.setQueryData(["build-artifact", "doctor", "run-1", "coach_scope", 0, undefined], {
+    items: [{ source_id: "example:old", source_text: "<script>已记录</script>", allowed: false, reason: "操作反馈属于系统助手" }],
+    total: 1,
+  });
+  const html = renderToStaticMarkup(createElement(QueryClientProvider, { client },
+    createElement(BuildArtifact, { styleId: "doctor", runId: "run-1", artifactKey: "coach_scope" })));
+  assert.ok(html.includes("已排除：非教练职责"));
+  assert.ok(html.includes("操作反馈属于系统助手"));
+  assert.ok(html.includes("&lt;script&gt;已记录&lt;/script&gt;"));
+  assert.ok(!html.includes("<script>"));
+  client.clear();
 });
 
 test("manual guide revisions send a new build input, not a mutation of a released version", async () => {
@@ -422,8 +469,8 @@ test("build progress links to persisted format errors without displaying raw out
     artifacts: ["input_materials", "validation:Comparison:abcdef1234"],
   });
   for (const text of [
-    "查看结构校验详情",
-    "结构校验详情：Comparison",
+    "查看输出校验详情",
+    "输出校验详情：Comparison",
     "恢复本次构建",
     "3 次尝试已用尽",
   ])
@@ -442,6 +489,7 @@ test("diagnostic artifact renders field errors and escapes raw model output for 
     client.setQueryData(["build-artifact", "doctor", "run-1", key, 0, undefined], {
       value: {
         schema_name: "Comparison",
+        contract: { version: "test-v1", references: { m1: "review:source-a", m2: "<script>source-b</script>" } },
         status,
         max_attempts_per_execution: 3,
         failures: [
@@ -479,6 +527,8 @@ test("diagnostic artifact renders field errors and escapes raw model output for 
       "less_than_equal",
       "必须小于等于 5",
       "查看模型原始输出",
+      "查看本批短编号与原始来源映射",
+      "review:source-a",
       "&lt;script&gt;",
     ])
       assert.ok(html.includes(text), text);

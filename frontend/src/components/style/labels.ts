@@ -7,6 +7,7 @@ export const materialRoles: Record<string, string> = {
   conflict: "冲突素材",
   missing_context: "缺少上下文",
   unusable: "不可用",
+  out_of_scope: "非教练职责",
 };
 
 export const scoreDimensions: Record<string, string> = {
