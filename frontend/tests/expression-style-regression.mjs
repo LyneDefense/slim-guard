@@ -80,7 +80,7 @@ const baseRun = {
   artifacts: ["input_materials", "materials"],
   error: null,
 };
-function render(path, runOverrides = {}, versionOverrides = {}) {
+function render(path, runOverrides = {}, versionOverrides = {}, caseOverrides = {}) {
   const run = { ...baseRun, ...runOverrides };
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -129,6 +129,7 @@ function render(path, runOverrides = {}, versionOverrides = {}) {
         test_case: { context: ["这是独立身份问答测试"] },
         automated: { passed: true },
         review: null,
+        ...caseOverrides,
       },
     ],
     total: 1,
@@ -215,6 +216,71 @@ test("build offers evidence and intermediate validated guide artifacts", () => {
   });
   assert.ok(html.includes("可用证据目录（程序绑定）"));
   assert.ok(html.includes("已验证的分批／合并指引"));
+});
+
+test("fallback answers are not shown as successful doctor rewrites or accept buttons", () => {
+  const html = render("/styles/doctor/review", {}, {
+    review_summary: { total: 17, accept: 17, pending: 0, reject: 0, auto_failed: 2 },
+  }, { automated: {
+    passed: false, fallback: true, failure_code: "style_integrity_invalid",
+    checks: [{ attempt: 1, passed: false, output: "失败的候选", issues: ["number_changed"] }],
+  } });
+  for (const text of ["中性原稿（兜底，非风格改写）", "不是成功的风格改写", "仅重试失败的 2 条", "数字未保持一致", "自动检查未通过"])
+    assert.ok(html.includes(text), text);
+  assert.match(html, /<button disabled="">接受当前回答<\/button>/);
+});
+
+test("retry task does not pretend to analyze materials and keeps task history visible", () => {
+  const html = render("/styles/doctor/build", {
+    job_kind: "preview_retry", preview_count: 2,
+    artifacts: ["retry_inputs", "retry_results"],
+  }, {
+    preview_retry: { id: "run-1", status: "running", target_count: 2, error: null },
+    review_summary: { total: 17, accept: 17, pending: 0, reject: 0, auto_failed: 2 },
+  });
+  for (const text of ["只重试 2 条失败用例", "未重试的评审保留", "失败用例重试中", "重试前的回答与评审（历史保留）", "查看重试进度与历史结果"])
+    assert.ok(html.includes(text), text);
+  assert.ok(!html.includes("冻结素材 21 条"));
+  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
+});
+
+test("retry artifacts distinguish old approval from a new unapproved candidate", async () => {
+  const { RetryInputsView, RetryResultsView } = await server.ssrLoadModule("/src/components/style/PreviewRetryArtifacts.tsx");
+  const old = renderToStaticMarkup(createElement(RetryInputsView, { items: [{
+    case_id: "failed", test_case: { user_input: "<script>old</script>", source_text: "原稿" },
+    automated: { passed: false, fallback: true }, doctor_response: "旧兜底",
+    review: { decision: "accept", reason: "原评审" }, output_revision: 1,
+  }] }));
+  assert.ok(old.includes("旧评审：已接受"));
+  assert.ok(old.includes("不代表新回答已获接受"));
+  assert.ok(!old.includes("<script>"));
+  const updated = renderToStaticMarkup(createElement(RetryResultsView, { items: [{
+    case_id: "failed", candidate: { passed: true, fallback: false, text: "新改写" },
+  }] }));
+  assert.ok(updated.includes("取消或执行失败不会覆盖原回答"));
+  assert.ok(updated.includes("新改写"));
+});
+
+test("retry API sends CSRF and idempotency while reviews bind the visible answer revision", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ id: "retry-run" }), { headers: { "content-type": "application/json" } });
+  };
+  try {
+    await stylesApi.retryFailed("doctor", "version-a", "stable-key");
+    assert.ok(calls[0].url.endsWith("/styles/doctor/versions/version-a/retry-failed"));
+    assert.equal(new Headers(calls[0].options.headers).get("X-SlimGuard-CSRF"), "1");
+    assert.equal(new Headers(calls[0].options.headers).get("Idempotency-Key"), "stable-key");
+    await stylesApi.review("doctor", "case-a", {
+      style_match: 4, fidelity: 5, appropriateness: 4, decision: "accept", reason: "", desired_response: "",
+      output_revision: 2,
+    });
+    assert.equal(JSON.parse(calls[1].options.body).output_revision, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test("style list precedes detail tabs and uses actual API counts", () => {

@@ -11,6 +11,7 @@ from slim_guard.expression_style.package import StylePackage
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
 
 from .models import BuildRun, Example, ReviewCase, Version
+from .preview_results import finish_retry
 
 
 class JobStore:
@@ -95,6 +96,9 @@ class JobStore:
             row.usage = {**row.usage, "seconds": round(seconds, 2)}
 
     async def finish(self, result: dict[str, Any]) -> None:
+        if result.get("job_kind") == "preview_retry":
+            await finish_retry(self.db, self.run_id, self.token, result)
+            return
         package = StylePackage.model_validate(result["package"])
         async with self.db.session() as s, s.begin():
             row = await s.scalar(self.owned())

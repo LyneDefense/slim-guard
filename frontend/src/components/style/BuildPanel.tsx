@@ -6,6 +6,7 @@ import { BuildProgress } from "./BuildProgress";
 import { PackageView } from "./PackageView";
 import { ReportView } from "./TrainingReport";
 import { GuideEditor } from "./GuideEditor";
+import { PreviewRetryPanel } from "./PreviewRetryPanel";
 
 export function BuildPanel({ style }: { style: Style }) {
   const client = useQueryClient();
@@ -173,6 +174,7 @@ export function BuildPanel({ style }: { style: Style }) {
                 <button
                   disabled={
                     action.isPending ||
+                    ["queued", "running"].includes(v.preview_retry?.status ?? "") ||
                     !v.report.release_eligible ||
                     !v.role_policy_current ||
                     !v.review_summary.total ||
@@ -206,6 +208,7 @@ export function BuildPanel({ style }: { style: Style }) {
               </button>
             )}
           </div>
+          <PreviewRetryPanel key={v.id} styleId={style.id} version={v} />
         </section>
       ))}
     </>

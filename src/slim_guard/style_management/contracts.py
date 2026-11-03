@@ -41,6 +41,7 @@ class ExampleInput(Input):
 
 
 class ReviewInput(Input):
+    output_revision: int | None = Field(default=None, ge=1, strict=True)
     style_match: int = Field(ge=1, le=5, strict=True)
     fidelity: int = Field(ge=1, le=5, strict=True)
     appropriateness: int = Field(ge=1, le=5, strict=True)

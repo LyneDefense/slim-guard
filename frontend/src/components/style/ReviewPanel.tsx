@@ -2,16 +2,21 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { stylesApi, type Case, type Review, type Style } from "./api";
+import { PreviewRetryPanel } from "./PreviewRetryPanel";
+import { PreviewChecks, PreviewOutcome } from "./PreviewOutcome";
 export function ReviewPanel({ style }: { style: Style }) {
   const [params, setParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
   const versions = useQuery({
     queryKey: ["expression-versions", style.id],
     queryFn: () => stylesApi.versions(style.id),
+    refetchInterval: 5000,
   });
   const available =
     versions.data?.items.filter((v) => v.review_summary.total > 0) ?? [];
   const version = params.get("version") ?? available[0]?.id ?? "";
+  const selectedVersion = available.find(v => v.id === version);
+  const retryInProgress = ["queued", "running"].includes(selectedVersion?.preview_retry?.status ?? "");
   const cases = useQuery({
     queryKey: ["expression-cases", style.id, version, offset],
     queryFn: () => stylesApi.cases(style.id, version, offset),
@@ -59,6 +64,7 @@ export function ReviewPanel({ style }: { style: Style }) {
               ["pending", "待评审"],
               ["accept", "已接受"],
               ["reject", "已拒绝"],
+              ["auto_failed", "自动检查未通过"],
             ].map(([key, label]) => (
               <article key={key}>
                 <strong>{cases.data.counts[key]}</strong>
@@ -68,14 +74,19 @@ export function ReviewPanel({ style }: { style: Style }) {
           </div>
         )}
       </section>
-      {cases.data?.items.map((c) => (
-        <ReviewCard
-          key={`${c.id}:${JSON.stringify(c.review)}`}
-          styleId={style.id}
-          value={c}
-          readOnly={readOnly}
-        />
-      ))}
+      {selectedVersion && <PreviewRetryPanel key={version} styleId={style.id} version={selectedVersion} />}
+      {cases.data?.items.map((c) => {
+        const retrying = retryInProgress && (!c.automated.passed || !!c.automated.fallback);
+        return (
+          <ReviewCard
+            key={`${c.id}:${c.output_revision ?? 1}:${JSON.stringify(c.review)}`}
+            styleId={style.id}
+            value={c}
+            readOnly={readOnly || retrying}
+            retrying={retrying}
+          />
+        );
+      })}
       {cases.data && cases.data.total > 20 && (
         <div className="pager">
           <button
@@ -103,10 +114,12 @@ function ReviewCard({
   styleId,
   value,
   readOnly,
+  retrying,
 }: {
   styleId: string;
   value: Case;
   readOnly: boolean;
+  retrying: boolean;
 }) {
   const client = useQueryClient();
   const [review, setReview] = useState<Review>(
@@ -121,10 +134,13 @@ function ReviewCard({
   );
   const [rejecting, setRejecting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const validRewrite = value.automated.passed && !value.automated.fallback;
+  const acceptedLabel = validRewrite ? "已接受" : "已接受旧展示内容（检查仍未通过）";
   const save = useMutation({
     mutationFn: (decision: "accept" | "reject") =>
       stylesApi.review(styleId, value.id, {
         ...review,
+        output_revision: value.output_revision ?? 1,
         decision,
         concern: decision === "accept" ? "output" : review.concern,
       }),
@@ -139,6 +155,9 @@ function ReviewCard({
       });
       void client.invalidateQueries({ queryKey: ["expression-styles"] });
     },
+    onError: () => {
+      void client.invalidateQueries({ queryKey: ["expression-cases", styleId] });
+    },
   });
   return (
     <article className="expression-card">
@@ -147,7 +166,7 @@ function ReviewCard({
         <span>
           {value.review
             ? value.review.decision === "accept"
-              ? "已接受"
+              ? acceptedLabel
               : "已拒绝"
             : "待评审"}
         </span>
@@ -158,7 +177,7 @@ function ReviewCard({
           <p>{value.user_input}</p>
         </section>
         <section>
-          <h3>医生回答</h3>
+          <h3>{value.automated.fallback ? "中性原稿（兜底，非风格改写）" : "医生回答"}</h3>
           <p>{value.doctor_response}</p>
         </section>
         <section>
@@ -169,11 +188,9 @@ function ReviewCard({
       {!!value.test_case.context.length && (
         <p>已知语境：{value.test_case.context.join("；")}</p>
       )}
-      {!value.automated.passed && (
-        <p role="alert">
-          语义、职责或执行检查未通过，或使用了原稿兜底；本条暂不可发布，不是对你语气偏好的否定。
-        </p>
-      )}
+      <PreviewOutcome value={value.automated} />
+      {retrying && <p role="status">本条正在重试，请等待新回答后再评审。</p>}
+      {(value.output_revision ?? 1) > 1 && <p>回答修订 {value.output_revision} · 旧回答的评审不自动应用于新回答。</p>}
       {value.review?.concern && value.review.concern !== "output" && (
         <p role="alert">
           待复核：
@@ -191,16 +208,7 @@ function ReviewCard({
         </p>
         <h3>对照版本回答</h3>
         <p>{value.baseline_response}</p>
-        {value.automated.checks?.map((check) => (
-          <section key={check.attempt}>
-            <h4>
-              第 {check.attempt} 次改写 · {check.passed ? "通过" : "未通过"}
-            </h4>
-            <p>{check.output}</p>
-            <p>{check.issues.join("；")}</p>
-            {check.details?.filter(d => d.dimension === "expression").map((d, i) => <p key={i}>表达建议（仅供参考）：{d.explanation}</p>)}
-          </section>
-        ))}
+        <PreviewChecks checks={value.automated.checks} />
       </details>
       <div className="expression-three">
         {(["style_match", "fidelity", "appropriateness"] as const).map(
@@ -246,10 +254,14 @@ function ReviewCard({
       </label>
       {save.error && <p role="alert">{save.error.message}</p>}
       {save.isPending && <p role="status">正在保存评审…</p>}
-      {(saved || value.review) && <p role="status">评审已保存。接受的是当前医生回答；期望回答用于下次构建。编辑后需再次提交。</p>}
+      {(saved || value.review) && <p role="status">
+        {validRewrite
+          ? "评审已保存。接受的是当前医生回答；期望回答用于下次构建。编辑后需再次提交。"
+          : "旧评审已保留。当前展示为失败后的兜底，不能视为风格改写已通过。"}
+      </p>}
       <div className="expression-actions">
         <button
-          disabled={readOnly || save.isPending}
+          disabled={readOnly || save.isPending || !validRewrite}
           onClick={() => save.mutate("accept")}
         >
           {save.isPending ? "保存中…" : "接受当前回答"}

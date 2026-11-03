@@ -105,6 +105,7 @@ export interface Report {
   limitations?: string[];
 }
 export interface Version {
+  preview_retry?: { id: string; status: string; error: string | null; target_count: number } | null;
   role_policy_current: boolean;
   id: string;
   name: string;
@@ -132,6 +133,8 @@ export interface BuildEvent {
   purpose?: string;
 }
 export interface BuildRun {
+  job_kind?: "build" | "preview_retry";
+  target_version_id?: string | null;
   id: string;
   name: string;
   status: string;
@@ -156,6 +159,7 @@ export interface BuildRun {
   artifacts?: string[];
 }
 export interface Review {
+  output_revision?: number;
   style_match: number;
   fidelity: number;
   appropriateness: number;
@@ -179,7 +183,7 @@ export interface ReviewCheck {
   issues: string[];
   verdict?: string;
   policy_version?: string;
-  details?: Array<{ dimension: string; explanation: string }>;
+  details?: Array<{ dimension: string; explanation: string; repair_requirement?: string }>;
 }
 export interface RewriteOutcome {
   text?: string;
@@ -189,6 +193,7 @@ export interface RewriteOutcome {
   checks?: ReviewCheck[];
 }
 export interface Case {
+  output_revision?: number;
   id: string;
   user_input: string;
   original_response: string;
@@ -262,6 +267,10 @@ export const stylesApi = {
     send<Version>(
       `${base(id)}/versions/${encodeURIComponent(version)}/${action}`,
     ),
+  retryFailed: (id: string, version: string, key: string) =>
+    send<BuildRun>(`${base(id)}/versions/${encodeURIComponent(version)}/retry-failed`, {}, "POST", {
+      "Idempotency-Key": key,
+    }),
   examples: (id: string, params: Record<string, string>) =>
     request<Page<Example>>(
       `${base(id)}/examples?${new URLSearchParams(params)}`,
@@ -286,6 +295,7 @@ export const stylesApi = {
     ),
   review: (id: string, c: string, value: Review) =>
     send<Case>(`${base(id)}/reviews/${encodeURIComponent(c)}`, {
+      output_revision: value.output_revision ?? 1,
       style_match: value.style_match,
       fidelity: value.fidelity,
       appropriateness: value.appropriateness,

@@ -21,6 +21,8 @@ def build_summary(row: BuildRun) -> dict[str, Any]:
     data["unused_count"] = row.snapshot.get("unused_count", 0)
     data["analyzed_count"] = len(row.checkpoints.get("materials", []))
     data["workflow_version"] = row.snapshot.get("workflow_version", "legacy")
+    data["job_kind"] = row.snapshot.get("job_kind", "build")
+    data["target_version_id"] = row.snapshot.get("retry_version_id")
     data["can_resume"] = data["workflow_version"] == WORKFLOW_VERSION and (
         row.status != "failed" or row.activity.get("retryable") is not False
     )
@@ -31,7 +33,11 @@ def build_summary(row: BuildRun) -> dict[str, Any]:
         if not data["can_resume"]
         else None
     )
-    data["preview_count"] = len(row.checkpoints.get("preview_suite", {}).get("cases", []))
+    data["preview_count"] = (
+        len(row.snapshot.get("retry_cases", []))
+        if data["job_kind"] == "preview_retry"
+        else len(row.checkpoints.get("preview_suite", {}).get("cases", []))
+    )
     data["baseline_version"] = row.snapshot.get("baseline", {}).get("version_id")
     data["last_event_sequence"] = len(row.events)
     return data

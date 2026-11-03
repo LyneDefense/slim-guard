@@ -193,7 +193,12 @@ class BuildRepository:
             if row is None or row.style_id != style_id:
                 raise LookupError("构建不存在")
             keys = [k for k in row.checkpoints if not k.startswith(("model:", "rewrite:"))]
-            return {**build_summary(row), "artifacts": ["input_materials", *keys]}
+            initial = (
+                "retry_inputs"
+                if row.snapshot.get("job_kind") == "preview_retry"
+                else "input_materials"
+            )
+            return {**build_summary(row), "artifacts": list(dict.fromkeys([initial, *keys]))}
 
     async def events(
         self, style_id: str, run_id: str, after: int = 0, limit: int = 50
@@ -217,9 +222,12 @@ class BuildRepository:
                 raise LookupError("构建不存在")
             if key.startswith(("model:", "rewrite:")):
                 raise LookupError("产物不存在")
-            value = (
-                row.snapshot["materials"] if key == "input_materials" else row.checkpoints.get(key)
-            )
+            if key == "input_materials" and row.snapshot.get("job_kind") != "preview_retry":
+                value = row.snapshot["materials"]
+            elif key == "retry_inputs" and row.snapshot.get("job_kind") == "preview_retry":
+                value = row.snapshot["retry_cases"]
+            else:
+                value = row.checkpoints.get(key)
             if value is None:
                 raise LookupError("产物尚未生成")
             if isinstance(value, list):

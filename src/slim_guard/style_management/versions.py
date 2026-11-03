@@ -11,6 +11,7 @@ from slim_guard.group_chat import ROLE_POLICY_VERSION
 
 from .contracts import ReviewInput
 from .models import ReviewCase, Style, Version
+from .preview_state import active_retry, latest_retry_summaries, output_revision
 from .views import row_data
 
 
@@ -18,7 +19,9 @@ def review_counts(rows: list[ReviewCase]) -> dict[str, int]:
     counts = {"total": len(rows), "pending": 0, "accept": 0, "reject": 0, "auto_failed": 0}
     for row in rows:
         counts[row.review["decision"] if row.review else "pending"] += 1
-        counts["auto_failed"] += not row.automated.get("passed", False)
+        counts["auto_failed"] += not row.automated.get("passed", False) or bool(
+            row.automated.get("fallback")
+        )
     return counts
 
 
@@ -31,6 +34,7 @@ class VersionRepository:
             if await s.get(Style, style_id) is None:
                 raise LookupError("风格不存在")
             result = []
+            retries = await latest_retry_summaries(s, style_id)
             for row in await s.scalars(
                 select(Version)
                 .where(Version.style_id == style_id)
@@ -45,6 +49,7 @@ class VersionRepository:
                         "review_summary": review_counts(cases),
                         "role_policy_current": row.report.get("role_policy_version")
                         == ROLE_POLICY_VERSION,
+                        "preview_retry": retries.get(row.id),
                     }
                 )
             return result
@@ -64,7 +69,10 @@ class VersionRepository:
                 )
             )
             return {
-                "items": [row_data(r) for r in rows[offset : offset + limit]],
+                "items": [
+                    {**row_data(r), "output_revision": output_revision(r)}
+                    for r in rows[offset : offset + limit]
+                ],
                 "total": len(rows),
                 "limit": limit,
                 "offset": offset,
@@ -85,11 +93,26 @@ class VersionRepository:
                 raise LookupError("评审用例不存在")
             if version.status != "ready_for_review":
                 raise ValueError("已发布版本只读")
+            job = await active_retry(s, style_id, version.id)
+            if job and any(
+                item["case_id"] == row.id for item in job.snapshot.get("retry_cases", [])
+            ):
+                raise ValueError("本条正在重试，请等待新回答后再评审")
+            revision = output_revision(row)
+            if value.output_revision != revision and (
+                value.output_revision is not None or revision > 1
+            ):
+                raise ValueError("回答已更新，请刷新后重新评审")
             row.review = {
                 **value.model_dump(),
+                "output_revision": revision,
                 "actor": actor,
                 "time": utc_now().isoformat(),
-                "revision": (row.review or {}).get("revision", 0) + 1,
+                "revision": max(
+                    (row.review or {}).get("revision", 0),
+                    row.automated.get("last_review_revision", 0),
+                )
+                + 1,
             }
             return row_data(row)
 
@@ -103,6 +126,8 @@ class VersionRepository:
             if package.style_id != style_id or package.version_id != version_id:
                 raise ValueError("风格产物归属不匹配")
             if action == "publish":
+                if await active_retry(s, style_id, version_id):
+                    raise ValueError("失败用例正在重试，完成并重新评审后才能发布")
                 if row.report.get("role_policy_version") != ROLE_POLICY_VERSION:
                     raise ValueError("此版本尚未按当前教练职责检查，请重新构建后评审")
                 cases = list(
@@ -118,9 +143,11 @@ class VersionRepository:
                     or (len(cases) < (1 if is_preview else 10))
                     or any(
                         not c.automated.get("passed")
+                        or c.automated.get("fallback")
                         or c.automated.get("package_hash") != package.package_hash
                         or not c.review
                         or c.review["decision"] != "accept"
+                        or c.review.get("output_revision", 1) != output_revision(c)
                         for c in cases
                     )
                 ):

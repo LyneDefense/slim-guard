@@ -12,6 +12,7 @@ import {
 import { materialRoles as roles } from "./labels";
 import { TestSuiteView, type FrozenSuite } from "./TestSuiteView";
 import { PackageView } from "./PackageView";
+import { RetryInputsView, RetryResultsView, type RetryInput, type RetryResult } from "./PreviewRetryArtifacts";
 import {
   EvidenceCatalogView,
   ConstructionGuidesView,
@@ -97,6 +98,8 @@ export function BuildArtifact({
   if (!data) return null;
   return (
     <div className="build-artifact">
+      {artifactKey === "retry_inputs" && data.items && <RetryInputsView items={data.items as RetryInput[]} />}
+      {artifactKey === "retry_results" && data.items && <RetryResultsView items={data.items as RetryResult[]} />}
       {artifactKey === "evidence_catalog" && data.items && (
         <EvidenceCatalogView items={data.items as BoundEvidence[]} />
       )}

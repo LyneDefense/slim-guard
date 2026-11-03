@@ -12,6 +12,7 @@ from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 from .builds import BuildRepository
 from .contracts import BuildInput, ExampleInput, ReviewInput, StyleInput
 from .corpus import CorpusRepository
+from .preview_retries import PreviewRetryRepository
 from .versions import VersionRepository
 
 T = TypeVar("T")
@@ -201,6 +202,31 @@ async def review(
     return await invoke(
         VersionRepository(request.app.state.database).review(
             style_id, case_id, payload, principal.username
+        )
+    )
+
+
+@router.post("/{style_id}/versions/{version_id}/retry-failed", status_code=202)
+async def retry_failed(
+    request: Request,
+    style_id: str,
+    version_id: str,
+    principal: Annotated[AdminPrincipal, Depends(access)],
+) -> dict[str, Any]:
+    settings = request.app.state.settings
+    if not settings.style_iteration_worker_enabled or not settings.zhipu_is_configured:
+        raise HTTPException(409, "风格构建 worker 或模型尚未配置")
+    key = request.headers.get("Idempotency-Key")
+    if key is not None and (not key.strip() or len(key) > 128):
+        raise HTTPException(422, "无效幂等键")
+    return await invoke(
+        PreviewRetryRepository(request.app.state.database).start(
+            style_id,
+            version_id,
+            principal.username,
+            model=settings.zhipu_text_model,
+            request_key=key,
+            config=BuildExecutionConfig(max_seconds=settings.style_training_max_seconds),
         )
     )
 

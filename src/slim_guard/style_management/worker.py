@@ -16,6 +16,7 @@ from slim_guard.expression_style.review.policy import review_signature
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
 from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION, BuildExecutionConfig
 from slim_guard.expression_style.trainer.ports import BuildInterrupted
+from slim_guard.expression_style.trainer.preview_retry import retry_previews
 from slim_guard.expression_style.trainer.service import StyleTrainer
 from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
 from slim_guard.usage.context import usage_scope
@@ -92,7 +93,11 @@ class StyleWorker:
                 job_id=run_id,
                 category="training",
             ):
-                work = asyncio.create_task(StyleTrainer(client).run(snapshot, run_id))
+                work = asyncio.create_task(
+                    retry_previews(client, snapshot)
+                    if snapshot.get("job_kind") == "preview_retry"
+                    else StyleTrainer(client).run(snapshot, run_id)
+                )
             pulse = asyncio.create_task(heartbeat())
             try:
                 async with asyncio.timeout(remaining):

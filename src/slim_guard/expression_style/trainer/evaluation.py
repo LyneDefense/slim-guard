@@ -4,7 +4,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from slim_guard.agents.contracts import AgentInvocation, ResponseContentBlock, ResponsePlan
+from slim_guard.agents.contracts import (
+    AgentInvocation,
+    ResponseContentBlock,
+    ResponsePlan,
+    ReviewerVerdict,
+)
 from slim_guard.agents.style.agent import RESPONSE_STYLE_PROMPT_VERSION, ResponseStyleAgent
 from slim_guard.expression_style.contracts import StyleContext
 from slim_guard.expression_style.package import StylePackage, content_hash
@@ -14,12 +19,16 @@ from slim_guard.runtime.invocation import InvocationRunner
 from .client import TrainingClient
 from .contracts import TestCase
 
+EXECUTION_FAILURES = frozenset({"style_internal_error", "model_gateway_error", "deadline_exceeded"})
+
 
 async def rewrite_case(
     client: TrainingClient,
     package: StylePackage,
     case: TestCase,
     stage: str,
+    *,
+    review_feedback: ReviewerVerdict | None = None,
 ) -> dict[str, Any]:
     signature = {
         "model": client.model,
@@ -28,10 +37,19 @@ async def rewrite_case(
         "temperature": 0,
     }
     key = "rewrite:" + content_hash(
-        {"package": package.package_hash, "case": case.model_dump(mode="json"), **signature}
+        {
+            "package": package.package_hash,
+            "case": case.model_dump(mode="json"),
+            **signature,
+            **(
+                {"repair_feedback": review_feedback.model_dump(mode="json")}
+                if review_feedback
+                else {}
+            ),
+        }
     )
     cached = await client.port.load(key)
-    if cached is not None:
+    if cached is not None and cached.get("failure_code") not in EXECUTION_FAILURES:
         return dict(cached)
     client.gateway.stage = stage
     snapshot = package.runtime_snapshot()
@@ -69,6 +87,7 @@ async def rewrite_case(
                 )
             ),
         ),
+        review_feedback=review_feedback,
     )
     outcome = {
         "package_hash": package.package_hash,
@@ -81,7 +100,8 @@ async def rewrite_case(
         "model_calls": result.model_call_count,
         "execution": signature,
     }
-    await client.port.save(key, outcome, stage=stage, message="已保存改写及共享审查结果")
+    if outcome["failure_code"] not in EXECUTION_FAILURES:
+        await client.port.save(key, outcome, stage=stage, message="已保存改写及共享审查结果")
     return outcome
 
 

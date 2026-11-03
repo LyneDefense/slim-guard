@@ -39,6 +39,8 @@ const artifactLabel = (key: string) => {
     coach_scope: "教练职责筛选结果",
     evidence_catalog: "可用证据目录（程序绑定）",
     construction_guides: "已验证的分批／合并指引",
+    retry_inputs: "重试前的回答与评审（历史保留）",
+    retry_results: "本次重试候选与检查结果",
   };
   return (
     names[key] ??
@@ -71,6 +73,9 @@ export function BuildProgress({
   const [events, setEvents] = useState<BuildEvent[]>([]);
   const [selected, setSelected] = useState("input_materials");
   const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    setSelected(run?.job_kind === "preview_retry" ? "retry_inputs" : "input_materials");
+  }, [runId, run?.job_kind]);
   const stream = useQuery({
     queryKey: [
       "build-events",
@@ -131,26 +136,32 @@ export function BuildProgress({
         <h2>{run.name}</h2>
         <strong>{states[run.status] ?? run.status}</strong>
       </header>
+      {run.job_kind === "preview_retry" && <p>
+        只重试 {run.preview_count} 条失败用例，不修改风格包，也不重新分析素材；未重试的评审保留。
+      </p>}
       <p>
         {stages[run.stage] ?? run.stage} · {activity.message}
       </p>
-      <p>
+      {run.job_kind !== "preview_retry" && <p>
         冻结素材 {run.material_count} 条 · 模型调用 {run.usage.calls ?? 0} 次 ·
         Token {run.usage.tokens ?? 0} · 运行{" "}
         {Math.round(run.usage.seconds ?? 0)} 秒
-      </p>
-      <p>
+      </p>}
+      {run.job_kind === "preview_retry" && <p>
+        模型调用 {run.usage.calls ?? 0} 次 · Token {run.usage.tokens ?? 0} · 运行 {Math.round(run.usage.seconds ?? 0)} 秒
+      </p>}
+      {run.job_kind !== "preview_retry" && <p>
         素材库 {run.library_count} 条 · 人评反馈 {run.human_feedback_count} 条 ·
         对照版本 {run.baseline_version ?? "基础表达"}
-      </p>
+      </p>}
       <p>
         最后活动：{time(run.heartbeat_at)} · 最后产物更新：
         {time(run.progress_at)}
       </p>
-      <p>
+      {run.job_kind !== "preview_retry" && <p>
         其中新素材／修订 {run.unused_count} 条 · 已分析 {run.analyzed_count} /{" "}
         {run.material_count} · 试答用例 {run.preview_count ?? 0} 条
-      </p>
+      </p>}
       {waiting && (
         <p role="status">
           等待模型：{activity.purpose} · 已等待{" "}
@@ -211,7 +222,7 @@ export function BuildProgress({
       </div>
       {action.error && <p role="alert">{action.error.message}</p>}
       <ol className="expression-progress">
-        {Object.entries(stages).map(([key, label]) => {
+        {Object.entries(stages).filter(([key]) => run.job_kind !== "preview_retry" || ["freeze", "preview", "complete"].includes(key)).map(([key, label]) => {
           const recorded = events.filter((e) => e.stage === key);
           const last = recorded.at(-1);
           return (
