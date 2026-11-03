@@ -7,11 +7,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
+
 from slim_guard.agent_models.gateway import (
     MessageRole,
     ModelMessage,
     ModelPurpose,
     ModelRequest,
+    ResponseFormat,
     ToolChoice,
 )
 from slim_guard.harness.errors import ContextCompilationError
@@ -51,6 +54,7 @@ class ContextCompiler:
         manifest: AgentManifest,
         system_prompt: str,
         tools: ToolRegistry,
+        completion_type: type[BaseModel] | None = None,
     ) -> None:
         if not system_prompt.strip():
             raise ValueError("System prompt cannot be empty")
@@ -62,6 +66,7 @@ class ContextCompiler:
         self._manifest = manifest
         self._system_prompt = system_prompt
         self._tools = tools
+        self._completion_type = completion_type
         self._validate_tool_versions()
 
     def compile(
@@ -111,6 +116,10 @@ class ContextCompiler:
             tool_choice=ToolChoice.AUTO if tool_definitions else ToolChoice.NONE,
             max_output_tokens=self._max_output_tokens(parameters),
             temperature=self._temperature(parameters),
+            response_format=(
+                ResponseFormat.JSON_OBJECT if self._completion_type else ResponseFormat.TEXT
+            ),
+            output_schema_name=self._completion_type.__name__ if self._completion_type else None,
             metadata={
                 "agent_version_id": self._manifest.version_id,
                 "context_policy_version": self._manifest.context_policy_version,
@@ -122,7 +131,14 @@ class ContextCompiler:
             allowed_tool_names=selected_names,
             input_item_ids=tuple(item.id for item in initialized.input_items),
             evidence_item_ids=self._evidence_item_ids(working_memory),
-            conversation_context=self._conversation_context(initialized, working_memory),
+            conversation_context={
+                **self._conversation_context(initialized, working_memory),
+                "authoritative_facts": authoritative_facts,
+                "input_source_refs": tuple(item.id for item in initialized.input_items),
+                "context_source_refs": self._evidence_item_ids(working_memory),
+                "current_time": current_time.isoformat(),
+                "turn_trigger": initialized.turn.trigger.value,
+            },
         )
 
     @staticmethod

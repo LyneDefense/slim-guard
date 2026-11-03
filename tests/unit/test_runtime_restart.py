@@ -61,7 +61,7 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
     async with database.session() as session, session.begin():
         session.add(SlimGuardUser(id="test-restart-user", first_seen_at=NOW, last_seen_at=NOW))
 
-    core_draft = "已记录今天的体重77.6kg。"
+    core_draft = "这次是77.6kg，接着看趋势。"
     reply_after_restart = "之前的77.6kg记录还在，这次没有新增记录。"
     first_model = ScriptedModelGateway(
         [
@@ -83,21 +83,10 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
                     },
                 },
             ),
-            text_response(core_draft),
+            text_response("{}"),
+            text_response(json.dumps({"text": core_draft})),
             text_response(
-                json.dumps(
-                    {
-                        "schema_version": "2",
-                        "messages": [
-                            {
-                                "participant": "system_assistant",
-                                "text": core_draft,
-                                "requires_response": False,
-                                "source_refs": [],
-                            }
-                        ],
-                    }
-                )
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
             ),
         ]
     )
@@ -108,21 +97,10 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
                 "search_health_records",
                 {"query": {"kind": "weight", "limit": 7, "timezone": "UTC"}},
             ),
-            text_response(reply_after_restart),
+            text_response("{}"),
+            text_response(json.dumps({"text": reply_after_restart})),
             text_response(
-                json.dumps(
-                    {
-                        "schema_version": "2",
-                        "messages": [
-                            {
-                                "participant": "system_assistant",
-                                "text": reply_after_restart,
-                                "requires_response": False,
-                                "source_refs": [],
-                            }
-                        ],
-                    }
-                )
+                '{"fidelity_passed":true,"role_passed":true,"expression_passed":true,"issues":[]}'
             ),
         ]
     )
@@ -150,7 +128,7 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
             )
         )
         assert first.termination is HarnessTermination.FINAL_RESPONSE
-        assert first.final_text == core_draft
+        assert first.messages[0].text == core_draft
         before = await WeightRepository(database).recent_trend("test-restart-user")
         assert len(before.records) == 1
         record = before.records[0]
@@ -164,7 +142,8 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
         assert [request.purpose for request in first_model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.HARNESS_TURN,
-            ModelPurpose.CONVERSATION,
+            ModelPurpose.COACH_RESPONSE,
+            ModelPurpose.COACH_REVIEW,
         ]
         first_model.assert_exhausted()
 
@@ -199,7 +178,8 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
         assert [r.purpose for r in second_model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.HARNESS_TURN,
-            ModelPurpose.CONVERSATION,
+            ModelPurpose.COACH_RESPONSE,
+            ModelPurpose.COACH_REVIEW,
         ]
         second_model.assert_exhausted()
 
@@ -226,7 +206,7 @@ async def test_after_restart_preserves_thread_records_and_harness_reply(
                     .select_from(AgentInvocationRecord)
                     .where(AgentInvocationRecord.turn_id == second.turn_id)
                 )
-                == 2
+                == 3
             )
     finally:
         await first_model.close()

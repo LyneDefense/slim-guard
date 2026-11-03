@@ -18,6 +18,8 @@ class ArtifactProducerRole(StrEnum):
     MEMORY_INGESTION = "memory_ingestion"
     MEMORY_RECALL = "memory_recall"
     CORE = "core"
+    COACH_RESPONSE = "coach_response"
+    COACH_REVIEW = "coach_review"
     ORCHESTRATOR = "orchestrator"
     DISH_RECOGNITION = "dish_recognition"
     USER_DISH_CONFIRMATION = "user_dish_confirmation"

@@ -89,6 +89,8 @@ export interface TraceListFilters {
 
 export type AgentRole =
   | "core"
+  | "coach_response"
+  | "coach_review"
   | "participant_router"
   | "orchestrator"
   | "dish_recognition"

@@ -51,15 +51,6 @@ class RecordingToolCallRunner:
         self.calls: list[NormalizedToolCall] = []
         self.contexts: list[ToolContext] = []
 
-    def requires_waiting(self, *, call, context, authorization) -> bool:
-        return self.turn_status in {
-            TurnStatus.WAITING_USER_CONFIRMATION,
-            TurnStatus.WAITING_HUMAN_REVIEW,
-        }
-
-    async def finalize_batch(self, *, turn_id, outcomes):
-        return self.turn_status
-
     async def execute(
         self,
         *,
@@ -82,11 +73,7 @@ class RecordingToolCallRunner:
                 tool_version="v1",
                 canonical_arguments=call.arguments,
                 idempotency_key=f"tool-{call.id}",
-                policy_decision=(
-                    ToolPolicyDecision.CONFIRM
-                    if self.turn_status is TurnStatus.WAITING_USER_CONFIRMATION
-                    else ToolPolicyDecision.ALLOW
-                ),
+                policy_decision=ToolPolicyDecision.ALLOW,
                 result=(
                     ToolResult.failed(
                         code=(self.failure_code or "tool_confirmation_required"),
@@ -97,8 +84,7 @@ class RecordingToolCallRunner:
                         ),
                         retryable=self.failure_retryable,
                     )
-                    if self.turn_status is TurnStatus.WAITING_USER_CONFIRMATION
-                    or self.failure_code is not None
+                    if self.failure_code is not None
                     else ToolResult.success(
                         output={"recorded": True, **call.arguments},
                         source_ids=(f"record-{call.id}",),
@@ -114,7 +100,6 @@ class RecordingToolCallRunner:
                 deadline_at=None,
                 completed_at=None,
             ),
-            pending_action=None,
         )
 
 
@@ -408,42 +393,13 @@ async def test_loop_executes_multiple_tool_calls_before_next_model_call() -> Non
     ]
 
 
-async def test_ungated_tool_calls_run_before_confirmation_gated_calls() -> None:
-    gated = tool_call("gated", name="confirm_weight")
-    ungated = tool_call("ungated")
-    model = ScriptedModelGateway(
-        (assistant_tool_calls(gated, ungated),)
-    )
-
-    class OrderedTools(RecordingToolCallRunner):
-        def __init__(self):
-            super().__init__()
-            self.finalized = False
-
-        def requires_waiting(self, *, call, context, authorization) -> bool:
-            return call.name == "confirm_weight"
-
-        async def finalize_batch(self, *, turn_id, outcomes):
-            self.finalized = True
-            if any(item.execution.tool_name == "confirm_weight" for item in outcomes):
-                return TurnStatus.WAITING_USER_CONFIRMATION
-            return None
-
-    tools = OrderedTools()
-    authorization_with_both_tools = ToolAuthorization(
-        allowed_tool_names=frozenset({"record_weight", "confirm_weight"}),
-        isolated_write_environment=True,
-    )
-
-    result = await run_loop(
-        model,
-        tools,
-        authorization_override=authorization_with_both_tools,
-    )
-
-    assert result.termination is HarnessTermination.WAITING_USER_CONFIRMATION
-    assert [call.id for call in tools.calls] == ["ungated", "gated"]
-    assert tools.finalized is True
+async def test_tools_follow_model_order_without_hidden_confirmation_gates() -> None:
+    model = ScriptedModelGateway((assistant_tool_calls(
+        tool_call("first"), tool_call("second")), assistant_text("完成。")))
+    tools = RecordingToolCallRunner()
+    result = await run_loop(model, tools)
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
+    assert [call.id for call in tools.calls] == ["first", "second"]
 
 
 async def test_empty_model_reply_is_a_nonretryable_fatal_result() -> None:
@@ -465,16 +421,13 @@ async def test_empty_model_reply_is_a_nonretryable_fatal_result() -> None:
     assert result.total_token_count == 3
 
 
-async def test_loop_pauses_immediately_when_tool_requires_confirmation() -> None:
-    model = ScriptedModelGateway((assistant_tool_calls(tool_call("call-1")),))
-    tools = RecordingToolCallRunner(turn_status=TurnStatus.WAITING_USER_CONFIRMATION)
-
+async def test_failed_tool_is_an_observation_not_a_confirmation_gate() -> None:
+    model = ScriptedModelGateway((assistant_tool_calls(tool_call("call-1")), assistant_text("需要补充信息。")))
+    tools = RecordingToolCallRunner(failure_code="missing_evidence")
     result = await run_loop(model, tools)
-
-    assert result.termination is HarnessTermination.WAITING_USER_CONFIRMATION
-    assert result.final_text is None
-    assert result.model_call_count == 1
+    assert result.termination is HarnessTermination.FINAL_RESPONSE
     assert result.tool_call_count == 1
+    assert result.model_call_count == 2
     model.assert_exhausted()
 
 

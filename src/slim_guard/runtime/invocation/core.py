@@ -118,15 +118,14 @@ class CoreInvocationRunner:
         self, invocation: AgentInvocation, result: HarnessLoopResult
     ) -> HarnessLoopResult:
         artifact_id = None
-        if result.final_text is not None:
-            # This is the actual Core draft, never the styled/final reply.
+        if result.final_output is not None:
             artifact = AgentArtifact.create(
                 artifact_id=f"artifact-{uuid4()}",
                 turn_id=invocation.turn_id,
                 producer_role=ArtifactProducerRole.CORE,
-                artifact_type="core_response",
+                artifact_type="core_completion",
                 schema_version="1",
-                payload={"text": result.final_text},
+                payload=result.final_output,
                 created_at=self._clock(),
             )
             artifact_id = artifact.artifact_id
@@ -152,7 +151,7 @@ class CoreInvocationRunner:
                 AgentResult(
                     invocation_id=invocation.invocation_id,
                     status=status,
-                    output_schema="CoreResponse",
+                    output_schema="CoreCompletion",
                     output_schema_version="1",
                     artifact_id=artifact_id,
                     model_call_count=len(result.model_responses),

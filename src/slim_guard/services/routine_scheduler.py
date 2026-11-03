@@ -243,6 +243,7 @@ class RoutineSchedulerService:
                 )
             if (
                 result.termination is not HarnessTermination.FINAL_RESPONSE
+                or result.failure_code is not None
                 or result.final_text is None
                 or not result.final_text.strip()
             ):

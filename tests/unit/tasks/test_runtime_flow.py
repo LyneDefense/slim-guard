@@ -15,7 +15,7 @@ from slim_guard.features.health_records.meal.repository import MealRepository
 from slim_guard.memory.config import MemoryRuntimeConfig
 from slim_guard.tasks.repository import ConversationTaskRepository
 from slim_guard.tools.contracts import ToolExecutionMode
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 from tests.unit.test_agent_runtime import final_reply, tool_call
 
 NOW = datetime(2026, 9, 23, 8, tzinfo=UTC)
@@ -90,7 +90,7 @@ async def test_task_survives_small_context_window_and_records_once(tmp_path: Pat
     core = ClarificationScript()
     runtime = build_agent_runtime(
         database=db,
-        model=SystemConversationScript(core),
+        model=BusinessCoreScript(core),
         clock=lambda: NOW,
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(provider="test", text_model="test", vision_model="test"),

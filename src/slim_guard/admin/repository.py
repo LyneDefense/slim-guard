@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import case, func, or_, select
 
+from slim_guard.admin.coach_trace import direct_style_summary
 from slim_guard.admin.presentation import context_sources, execution_summary, present_event
 from slim_guard.db.models import (
     AdminAuditEventRecord,
@@ -2950,6 +2951,9 @@ class AdminQueryRepository:
         adopted: dict[str, Any],
         degraded_events: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        direct = direct_style_summary(artifacts)
+        if direct is not None:
+            return direct
         style_artifacts = [
             artifact
             for artifact in artifacts

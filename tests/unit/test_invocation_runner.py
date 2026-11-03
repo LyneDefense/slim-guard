@@ -78,7 +78,8 @@ async def test_invocation_runner_repairs_invalid_json_once() -> None:
     assert result.status is InvocationStatus.SUCCEEDED
     assert result.output == ExampleOutput(text="收到，我在。")
     assert result.model_call_count == 2
-    assert "previous output was invalid" in (model.requests[1].messages[-1].content or "")
+    assert "validation_errors" in (model.requests[1].messages[-1].content or "")
+    assert result.validation_errors[0]["schema"] == "ExampleOutput"
 
 
 async def test_invocation_runner_rejects_tool_calls_and_expired_deadline() -> None:

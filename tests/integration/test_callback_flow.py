@@ -27,7 +27,7 @@ from slim_guard.integrations.wecom_kf.client import WeComMedia
 from slim_guard.integrations.wecom_kf.crypto import WeComCallbackCrypto
 from slim_guard.integrations.wecom_kf.schemas import SyncMessage, SyncPage
 from slim_guard.main import create_app
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 from tests.fakes import FakeReplyAgent, FakeWeComClient
 
 
@@ -289,7 +289,7 @@ async def test_callback_runs_harness_weight_loop(test_settings: Settings) -> Non
     app = create_app(
         harness_settings,
         client=fake,
-        model_gateway=SystemConversationScript(model, mutation_claims=weight_claims),
+        model_gateway=BusinessCoreScript(model),
     )
     crypto = WeComCallbackCrypto(
         harness_settings.wecom_callback_token,
@@ -390,7 +390,7 @@ async def test_image_callback_runs_vision_then_records_weight(
     app = create_app(
         harness_settings,
         client=fake,
-        model_gateway=SystemConversationScript(model),
+        model_gateway=BusinessCoreScript(model),
         vision_gateway=vision,
     )
     crypto = WeComCallbackCrypto(

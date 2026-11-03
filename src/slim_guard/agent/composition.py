@@ -19,6 +19,7 @@ from slim_guard.agent_models.assembly import build_model_gateway, build_vision_g
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agent_models.vision import VisionModelGateway
 from slim_guard.agents.core import CoreAgent
+from slim_guard.agents.core.contracts import CoreCompletion
 from slim_guard.agents.nutrition.tools import (
     NutritionKnowledgeRepository as NutritionKnowledgePort,
 )
@@ -28,12 +29,10 @@ from slim_guard.harness.initialization import TurnInitializer
 from slim_guard.harness.manifest import AgentManifest
 from slim_guard.harness.preparation import TurnContextPreparer
 from slim_guard.harness.repository import AgentVersionRepository
-from slim_guard.harness.safety import SlimGuardOutputGuard
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine
 from slim_guard.orchestration.repository import OrchestrationRepository
-from slim_guard.response_pipeline.mutation_review import ModelMutationClaimReviewer
 from slim_guard.response_pipeline.processor import ResponseProcessor
 from slim_guard.runtime.invocation.core import CoreInvocationRunner
 from slim_guard.runtime.turn import TurnHarness
@@ -127,7 +126,6 @@ def build_agent_runtime(
         database=database,
         model=model,
         model_name=definition.models.text_model,
-        nutrition_specialist=nutrition.specialist,
         invocation_store=invocation_store,
         recorder=recorder,
         graph_version=_CORE_PRIMARY_GRAPH_VERSION,
@@ -140,6 +138,7 @@ def build_agent_runtime(
                 manifest=active_manifest,
                 system_prompt=SLIM_GUARD_HARNESS_PROMPT,
                 tools=registry,
+                completion_type=CoreCompletion,
             ),
             recorder=recorder,
             context_data=business.context,
@@ -154,8 +153,6 @@ def build_agent_runtime(
         ),
         responses=ResponseProcessor(
             recorder=recorder,
-            output_guard=SlimGuardOutputGuard(),
-            claim_reviewer=ModelMutationClaimReviewer(model, definition.models.text_model),
             finalizer=response_finalizer,
         ),
         recorder=recorder,

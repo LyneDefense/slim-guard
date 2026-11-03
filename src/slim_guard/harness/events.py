@@ -54,6 +54,7 @@ class ItemType(StrEnum):
     WORKFLOW_TRANSITION = "workflow_transition"
     RESPONSE_ADOPTED = "response_adopted"
     RESPONSE_DEGRADED = "response_degraded"
+    STRUCTURED_OUTPUT_REJECTED = "structured_output_rejected"
     ERROR = "error"
 
 
@@ -64,6 +65,7 @@ class ItemStatus(StrEnum):
 
 
 WORKFLOW_TRACE_EVENT_FIELDS: dict[ItemType, frozenset[str]] = {
+    ItemType.STRUCTURED_OUTPUT_REJECTED: frozenset({"schema", "errors_json", "attempt"}),
     ItemType.INVOCATION_STARTED: frozenset(
         {
             "invocation_id",

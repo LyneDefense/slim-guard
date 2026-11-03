@@ -49,7 +49,7 @@ from slim_guard.tools.memory import (
     SET_WEIGHT_GOAL_TOOL_NAME,
 )
 from slim_guard.usage.repository import UsageRepository
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 
 FIXED_NOW = datetime(2026, 8, 27, 7, 30, tzinfo=UTC)
 
@@ -290,7 +290,7 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -321,7 +321,7 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         stored_manifest = await AgentVersionRepository(database).get(runtime.manifest.version_id)
 
         assert result.termination is HarnessTermination.FINAL_RESPONSE
-        assert result.final_text == "已记录今天空腹体重 77.6kg。这是第一条记录，先建立基线。"
+        assert result.messages[0].text == "已记录今天空腹体重 77.6kg。这是第一条记录，先建立基线。"
         assert stored_manifest is not None
         assert stored_turn is not None
         assert stored_turn.status is TurnStatus.COMPLETED
@@ -343,9 +343,10 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
             ItemType.MODEL_MESSAGE,
             ItemType.AGENT_MESSAGE,
             ItemType.AGENT_MESSAGE,
+            ItemType.AGENT_MESSAGE,
         ]
         messages = [item.payload for item in items if item.item_type is ItemType.AGENT_MESSAGE]
-        assert [message["kind"] for message in messages] == ["text", "card"]
+        assert [message["kind"] for message in messages] == ["text", "text", "card"]
         assert items[0].payload == {
             "channel_id": "wecom-kf",
             "occurred_at": FIXED_NOW.isoformat(),
@@ -382,12 +383,13 @@ async def test_runtime_composes_complete_weight_tool_loop(tmp_path: Path) -> Non
         )
         assert usage["summary"]["calls"] == 5
         assert {row["agent_role"]: row["calls"] for row in usage["agents"]} == {
-            "core": 4,
-            "conversation": 1,
+            "core": 3,
+            "coach_response": 1,
+            "coach_review": 1,
         }
         core_calls = [row for row in usage["items"] if row["agent_role"] == "core"]
-        (conversation,) = [row for row in usage["items"] if row["agent_role"] == "conversation"]
-        assert conversation["parent_invocation_id"] == core_calls[0]["invocation_id"]
+        (coach,) = [row for row in usage["items"] if row["agent_role"] == "coach_response"]
+        assert coach["parent_invocation_id"] == core_calls[0]["invocation_id"]
         assert {row["request_id"] for row in usage["items"]} == {"wecom-message-1"}
         model.assert_exhausted()
     finally:
@@ -416,7 +418,7 @@ async def test_runtime_persists_and_recalls_profile_memory_across_turns(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -451,7 +453,7 @@ async def test_runtime_persists_and_recalls_profile_memory_across_turns(
             if "权威用户事实" in (message.content or "")
         )
 
-        assert first.final_text == "记住了，阿杰。之后我会简短回复。"
+        assert first.messages[0].text == "记住了，阿杰。之后我会简短回复。"
         assert second.final_text == "状态不错，继续按计划记录。"
         assert '"key":"identity.preferred_name"' in memory_context
         assert '"name":"阿杰"' in memory_context
@@ -469,7 +471,7 @@ async def test_runtime_saves_unambiguous_historical_height_without_asking_again(
     model = HistoricalHeightModelGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -507,7 +509,7 @@ async def test_runtime_saves_unambiguous_historical_height_without_asking_again(
         )
 
         assert first.final_text == "知道了。"
-        assert second.final_text == "记好了，身高179cm。"
+        assert second.messages[0].text == "记好了，身高179cm。"
         assert len(memories) == 1
         assert memories[0].value == {"millimeters": 1790}
         assert memories[0].source_turn_id == second.turn_id
@@ -537,7 +539,7 @@ async def test_runtime_saves_height_as_profile_memory_not_weight_record(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -663,7 +665,7 @@ async def test_runtime_handles_onboarding_measurements_goals_and_habits(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -752,7 +754,7 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
 
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model, mutation_claims=claims),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -774,14 +776,15 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
+        assert result.messages[0].text == "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
+        assert any(m.notice_text == "资料未完成，未保存本次修改。" for m in result.messages)
         assert not any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
     finally:
         await model.close()
         await database.close()
 
 
-async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Path) -> None:
+async def test_failed_profile_write_has_an_independent_failure_notice(tmp_path: Path) -> None:
     database = await prepare_database(tmp_path)
     model = ScriptedModelGateway(
         (
@@ -809,7 +812,7 @@ async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Pa
 
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model, mutation_claims=claims),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -831,9 +834,10 @@ async def test_runtime_does_not_claim_failed_memory_write_succeeded(tmp_path: Pa
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.final_text == "这项更改没有保存成功。"
-        guard = next(item for item in items if item.item_type is ItemType.OUTPUT_GUARD)
-        assert guard.payload["code"] == "mutation_status_mismatch"
+        assert any(m.notice_text == "资料未完成，未保存本次修改。" for m in result.messages)
+        # Role/claim suppression is covered by the direct-coach grounding tests;
+        # this business fixture tests only the actual failed write receipt.
+        assert not any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
     finally:
         await model.close()
         await database.close()
@@ -860,7 +864,7 @@ async def test_runtime_recalls_weight_goal_without_creating_measurement(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -916,7 +920,7 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -972,7 +976,7 @@ async def test_runtime_saves_uncertain_image_meal_then_corrects_same_record_acro
     vision = UncertainMealVisionGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         vision=vision,
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
@@ -1012,11 +1016,11 @@ async def test_runtime_saves_uncertain_image_meal_then_corrects_same_record_acro
             "user-1", RecordQuery(kind="meal", limit=10)
         )
 
-        assert first.final_text == "午餐已经记下，方形配菜的名称之后还可以更正。"
+        assert first.messages[0].text == "午餐已经记下，方形配菜的名称之后还可以更正。"
         assert len(first_records.records) == 1
         assert first_records.records[0].content.foods[1].name == "方形配菜"
         assert len(first_records.records[0].recognition_issues) == 1
-        assert second.final_text == "已把原午餐里的方形配菜改为蒸蛋。"
+        assert second.messages[0].text == "已把原午餐里的方形配菜改为蒸蛋。"
         assert len(current_records.records) == 1
         assert current_records.records[0].ref.record_id == first_records.records[0].ref.record_id
         assert current_records.records[0].ref.revision == 2
@@ -1057,7 +1061,7 @@ async def test_runtime_persists_explicit_task_for_a_later_turn(
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -1104,7 +1108,7 @@ async def test_runtime_runs_input_free_scheduled_turn_without_tools(tmp_path: Pa
     model = ScriptedModelGateway((final_reply("早上好，记得空腹称一下体重哦。"),))
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -1149,7 +1153,7 @@ async def test_runtime_does_not_run_input_risk_word_checks(
     model = ScriptedModelGateway((final_reply("没关系，继续运动观察一下。"),))
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",

@@ -7,9 +7,11 @@ persistence, final reply processing, and delivery belong to their outer layers.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 
 from slim_guard.agent_models.gateway import ModelGateway, ModelRequest
+from slim_guard.agents.core.contracts import CoreCompletion
 from slim_guard.harness.loop import (
     HarnessLoop,
     HarnessLoopResult,
@@ -22,7 +24,7 @@ from slim_guard.tools.policy import ToolAuthorization
 
 
 class CoreAgent:
-    """Run the primary user-facing reasoning and tool-use loop for one Turn.
+    """Run business orchestration and tool use for one Turn, without reply prose.
 
     Business decisions belong to the model; this Agent does not finalize the
     Turn, render group-chat replies, or deliver user messages.
@@ -56,7 +58,7 @@ class CoreAgent:
     ) -> HarnessLoopResult:
         """Execute one bounded Core Agent invocation."""
 
-        return await self._loop.run(
+        result = await self._loop.run(
             request=request,
             context=context,
             authorization=authorization,
@@ -64,4 +66,20 @@ class CoreAgent:
             now=now,
             trusted_evidence_item_ids=trusted_evidence_item_ids,
             progress=progress,
+            final_output_type=CoreCompletion,
         )
+        if result.final_output is not None and source_item_id:
+            completion = CoreCompletion.model_validate(result.final_output)
+            question = completion.operation_question
+            if question is not None:
+                refs = tuple(
+                    dict.fromkeys(
+                        source_item_id if ref == "current-user-message" else ref
+                        for ref in question.source_refs
+                    )
+                )
+                completion = completion.model_copy(
+                    update={"operation_question": question.model_copy(update={"source_refs": refs})}
+                )
+            result = replace(result, final_output=completion.model_dump(mode="json"))
+        return result

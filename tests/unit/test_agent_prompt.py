@@ -2,13 +2,14 @@ from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT
 
 
 def test_core_prompt_is_short_and_keeps_conversation_out_of_core() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION.endswith("v35")
-    assert "Conversation Agent" in SLIM_GUARD_HARNESS_PROMPT
-    assert "CoachStyleRenderer" in SLIM_GUARD_HARNESS_PROMPT
+    assert SLIM_GUARD_PROMPT_VERSION == "core-orchestration-v37"
+    assert "CoreCompletion" in SLIM_GUARD_HARNESS_PROMPT
+    assert "Conversation Agent" not in SLIM_GUARD_HARNESS_PROMPT
+    assert "CoachStyleRenderer" not in SLIM_GUARD_HARNESS_PROMPT
     assert "不声称工具成功" in SLIM_GUARD_HARNESS_PROMPT
     assert "不输出原始工具调用文本" in SLIM_GUARD_HARNESS_PROMPT
     assert "真人教练一样说话" not in SLIM_GUARD_HARNESS_PROMPT
-    assert len(SLIM_GUARD_HARNESS_PROMPT.splitlines()) < 40
+    assert len(SLIM_GUARD_HARNESS_PROMPT.splitlines()) < 70
 
 
 def test_core_prompt_delegates_domain_parameters_to_contracts() -> None:

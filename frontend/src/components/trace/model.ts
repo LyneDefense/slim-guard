@@ -20,6 +20,8 @@ const AGENT_OPERATIONS = new Set([
 
 const AGENT_ROLES = new Set<AgentRole>([
   "core",
+  "coach_response",
+  "coach_review",
   "participant_router",
   "orchestrator",
   "dish_recognition",
@@ -50,7 +52,9 @@ export interface WorkflowTraceView {
 }
 
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
-  core: "主教练 Agent",
+  core: "Core 业务编排",
+  coach_response: "医生直接回复",
+  coach_review: "医生证据审查",
   participant_router: "群聊角色路由",
   orchestrator: "对话编排 Agent",
   dish_recognition: "菜品识别 Agent",

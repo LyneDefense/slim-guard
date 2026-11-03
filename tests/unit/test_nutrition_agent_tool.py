@@ -21,7 +21,7 @@ from slim_guard.db.session import Database
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.runtime.contracts import AgentRole
 from slim_guard.tools.contracts import ToolExecutionMode
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
@@ -73,7 +73,7 @@ async def test_core_invokes_nutrition_with_default_tool_availability(tmp_path) -
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
                 provider="zhipu",
@@ -116,7 +116,7 @@ async def test_available_nutrition_tool_does_not_trigger_automatic_consultation(
     model = ScriptedModelGateway((text_response("你好。"),))
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(model),
+        model=BusinessCoreScript(model),
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(provider="test", text_model="text", vision_model="vision"),
             code_revision="nutrition-available-not-automatic-test",
@@ -132,10 +132,10 @@ async def test_available_nutrition_tool_does_not_trigger_automatic_consultation(
         assert CONSULT_NUTRITION_TOOL_NAME in {tool.name for tool in model.requests[0].tools}
         assert model.requests[0].purpose is ModelPurpose.HARNESS_TURN
         invocations = await OrchestrationRepository(database).list_turn_invocations(result.turn_id)
-        assert len(invocations) == 2
+        assert len(invocations) == 3
         by_role = {item.agent_role: item for item in invocations}
-        assert set(by_role) == {AgentRole.CORE.value, AgentRole.CONVERSATION.value}
-        assert by_role[AgentRole.CONVERSATION.value].parent_invocation_id == (
+        assert set(by_role) == {AgentRole.CORE.value, AgentRole.COACH_RESPONSE.value, AgentRole.COACH_REVIEW.value}
+        assert by_role[AgentRole.COACH_RESPONSE.value].parent_invocation_id == (
             by_role[AgentRole.CORE.value].invocation_id
         )
     finally:

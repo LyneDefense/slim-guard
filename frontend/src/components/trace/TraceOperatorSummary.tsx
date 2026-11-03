@@ -66,9 +66,14 @@ export function TraceOperatorSummary({
     },
     workflowCard(workflow, multiAgentFailed, finalAdopted),
     ragCard(data, workflow, multiAgentFailed),
-    stageCard(workflow, "participant_router", "群聊角色路由", multiAgentFailed),
-    stageCard(workflow, "response_style", "医生风格", multiAgentFailed),
-    stageCard(workflow, "response_reviewer", "回复审查", multiAgentFailed),
+    ...(workflow.invocations.some(i => i.agent_role === "coach_response") ? [
+      stageCard(workflow, "coach_response", "医生风格直接生成", multiAgentFailed),
+      stageCard(workflow, "coach_review", "证据审查", multiAgentFailed),
+    ] : [
+      stageCard(workflow, "participant_router", "群聊角色路由", multiAgentFailed),
+      stageCard(workflow, "response_style", "医生风格", multiAgentFailed),
+      stageCard(workflow, "response_reviewer", "回复审查", multiAgentFailed),
+    ]),
   ];
 
   return (
@@ -137,7 +142,7 @@ function workflowCard(
 
 function stageCard(
   workflow: WorkflowTraceView,
-  role: "nutrition_retrieval" | "participant_router" | "response_style" | "response_reviewer",
+  role: "nutrition_retrieval" | "participant_router" | "response_style" | "response_reviewer" | "coach_response" | "coach_review",
   label: string,
   upstreamFailed: boolean,
 ): SummaryCard {

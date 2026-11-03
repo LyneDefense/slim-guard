@@ -5,6 +5,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
+
+from pydantic import BaseModel
 
 from slim_guard.agent_models.errors import InvalidModelResponse, ModelGatewayError
 from slim_guard.agent_models.gateway import (
@@ -24,6 +27,7 @@ from slim_guard.harness.model_response_recovery import (
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.harness.tool_calls import ToolCallOutcome, ToolCallRunner
 from slim_guard.harness.trace import HarnessRunRecorder, NullHarnessRunRecorder
+from slim_guard.runtime.invocation.validation import parse_output, repair_content
 from slim_guard.tools.contracts import (
     ToolContext,
     ToolEffectStatus,
@@ -78,6 +82,7 @@ class HarnessLoopResult:
     model_responses: tuple[ModelResponse, ...]
     tool_outcomes: tuple[ToolCallOutcome, ...]
     failure: HarnessFailure | None = None
+    final_output: dict[str, Any] | None = None
 
     @property
     def model_call_count(self) -> int:
@@ -146,6 +151,7 @@ class HarnessLoop:
         now: datetime,
         trusted_evidence_item_ids: tuple[str, ...] = (),
         progress: LoopProgress | None = None,
+        final_output_type: type[BaseModel] | None = None,
     ) -> HarnessLoopResult:
         state = progress if progress is not None else LoopProgress()
         state.messages.extend(request.messages)
@@ -248,6 +254,46 @@ class HarnessLoop:
                         messages=messages,
                         model_responses=model_responses,
                         tool_outcomes=tool_outcomes,
+                    )
+                if final_output_type is not None:
+                    parsed, errors = parse_output(text, final_output_type)
+                    if parsed is None:
+                        await self._recorder.record_workflow_event(
+                            turn_id=context.turn_id,
+                            event_type="structured_output_rejected",
+                            payload={
+                                "schema": final_output_type.__name__,
+                                "errors_json": json.dumps(errors, ensure_ascii=False),
+                                "attempt": state.format_repair_attempts + 1,
+                            },
+                        )
+                        if state.format_repair_attempts < MAX_FORMAT_REPAIR_ATTEMPTS:
+                            state.format_repair_attempts += 1
+                            messages.append(
+                                ModelMessage(
+                                    role=MessageRole.SYSTEM,
+                                    content=repair_content(final_output_type, text, errors),
+                                )
+                            )
+                            continue
+                        return self._result(
+                            termination=HarnessTermination.FATAL_ERROR,
+                            failure=HarnessFailure(
+                                code="core_completion_invalid",
+                                error_type="CoreCompletionInvalid",
+                                retryable=False,
+                            ),
+                            messages=messages,
+                            model_responses=model_responses,
+                            tool_outcomes=tool_outcomes,
+                        )
+                    return HarnessLoopResult(
+                        termination=HarnessTermination.FINAL_RESPONSE,
+                        final_text=None,
+                        final_output=parsed.model_dump(mode="json"),
+                        messages=tuple(messages),
+                        model_responses=tuple(model_responses),
+                        tool_outcomes=tuple(tool_outcomes),
                     )
                 return self._result(
                     termination=HarnessTermination.FINAL_RESPONSE,

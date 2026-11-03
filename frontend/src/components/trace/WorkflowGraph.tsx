@@ -156,6 +156,8 @@ function roleForNode(node: string): AgentRole | null {
 function nodeForRole(role: AgentRole): string {
   return {
     core: "core_running",
+    coach_response: "coach_response",
+    coach_review: "coach_review",
     participant_router: "participant_router_running",
     orchestrator: "orchestrator_running",
     dish_recognition: "dish_recognition_running",

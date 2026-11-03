@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from slim_guard.group_chat.contracts import CardPayload, ChatMessage, ParticipantRole, RenderKind
+from slim_guard.tools.receipts import effective_executions
 
 if TYPE_CHECKING:
     from slim_guard.harness.tool_calls import ToolCallOutcome
@@ -92,13 +93,14 @@ def compose_messages(
 def project_cards(outcomes: tuple[ToolCallOutcome, ...]) -> tuple[CardPayload, ...]:
     cards: list[CardPayload] = []
     seen: set[str] = set()
-    for outcome in outcomes:
-        execution = outcome.execution
+    for execution in effective_executions(tuple(o.execution for o in outcomes)):
         operation = execution.result.operation
         tool_name = operation.tool_name if operation is not None else execution.tool_name
         identity = operation.operation_id if operation is not None else execution.tool_call_id
         card_type = _CARD_TOOLS.get(tool_name)
         if card_type is None or execution.result.status.value != "succeeded":
+            continue
+        if operation is not None and operation.status != "succeeded":
             continue
         if identity in seen:
             continue

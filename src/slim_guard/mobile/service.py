@@ -538,19 +538,27 @@ class MobileApplicationService:
             trace_id=trace_id,
             component="agent",
             operation="turn_finished",
-            status="completed" if succeeded else "failed",
+            status="degraded"
+            if succeeded and failure_code
+            else "completed"
+            if succeeded
+            else "failed",
             attributes={
                 "turn_id": turn_id,
                 "termination": termination.value,
                 "failure_code": failure_code,
             },
-            error_code=None if succeeded else failure_code,
+            error_code=failure_code,
         )
         await self._traces.mark_generation(
             trace_id=trace_id,
-            status="succeeded" if succeeded else "failed",
+            status="degraded"
+            if succeeded and failure_code
+            else "succeeded"
+            if succeeded
+            else "failed",
             reply_kind="agent",
-            failure_code=None if succeeded else failure_code,
+            failure_code=failure_code,
         )
         await self._traces.mark_delivery(
             trace_id=trace_id,

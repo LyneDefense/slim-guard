@@ -41,7 +41,7 @@ from slim_guard.usage.context import CURRENT
 NOW = datetime(2026, 9, 23, tzinfo=UTC)
 
 
-def response(text="中性草稿。", *, calls=()):
+def response(text="{}", *, calls=()):
     return ModelResponse(
         message=ModelMessage(role="assistant", content=text, tool_calls=calls),
         usage=ModelUsage(total_tokens=7),
@@ -133,7 +133,9 @@ async def env(database):
                 store=invocations,
                 clock=lambda: NOW,
             ),
-            responses=ResponseProcessor(recorder=recorder, finalizer=finalizer, output_guard=guard),
+            responses=ResponseProcessor(
+                recorder=recorder, finalizer=finalizer or Finalizer(), output_guard=guard
+            ),
             recorder=recorder,
             clock=lambda: NOW,
         )
@@ -148,7 +150,7 @@ class Finalizer:
         return ResponseFinalizationResult(
             text="教练回复。",
             status="succeeded",
-            core_output_artifact_id="plan",
+            evidence_artifact_id="facts",
             final_output_artifact_id="final",
             style_profile_version="doctor",
             model_call_count=2,
@@ -176,8 +178,8 @@ async def test_core_finishes_before_reply_but_turn_stays_running(env):
             assert turn.status is TurnStatus.RUNNING
             assert env.recorder.finishes == []
             draft = await env.invocations.get_artifact(core.output_artifact_id)
-            assert draft.artifact_type == "core_response"
-            assert draft.payload == {"text": "中性草稿。"}
+            assert draft.artifact_type == "core_completion"
+            assert draft.payload == {"operation_question": None, "failed_operation_refs": []}
             assert CURRENT.get().user_id == "user"
             assert CURRENT.get().invocation_id == core.invocation_id
             return await super().finalize(request)
@@ -214,7 +216,7 @@ async def test_reply_failure_uses_an_explicit_error_notice_without_exposing_core
     assert len(env.recorder.finishes) == 1
 
 
-@pytest.mark.parametrize("blocked_text", ["中性草稿。", "教练回复。"])
+@pytest.mark.parametrize("blocked_text", ["教练回复。"])
 async def test_output_guard_policy_is_applied_once_per_stage(env, blocked_text):
     class Guard:
         texts = []
@@ -227,13 +229,10 @@ async def test_output_guard_policy_is_applied_once_per_stage(env, blocked_text):
 
     guard = Guard()
     result = await env.build(finalizer=Finalizer(), guard=guard).run(request=env.request)
-    expected = ["中性草稿。"] if blocked_text == "中性草稿。" else ["中性草稿。", "教练回复。"]
+    expected = ["教练回复。"]
     assert guard.texts == expected
     assert result.final_text == "安全提示。"
-    if len(expected) == 1:
-        assert result.outgoing_messages == ()
-    else:
-        assert result.outgoing_messages[0].text == "安全提示。"
+    assert result.outgoing_messages[0].text == "安全提示。"
     assert result.final_output_artifact_id is None
     assert len(env.recorder.finishes) == 1
 
@@ -269,7 +268,7 @@ async def test_actual_notice_summary_is_checked_even_when_body_matches_core_draf
 
     guard = Guard()
     result = await env.build(finalizer=NoticeFinalizer(), guard=guard).run(request=env.request)
-    assert guard.texts == ["中性草稿。", "中性草稿。\n所有更改都已成功。"]
+    assert guard.texts == ["中性草稿。\n所有更改都已成功。"]
     assert result.final_text == "操作结果仍需核实。"
     assert result.outgoing_messages[0].notice_text == "操作结果仍需核实。"
     assert "中性草稿" not in result.final_text

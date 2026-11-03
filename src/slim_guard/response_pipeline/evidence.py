@@ -1,9 +1,39 @@
-"""Project verified evidence for dialogue planning without deciding who speaks."""
+"""Project frozen facts directly for the coach; no neutral prose or role routing."""
 
 from typing import Any
 
+from slim_guard.agents.coach import CoachEvidence
 from slim_guard.agents.contracts import ProfessionalAssessment
 from slim_guard.harness.tool_calls import ToolCallOutcome
+from slim_guard.response_pipeline.contracts import ResponseFinalizationRequest
+
+
+def build_evidence(request: ResponseFinalizationRequest) -> CoachEvidence:
+    refs = [o.execution.tool_call_id for o in request.tool_outcomes]
+    for key in ("input_source_refs", "context_source_refs"):
+        items = request.conversation_context.get(key, ())
+        if isinstance(items, (list, tuple)):
+            refs.extend(ref for ref in items if isinstance(ref, str))
+    assessments = []
+    for outcome in request.tool_outcomes:
+        result = outcome.execution.result
+        if result.status.value != "succeeded" or not isinstance(
+            result.output.get("assessment"), dict
+        ):
+            continue
+        assessment = ProfessionalAssessment.model_validate(result.output["assessment"])
+        assessments.append(
+            {"source_ref": outcome.execution.tool_call_id, **assessment_summary(assessment)}
+        )
+    return CoachEvidence(
+        context=request.conversation_context,
+        observations=tool_observations(request.tool_outcomes),
+        assessments=tuple(assessments),
+        allowed_source_refs=tuple(dict.fromkeys(refs)),
+        operation_question=request.completion.operation_question.text
+        if request.completion.operation_question
+        else None,
+    )
 
 
 def tool_observations(outcomes: tuple[ToolCallOutcome, ...]) -> tuple[dict[str, object], ...]:

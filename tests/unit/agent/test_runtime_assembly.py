@@ -113,9 +113,9 @@ async def test_runtime_assembly_shares_registry_context_and_conversation_tasks()
             "clock",
         }
         assert finalizer.call_args.kwargs["graph_version"] == "core-primary-v1"
-        assert finalizer.call_args.kwargs["style_agent"] is not None
-        assert finalizer.call_args.kwargs["reviewer_agent"] is not None
-        assert finalizer.call_args.kwargs["conversation_agent"] is not None
+        assert finalizer.call_args.kwargs["coach"] is not None
+        assert "style_agent" not in finalizer.call_args.kwargs
+        assert "conversation_agent" not in finalizer.call_args.kwargs
         assert model.requests == []
     finally:
         await database.close()

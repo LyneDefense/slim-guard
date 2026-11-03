@@ -13,8 +13,10 @@ from slim_guard.runtime.contracts.base import ContractModel
 
 class AgentRole(StrEnum):
     CORE = "core"
+    COACH_RESPONSE = "coach_response"
+    COACH_REVIEW = "coach_review"
     NUTRITION_EXPERT = "nutrition_expert"
-    CONVERSATION = "conversation"
+    CONVERSATION = "conversation"  # Historical rows only; no online role router.
     # Kept only so historical invocation rows remain readable after migration.
     PARTICIPANT_ROUTER = "participant_router"
     RESPONSE_STYLE = "response_style"

@@ -5,6 +5,7 @@ import type {
   TraceStyledResponsePayload,
 } from "../../types";
 import { type WorkflowTraceView } from "./model";
+import { DirectCoachTracePanel } from "./DirectCoachTracePanel";
 
 interface StyleTraceView {
   profileName: string | null;
@@ -29,6 +30,9 @@ interface StyleTraceView {
 }
 
 export function StyleTracePanel({ workflow }: { workflow: WorkflowTraceView }) {
+  if (workflow.invocations.some(i => i.agent_role === "coach_response")) {
+    return <DirectCoachTracePanel workflow={workflow} />;
+  }
   const view = buildStyleTrace(workflow);
   if (!view) return null;
   const renderer = view.styleInvocationStatus

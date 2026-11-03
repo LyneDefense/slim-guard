@@ -73,7 +73,7 @@ class TurnRunResult:
 class TurnHarness:
     """Own a Turn's lifecycle, not business routing or reply policy.
 
-    Core returns a draft, the response processor returns user-visible messages,
+    Core returns a structured handoff, the response processor returns user-visible messages,
     and only this owner finishes the Turn. Delivery remains outside this layer.
     """
 

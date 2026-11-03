@@ -1,4 +1,8 @@
-"""Response Style Agent with bounded repair and deterministic fallback."""
+"""Offline expression evaluation with bounded repair and deterministic fallback.
+
+The online coach generates directly using the same published style assets; it
+does not call this rewrite capability or produce a neutral source draft.
+"""
 
 from __future__ import annotations
 

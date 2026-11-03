@@ -10,7 +10,7 @@ from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.memory.contracts import MemoryKey
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 from tests.unit.test_agent_runtime import FIXED_NOW, final_reply, prepare_database, tool_call
 
 
@@ -86,7 +86,7 @@ async def test_normalized_constraint_and_synonym_update_survive_the_full_runtime
             final_reply("已记录口味偏好，会留意辣度。"),
         ]
     )
-    wrapper = SystemConversationScript(model, mutation_claims=profile_claims)
+    wrapper = BusinessCoreScript(model)
     runtime = build_agent_runtime(
         database=database,
         model=wrapper,
@@ -109,7 +109,7 @@ async def test_normalized_constraint_and_synonym_update_survive_the_full_runtime
                     )
                 )
             )
-        assert [r.final_text for r in results] == [
+        assert [r.messages[0].text for r in results] == [
             "已记录你的口味限制和西兰花过敏自述。",
             "已记录口味偏好，会留意辣度。",
         ]

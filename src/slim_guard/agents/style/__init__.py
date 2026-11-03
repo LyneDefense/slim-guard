@@ -23,14 +23,8 @@ from slim_guard.expression_style.review.integrity import (
     StyleValidationReport,
 )
 
-# Online style rendering is a capability of the Conversation Agent rather
-# than a business-decision agent. Keep the implementation name for persisted
-# manifests while exposing the narrower architectural role.
-CoachStyleRenderer = ResponseStyleAgent
-
 __all__ = [
     "NeutralRenderer",
-    "CoachStyleRenderer",
     "RESPONSE_STYLE_PROMPT",
     "RESPONSE_STYLE_PROMPT_VERSION",
     "ResponseStyleAgent",

@@ -28,6 +28,30 @@ function render(payload, changes = {}) {
   } }));
 }
 
+test("direct coach trace shows the loaded style and grounding, never a missing neutral draft", () => {
+  const html = render({}, { invocations: [{ agent_role: "coach_response", status: "succeeded" }],
+    artifacts: [
+      artifact("TEST-style", "style_resolution", { profile_version: "TEST-published", source: "runtime_active", example_ids: ["TEST-1"] }),
+      artifact("TEST-reply", "coach_reply", { output: { text: "你确定？" }, validation_errors: [] }),
+      { ...artifact("TEST-review", "coach_grounding_review", { output: { role_passed: true } }), parent_artifact_ids: ["TEST-reply"] },
+      artifact("TEST-final", "outgoing_messages", { status: "succeeded" }),
+    ] });
+  assert.ok(html.includes("医生直接回复"));
+  assert.ok(html.includes("TEST-published"));
+  assert.ok(html.includes("你确定？"));
+  assert.ok(!html.includes("未记录中性稿"));
+});
+
+test("direct coach trace exposes exact structural diagnostics and an undelivered doctor response", () => {
+  const html = render({}, { invocations: [{ agent_role: "coach_response", status: "failed" }],
+    artifacts: [artifact("TEST-broken", "coach_reply", { failure_code: "structured_output_invalid",
+      validation_errors: [{ path: ["source_refs"], code: "unavailable_reference" }] }),
+      artifact("TEST-final", "outgoing_messages", { status: "degraded", failure_code: "structured_output_invalid" })] });
+  assert.ok(html.includes("source_refs"));
+  assert.ok(html.includes("unavailable_reference"));
+  assert.ok(html.includes("医生回复未放行"));
+});
+
 test("Style Trace shows frozen active version, expression IDs without act categories", () => {
   const html = render({
     style_profile_id: "TEST-style", style_profile_version: "TEST-style-v1",

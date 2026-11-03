@@ -1,4 +1,4 @@
-"""Response preparation, participant output, style, review and bounded repair."""
+"""Direct coach generation, evidence review and independent operational notices."""
 
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
@@ -6,7 +6,6 @@ from slim_guard.response_pipeline.contracts import (
     ResponseFinalizer,
 )
 from slim_guard.response_pipeline.finalizer import AgentResponseFinalizer
-from slim_guard.response_pipeline.planning import PlannedResponse, ResponsePlanBuilder
 from slim_guard.response_pipeline.profiles import (
     ActiveStyleVersionResolver,
     ResolvedStyleProfile,
@@ -16,11 +15,9 @@ from slim_guard.response_pipeline.profiles import (
 __all__ = [
     "ActiveStyleVersionResolver",
     "AgentResponseFinalizer",
-    "PlannedResponse",
     "ResolvedStyleProfile",
     "ResponseFinalizationRequest",
     "ResponseFinalizationResult",
     "ResponseFinalizer",
-    "ResponsePlanBuilder",
     "StyleProfileResolver",
 ]

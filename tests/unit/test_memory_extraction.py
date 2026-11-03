@@ -25,7 +25,7 @@ from slim_guard.memory.extraction import (
 )
 from slim_guard.memory.long_term import LongTermMemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 
 NOW = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
 
@@ -88,7 +88,7 @@ async def test_completed_reply_queues_then_asynchronously_extracts_text_memory(
     extraction = ExtractionGateway()
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(conversation),
+        model=BusinessCoreScript(conversation),
         memory_extraction_model=extraction,
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from slim_guard.agent_models.gateway import ModelMessage, ModelResponse
+from slim_guard.agents.core.contracts import CoreCompletion
 from slim_guard.group_chat.contracts import ChatMessage
 from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.runtime.contracts import InvocationStatus
@@ -19,7 +20,7 @@ class ResponseFinalizationRequest:
     thread_id: str
     turn_id: str
     core_invocation_id: str
-    neutral_draft: str
+    completion: CoreCompletion
     messages: tuple[ModelMessage, ...]
     tool_outcomes: tuple[ToolCallOutcome, ...]
     model_responses: tuple[ModelResponse, ...]
@@ -31,16 +32,13 @@ class ResponseFinalizationRequest:
 class ResponseFinalizationResult:
     text: str
     status: InvocationStatus
-    core_output_artifact_id: str
+    evidence_artifact_id: str
     final_output_artifact_id: str
     style_profile_version: str
     model_call_count: int = 0
     total_token_count: int = 0
     reviewer_ran: bool = False
-    style_repaired: bool = False
-    nutrition_repaired: bool = False
-    core_repaired: bool = False
-    used_neutral_fallback: bool = False
+    reply_repaired: bool = False
     failure_code: str | None = None
     messages: tuple[ChatMessage, ...] = ()
 

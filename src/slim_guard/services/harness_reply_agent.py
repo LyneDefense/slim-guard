@@ -80,7 +80,7 @@ class HarnessReplyAgent:
                 },
                 error_code=result.failure_code,
             )
-            if result.termination is HarnessTermination.FINAL_RESPONSE:
+            if result.termination is HarnessTermination.FINAL_RESPONSE and not result.failure_code:
                 await self._traces.mark_generation(
                     trace_id=request.trace_id,
                     status="succeeded",
@@ -89,7 +89,9 @@ class HarnessReplyAgent:
             else:
                 await self._traces.mark_generation(
                     trace_id=request.trace_id,
-                    status="failed",
+                    status="degraded"
+                    if result.termination is HarnessTermination.FINAL_RESPONSE
+                    else "failed",
                     reply_kind="agent",
                     failure_code=result.failure_code or result.termination.value,
                 )

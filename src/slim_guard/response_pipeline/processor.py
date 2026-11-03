@@ -1,12 +1,14 @@
 """Own output safety, finalization adoption and fallback outside the Core loop."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from slim_guard.agents.core.contracts import CoreCompletion
 from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages
 from slim_guard.group_chat.contracts import ChatMessage, ParticipantRole
 from slim_guard.group_chat.failures import reply_failure_notice
 from slim_guard.harness.events import ItemType
+from slim_guard.harness.failures import HarnessFailure
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.loop import HarnessLoopResult
 from slim_guard.harness.safety import OutputGuard, OutputGuardResult, PermissiveOutputGuard
@@ -19,6 +21,7 @@ from slim_guard.response_pipeline.contracts import (
     ResponseFinalizer,
 )
 from slim_guard.response_pipeline.mutation_review import MutationClaimReviewer
+from slim_guard.response_pipeline.notices import operation_notices
 from slim_guard.runtime.contracts import AgentInvocation
 from slim_guard.usage.context import usage_operation, usage_scope
 
@@ -68,13 +71,26 @@ class ResponseProcessor:
         conversation_context: dict[str, object] | None = None,
     ) -> ProcessedResponse:
         if result.termination is not HarnessTermination.FINAL_RESPONSE:
+            if self._finalizer is not None and result.tool_outcomes:
+                # A completed write survives Core/output failure. Deliver receipts,
+                # not another tool run; keep the original failure for observability.
+                failure = result.failure or HarnessFailure(
+                    code=result.termination.value, error_type="CoreIncomplete", retryable=False
+                )
+                return self._notice_response(
+                    invocation,
+                    replace(result, termination=HarnessTermination.FINAL_RESPONSE, failure=failure),
+                    None,
+                    reply_failure_notice(),
+                )
             return ProcessedResponse(result, final_text=None)
-        assert result.final_text is not None
-        guarded = await self._review(result.final_text, result.tool_outcomes)
-        if guarded.modified:
-            await self._recorder.record_output_guard(turn_id=invocation.turn_id, code=guarded.code)
-            return ProcessedResponse(result, final_text=guarded.text)
         if self._finalizer is None:
+            assert result.final_text is not None
+            guarded = await self._review(result.final_text, result.tool_outcomes)
+            if guarded.modified:
+                await self._recorder.record_output_guard(
+                    turn_id=invocation.turn_id, code=guarded.code
+                )
             return ProcessedResponse(result, final_text=guarded.text)
 
         finalization = None
@@ -91,7 +107,7 @@ class ResponseProcessor:
                         thread_id=initialized.thread.id,
                         turn_id=initialized.turn.id,
                         core_invocation_id=invocation.invocation_id,
-                        neutral_draft=guarded.text,
+                        completion=CoreCompletion.model_validate(result.final_output),
                         messages=result.messages,
                         tool_outcomes=result.tool_outcomes,
                         model_responses=result.model_responses,
@@ -99,8 +115,6 @@ class ResponseProcessor:
                         conversation_context=conversation_context or {},
                     )
                 )
-            # Identical text over the same immutable receipt set already has a
-            # verdict. Styling/new text still receives its own semantic review.
             review_text = "\n".join(
                 dict.fromkeys(
                     (
@@ -113,11 +127,7 @@ class ResponseProcessor:
                     )
                 )
             )
-            checked = (
-                guarded
-                if review_text == guarded.text
-                else await self._review(review_text, result.tool_outcomes)
-            )
+            checked = await self._review(review_text, result.tool_outcomes)
             if checked.modified:
                 await self._degraded(
                     invocation, "response_pipeline_output_guard_modified", finalization
@@ -142,7 +152,16 @@ class ResponseProcessor:
                 },
             )
             return ProcessedResponse(
-                result,
+                replace(
+                    result,
+                    failure=HarnessFailure(
+                        code=finalization.failure_code,
+                        error_type="ResponseFinalizationDegraded",
+                        retryable=False,
+                    ),
+                )
+                if finalization.failure_code
+                else result,
                 final_text=finalization.text,
                 outgoing_messages=finalization.messages,
                 final_output_artifact_id=finalization.final_output_artifact_id,
@@ -151,7 +170,19 @@ class ResponseProcessor:
         except Exception:
             logger.exception("final_response_workflow_failed")
             await self._degraded(invocation, "response_pipeline_failed", finalization)
-            return self._notice_response(invocation, result, finalization, reply_failure_notice())
+            return self._notice_response(
+                invocation,
+                replace(
+                    result,
+                    failure=HarnessFailure(
+                        code="response_pipeline_failed",
+                        error_type="ResponseFinalizationFailed",
+                        retryable=False,
+                    ),
+                ),
+                finalization,
+                reply_failure_notice(),
+            )
 
     @staticmethod
     def _notice_response(
@@ -160,9 +191,12 @@ class ResponseProcessor:
         finalization: ResponseFinalizationResult | None,
         notice: OutgoingTextMessage,
     ) -> ProcessedResponse:
+        notices = operation_notices(
+            completion=CoreCompletion(), outcomes=result.tool_outcomes, allowed_source_refs=()
+        )
         messages = compose_messages(
             turn_id=invocation.turn_id,
-            text_messages=(notice,),
+            text_messages=(notice, *notices),
             tool_outcomes=result.tool_outcomes,
         )
         return ProcessedResponse(

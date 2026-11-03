@@ -1,14 +1,10 @@
-"""Wire the existing conversation, style, review and repair components."""
+"""Wire direct coach generation; published styles remain managed offline."""
 
 from collections.abc import Callable
 from datetime import datetime
 
 from slim_guard.agent_models.gateway import ModelGateway
-from slim_guard.agents.conversation import ConversationAgent
-from slim_guard.agents.core import CoreResponseRepairAgent
-from slim_guard.agents.nutrition import NutritionSpecialist
-from slim_guard.agents.reviewer import ResponseReviewerAgent
-from slim_guard.agents.style import CoachStyleRenderer
+from slim_guard.agents.coach import CoachResponder
 from slim_guard.db.session import Database
 from slim_guard.harness.trace import HarnessRunRecorder
 from slim_guard.response_pipeline import AgentResponseFinalizer, StyleProfileResolver
@@ -21,7 +17,6 @@ def build_response_finalizer(
     database: Database,
     model: ModelGateway,
     model_name: str,
-    nutrition_specialist: NutritionSpecialist,
     invocation_store: InvocationStore,
     recorder: HarnessRunRecorder,
     graph_version: str,
@@ -29,10 +24,7 @@ def build_response_finalizer(
 ) -> AgentResponseFinalizer:
     runner = InvocationRunner(model=model, clock=clock)
     return AgentResponseFinalizer(
-        style_agent=CoachStyleRenderer(runner=runner, model=model_name),
-        reviewer_agent=ResponseReviewerAgent(runner=runner, model=model_name),
-        core_repair_agent=CoreResponseRepairAgent(runner=runner, model=model_name),
-        nutrition_specialist=nutrition_specialist,
+        coach=CoachResponder(runner=runner, model=model_name),
         profile_resolver=StyleProfileResolver(
             profiles=RuntimeStyles(database),
             active_version=RuntimeStyles(database),
@@ -42,5 +34,4 @@ def build_response_finalizer(
         recorder=recorder,
         graph_version=graph_version,
         clock=clock,
-        conversation_agent=ConversationAgent(runner=runner, model=model_name),
     )

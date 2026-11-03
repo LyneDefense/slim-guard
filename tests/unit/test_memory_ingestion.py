@@ -19,7 +19,7 @@ from slim_guard.harness.state_repository import HarnessStateRepository, NewTurnI
 from slim_guard.memory.contracts import MemoryKey
 from slim_guard.memory.repository import MemoryRepository
 from slim_guard.tools.contracts import ToolExecutionMode
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 
 NOW = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
 
@@ -68,7 +68,7 @@ async def test_ordinary_ingestion_is_queued_after_reply_and_does_not_write_profi
     extractor = ScriptedModelGateway(())
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(conversation),
+        model=BusinessCoreScript(conversation),
         memory_extraction_model=extractor,
         definition=definition("test-post-turn-memory"),
         clock=lambda: NOW,
@@ -99,7 +99,7 @@ async def test_post_turn_extraction_does_not_backfill_unrelated_historical_messa
     extractor = ScriptedModelGateway(())
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(conversation),
+        model=BusinessCoreScript(conversation),
         memory_extraction_model=extractor,
         definition=definition("test-no-memory-backfill"),
         clock=lambda: NOW,

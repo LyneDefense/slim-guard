@@ -227,7 +227,7 @@ test("turn overview starts with user input, ends with delivered output, and comp
   assert.ok(html.includes("用户这一轮说了什么"));
   assert.ok(html.includes("这顿饭能吃吗？"));
   assert.ok(html.includes("用户实际收到的回复"));
-  assert.ok(html.includes("主教练 Agent"));
+  assert.ok(html.includes("Core 业务编排"));
   assert.ok(html.includes("医生风格具体改了什么"));
   assert.ok(html.includes("唯一线上 Profile · doctor_strict_v3"));
   assert.ok(html.includes("第 2 次渲染"));

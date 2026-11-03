@@ -9,7 +9,7 @@ from slim_guard.agent_models.gateway import (
     ModelResponse,
     NormalizedToolCall,
 )
-from slim_guard.agents.core import CoreAgent
+from slim_guard.harness.loop import HarnessLoop
 from slim_guard.db.models import SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.harness.context import ContextCompiler
@@ -204,7 +204,7 @@ def build_runner(
             recorder=recorder,
         ),
         core=CoreInvocationRunner(
-            agent=CoreAgent(
+            agent=HarnessLoop(
                 model=model, tool_calls=tool_calls, recorder=recorder, clock=lambda: current_time
             ),
             clock=lambda: current_time,

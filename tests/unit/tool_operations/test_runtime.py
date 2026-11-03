@@ -13,7 +13,7 @@ from slim_guard.harness.events import ItemType
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.termination import HarnessTermination
 from slim_guard.tools.contracts import ToolExecutionMode
-from tests.conversation_script import SystemConversationScript
+from tests.coach_script import BusinessCoreScript
 from tests.unit.test_agent_runtime import FIXED_NOW, final_reply, prepare_database, tool_call
 
 
@@ -21,16 +21,36 @@ async def test_real_harness_corrects_foods_in_same_turn_and_persists_one_meal(tm
     database = await prepare_database(tmp_path)
     core = ScriptedModelGateway(
         (
-            tool_call("invalid", "record_meal", {"meal_type": "lunch", "foods": ["烧茄子"]}),
             tool_call(
-                "corrected", "record_meal", {"meal_type": "lunch", "foods": [{"name": "烧茄子"}]}
+                "invalid",
+                "record_meal",
+                {
+                    "meal_type": "lunch",
+                    "foods": ["烧茄子"],
+                    "evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
+                },
+            ),
+            tool_call(
+                "corrected",
+                "record_meal",
+                {
+                    "meal_type": "lunch",
+                    "foods": [{"name": "烧茄子"}],
+                    "evidence": {
+                        "source_kind": "user_reported",
+                        "source_refs": ["current-user-message"],
+                    },
+                },
             ),
             final_reply("午餐已记录：烧茄子。"),
         )
     )
     runtime = build_agent_runtime(
         database=database,
-        model=SystemConversationScript(core),
+        model=BusinessCoreScript(core),
         clock=lambda: FIXED_NOW,
         definition=AgentRuntimeDefinition(
             models=ModelRuntimeConfig(
@@ -63,7 +83,9 @@ async def test_real_harness_corrects_foods_in_same_turn_and_persists_one_meal(tm
         assert core.requests[1].tools == core.requests[0].tools
         records = await MealRepository(database).recent("user-1")
         assert len(records) == 1
-        assert records[0].occurred_at == FIXED_NOW
+        # This fixture supplies no occurrence contract; do not fabricate a time
+        # from the channel delivery timestamp.
+        assert records[0].occurred_at is None
         assert records[0].idempotency_key.startswith("op-")
         items = await HarnessStateRepository(database).list_items(result.turn_id)
         messages = [i.payload for i in items if i.item_type is ItemType.AGENT_MESSAGE]
