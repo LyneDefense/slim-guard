@@ -1,29 +1,18 @@
-.app-shell.call-shell,
 .call-workspace {
-  color-scheme: light dark;
-  --call-bg: light-dark(#f7f8fc, #141821);
-  --call-panel: light-dark(#fff, #1d2330);
-  --call-ink: light-dark(#202d4d, #ecf0fc);
-  --call-sub: light-dark(#65718a, #b2bed6);
-  --call-line: light-dark(#e5e9f2, #354056);
-  --call-navy: light-dark(#354780, #b6c6ff);
-  --call-active: light-dark(#eaf0ff, #303e64);
-  --call-apricot: light-dark(#fff0df, #483426);
-  --call-orange: light-dark(#a34f09, #ffd0a0);
-  --call-good: light-dark(#23654e, #a0dbc1);
-  --call-good-bg: light-dark(#eaf6ef, #203d32);
-  --call-bad: light-dark(#a2373c, #ffc0c3);
-  --call-bad-bg: light-dark(#fff0ef, #442a31);
-  font:
-    13px/1.55 -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    "PingFang SC",
-    sans-serif;
-  color: var(--call-ink);
-  background: var(--call-bg);
-  width: 100%;
-  box-sizing: border-box;
+  --call-bg: var(--bg);
+  --call-panel: var(--surface);
+  --call-ink: var(--ink);
+  --call-sub: var(--muted);
+  --call-line: var(--line);
+  --call-navy: var(--accent);
+  --call-active: var(--active);
+  --call-apricot: var(--notice);
+  --call-orange: var(--orange);
+  --call-good: var(--good);
+  --call-good-bg: var(--good-bg);
+  --call-bad: var(--red);
+  --call-bad-bg: var(--danger-bg);
+  width: 100%; color: var(--ink); background: var(--bg);
 }
 .call-workspace * {
   box-sizing: border-box;
@@ -35,31 +24,13 @@
   color: inherit;
 }
 .call-workspace button {
-  cursor: inherit;
+  cursor: pointer;
 }
 .call-workspace button:focus-visible,
 .call-workspace select:focus-visible,
 .call-workspace input:focus-visible {
   outline: 2px solid var(--call-navy);
   outline-offset: 3px;
-}
-.call-workspace .app-shell.call-shell {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-}
-.call-workspace .call-topbar {
-  padding: 16px 22px;
-  background: var(--call-panel);
-  border-bottom: 1px solid var(--call-line);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.call-workspace .call-topbar small {
-  color: var(--call-sub);
-  font-size: 12px;
 }
 .call-workspace .call-main {
   padding: 22px;
@@ -89,6 +60,9 @@
 }
 .call-workspace .call-small {
   font-size: 12px;
+}
+.call-workspace .call-node-title {
+  font-weight: 500;
 }
 .call-workspace .call-heading {
   display: flex;
@@ -539,9 +513,6 @@
   color: var(--call-sub);
 }
 @media (max-width: 900px) {
-  .call-workspace .app-shell.call-shell {
-    grid-template-columns: 102px minmax(0, 1fr);
-  }
   .call-workspace .call-main {
     padding: 16px;
   }
@@ -550,12 +521,6 @@
   }
 }
 @media (max-width: 740px) {
-  .call-workspace .app-shell.call-shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .call-workspace .call-topbar {
-    padding: 12px 15px;
-  }
   .call-workspace .call-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -583,83 +548,6 @@
   .call-workspace select {
     font-size: 16px;
   }
-}
-
-.app-shell.call-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-}
-.app-shell.call-shell .sidebar {
-  background: var(--call-panel);
-  color: var(--call-ink);
-  border-right: 1px solid var(--call-line);
-  padding: 23px 12px;
-}
-.app-shell.call-shell .brand {
-  margin: 0 0 28px;
-  gap: 9px;
-  font-size: 17px;
-}
-.app-shell.call-shell .brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
-  background: var(--call-apricot);
-  color: var(--call-orange);
-  font-size: 18px;
-}
-.app-shell.call-shell .brand strong {
-  font-weight: 500;
-  letter-spacing: 0;
-}
-.app-shell.call-shell .brand small {
-  display: none;
-}
-.app-shell.call-shell .nav-item {
-  font-size: 13px;
-  font-weight: 400;
-  padding: 10px 9px;
-  gap: 6px;
-  border-radius: 8px;
-  margin-bottom: 6px;
-  color: var(--call-sub);
-}
-.app-shell.call-shell .nav-item:hover,
-.app-shell.call-shell .nav-item.active {
-  background: var(--call-active);
-  color: var(--call-navy);
-}
-.app-shell.call-shell .sidebar-note {
-  padding: 10px 6px;
-  border: 0;
-  color: var(--call-sub);
-  font-size: 11px;
-}
-.app-shell.call-shell .sidebar-note small {
-  color: var(--call-sub);
-  margin-left: 0;
-}
-.app-shell.call-shell .privacy-dot {
-  box-shadow: none;
-  background: var(--call-good);
-}
-.app-shell.call-shell .account-panel {
-  padding: 8px 3px;
-  background: none;
-  color: var(--call-sub);
-  flex-wrap: wrap;
-}
-.app-shell.call-shell .account-panel small {
-  color: var(--call-sub);
-}
-.app-shell.call-shell .account-panel button {
-  color: var(--call-sub);
-  border: 1px solid var(--call-line);
-}
-.call-workspace .call-topbar small,
-.call-workspace .call-node-title {
-  font-weight: 500;
 }
 .call-workspace .call-quote p {
   margin: 3px 0;
@@ -736,56 +624,11 @@
   display: block;
   color: var(--call-sub);
 }
-.app-shell.call-shell .call-nav-label {
-  font-size: 11px;
-  color: var(--call-sub);
-  padding: 11px 9px;
-}
 .call-workspace details {
   overflow-wrap: anywhere;
 }
 @media (min-width: 1300px) {
   .call-workspace .call-grid {
     grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-  }
-}
-@media (max-width: 900px) {
-  .app-shell.call-shell {
-    grid-template-columns: 102px minmax(0, 1fr);
-  }
-}
-@media (max-width: 740px) {
-  .app-shell.call-shell {
-    display: block;
-  }
-  .app-shell.call-shell .sidebar {
-    position: static;
-    height: auto;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 15px;
-    flex-wrap: wrap;
-    border-right: 0;
-    border-bottom: 1px solid var(--call-line);
-  }
-  .app-shell.call-shell .brand {
-    margin: 0;
-    font-size: 15px;
-  }
-  .app-shell.call-shell .sidebar nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .app-shell.call-shell .nav-item {
-    margin: 0;
-    padding: 6px 8px;
-    font-size: 12px;
-  }
-  .app-shell.call-shell .sidebar-note,
-  .app-shell.call-shell .account-panel {
-    display: none;
   }
 }

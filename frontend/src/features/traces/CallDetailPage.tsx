@@ -19,6 +19,7 @@ import {
   problemNode,
 } from "./presentation";
 import type { CallDetail } from "./types";
+import { Workspace } from "../../app/Workspace";
 import "./calls.css";
 
 export function CallDetailPage() {
@@ -30,14 +31,16 @@ export function CallDetailPage() {
     refetchInterval: (state) => (needsRefresh(state.state.data) ? 3000 : false),
   });
   return (
-    <div className="call-workspace">
-      <header className="call-topbar">
-        <span>调用过程 / 单次详情</span>
-        <span className="call-small call-muted">
+    <Workspace
+      className="call-workspace"
+      title="调用过程 / 单次详情"
+      note={
+        <>
           {needsRefresh(query.data) ? "每 3 秒更新" : "处理已结束"} ·
           敏感读取已审计
-        </span>
-      </header>
+        </>
+      }
+    >
       <div className="call-main">
         {query.isPending && <CallState loading />}
         {query.isError && (
@@ -50,7 +53,7 @@ export function CallDetailPage() {
         )}
         {query.data && <CallDetailView key={traceId} data={query.data} />}
       </div>
-    </div>
+    </Workspace>
   );
 }
 

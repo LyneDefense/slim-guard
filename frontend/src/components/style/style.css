@@ -1,25 +1,25 @@
 /* Expression style library and nested style detail views */
 .style-overview-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
-  margin-bottom: 2rem;
+  margin-bottom: 16px;
 }
 .style-overview-grid article {
-  background: var(--surface, #fff);
-  border: 1px solid var(--line, #dce7e1);
-  border-radius: 18px;
-  padding: 1.25rem 1.4rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
   display: grid;
   gap: 0.35rem;
 }
 .style-overview-grid span,
 .style-overview-grid small {
-  color: var(--muted, #6f8179);
+  color: var(--muted);
 }
 .style-overview-grid strong {
-  color: var(--ink, #16352c);
-  font-size: 1.65rem;
+  color: var(--ink);
+  font-size: 24px;
 }
 .style-profile-grid {
   display: grid;
@@ -28,10 +28,10 @@
 }
 .style-profile-card {
   text-align: left;
-  background: var(--surface, #fff);
-  border: 1px solid var(--line, #dce7e1);
-  border-radius: 18px;
-  padding: 1.35rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
   color: inherit;
   cursor: pointer;
 }
@@ -39,22 +39,22 @@ button.style-profile-card {
   font: inherit;
 }
 .style-profile-card:hover {
-  border-color: #2f8066;
-  box-shadow: 0 8px 24px rgba(24, 77, 58, 0.08);
+  border-color: var(--accent);
+  box-shadow: none;
 }
 .style-profile-card h2 {
   margin: 0 0 0.35rem;
 }
 .style-profile-card p {
-  color: var(--muted, #6f8179);
+  color: var(--muted);
   line-height: 1.7;
 }
 .style-profile-card footer {
   display: flex;
   justify-content: space-between;
-  border-top: 1px solid var(--line, #e7efeb);
+  border-top: 1px solid var(--line);
   padding-top: 0.9rem;
-  color: var(--muted, #6f8179);
+  color: var(--muted);
 }
 .style-profile-empty {
   border-style: dashed;
@@ -65,29 +65,29 @@ button.style-profile-card {
 }
 .status-chip {
   display: inline-block;
-  border-radius: 999px;
+  border-radius: 5px;
   padding: 0.25rem 0.65rem;
   font-size: 0.78rem;
 }
 .status-chip.success {
-  background: #dff2e9;
-  color: #176b4d;
+  background: var(--good-bg);
+  color: var(--good);
 }
 .breadcrumb {
   display: flex;
   gap: 0.6rem;
   align-items: center;
-  color: var(--muted, #6f8179);
+  color: var(--muted);
   margin-bottom: 1rem;
 }
 .style-profile-header {
   display: flex;
   gap: 1rem;
   align-items: center;
-  background: var(--surface, #fff);
-  border: 1px solid var(--line, #dce7e1);
-  border-radius: 18px;
-  padding: 1.25rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
   margin-bottom: 1rem;
 }
 .style-profile-header h1 {
@@ -96,14 +96,14 @@ button.style-profile-card {
 }
 .style-profile-header p {
   margin: 0.35rem 0 0;
-  color: var(--muted, #6f8179);
+  color: var(--muted);
 }
 .style-detail-tabs {
   display: flex;
   gap: 0.3rem;
-  background: var(--surface, #fff);
-  border: 1px solid var(--line, #dce7e1);
-  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 0.35rem;
   margin-bottom: 1rem;
 }
@@ -118,13 +118,13 @@ button.style-profile-card {
 }
 
 .expression-page {
-  max-width: 1500px;
+  min-width: 0;
 }
 .expression-card {
-  background: #fff;
-  border: 1px solid #dbe6df;
-  border-radius: 18px;
-  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
   margin: 20px 0;
 }
 .expression-card header {
@@ -145,14 +145,14 @@ button.style-profile-card {
   flex-direction: column;
   gap: 8px;
   margin: 12px 0;
-  color: #40584d;
+  color: var(--muted);
 }
 .expression-page input,
 .expression-page textarea,
 .expression-page select {
   width: 100%;
-  border: 1px solid #cfdcd4;
-  background: #fcfefd;
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: 9px;
   padding: 12px;
   font: inherit;
@@ -163,10 +163,10 @@ button.style-profile-card {
   resize: vertical;
 }
 .expression-page button {
-  border: 1px solid #cbded3;
-  background: #e6f2eb;
-  color: #144d36;
-  padding: 10px 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 7px 10px;
   border-radius: 9px;
   font: inherit;
   cursor: pointer;
@@ -176,8 +176,8 @@ button.style-profile-card {
   cursor: not-allowed;
 }
 .expression-page button.danger {
-  background: #fff0ef;
-  color: #a53732;
+  background: var(--danger-bg);
+  color: var(--red);
 }
 .expression-page p {
   white-space: pre-wrap;
@@ -185,10 +185,10 @@ button.style-profile-card {
   line-height: 1.7;
 }
 .expression-page [role="alert"] {
-  color: #ad332e;
+  color: var(--red);
 }
 .expression-page a {
-  color: #1d7654;
+  color: var(--accent);
 }
 .expression-page .style-profile-card {
   text-decoration: none;
@@ -196,17 +196,18 @@ button.style-profile-card {
 .expression-three {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
+  gap: 16px;
 }
 .expression-columns {
   display: grid;
-  grid-template-columns: 1fr 2fr;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 16px;
 }
 .expression-actions {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
   margin-top: 16px;
 }
 .expression-progress {
@@ -220,32 +221,32 @@ button.style-profile-card {
   min-width: 180px;
   display: flex;
   flex-direction: column;
-  border-left: 3px solid #5f9f81;
+  border-left: 3px solid var(--line);
   padding-left: 10px;
   gap: 8px;
 }
 .expression-guide {
-  background: #f1f7f3;
+  background: var(--bg);
   padding: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius);
 }
 .expression-guide small {
-  color: #70887b;
+  color: var(--muted);
 }
 .style-detail-tabs a {
-  padding: 12px 18px;
+  padding: 7px 11px;
   border-radius: 10px;
   text-decoration: none;
-  color: #507261;
+  color: var(--muted);
 }
 .style-detail-tabs a.active {
-  background: #e5f3ed;
+  background: var(--active);
   font-weight: 700;
 }
 .expression-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: #0d241e77;
+  background: var(--overlay);
   z-index: 1000;
   display: grid;
   place-items: center;
@@ -261,7 +262,7 @@ button.style-profile-card {
 }
 .style-material {
   padding: 1rem 0;
-  border-bottom: 1px solid #dfe8e3;
+  border-bottom: 1px solid var(--line);
 }
 .style-material p,
 .build-artifact p {
@@ -273,12 +274,12 @@ button.style-profile-card {
   max-height: 360px;
   overflow: auto;
   padding: 12px;
-  background: #f3f6f4;
+  background: var(--bg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .build-progress .expression-progress .current {
-  border-left: 4px solid #28785c;
+  border-left: 4px solid var(--accent);
   padding-left: 1rem;
 }
 .build-progress .expression-progress li {
@@ -293,7 +294,7 @@ button.style-profile-card {
   margin-block: 0.7rem;
 }
 .expression-guide blockquote {
-  border-left: 3px solid #abc8b9;
+  border-left: 3px solid var(--line);
   padding-left: 1rem;
   margin-left: 0;
 }
@@ -310,5 +311,16 @@ button.style-profile-card {
 .style-score-table th {
   padding: 0.6rem;
   text-align: left;
-  border-bottom: 1px solid #dfe8e3;
+  border-bottom: 1px solid var(--line);
+}
+
+.expression-card, .expression-guide, .style-profile-card, .expression-three > *, .expression-columns > * { min-width: 0; }
+.expression-card > details { overflow-x: auto; }
+.style-detail-tabs a { white-space: nowrap; }
+.expression-modal-backdrop { padding: 16px; }
+.expression-modal-backdrop .expression-card { max-height: calc(100dvh - 32px); overflow: auto; margin: 0; }
+@media (max-width: 560px) {
+  .style-profile-header { flex-wrap: wrap; }
+  .expression-actions { align-items: stretch; }
+  .expression-actions button { flex: 1; }
 }

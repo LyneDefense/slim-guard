@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, NavLink, useParams } from "react-router-dom";
 import { usageApi, type Totals } from "./api";
 import "./usage.css";
 
@@ -46,9 +46,9 @@ function UsageList({ userId, jobs }: { userId?: string; jobs: boolean }) {
   const valid = !start || !end || new Date(start) < new Date(end);
   const query = useQuery({ queryKey: ["usage", path, params.toString()], queryFn: () => usageApi.list(path, params), enabled: valid, refetchInterval: 10000 });
   return <section className={`usage ${userId ? "" : "page"}`}>
-    <h1>{userId ? "问答用量" : jobs ? "系统任务用量" : "用户用量统计"}</h1>
-    <p>一条用户输入及其完整回复计为一次问答；多角色气泡和卡片不拆开计数。后续确认是新问答。异步用量回填原问答。</p>
-    {!userId && <nav className="tabs"><Link to="/usage">按用户</Link><Link to="/usage/jobs">系统任务（无用户归属）</Link></nav>}
+    <header className="page-header"><div><h1>{userId ? "问答用量" : jobs ? "系统任务用量" : "用户用量统计"}</h1>
+    <p>一条用户输入及其完整回复计为一次问答；多角色气泡和卡片不拆开计数。后续确认是新问答。异步用量回填原问答。</p></div></header>
+    {!userId && <nav className="tabs" aria-label="用量视图"><NavLink end to="/usage">按用户</NavLink><NavLink to="/usage/jobs">系统任务（无用户归属）</NavLink></nav>}
     <div className="usage-filters"><label>开始时间<input type="datetime-local" value={start} onChange={e => { setStart(e.target.value); setOffset(0); }} /></label>
       <label>结束时间（不含）<input type="datetime-local" value={end} onChange={e => { setEnd(e.target.value); setOffset(0); }} /></label></div>
     {!valid && <p role="alert">结束时间必须晚于开始时间。</p>}
@@ -71,7 +71,7 @@ export function UsageDetailPage() {
   const query = useQuery({ queryKey: ["usage-detail", path, offset], queryFn: () => usageApi.detail(path, offset), refetchInterval: 10000 });
   const data = query.data;
   return <section className={`usage ${userId ? "" : "page"}`}>
-    <Link to={userId ? `/users/${userId}/usage` : "/usage/jobs"}>← 返回用量列表</Link><h2>本次{userId ? "问答" : "任务"}用量</h2><p>{requestId || jobId}</p>
+    <Link className="back-link" to={userId ? `/users/${userId}/usage` : "/usage/jobs"}>← 返回用量列表</Link><header className="page-header"><div><h1>本次{userId ? "问答" : "任务"}用量</h1><p>{requestId || jobId}</p></div></header>
     {query.isLoading && <p>正在读取…</p>}{query.error && <p role="alert">读取失败：{String(query.error)}</p>}
     {data && <>{data.trace_id && userId && <Link to={`/users/${userId}/traces/${data.trace_id}`}>查看这次问答的用户输入、实际回复和流程</Link>}<Counters data={data.summary} /><p className="usage-note">{data.coverage}</p>
       <h3>按 Agent 汇总（自身消耗）</h3><p>共 {data.executions} 次 Agent 执行，包括没有发起模型请求的执行。历史未采集的请求不补算。</p><div className="usage-table"><table><thead><tr><th>归属</th><th>Agent 执行</th><th>模型请求</th><th>已知总 Token</th><th>未知用量</th></tr></thead><tbody>

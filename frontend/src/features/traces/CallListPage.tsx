@@ -9,6 +9,7 @@ import {
 import { callApi } from "./api";
 import { Badge, CallState } from "./components";
 import { date, elapsed } from "./presentation";
+import { Workspace } from "../../app/Workspace";
 import "./calls.css";
 
 export function CallListPage() {
@@ -35,11 +36,11 @@ export function CallListPage() {
     setParams(next);
   };
   return (
-    <div className="call-workspace">
-      <header className="call-topbar">
-        <span>调用过程{userId ? " / 当前用户" : ""}</span>
-        <span className="call-small call-muted">每 5 秒自动更新</span>
-      </header>
+    <Workspace
+      className="call-workspace"
+      title={<>调用过程{userId ? " / 当前用户" : ""}</>}
+      note="每 5 秒自动更新"
+    >
       <div className="call-main">
         <div className="call-heading">
           <div>
@@ -227,6 +228,6 @@ export function CallListPage() {
           </>
         )}
       </div>
-    </div>
+    </Workspace>
   );
 }

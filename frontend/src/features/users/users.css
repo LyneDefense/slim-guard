@@ -1,0 +1,24 @@
+.user-grid, .data-grid { display: grid; gap: 10px; }
+.user-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.user-card:hover { border-color: var(--accent); }
+.avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; color: var(--accent); background: var(--active); font-size: 16px; }
+.avatar-large { width: 44px; height: 44px; font-size: 20px; }
+.user-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.user-title h2 { margin: 0; }
+.user-main code { color: var(--muted); font-size: 11px; }
+.user-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 7px; color: var(--muted); font-size: 12px; }
+.issue { padding: 3px 8px; border-radius: 5px; background: var(--danger-bg); color: var(--red); font-size: 11px; }
+.arrow { color: var(--muted); }
+.user-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.data-card { min-width: 0; padding: 10px 14px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.memory-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); gap: 12px; }
+.memory-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.memory-card.memory-superseded, .memory-card.memory-revoked, .memory-card.memory-expired { opacity: .7; }
+.memory-card header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.memory-card h3 { margin: 6px 0 0; font-size: 15px; }
+.memory-value { margin: 16px 0; color: var(--ink); font-size: 18px; line-height: 1.5; white-space: pre-wrap; }
+.memory-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.memory-meta > div { min-width: 0; padding: 10px; border-radius: 7px; background: var(--bg); }
+.memory-meta dt { color: var(--muted); font-size: 11px; }
+.memory-meta dd { margin: 4px 0 0; font-size: 12px; }
+@media (max-width: 560px) { .user-meta { gap: 4px 8px; } .user-card { padding: 12px; gap: 10px; } }

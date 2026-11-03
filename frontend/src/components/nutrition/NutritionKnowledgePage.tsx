@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
 import { api } from "../../api";
+import "./nutrition.css";
 import type {
   NutritionEvaluationCase,
   NutritionEvaluationRun,

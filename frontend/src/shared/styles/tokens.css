@@ -1,0 +1,25 @@
+/* One palette for every workspace, including the call monitor. */
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f7f8fc, #141821);
+  --surface: light-dark(#fff, #1d2330);
+  --ink: light-dark(#202d4d, #ecf0fc);
+  --muted: light-dark(#65718a, #b2bed6);
+  --line: light-dark(#e5e9f2, #354056);
+  --accent: light-dark(#354780, #b6c6ff);
+  --active: light-dark(#eaf0ff, #303e64);
+  --notice: light-dark(#fff0df, #483426);
+  --orange: light-dark(#a34f09, #ffd0a0);
+  --good: light-dark(#23654e, #a0dbc1);
+  --good-bg: light-dark(#eaf6ef, #203d32);
+  --red: light-dark(#a2373c, #ffc0c3);
+  --danger-bg: light-dark(#fff0ef, #442a31);
+  --on-accent: light-dark(#fff, #141821);
+  --overlay: light-dark(#202d4d66, #0009);
+  --shadow: 0 10px 35px light-dark(#202d4d12, #0004);
+  --radius: 10px;
+  font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  font-synthesis: none;
+  color: var(--ink);
+  background: var(--bg);
+}

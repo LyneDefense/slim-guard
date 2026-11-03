@@ -2,17 +2,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-const [page, api, app, routes, repository] = await Promise.all([
+const [page, api, app, routes, repository, shell] = await Promise.all([
   readFile(new URL("../src/components/nutrition/NutritionKnowledgePage.tsx", import.meta.url), "utf8"),
   readFile(new URL("../src/api.ts", import.meta.url), "utf8"),
   readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
   readFile(new URL("../../src/slim_guard/api/nutrition_knowledge_routes.py", import.meta.url), "utf8"),
   readFile(new URL("../../src/slim_guard/nutrition_rag/repository.py", import.meta.url), "utf8"),
+  readFile(new URL("../src/app/AdminShell.tsx", import.meta.url), "utf8"),
 ]);
 
 test("admin navigation exposes the nutrition knowledge control plane", () => {
-  assert.match(app, /to="\/nutrition-knowledge"/);
-  assert.match(app, /path="nutrition-knowledge" element=\{<NutritionKnowledgePage \/>\}/);
+  assert.match(shell, /to="\/nutrition-knowledge"/);
+  assert.match(app, /path="nutrition-knowledge"/);
+  assert.match(app, /<NutritionKnowledgePage \/>/);
   for (const label of ["总览", "资料源", "后台任务", "检索实验室", "语料版本", "评测集"]) {
     assert.ok(page.includes(label), label);
   }
