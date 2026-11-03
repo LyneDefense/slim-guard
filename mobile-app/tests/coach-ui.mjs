@@ -107,7 +107,7 @@ test('send failure restores the payload without erasing a newer draft; queued/pr
   assert.equal(view.render().text, '原消息\n新草稿');
   for (const result of ['queued','processing']) {
     const next = composerFixture({ draft: '晚餐', send: async () => result }); next.render(); await next.render().send();
-    assert.equal(next.render().text, ''); assert.equal(next.alerts.length, result === 'queued' ? 1 : 0);
+    assert.equal(next.render().text, ''); assert.equal(next.alerts.length, 0);
   }
 });
 
@@ -167,7 +167,14 @@ test('coach page keeps identity and notice/composer outside scrolling, handles e
     $keyboard: (event, callback) => { listeners[event] = callback; return { remove() { removed++; } }; },
   });
   assert.equal(named(view, 'BrandHeader')[0].props.status, '离线模式');
-  assert.ok(text(view).includes('1 条消息将在联网后自动发送'));
+  assert.equal(text(view).includes('条消息'), false);
+  state.connection = { device: 'connected', backend: 'reachable' };
+  for (const delivery_state of ['sending', 'queued', 'processing']) {
+    state.pending = [{ delivery_state }];
+    view.render();
+    assert.equal(text(view).includes('条消息'), false);
+    assert.equal(text(view).includes('自动重试'), false);
+  }
   const scroll = view.find('ScrollView');
   assert.equal(tree(scroll.props.children).some(node => node.type === 'SystemNoticeBar' || node.type === 'ChatComposer' || node.type.name === 'CoachIdentity'), false);
   assert.equal(view.find('KeyboardAvoidingView').props.behavior, 'padding');

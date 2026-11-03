@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef } from 'react';
 import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { ScrollViewInstance, TextInputInstance } from 'react-native';
@@ -17,7 +16,6 @@ import { connectionLabel } from '../shared/network/connection';
 
 export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDraft: () => void }) {
   const { data, sendMessage, connection, pending, notices, dismissNotice } = useApp();
-  const disconnected = connection.device === 'disconnected';
   const composer = useCoachComposer(draft, consumeDraft, sendMessage);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const stickToBottom = useRef(true);
@@ -49,10 +47,6 @@ export function CoachScreen({ draft, consumeDraft }: { draft: string; consumeDra
           {timeLabel && <Text style={styles.time}>{timeLabel}</Text>}
           <ChatBubble message={message} />
         </View>)}
-        {pending.length > 0 && <View style={styles.queue}>
-          <Ionicons name={disconnected ? 'cloud-offline-outline' : 'sync-outline'} size={16} color={palette.orange} />
-          <Text style={styles.queueText}>{disconnected ? `${pending.length} 条消息将在联网后自动发送` : `${pending.length} 条消息正在发送或等待处理，将自动重试`}</Text>
-        </View>}
       </ScrollView>
       <SelectedPhotoStrip photos={composer.images} onRemove={composer.removePhoto} />
       <SystemNoticeBar notices={notices} onDismiss={dismissNotice} onReply={() => inputRef.current?.focus()} />
@@ -66,6 +60,4 @@ const styles = StyleSheet.create({
   messages: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 4 },
   time: { textAlign: 'center', color: '#81889D', fontSize: 12, lineHeight: 18, marginTop: 3, marginBottom: 12 },
   empty: { color: palette.muted, textAlign: 'center', fontSize: 14, lineHeight: 24, marginTop: 44 },
-  queue: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 18, backgroundColor: '#FFF0E6', paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8 },
-  queueText: { flexShrink: 1, color: palette.orangeInk, fontSize: 12, lineHeight: 18 },
 });

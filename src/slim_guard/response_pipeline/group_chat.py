@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
 
 from slim_guard.agents.contracts import (
     ContentBlockKind,
-    ProfessionalAssessment,
     RepairTarget,
     ReviewerVerdictStatus,
 )
 from slim_guard.group_chat import COACH_ROLE_VIOLATION
 from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages
 from slim_guard.group_chat.contracts import ParticipantRole
+from slim_guard.group_chat.failures import reply_failure_notice
 from slim_guard.group_chat.routing import RoutedMessage
-from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.response_pipeline.contracts import (
     ResponseFinalizationRequest,
     ResponseFinalizationResult,
 )
+from slim_guard.response_pipeline.conversation_evidence import assessment_summary, tool_observations
 from slim_guard.response_pipeline.planning import PlannedResponse, ResponsePlanBuilder
 from slim_guard.response_pipeline.profiles import ResolvedStyleProfile
 from slim_guard.response_pipeline.repair import OwnerRepairCoordinator
@@ -80,23 +79,23 @@ class GroupChatFinalizer:
             block.kind in {ContentBlockKind.QUESTION, ContentBlockKind.UNCERTAINTY}
             for block in planned.plan.content_blocks
         )
-        successful_tool_results = self._successful_tool_results(request.tool_outcomes)
-        tool_failed = self._has_failed_tool(request.tool_outcomes)
+        tool_failed = any(
+            o.execution.result.status.value != "succeeded" for o in request.tool_outcomes
+        )
         routed = await self._stages.run_conversation(
             request=request,
-            system_text=request.neutral_draft,
+            neutral_draft=request.neutral_draft,
             conversation_context=request.conversation_context,
             plan_artifact=plan_artifact,
             parent_invocation_id=request.core_invocation_id,
-            system_source_refs=self._system_source_refs(planned),
             semantic_summary={
                 "response_plan": planned.plan.model_dump(mode="json"),
                 "professional_assessment": (
-                    self._approved_assessment_summary(planned.assessment)
+                    assessment_summary(planned.assessment)
                     if planned.assessment is not None
                     else None
                 ),
-                "successful_tool_results": successful_tool_results,
+                "tool_results": tool_observations(request.tool_outcomes),
             },
             allowed_source_refs=tuple(
                 dict.fromkeys(
@@ -107,11 +106,7 @@ class GroupChatFinalizer:
                             for block in planned.plan.content_blocks
                             for reference in block.source_refs
                         ),
-                        *(
-                            outcome.execution.tool_call_id
-                            for outcome in request.tool_outcomes
-                            if outcome.execution.result.status.value == "succeeded"
-                        ),
+                        *(outcome.execution.tool_call_id for outcome in request.tool_outcomes),
                     )
                 )
             ),
@@ -179,7 +174,7 @@ class GroupChatFinalizer:
                         review=review,
                         next_sequence=sequence_base + coach_index + 1,
                     ),
-                    system_text=routed.routing.system_text,
+                    preserved_notices=routed.routing.system_messages,
                     calls=calls,
                     tokens=tokens,
                 )
@@ -199,6 +194,11 @@ class GroupChatFinalizer:
             if coach_result.style.status is not InvocationStatus.SUCCEEDED:
                 failure_codes.append(coach_result.style.failure_code or "coach_style_degraded")
 
+        if not outgoing:
+            # A rejected doctor response must not reappear as an unreviewed
+            # system draft. Completed operation cards are still projected below.
+            outgoing.append(reply_failure_notice())
+            failure_codes.append("no_adoptable_conversation_message")
         messages = compose_messages(
             turn_id=request.turn_id,
             text_messages=tuple(outgoing),
@@ -343,7 +343,7 @@ class GroupChatFinalizer:
         selection: ResolvedStyleProfile,
         resolution_artifact: AgentArtifact,
         origin: ContentRepairOrigin,
-        system_text: str,
+        preserved_notices: tuple[RoutedMessage, ...],
         calls: int,
         tokens: int,
     ) -> ResponseFinalizationResult:
@@ -358,8 +358,18 @@ class GroupChatFinalizer:
         tokens += repair.total_token_count
         repaired = repair.core
         if isinstance(repaired, CoreRepairFailure):
+            notices = tuple(
+                OutgoingTextMessage(
+                    participant=message.participant,
+                    text=message.text,
+                    source_refs=message.source_refs,
+                    requires_response=message.requires_response,
+                    notice_text=message.notice_text,
+                )
+                for message in preserved_notices
+            ) or (reply_failure_notice(),)
             return ResponseFinalizationResult(
-                text=system_text,
+                text="\n".join(message.text for message in notices),
                 status=InvocationStatus.DEGRADED,
                 core_output_artifact_id=plan_artifact.artifact_id,
                 final_output_artifact_id=origin.review.artifact.artifact_id,
@@ -371,13 +381,7 @@ class GroupChatFinalizer:
                 nutrition_repaired=repair.nutrition_repaired,
                 messages=compose_messages(
                     turn_id=request.turn_id,
-                    text_messages=(
-                        OutgoingTextMessage(
-                            participant=ParticipantRole.SYSTEM_ASSISTANT,
-                            text=system_text,
-                            source_refs=self._system_source_refs(planned),
-                        ),
-                    ),
+                    text_messages=notices,
                     tool_outcomes=request.tool_outcomes,
                 ),
             )
@@ -401,108 +405,3 @@ class GroupChatFinalizer:
             core_repaired=True,
             nutrition_repaired=repair.nutrition_repaired,
         )
-
-    @staticmethod
-    def _successful_tool_results(
-        outcomes: tuple[ToolCallOutcome, ...],
-    ) -> tuple[dict[str, object], ...]:
-        """Expose verified observations without making routing decisions.
-
-        The participant model receives successful tool observations as data.  It
-        decides whether any of them justify a coach message; this method does
-        not classify a fixed set of business tools as coach-worthy.
-        """
-
-        summary: list[dict[str, object]] = []
-        for outcome in outcomes:
-            execution = outcome.execution
-            if execution.result.status.value != "succeeded":
-                continue
-            summary.append(
-                {
-                    "tool_name": execution.tool_name,
-                    "source_ref": execution.tool_call_id,
-                    "result": GroupChatFinalizer._model_visible_result(execution.result.output),
-                }
-            )
-        return tuple(summary)
-
-    @staticmethod
-    def _has_failed_tool(outcomes: tuple[ToolCallOutcome, ...]) -> bool:
-        """Expose verified tool failure as context, not a participant decision."""
-
-        return any(outcome.execution.result.status.value != "succeeded" for outcome in outcomes)
-
-    @staticmethod
-    def _system_source_refs(planned: PlannedResponse) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                (
-                    *planned.plan.citation_refs,
-                    *(
-                        reference
-                        for block in planned.plan.content_blocks
-                        for reference in block.source_refs
-                    ),
-                )
-            )
-        )
-
-    @staticmethod
-    def _approved_assessment_summary(
-        assessment: ProfessionalAssessment,
-    ) -> dict[str, object]:
-        """Expose only approved semantic conclusions to Conversation Agent.
-
-        Citation objects and retrieval metadata stay in Trace and the nutrition
-        artifact. The conversation model receives the conclusions it may express,
-        never the source text or raw RAG record.
-        """
-
-        return {
-            "assessment_type": assessment.assessment_type.value,
-            "overall": assessment.overall,
-            "findings": tuple(
-                {
-                    "category": finding.category,
-                    "statement": finding.statement,
-                    "confidence": finding.confidence.value,
-                }
-                for finding in assessment.findings
-            ),
-            "priority_problem": assessment.priority_problem,
-            "actions": tuple(action.statement for action in assessment.actions),
-            "questions": assessment.questions,
-            "risk_flags": assessment.risk_flags,
-            "uncertainty_note": assessment.uncertainty_note,
-        }
-
-    @classmethod
-    def _model_visible_result(cls, value: Any) -> Any:
-        """Remove persistence plumbing before observations reach a model."""
-
-        if isinstance(value, dict):
-            return {
-                key: cls._model_visible_result(item)
-                for key, item in value.items()
-                if key
-                not in {
-                    "id",
-                    "record_id",
-                    "artifact_id",
-                    "citation_id",
-                    "assessment",
-                    "citations",
-                    "idempotency_key",
-                    "created_at",
-                    "updated_at",
-                    "occurred_at",
-                    "timestamp",
-                    "source_ids",
-                }
-            }
-        if isinstance(value, list):
-            return [cls._model_visible_result(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(cls._model_visible_result(item) for item in value)
-        return value

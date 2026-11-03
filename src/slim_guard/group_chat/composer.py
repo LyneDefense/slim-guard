@@ -53,8 +53,6 @@ def compose_messages(
 ) -> tuple[ChatMessage, ...]:
     now = created_at or datetime.now(UTC)
     messages: list[ChatMessage] = []
-    if not any(item.participant is ParticipantRole.SYSTEM_ASSISTANT for item in text_messages):
-        raise ValueError("Outgoing message sequence must include the system assistant")
     for item in text_messages:
         if not item.text.strip():
             continue
@@ -86,6 +84,8 @@ def compose_messages(
                 created_at=now,
             )
         )
+    if not messages:
+        raise ValueError("Outgoing message sequence must contain visible content")
     return tuple(messages)
 
 

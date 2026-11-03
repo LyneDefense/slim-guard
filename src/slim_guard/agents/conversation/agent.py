@@ -16,26 +16,30 @@ from slim_guard.agent_models.gateway import (
 )
 from slim_guard.agents.conversation.contracts import (
     ConversationDecision,
-    ConversationMessageProposal,
 )
 from slim_guard.group_chat import COACH_ROLE_POLICY
-from slim_guard.group_chat.routing import ConversationRouter, RoutingResult
+from slim_guard.group_chat.contracts import ParticipantRole
+from slim_guard.group_chat.failures import REPLY_UNAVAILABLE
+from slim_guard.group_chat.routing import ConversationRouter, RoutedMessage, RoutingResult
 from slim_guard.runtime.contracts import AgentInvocation, InvocationStatus
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner
 
-CONVERSATION_PROMPT_VERSION = "conversation-v5-coach-scope"
+CONVERSATION_PROMPT_VERSION = "conversation-v6-coach-default"
 CONVERSATION_PROMPT = (
     "你是 SlimGuard 群聊中的 Conversation Agent，负责为用户、教练和系统助手组织本轮有序消息。"
-    "你收到的是当前用户输入、近期对话、任务状态，以及 Core/Harness 已形成的系统回复和验证语义。"
-    "请根据完整交流上下文判断哪些内容适合由系统助手说、哪些关系性内容适合由教练说；"
-    "系统助手承担事实、操作状态和必要澄清；它的回复不代替教练的关系性回应。"
-    "用户分享饮食、运动、身体变化或个人感受时，应认真考虑由教练补充简短、自然且有帮助的回应；"
+    "你收到当前用户输入、近期对话、任务状态、中性草稿和已验证的工具结果。"
+    "中性草稿 neutral_draft 是语义输入，不属于系统助手，不要求逐字照搬。"
+    "医生教练是默认对话入口，负责回应用户、聊天、答疑、点评和建议，包括有依据的事实解释和安全提醒。"
+    "通常仅输出 coach 消息；不要把普通对话变成系统提示，也不要用系统通知代替医生回应。"
+    "只在用户操作确有需要对外说明的结果、进度或业务澄清时，附加 system_assistant 通知；"
+    "notice_kind 分别为 operation_result、operation_progress、operation_clarification。"
+    "内部检索、读取上下文或咨询专家不等于需要通知用户，不能因调用过工具就生成通知。"
+    "操作结果必须依据真实回执，不编造成功、失败或进度；业务澄清必须是完成用户操作所必需的信息。"
+    "医生可以在操作通知之外正常交流，但不播报操作状态；不要机械附加夸奖或重复通知内容。"
     "只要已有明确部分可回应，就不要仅因其他细节仍不确定而让教练整轮沉默。"
-    "教练可以回应已确认的部分或用户感受，不得猜测未确认的菜品、状态或记录结果；"
-    "对纯事实查询、必要澄清、安全风险或确实没有自然教练补充的场景，系统助手单独回复即可。"
-    "教练可以不发言，也可以发送多条彼此必要且自然的消息，不要把每次工具成功机械变成教练发言。"
-    "输出 messages 数组，按期望展示顺序排列；必须恰好包含一条 system_assistant 消息，"
-    "其 text 必须逐字等于 system_candidate，source_refs 由 Harness 校验。"
+    "输出 schema_version=3 的 messages 数组，按自然交流顺序排列；不要求每轮出现系统消息。"
+    "多个操作事项合为一条必要的通知；医生消息没有固定条数或角色配比。"
+    "source_refs 只能来自允许引用列表。"
     "手机界面把系统助手内容显示为输入框上方的提示条，教练内容仍显示为聊天气泡。"
     "为系统消息提供 notice_text：简短、忠实地概括执行结果或系统说明，保留重要失败与风险信息；"
     "不重复列出整份菜品明细，不附加例行的‘如需更正请告诉我’话术，用户可在记录历史直接修改。"
@@ -57,7 +61,6 @@ CONVERSATION_PROMPT = (
 class ConversationAgentResult:
     status: InvocationStatus
     routing: RoutingResult
-    model_system_text: str | None
     responses: tuple[ModelResponse, ...]
     model_call_count: int
     total_token_count: int
@@ -82,10 +85,9 @@ class ConversationAgent:
         self,
         *,
         invocation: AgentInvocation,
-        system_text: str,
+        neutral_draft: str,
         semantic_summary: dict[str, object] | None = None,
         conversation_context: dict[str, object] | None = None,
-        system_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
         tool_failed: bool = False,
@@ -100,12 +102,13 @@ class ConversationAgent:
                     role=MessageRole.USER,
                     content=json.dumps(
                         {
-                            "system_candidate": system_text,
+                            "neutral_draft": neutral_draft,
                             "semantic_summary": semantic_summary or {},
                             "conversation_context": conversation_context or {},
                             "allowed_source_refs": allowed_source_refs,
                             "pending_clarification": pending_clarification,
                             "tool_failed": tool_failed,
+                            "output_schema": ConversationDecision.model_json_schema(),
                         },
                         ensure_ascii=False,
                     ),
@@ -129,45 +132,30 @@ class ConversationAgent:
             grant=grant,
         )
         if result.output is None:
-            fallback = ConversationMessageProposal(
-                participant="system_assistant",
-                text=system_text.strip(),
-                # A failed planner cannot prove that the message is transient.
-                # Keep its authoritative content available until dismissed/replied.
-                requires_response=True,
-            )
             return ConversationAgentResult(
                 status=InvocationStatus.DEGRADED,
-                routing=self._router.route(
-                    system_text=system_text,
-                    proposals=(fallback,),
-                    system_source_refs=system_source_refs,
-                    allowed_source_refs=allowed_source_refs,
+                routing=RoutingResult(
+                    messages=(
+                        RoutedMessage(
+                            participant=ParticipantRole.SYSTEM_ASSISTANT,
+                            text=REPLY_UNAVAILABLE,
+                            notice_text=REPLY_UNAVAILABLE,
+                            notice_kind="service_error",
+                        ),
+                    ),
                 ),
-                model_system_text=None,
                 responses=result.responses,
                 model_call_count=result.model_call_count,
                 total_token_count=result.total_token_count,
                 failure_code=result.failure_code or "conversation_planning_failed",
             )
         routing = self._router.route(
-            system_text=system_text,
             proposals=result.output.messages,
-            system_source_refs=system_source_refs,
             allowed_source_refs=allowed_source_refs,
-        )
-        proposed_system = next(
-            (
-                message.text
-                for message in result.output.messages
-                if message.participant == "system_assistant"
-            ),
-            None,
         )
         return ConversationAgentResult(
             status=InvocationStatus.SUCCEEDED,
             routing=routing,
-            model_system_text=proposed_system,
             responses=result.responses,
             model_call_count=result.model_call_count,
             total_token_count=result.total_token_count,

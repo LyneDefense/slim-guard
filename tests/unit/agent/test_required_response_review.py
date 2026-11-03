@@ -65,7 +65,7 @@ async def test_group_chat_only_sends_coach_after_successful_review(tmp_path, sce
         reply("已收到消息。"),
         reply(
             {
-                "schema_version": "2",
+                "schema_version": "3",
                 "messages": [
                     *(
                         [{"participant": "coach", "text": coach, "source_refs": []}]
@@ -76,6 +76,7 @@ async def test_group_chat_only_sends_coach_after_successful_review(tmp_path, sce
                         "participant": "system_assistant",
                         "text": "已收到消息。",
                         "requires_response": False,
+                        "notice_kind": "operation_result",
                         "source_refs": [],
                     },
                 ],

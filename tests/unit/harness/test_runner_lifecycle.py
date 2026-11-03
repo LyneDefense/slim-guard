@@ -1,6 +1,7 @@
 """Turn ownership, Core invocation boundaries and response policy regression."""
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from slim_guard.agents.core import CoreAgent
 from slim_guard.db.models import AgentTurnRecord, SlimGuardUser
 from slim_guard.db.session import Database
 from slim_guard.group_chat.contracts import ChatMessage
+from slim_guard.group_chat.failures import REPLY_UNAVAILABLE
 from slim_guard.harness.context import ContextCompiler
 from slim_guard.harness.events import ItemType, TurnStatus, TurnTrigger
 from slim_guard.harness.initialization import TurnInitializationRequest, TurnInitializer, TurnInput
@@ -27,13 +29,12 @@ from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.runner import TurnHarness
 from slim_guard.harness.safety import OutputGuardResult
 from slim_guard.harness.state_repository import HarnessStateRepository
-from slim_guard.harness.tool_calls import ToolCallOutcome
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.response_pipeline.contracts import ResponseFinalizationResult
 from slim_guard.response_pipeline.processor import ResponseProcessor
 from slim_guard.runtime.invocation.core import CoreInvocationRunner
-from slim_guard.tools.contracts import ToolExecution, ToolExecutionMode, ToolResult
+from slim_guard.tools.contracts import ToolExecutionMode
 from slim_guard.tools.registry import ToolRegistry
 from slim_guard.usage.context import CURRENT
 
@@ -196,14 +197,15 @@ async def test_core_finishes_before_reply_but_turn_stays_running(env):
     assert CURRENT.get().turn_id is None
 
 
-async def test_reply_failure_preserves_core_draft_without_regeneration(env):
+async def test_reply_failure_uses_an_explicit_error_notice_without_exposing_core_draft(env):
     class BrokenFinalizer:
         async def finalize(self, request):
             raise RuntimeError("unavailable")
 
     model = ScriptedModelGateway([response()])
     result = await env.build(model=model, finalizer=BrokenFinalizer()).run(request=env.request)
-    assert result.final_text == "中性草稿。" and len(model.requests) == 1
+    assert result.final_text == REPLY_UNAVAILABLE and len(model.requests) == 1
+    assert result.outgoing_messages[0].participant.value == "system_assistant"
     assert result.loop.model_call_count == 1
     items = await env.state.list_items(result.initialized.turn.id)
     degraded = [i for i in items if i.item_type is ItemType.RESPONSE_DEGRADED]
@@ -227,10 +229,50 @@ async def test_output_guard_policy_is_applied_once_per_stage(env, blocked_text):
     result = await env.build(finalizer=Finalizer(), guard=guard).run(request=env.request)
     expected = ["中性草稿。"] if blocked_text == "中性草稿。" else ["中性草稿。", "教练回复。"]
     assert guard.texts == expected
-    assert result.final_text == ("安全提示。" if len(expected) == 1 else "中性草稿。")
-    assert result.outgoing_messages == ()
+    assert result.final_text == "安全提示。"
+    if len(expected) == 1:
+        assert result.outgoing_messages == ()
+    else:
+        assert result.outgoing_messages[0].text == "安全提示。"
     assert result.final_output_artifact_id is None
     assert len(env.recorder.finishes) == 1
+
+
+async def test_actual_notice_summary_is_checked_even_when_body_matches_core_draft(env):
+    class NoticeFinalizer(Finalizer):
+        async def finalize(self, request):
+            result = await super().finalize(request)
+            return replace(
+                result,
+                text="中性草稿。",
+                messages=(
+                    result.messages[0].model_copy(
+                        update={
+                            "participant": "system_assistant",
+                            "text": "中性草稿。",
+                            "notice_text": "所有更改都已成功。",
+                        }
+                    ),
+                ),
+            )
+
+    class Guard:
+        texts = []
+
+        def review(self, *, text, **kwargs):
+            self.texts.append(text)
+            return OutputGuardResult(
+                "操作结果仍需核实。" if "所有更改都已成功。" in text else text,
+                "所有更改都已成功。" in text,
+                "test_notice_guard",
+            )
+
+    guard = Guard()
+    result = await env.build(finalizer=NoticeFinalizer(), guard=guard).run(request=env.request)
+    assert guard.texts == ["中性草稿。", "中性草稿。\n所有更改都已成功。"]
+    assert result.final_text == "操作结果仍需核实。"
+    assert result.outgoing_messages[0].notice_text == "操作结果仍需核实。"
+    assert "中性草稿" not in result.final_text
 
 
 async def test_unknown_core_exception_is_rethrown_with_completed_usage(env):
@@ -338,4 +380,3 @@ async def test_core_cancellation_retains_already_completed_model_usage(env):
     assert core.model_call_count == 1 and core.total_token_count == 7
     assert finish["model_call_count"] == 1 and finish["total_token_count"] == 7
     assert core.failure_code == "execution_cancelled"
-

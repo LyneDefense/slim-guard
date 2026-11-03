@@ -20,6 +20,7 @@ class RoutedMessage:
     source_refs: tuple[str, ...] = ()
     requires_response: bool = False
     notice_text: str | None = None
+    notice_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +29,9 @@ class RoutingResult:
     suppressed_reasons: tuple[str, ...] = ()
 
     @property
-    def system_text(self) -> str:
-        return next(
-            message.text
+    def system_messages(self) -> tuple[RoutedMessage, ...]:
+        return tuple(
+            message
             for message in self.messages
             if message.participant is ParticipantRole.SYSTEM_ASSISTANT
         )
@@ -47,7 +48,7 @@ class RoutingResult:
 
 
 class ConversationRouter:
-    """Validate ordering and provenance while preserving authoritative status.
+    """Validate message provenance, not the user's business intent.
 
     This is a contract/safety boundary, not a scenario router. Pending questions
     and failed operations are facts supplied to the Conversation Agent; neither
@@ -57,73 +58,49 @@ class ConversationRouter:
     def route(
         self,
         *,
-        system_text: str,
         proposals: Sequence[ConversationMessageProposal],
-        system_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
     ) -> RoutingResult:
-        authoritative_system_text = system_text.strip()
-        if not authoritative_system_text:
-            raise ValueError("The system assistant must have an authoritative response")
-
         allowed = set(allowed_source_refs)
-        system_refs = tuple(ref for ref in system_source_refs if ref in allowed)
         routed: list[RoutedMessage] = []
         suppressed: list[str] = []
         system_seen = False
+        seen: set[tuple[str, str]] = set()
 
         for proposal in proposals:
+            refs = proposal.source_refs
+            if any(ref not in allowed for ref in refs):
+                suppressed.append(f"{proposal.participant}_source_ref_not_allowed")
+                continue
+            identity = (proposal.participant, proposal.text)
+            if identity in seen:
+                suppressed.append("duplicate_message")
+                continue
+            seen.add(identity)
             if proposal.participant == "system_assistant":
                 if system_seen:
                     suppressed.append("duplicate_system_message")
                     continue
                 system_seen = True
-                if proposal.text.strip() != authoritative_system_text:
-                    # Presentation planning cannot change a verified operation
-                    # result, system fact, or required clarification.
-                    suppressed.append("system_text_kept_authoritative")
                 routed.append(
                     RoutedMessage(
                         participant=ParticipantRole.SYSTEM_ASSISTANT,
-                        text=authoritative_system_text,
-                        source_refs=system_refs,
+                        text=proposal.text,
+                        source_refs=refs,
                         requires_response=proposal.requires_response,
-                        notice_text=(
-                            proposal.notice_text
-                            if proposal.text.strip() == authoritative_system_text
-                            else None
-                        ),
+                        notice_text=proposal.notice_text,
+                        notice_kind=proposal.notice_kind,
                     )
                 )
                 continue
 
-            candidate = proposal.text.strip()
-            refs = tuple(dict.fromkeys(ref.strip() for ref in proposal.source_refs if ref.strip()))
-            if any(ref not in allowed for ref in refs):
-                suppressed.append("coach_source_ref_not_allowed")
-                continue
-            if not candidate or candidate == authoritative_system_text:
-                suppressed.append("duplicate_system_text")
-                continue
             routed.append(
                 RoutedMessage(
                     participant=ParticipantRole.COACH,
-                    text=candidate,
+                    text=proposal.text,
                     source_refs=refs,
                 )
             )
-
-        if not system_seen:
-            # Defensive fallback for non-model callers. The typed output contract
-            # normally requires exactly one system message.
-            routed.append(
-                RoutedMessage(
-                    participant=ParticipantRole.SYSTEM_ASSISTANT,
-                    text=authoritative_system_text,
-                    source_refs=system_refs,
-                )
-            )
-            suppressed.append("system_message_added_by_harness")
 
         return RoutingResult(messages=tuple(routed), suppressed_reasons=tuple(suppressed))
 

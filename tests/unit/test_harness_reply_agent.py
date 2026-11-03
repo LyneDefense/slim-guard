@@ -118,11 +118,11 @@ async def test_adapter_does_not_deliver_non_final_harness_result() -> None:
         )
 
 
-async def test_adapter_delivers_user_confirmation_prompt() -> None:
+async def test_adapter_delivers_model_clarification_without_a_fixed_confirmation_workflow() -> None:
+    clarification = "你想把目标体重改为多少？"
     runtime = FakeAgentRuntime(
         runtime_result(
-            termination=HarnessTermination.WAITING_USER_CONFIRMATION,
-            final_text=None,
+            final_text=clarification,
         )
     )
     adapter = HarnessReplyAgent(
@@ -135,9 +135,8 @@ async def test_adapter_delivers_user_confirmation_prompt() -> None:
         ReplyRequest(
             user_id="internal-user-1",
             nickname=None,
-            text="清空我的个性化记忆",
+            text="帮我修改目标体重",
         )
     )
 
-    assert "需要你再次明确确认" in reply
-    assert "确认执行" in reply
+    assert reply == clarification

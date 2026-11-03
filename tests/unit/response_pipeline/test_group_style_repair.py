@@ -133,13 +133,14 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
         reply("已记录今天体重77.6kg。"),
         reply(
             {
-                "schema_version": "2",
+                "schema_version": "3",
                 "messages": [
                     {"participant": "coach", "text": "加油。", "source_refs": []},
                     {
                         "participant": "system_assistant",
                         "text": "已记录今天体重77.6kg。",
                         "requires_response": False,
+                        "notice_kind": "operation_result",
                         "source_refs": [],
                     },
                 ],
@@ -155,13 +156,14 @@ async def test_coach_style_repair_is_bounded_and_preserves_record(
                 reply({"neutral_draft": "已记录今天体重77.6kg。"}),
                 reply(
                     {
-                        "schema_version": "2",
+                        "schema_version": "3",
                         "messages": [
                             {"participant": "coach", "text": "加油。", "source_refs": []},
                             {
                                 "participant": "system_assistant",
                                 "text": "已记录今天体重77.6kg。",
                                 "requires_response": False,
+                                "notice_kind": "operation_result",
                                 "source_refs": [],
                             },
                         ],

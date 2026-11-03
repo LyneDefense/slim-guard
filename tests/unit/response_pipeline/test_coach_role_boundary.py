@@ -57,13 +57,14 @@ async def test_wrong_role_coach_is_suppressed_and_record_receipt_survives(tmp_pa
             reply(system_text),
             reply(
                 {
-                    "schema_version": "2",
+                    "schema_version": "3",
                     "messages": [
                         {"participant": "coach", "text": source, "source_refs": []},
                         {
                             "participant": "system_assistant",
                             "text": system_text,
                             "requires_response": False,
+                            "notice_kind": "operation_result",
                             "source_refs": [],
                         },
                     ],

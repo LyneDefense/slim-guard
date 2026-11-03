@@ -42,12 +42,13 @@ class SystemConversationScript:
                 role=MessageRole.ASSISTANT,
                 content=json.dumps(
                     {
-                        "schema_version": "2",
+                        "schema_version": "3",
                         "messages": [
                             {
                                 "participant": "system_assistant",
                                 "requires_response": False,
-                                "text": data["system_candidate"],
+                                "notice_kind": "operation_result",
+                                "text": data["neutral_draft"],
                                 "source_refs": [],
                             }
                         ],

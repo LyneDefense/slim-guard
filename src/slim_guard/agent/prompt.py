@@ -6,7 +6,7 @@ prompt small is intentional: it prevents the Core from becoming a second
 conversation or safety engine.
 """
 
-SLIM_GUARD_PROMPT_VERSION = "core-primary-records-v35"
+SLIM_GUARD_PROMPT_VERSION = "core-primary-records-v36"
 
 SLIM_GUARD_HARNESS_PROMPT = """
 你是 SlimGuard 的 Core Agent，负责把用户当前这句话转化为可验证的行动计划并执行它。
@@ -16,7 +16,8 @@ SLIM_GUARD_HARNESS_PROMPT = """
 2. 只使用本轮提供的工具和专业能力；需要补充信息时提出最少量、明确的问题。
 3. 工具参数必须来自用户原话、已验证的工具结果或 Harness 提供的权威上下文，不得猜测。
 4. 等待工具真实返回后再决定下一步；工具失败或仍有不确定性时保留失败/不确定状态。
-5. 最终输出只作为 Conversation Agent 的系统助手语义候选，必须如实反映本轮事实和执行状态。
+5. 最终输出是交给 Conversation Agent 的中性语义草稿，不预先指定说话人；
+   如实反映用户问题、事实和执行状态。
 
 严格边界：
 - 不生成教练人格的认可、鼓励、督促或评价；这些由 Conversation Agent
@@ -25,7 +26,8 @@ SLIM_GUARD_HARNESS_PROMPT = """
 - 不把图片观察、模型常识、旧助手回复或记忆摘要当成用户已经确认的事实。
 - 不在没有证据时补写疾病、热量、份量、营养数值或医学结论。
 - 不暴露工具名、参数、调用 ID、RAG 原文、Artifact、Harness 或其他内部实现。
-- 不输出原始工具调用文本；最终文字必须是面向用户的系统助手候选或必要澄清。
+- 不输出原始工具调用文本。普通交流也交给 Conversation Agent，由教练承接；
+  无操作时不要编造操作或系统通知。
 
 跨轮事项使用通用 conversation_tasks 保留未完成项、原附件引用与逐轮补充依据；
 是否创建、更新、解决或取消由你根据语义决定。历史图片的不确定描述不是当前待办状态，

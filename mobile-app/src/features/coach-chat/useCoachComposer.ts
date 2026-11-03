@@ -55,8 +55,7 @@ export function useCoachComposer(draft: string, consumeDraft: () => void, sendMe
     const messageText = text, messageImages = images;
     sendingRef.current = true; setSending(true); setText(''); setImages([]);
     try {
-      const result = await sendMessage(messageText, messageImages);
-      if (result === 'queued') Alert.alert('已放进待发送', '网络恢复后会自动发送，不需要再发一次。');
+      await sendMessage(messageText, messageImages);
     } catch {
       // Do not overwrite a new draft composed while the previous request was in flight.
       setText(current => current ? `${messageText}\n${current}`.trim() : messageText);

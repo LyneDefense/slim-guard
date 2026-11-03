@@ -136,12 +136,11 @@ class ResponseStageExecutor:
         self,
         *,
         request: ResponseFinalizationRequest,
-        system_text: str,
+        neutral_draft: str,
         semantic_summary: dict[str, object] | None = None,
         conversation_context: dict[str, object] | None = None,
         plan_artifact: AgentArtifact,
         parent_invocation_id: str,
-        system_source_refs: tuple[str, ...] = (),
         allowed_source_refs: tuple[str, ...] = (),
         pending_clarification: bool = False,
         tool_failed: bool = False,
@@ -166,10 +165,9 @@ class ResponseStageExecutor:
         await self._start(invocation, "生成系统助手和教练的群聊消息计划")
         result = await self._conversation_agent.run(
             invocation=invocation,
-            system_text=system_text,
+            neutral_draft=neutral_draft,
             semantic_summary=semantic_summary,
             conversation_context=conversation_context,
-            system_source_refs=system_source_refs,
             allowed_source_refs=allowed_source_refs,
             pending_clarification=pending_clarification,
             tool_failed=tool_failed,
@@ -180,8 +178,7 @@ class ResponseStageExecutor:
             producer=ArtifactProducerRole.CONVERSATION,
             artifact_type="conversation_plan",
             payload={
-                "system_text": system_text,
-                "model_system_text": result.model_system_text,
+                "neutral_draft": neutral_draft,
                 "messages": [
                     {
                         "participant": message.participant.value,
@@ -189,6 +186,7 @@ class ResponseStageExecutor:
                         "source_refs": list(message.source_refs),
                         "requires_response": message.requires_response,
                         "notice_text": message.notice_text,
+                        "notice_kind": message.notice_kind,
                     }
                     for message in result.routing.messages
                 ],
@@ -206,7 +204,7 @@ class ResponseStageExecutor:
                 invocation_id=invocation.invocation_id,
                 status=result.status,
                 output_schema="ConversationDecision",
-                output_schema_version="2",
+                output_schema_version="3",
                 artifact_id=artifact.artifact_id,
                 model_call_count=result.model_call_count,
                 tool_call_count=0,

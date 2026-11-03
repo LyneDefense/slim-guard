@@ -8,6 +8,8 @@ from pydantic import Field, field_validator, model_validator
 
 from slim_guard.runtime.contracts import ContractModel
 
+OperationNoticeKind = Literal["operation_result", "operation_clarification", "operation_progress"]
+
 
 class ConversationMessageProposal(ContractModel):
     """One ordered text message proposed for a group-chat participant."""
@@ -17,11 +19,24 @@ class ConversationMessageProposal(ContractModel):
     source_refs: tuple[str, ...] = Field(default=(), max_length=64)
     requires_response: bool = False
     notice_text: str | None = Field(default=None, min_length=1, max_length=800)
+    notice_kind: OperationNoticeKind | None = None
 
     @model_validator(mode="after")
     def system_notice_only(self) -> ConversationMessageProposal:
-        if self.participant == "coach" and (self.requires_response or self.notice_text is not None):
-            raise ValueError("Notice metadata belongs to the system assistant")
+        if self.participant == "coach":
+            if (
+                self.requires_response
+                or self.notice_text is not None
+                or self.notice_kind is not None
+            ):
+                raise ValueError("Notice metadata belongs to the system assistant")
+        else:
+            if self.notice_kind is None:
+                raise ValueError("System notice must declare its operation purpose")
+            if "requires_response" not in self.model_fields_set:
+                raise ValueError("System notice must explicitly declare requires_response")
+            if self.requires_response != (self.notice_kind == "operation_clarification"):
+                raise ValueError("Only operation clarification notices require a response")
         if self.notice_text is not None and not self.notice_text.strip():
             raise ValueError("Notice text cannot be blank")
         return self
@@ -46,16 +61,14 @@ class ConversationMessageProposal(ContractModel):
 class ConversationDecision(ContractModel):
     """Propose an ordered assistant/coach message sequence, never tool cards."""
 
-    schema_version: Literal["2"] = "2"
+    schema_version: Literal["3"] = "3"
     messages: tuple[ConversationMessageProposal, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def require_system_assistant_message(self) -> ConversationDecision:
+    def validate_optional_system_notice(self) -> ConversationDecision:
         system = [message for message in self.messages if message.participant == "system_assistant"]
-        if len(system) != 1:
-            raise ValueError("Conversation plan must contain exactly one system assistant message")
-        if "requires_response" not in system[0].model_fields_set:
-            raise ValueError("System message must explicitly declare requires_response")
+        if len(system) > 1:
+            raise ValueError("Combine operation notices into at most one system notification")
         return self
 
 

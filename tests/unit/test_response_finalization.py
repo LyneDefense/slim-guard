@@ -61,8 +61,21 @@ async def test_system_response_does_not_enter_style_or_review(tmp_path) -> None:
     database = await prepare_database(tmp_path)
     model = ScriptedModelGateway(
         (
-            response("已收到。"),
-            conversation("已收到。", coach=None),
+            response("需要提供新目标体重。"),
+            response(
+                json.dumps(
+                    {
+                        "messages": [
+                            {
+                                "participant": "system_assistant",
+                                "text": "需要提供新目标体重。",
+                                "notice_kind": "operation_clarification",
+                                "requires_response": True,
+                            }
+                        ]
+                    }
+                )
+            ),
         )
     )
     runtime = build_agent_runtime(
@@ -75,8 +88,10 @@ async def test_system_response_does_not_enter_style_or_review(tmp_path) -> None:
         clock=lambda: NOW,
     )
     try:
-        result = await runtime.run_user_message(AgentRuntimeRequest(user_id="user-1", text="你好"))
-        assert result.final_text == "已收到。"
+        result = await runtime.run_user_message(
+            AgentRuntimeRequest(user_id="user-1", text="帮我修改目标体重")
+        )
+        assert result.final_text == "需要提供新目标体重。"
         assert [r.purpose for r in model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.CONVERSATION,
@@ -96,18 +111,20 @@ def conversation(system: str | None, *, coach: str | None) -> ModelResponse:
                 "source_refs": [],
             }
         )
-    messages.append(
-        {
-            "participant": "system_assistant",
-            "text": system or "已收到。",
-            "requires_response": False,
-            "source_refs": [],
-        }
-    )
+    if system is not None:
+        messages.append(
+            {
+                "participant": "system_assistant",
+                "text": system,
+                "requires_response": False,
+                "notice_kind": "operation_result",
+                "source_refs": [],
+            }
+        )
     return response(
         json.dumps(
             {
-                "schema_version": "2",
+                "schema_version": "3",
                 "messages": messages,
             },
             ensure_ascii=False,
@@ -134,7 +151,7 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
             response(
                 json.dumps(
                     {
-                        "schema_version": "2",
+                        "schema_version": "3",
                         "messages": [
                             {
                                 "participant": "coach",
@@ -145,6 +162,7 @@ async def test_group_chat_routes_coach_text_through_style_and_keeps_system_text(
                                 "participant": "system_assistant",
                                 "text": "今天这条晚餐处理好了。",
                                 "requires_response": False,
+                                "notice_kind": "operation_result",
                                 "source_refs": [],
                             },
                         ],
@@ -241,7 +259,7 @@ async def test_multiple_coach_messages_keep_model_order_and_are_reviewed_individ
         response(
             json.dumps(
                 {
-                    "schema_version": "2",
+                    "schema_version": "3",
                     "messages": [
                         {
                             "participant": "coach",
@@ -252,6 +270,7 @@ async def test_multiple_coach_messages_keep_model_order_and_are_reviewed_individ
                             "participant": "system_assistant",
                             "text": "收到。",
                             "requires_response": False,
+                            "notice_kind": "operation_result",
                             "source_refs": [],
                         },
                         {
@@ -378,6 +397,7 @@ async def test_professional_response_runs_nutrition_style_and_reviewer_as_childr
         by_role = {item.agent_role: item for item in invocations}
 
         assert result.messages[0].text == styled["text"]
+        assert [m.participant.value for m in result.messages] == ["coach"]
         assert [request.purpose for request in model.requests] == [
             ModelPurpose.HARNESS_TURN,
             ModelPurpose.NUTRITION,

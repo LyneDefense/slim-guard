@@ -3,7 +3,9 @@
 import logging
 from dataclasses import dataclass
 
-from slim_guard.group_chat.contracts import ChatMessage
+from slim_guard.group_chat.composer import OutgoingTextMessage, compose_messages
+from slim_guard.group_chat.contracts import ChatMessage, ParticipantRole
+from slim_guard.group_chat.failures import reply_failure_notice
 from slim_guard.harness.events import ItemType
 from slim_guard.harness.initialization import InitializedTurn
 from slim_guard.harness.loop import HarnessLoopResult
@@ -99,18 +101,37 @@ class ResponseProcessor:
                 )
             # Identical text over the same immutable receipt set already has a
             # verdict. Styling/new text still receives its own semantic review.
+            review_text = "\n".join(
+                dict.fromkeys(
+                    (
+                        finalization.text,
+                        *(
+                            message.notice_text
+                            for message in finalization.messages
+                            if message.notice_text
+                        ),
+                    )
+                )
+            )
             checked = (
                 guarded
-                if finalization.text == guarded.text
-                else await self._review(finalization.text, result.tool_outcomes)
+                if review_text == guarded.text
+                else await self._review(review_text, result.tool_outcomes)
             )
             if checked.modified:
-                # Preserve the existing fallback policy; role-preserving repair is
-                # a separate behavior change, not part of lifecycle extraction.
                 await self._degraded(
                     invocation, "response_pipeline_output_guard_modified", finalization
                 )
-                return ProcessedResponse(result, final_text=guarded.text, finalization=finalization)
+                return self._notice_response(
+                    invocation,
+                    result,
+                    finalization,
+                    OutgoingTextMessage(
+                        participant=ParticipantRole.SYSTEM_ASSISTANT,
+                        text=checked.text,
+                        notice_text=checked.text,
+                    ),
+                )
             await self._recorder.record_workflow_event(
                 turn_id=invocation.turn_id,
                 event_type=ItemType.RESPONSE_ADOPTED,
@@ -122,7 +143,7 @@ class ResponseProcessor:
             )
             return ProcessedResponse(
                 result,
-                final_text=checked.text,
+                final_text=finalization.text,
                 outgoing_messages=finalization.messages,
                 final_output_artifact_id=finalization.final_output_artifact_id,
                 finalization=finalization,
@@ -130,7 +151,26 @@ class ResponseProcessor:
         except Exception:
             logger.exception("final_response_workflow_failed")
             await self._degraded(invocation, "response_pipeline_failed", finalization)
-            return ProcessedResponse(result, final_text=guarded.text, finalization=finalization)
+            return self._notice_response(invocation, result, finalization, reply_failure_notice())
+
+    @staticmethod
+    def _notice_response(
+        invocation: AgentInvocation,
+        result: HarnessLoopResult,
+        finalization: ResponseFinalizationResult | None,
+        notice: OutgoingTextMessage,
+    ) -> ProcessedResponse:
+        messages = compose_messages(
+            turn_id=invocation.turn_id,
+            text_messages=(notice,),
+            tool_outcomes=result.tool_outcomes,
+        )
+        return ProcessedResponse(
+            result,
+            final_text="\n".join(m.text for m in messages if m.text),
+            outgoing_messages=messages,
+            finalization=finalization,
+        )
 
     async def _degraded(
         self,
@@ -144,6 +184,6 @@ class ResponseProcessor:
             payload={
                 "artifact_id": finalization.final_output_artifact_id if finalization else None,
                 "reason_code": reason,
-                "fallback_type": "core_response",
+                "fallback_type": "system_notice",
             },
         )
