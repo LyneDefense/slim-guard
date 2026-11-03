@@ -15,6 +15,7 @@ from slim_guard.agents.contracts import (
 from slim_guard.agents.style.agent import ResponseStyleAgent
 from slim_guard.expression_style.contracts import SLIMGUARD_DEFAULT_V1, StyleContext
 from slim_guard.expression_style.review.contracts import ReplyCheck
+from slim_guard.expression_style.review.policy import POLICY_VERSION
 from slim_guard.expression_style.review.service import StyleReviewService
 from slim_guard.runtime.invocation import InvocationRunner
 
@@ -87,6 +88,7 @@ async def test_shared_review_can_run_without_trainer_or_agent():
     assert {c["name"] for c in result.checks} == {"integrity", "fidelity", "role", "expression"}
     assert all(c["status"] == "passed" for c in result.checks)
     assert result.signature
+    assert result.policy_version == POLICY_VERSION
     assert not gateway.requests[0].tools
 
 
@@ -107,6 +109,8 @@ async def test_agent_repairs_with_previous_output_and_specific_reason():
     assert result.checks[0]["output"] == "不错，要保持。"
     assert "保留产品名称" in gateway.requests[2].messages[-1].content
     assert "不错，要保持" in gateway.requests[2].messages[-1].content
+    for key in ("source_excerpt", "output_excerpt", "repair_requirement"):
+        assert key in gateway.requests[2].messages[-1].content
     assert result.checks[1]["verdict"] == "passed"
 
 
@@ -147,11 +151,12 @@ async def test_integrity_failure_marks_other_checks_not_run():
     gateway = ScriptedModelGateway([])
     result = await StyleReviewService(InvocationRunner(model=gateway), "test").review(
         invocation=invocation(),
-        context=context("体重 78kg。"),
-        response=styled("体重 70kg。"),
+        context=context("体重 78kg。").model_copy(update={"protected_literals": ("78kg",)}),
+        response=styled("体重 78千克。"),
         source_text="体重 78kg。",
     )
     assert result.verdict == "needs_repair" and not gateway.requests
+    assert result.issues == ("protected_literal_changed",)
     assert result.checks[1]["status"] == "not_run"
 
 
@@ -213,6 +218,13 @@ async def test_unsupported_additions_are_rejected_by_shared_semantic_review(sour
     [
         ("体重 75.0kg，体脂 20.0%。", "体重75kg，体脂20%。"),
         ("累计 1,000 次。", "累计1000次。"),
+        ("今天喝了1500毫升水。", "今天喝了1500毫升水，这1500毫升是今天的饮水量。"),
+        ("今天喝了1500毫升水，饮水量是1500毫升。", "今天喝了1500毫升水。"),
+        ("这周运动了3次。", "这周运动了三次。"),
+        ("这周运动了三次。", "这周运动了3次。"),
+        ("今天喝了1.5升水。", "今天喝了1500毫升水。"),
+        ("体重下降了0.5kg。", "体重下降了500克。"),
+        ("1. 今天散步30分钟。\n2. 今天喝水1500毫升。", "今天散步30分钟，喝水1500毫升。"),
         ("不用客气，很高兴帮到你。", "不客气。"),
     ],
 )
@@ -225,6 +237,9 @@ async def test_equivalent_numbers_and_shortening_reach_semantic_review(source, r
         source_text=source,
     )
     assert result.passed and len(gateway.requests) == 1
+    payload = json.loads(gateway.requests[0].messages[-1].content)
+    assert payload["original"] == source and payload["rewritten"] == rewritten
+    assert all(c["status"] == "passed" for c in result.checks)
 
 
 async def test_literal_contract_is_checked_inside_agent_and_drives_repair():

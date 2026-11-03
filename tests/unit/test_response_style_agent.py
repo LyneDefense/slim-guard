@@ -192,7 +192,7 @@ def test_neutral_renderer_preserves_all_blocks_and_reference_sets() -> None:
     assert StyleResponseValidator().validate(context, response).is_valid
 
 
-def test_validator_rejects_changed_content_numbers_and_reference_sets() -> None:
+def test_validator_rejects_changed_protected_content_and_reference_sets() -> None:
     context = style_context()
     changed = StyledResponse(
         text="今天体重 76kg，已经记录。最近 8 天趋势平稳。",
@@ -216,7 +216,6 @@ def test_validator_rejects_changed_content_numbers_and_reference_sets() -> None:
     assert StyleIntegrityIssueCode.RISK_REFERENCE_CHANGED in codes
     assert StyleIntegrityIssueCode.CITATION_REFERENCE_CHANGED in codes
     assert StyleIntegrityIssueCode.PROTECTED_CONTENT_CHANGED in codes
-    assert StyleIntegrityIssueCode.NUMBER_CHANGED in codes
 
 
 async def test_style_agent_returns_valid_model_response_without_repair() -> None:
@@ -262,7 +261,7 @@ async def test_style_agent_returns_valid_model_response_without_repair() -> None
     }
 
 
-async def test_style_agent_repairs_a_semantically_invalid_json_response_once() -> None:
+async def test_style_agent_repairs_changed_protected_content_once() -> None:
     invalid = valid_styled_response().model_copy(update={"text": "今天体重 88kg，已经记录。"})
     gateway = ScriptedModelGateway(
         (
@@ -282,7 +281,7 @@ async def test_style_agent_repairs_a_semantically_invalid_json_response_once() -
     assert result.repair_attempted is True
     assert result.model_call_count == 3
     assert result.total_token_count == 70
-    assert "number_changed" in (gateway.requests[1].messages[-1].content or "")
+    assert "protected_content_changed" in (gateway.requests[1].messages[-1].content or "")
 
 
 async def test_style_agent_repairs_invalid_json_once() -> None:

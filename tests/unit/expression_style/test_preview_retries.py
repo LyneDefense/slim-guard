@@ -57,6 +57,7 @@ async def seed_preview(db, *, total=17, failed=2):
         await session.flush()
         for i in range(total):
             source = f"可以聊第{i}个话题。"
+            # Historical persisted failures must remain readable after retiring the counter check.
             automated = {
                 "text": source,
                 "package_hash": package.package_hash,
@@ -315,6 +316,27 @@ async def test_still_invalid_rewrite_remains_unpublishable_and_never_fakes_succe
             if request.output_schema_name == "StyledResponse":
                 value = json.loads(result.message.content)
                 value["text"] = "无依据省略了原稿数字。"
+                return result.model_copy(
+                    update={"message": ModelMessage(role="assistant", content=json.dumps(value))}
+                )
+            if request.output_schema_name == "ReplyCheck":
+                payload = json.loads(request.messages[1].content)
+                value = {
+                    "fidelity_passed": False,
+                    "role_passed": True,
+                    "expression_passed": True,
+                    "issues": [
+                        {
+                            "dimension": "fidelity",
+                            "severity": "repairable",
+                            "code": "topic_omitted",
+                            "explanation": "删除了原稿指定的话题",
+                            "source_excerpt": payload["original"],
+                            "output_excerpt": payload["rewritten"],
+                            "repair_requirement": "保留原稿指定的话题",
+                        }
+                    ],
+                }
                 return result.model_copy(
                     update={"message": ModelMessage(role="assistant", content=json.dumps(value))}
                 )

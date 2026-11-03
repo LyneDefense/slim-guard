@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections import Counter
 from dataclasses import dataclass
-from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -14,6 +12,8 @@ from slim_guard.agents.contracts import ContentBlockKind, StyledResponse
 
 if TYPE_CHECKING:
     from slim_guard.expression_style.contracts import StyleContext
+
+INTEGRITY_VERSION = "style-integrity-v3-contracts-only"
 
 
 class StyleIntegrityIssueCode(StrEnum):
@@ -27,7 +27,6 @@ class StyleIntegrityIssueCode(StrEnum):
     CITATION_REFERENCE_CHANGED = "citation_reference_changed"
     PROTECTED_CONTENT_CHANGED = "protected_content_changed"
     PROTECTED_LITERAL_CHANGED = "protected_literal_changed"
-    NUMBER_CHANGED = "number_changed"
     PROHIBITED_PHRASE_USED = "prohibited_phrase_used"
 
 
@@ -66,7 +65,6 @@ _PROTECTED_KINDS = frozenset(
         ContentBlockKind.UNCERTAINTY,
     }
 )
-_NUMBER_PATTERN = re.compile(r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?")
 _IGNORABLE_TEXT = re.compile(r"[\s\u3000，。！？；：、,.!?;:'\"“”‘’（）()【】\[\]《》<>—–-]+")
 
 
@@ -76,7 +74,9 @@ class StyleResponseValidator:
     Protected blocks intentionally remain verbatim modulo whitespace and punctuation.
     This conservative boundary prevents a style-only model from changing facts,
     conclusions, actions, risks, or uncertainty explicitly protected by upstream.
-    Other semantic equivalence and unsupported additions belong to the shared model review.
+    Numeric meaning (including units, ownership and repetition), other semantic
+    equivalence and unsupported additions belong to the shared model review.
+    Number spellings or occurrence counts are not a content contract.
     """
 
     def validate(
@@ -165,12 +165,6 @@ class StyleResponseValidator:
                     )
                 )
 
-        selected_text = "\n".join(
-            block.text for block in plan.content_blocks if block.block_id in used_blocks
-        )
-        if self._numbers(selected_text) != self._numbers(response.text):
-            issues.append(StyleIntegrityIssue(StyleIntegrityIssueCode.NUMBER_CHANGED, "text"))
-
         normalized_candidate = unicodedata.normalize("NFKC", response.text).casefold()
         for phrase in context.profile.prohibited_phrases:
             if unicodedata.normalize("NFKC", phrase).casefold() in normalized_candidate:
@@ -218,16 +212,6 @@ class StyleResponseValidator:
     def _semantic_text(value: str) -> str:
         normalized = unicodedata.normalize("NFKC", value).casefold()
         return _IGNORABLE_TEXT.sub("", normalized)
-
-    @staticmethod
-    def _numbers(value: str) -> Counter[str]:
-        normalized = unicodedata.normalize("NFKC", value)
-        values = []
-        for match in _NUMBER_PATTERN.finditer(normalized):
-            raw = match.group(0).replace(",", "")
-            suffix = "%" if raw.endswith("%") else ""
-            values.append(f"{Decimal(raw.rstrip('%')).normalize()}{suffix}")
-        return Counter(values)
 
 
 __all__ = [

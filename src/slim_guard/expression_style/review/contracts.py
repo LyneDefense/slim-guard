@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slim_guard.agent_models.gateway import ModelResponse
 from slim_guard.expression_style.review.integrity import StyleValidationReport
+from slim_guard.expression_style.review.policy import POLICY_VERSION
 
 if TYPE_CHECKING:
     from slim_guard.agents.contracts import AgentInvocation, StyledResponse
@@ -57,7 +58,7 @@ class RewriteReviewResult:
     responses: tuple[ModelResponse, ...] = ()
     total_token_count: int = 0
     integrity: StyleValidationReport = StyleValidationReport()
-    policy_version: str = "style-review-v4-coach-scope"
+    policy_version: str = POLICY_VERSION
     verdict: str = "inconclusive"
     details: tuple[dict[str, object], ...] = ()
     signature: str = ""
