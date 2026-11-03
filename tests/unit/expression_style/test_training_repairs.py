@@ -29,7 +29,7 @@ async def test_invalid_example_reference_is_repaired_without_generating_tests(st
 
         async def complete(self, request):
             result = await super().complete(request)
-            if request.output_schema_name == "CandidateProposal" and not self.changed:
+            if request.output_schema_name == "ExampleSelection" and not self.changed:
                 self.changed = True
                 value = json.loads(result.message.content)
                 value["example_ids"] = ["不存在的素材"]
@@ -50,9 +50,9 @@ async def test_invalid_example_reference_is_repaired_without_generating_tests(st
     await StyleWorker(style_db, gateway, "test-model").run_once()
     detail = await builds.detail("doctor", run["id"])
     assert detail["status"] == "completed", detail["error"]
-    calls = [r for r in gateway.requests if r.output_schema_name == "CandidateProposal"]
+    calls = [r for r in gateway.requests if r.output_schema_name == "ExampleSelection"]
     assert len(calls) == 2
-    assert json.loads(calls[1].messages[1].content)["repair_issues"]
+    assert "unsupported_example" in calls[1].messages[-1].content
     assert all(r.output_schema_name not in {"TestSuite", "Comparison"} for r in gateway.requests)
 
 
@@ -69,12 +69,12 @@ async def test_negative_only_material_builds_guide_without_positive_examples(sty
 
 
 async def test_schema_failure_resume_reuses_analysis_and_retains_diagnostics(style_db):
-    class BrokenProposalGateway(TrainerGateway):
+    class BrokenSelectionGateway(TrainerGateway):
         broken = True
 
         async def complete(self, request):
             result = await super().complete(request)
-            if request.output_schema_name == "CandidateProposal" and self.broken:
+            if request.output_schema_name == "ExampleSelection" and self.broken:
                 return result.model_copy(
                     update={
                         "message": ModelMessage(
@@ -88,12 +88,12 @@ async def test_schema_failure_resume_reuses_analysis_and_retains_diagnostics(sty
     await material(style_db)
     builds = BuildRepository(style_db)
     run = await builds.build("doctor", "admin", model="test-model")
-    gateway = BrokenProposalGateway()
+    gateway = BrokenSelectionGateway()
     worker = StyleWorker(style_db, gateway, "test-model")
     await worker.run_once()
     detail = await builds.detail("doctor", run["id"])
     assert detail["status"] == "failed" and detail["can_resume"]
-    key = next(k for k in detail["artifacts"] if k.startswith("validation:CandidateProposal:"))
+    key = next(k for k in detail["artifacts"] if k.startswith("validation:ExampleSelection:"))
     failure = (await builds.artifact("doctor", run["id"], key))["value"]
     assert len(failure["failures"]) == 3 and failure["status"] == "unresolved"
     async with style_db.session() as session:
@@ -105,7 +105,7 @@ async def test_schema_failure_resume_reuses_analysis_and_retains_diagnostics(sty
     await worker.run_once()
     detail = await builds.detail("doctor", run["id"])
     assert detail["status"] == "completed", detail["error"]
-    assert gateway.requests[calls_before].output_schema_name == "CandidateProposal"
+    assert gateway.requests[calls_before].output_schema_name == "ExampleSelection"
     assert "validation_errors" in gateway.requests[calls_before].messages[-1].content
     assert sum(r.output_schema_name == "AnalysisBatch" for r in gateway.requests) == 1
     assert detail["usage"]["calls"] == len(gateway.requests)

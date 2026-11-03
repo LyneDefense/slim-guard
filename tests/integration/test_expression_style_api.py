@@ -89,12 +89,21 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
         }
         async with db.session() as session, session.begin():
             row = await session.get(BuildRun, run["id"])
-            row.checkpoints = {diagnostic_key: diagnostic}
+            row.checkpoints = {
+                diagnostic_key: diagnostic,
+                "evidence_catalog": [
+                    {"ref": f"e{i}", "quote": "private-frozen-source", "field": "desired_response"}
+                    for i in range(24)
+                ],
+            }
         base = f"/api/admin/styles/doctor/builds/{run['id']}"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             assert (await client.get(base)).status_code == 401
             assert (
                 await client.get(base + "/artifacts", params={"key": diagnostic_key})
+            ).status_code == 401
+            assert (
+                await client.get(base + "/artifacts", params={"key": "evidence_catalog"})
             ).status_code == 401
             await client.post(
                 "/api/admin/auth/login",
@@ -108,11 +117,22 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
             assert not {"worker_token", "snapshot", "checkpoints", "lease_until"} & data.keys()
             assert diagnostic_key in data["artifacts"]
             assert "private-model-output" not in str(data)
+            assert "private-frozen-source" not in str(data)
+            catalog = await client.get(base + "/artifacts", params={"key": "evidence_catalog"})
+            assert catalog.status_code == 200
+            assert len(catalog.json()["items"]) == 20 and catalog.json()["total"] == 24
+            remainder = await client.get(
+                base + "/artifacts", params={"key": "evidence_catalog", "offset": 20}
+            )
+            assert len(remainder.json()["items"]) == 4
             detailed = await client.get(base + "/artifacts", params={"key": diagnostic_key})
             assert detailed.status_code == 200 and detailed.json()["value"] == diagnostic
             wrong_scope = base.replace("/doctor/", "/another-style/")
             assert (
                 await client.get(wrong_scope + "/artifacts", params={"key": diagnostic_key})
+            ).status_code == 404
+            assert (
+                await client.get(wrong_scope + "/artifacts", params={"key": "evidence_catalog"})
             ).status_code == 404
             events = (await client.get(base + "/events")).json()
             assert events["next_sequence"] == 1

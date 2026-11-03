@@ -7,7 +7,7 @@ import { ReportView } from "./TrainingReport";
 const stages: Record<string, string> = {
   freeze: "冻结全库",
   materials: "素材审查",
-  construction: "提炼并联合构建",
+  construction: "提炼指引与选择示例",
   scope: "教练职责检查",
   preview: "固定用例试答",
   complete: "构建结论",
@@ -37,6 +37,8 @@ const artifactLabel = (key: string) => {
     dataset_audit: "造题审查与修复",
     preview_suite: "固定用例与样例回放",
     coach_scope: "教练职责筛选结果",
+    evidence_catalog: "可用证据目录（程序绑定）",
+    construction_guides: "已验证的分批／合并指引",
   };
   return (
     names[key] ??

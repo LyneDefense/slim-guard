@@ -61,7 +61,7 @@ const baseRun = {
   human_feedback_count: 1,
   unused_count: 2,
   analyzed_count: 21,
-  workflow_version: "style-preview-v3-coach-scope",
+  workflow_version: "style-preview-v4-bound-evidence",
   can_resume: true,
   preview_count: 8,
   baseline_version: "builtin",
@@ -70,7 +70,7 @@ const baseRun = {
   activity: {
     state: "waiting_model",
     message: "等待模型返回",
-    purpose: "Guide",
+    purpose: "GuideDraft",
     request_started_at: new Date().toISOString(),
     timeout_seconds: 120,
   },
@@ -189,6 +189,34 @@ function render(path, runOverrides = {}, versionOverrides = {}) {
   client.clear();
   return html;
 }
+test("construction artifacts display program-owned source locations and escape source text", async () => {
+  const { EvidenceCatalogView, ConstructionGuidesView } = await server.ssrLoadModule(
+    "/src/components/style/ConstructionArtifacts.tsx",
+  );
+  const html = renderToStaticMarkup(createElement(EvidenceCatalogView, { items: [{
+    ref: "e2", material_ref: "m1", example_id: "sample-a", revision: 3,
+    field: "desired_response", start: 0, end: 4, quote: "<script>untrusted</script>",
+  }] }));
+  for (const text of ["e2", "期望回答", "sample-a", "修订 3", "[0, 4)"])
+    assert.ok(html.includes(text));
+  assert.ok(!html.includes("<script>"));
+  assert.ok(html.includes("&lt;script&gt;"));
+  const guide = renderToStaticMarkup(createElement(ConstructionGuidesView, { items: [{
+    phase: "merge", level: 1, batch: 2,
+    guide: { summary: "验证后的指引", rules: [], prohibited_phrases: [] },
+  }] }));
+  assert.ok(guide.includes("第 1 层合并"));
+  assert.ok(guide.includes("验证后的指引"));
+});
+
+test("build offers evidence and intermediate validated guide artifacts", () => {
+  const html = render("/styles/doctor/build", {
+    artifacts: ["input_materials", "evidence_catalog", "construction_guides"],
+  });
+  assert.ok(html.includes("可用证据目录（程序绑定）"));
+  assert.ok(html.includes("已验证的分批／合并指引"));
+});
+
 test("style list precedes detail tabs and uses actual API counts", () => {
   const html = render("/styles");
   assert.ok(html.includes("医生风格"));

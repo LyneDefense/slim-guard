@@ -69,52 +69,25 @@ class TrainerGateway:
                     for m in payload
                 ]
             }
-        elif schema == "Guide":
-            if isinstance(payload[0], dict) and "analysis" in payload[0]:
-                value = {
-                    "summary": "简洁自然",
-                    "rules": [
-                        {
-                            "rule_id": "concise",
-                            "text": "减少无信息铺垫",
-                            "boundary": "不删除任何事实或限定",
-                            "evidence": [
-                                {
-                                    "example_id": m["id"],
-                                    "revision": m["revision"],
-                                    "quote": m["desired_response"] or m["correction_opinion"],
-                                }
-                                for m in payload
-                                if m["analysis"]["role"] in {"positive", "negative"}
-                            ],
-                            "counterexample_ids": [],
-                        }
-                    ],
-                    "prohibited_phrases": [],
-                }
-                if not value["rules"][0]["evidence"]:
-                    value["rules"] = []
-            else:
-                evidence = {
-                    e["example_id"]: e for p in payload for r in p["rules"] for e in r["evidence"]
-                }
-                value = {
-                    "summary": "简洁自然",
-                    "rules": [
-                        {
-                            "rule_id": "concise",
-                            "text": "减少无信息铺垫",
-                            "boundary": "不删除任何事实或限定",
-                            "evidence": list(evidence.values()),
-                            "counterexample_ids": [],
-                        }
-                    ],
-                    "prohibited_phrases": [],
-                }
-        elif schema == "CandidateProposal":
+        elif schema == "GuideDraft":
+            refs = [e["ref"] for e in payload["evidence"]]
+            value = {
+                "summary": "简洁自然",
+                "rules": [
+                    {
+                        "rule_id": "concise",
+                        "text": "减少无信息铺垫",
+                        "boundary": "不删除任何事实或限定",
+                        "evidence_refs": refs,
+                    }
+                ]
+                if refs
+                else [],
+                "prohibited_phrases": [],
+            }
+        elif schema == "ExampleSelection":
             ids = [m["id"] for m in payload["eligible_examples"]]
             value = {
-                "guide": payload["guide"],
                 "example_ids": ids[:1],
                 "explanation": "选择一条有证据且互补的表达",
             }

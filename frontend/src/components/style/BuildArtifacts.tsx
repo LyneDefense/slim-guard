@@ -12,6 +12,12 @@ import {
 import { materialRoles as roles } from "./labels";
 import { TestSuiteView, type FrozenSuite } from "./TestSuiteView";
 import { PackageView } from "./PackageView";
+import {
+  EvidenceCatalogView,
+  ConstructionGuidesView,
+  type BoundEvidence,
+  type ConstructionGuide,
+} from "./ConstructionArtifacts";
 import { ReportView, MetricView, DiffView } from "./TrainingReport";
 import {
   ValidationDiagnostics,
@@ -91,6 +97,12 @@ export function BuildArtifact({
   if (!data) return null;
   return (
     <div className="build-artifact">
+      {artifactKey === "evidence_catalog" && data.items && (
+        <EvidenceCatalogView items={data.items as BoundEvidence[]} />
+      )}
+      {artifactKey === "construction_guides" && data.items && (
+        <ConstructionGuidesView items={data.items as ConstructionGuide[]} />
+      )}
       {artifactKey.startsWith("validation:") && data.value != null && (
         <ValidationDiagnostics value={data.value as ValidationDiagnostic} />
       )}

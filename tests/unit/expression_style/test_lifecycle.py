@@ -146,7 +146,7 @@ async def test_failed_build_does_not_mark_material_used_and_resume_reuses_cache(
     builds = BuildRepository(style_db)
     run = await builds.build("doctor", "admin", model="test-model")
     gateway = TrainerGateway()
-    gateway.fail_schema = "CandidateProposal"
+    gateway.fail_schema = "ExampleSelection"
     worker = StyleWorker(style_db, gateway, "test-model")
     await worker.run_once()
     assert (await builds.detail("doctor", run["id"]))["status"] == "failed"

@@ -9,9 +9,9 @@ from slim_guard.expression_style.package import (
     StylePackage,
     make_package,
 )
-from slim_guard.expression_style.trainer.construction import validate_proposal
+from slim_guard.expression_style.trainer.construction_contracts import ExampleSelection, GuideDraft
+from slim_guard.expression_style.trainer.construction_evidence import EvidenceCatalog
 from slim_guard.expression_style.trainer.contracts import (
-    CandidateProposal,
     Material,
     MaterialAnalysis,
 )
@@ -64,18 +64,20 @@ def test_only_positive_material_can_be_a_fixed_example(role):
         original_response="不用客气",
         desired_response="不客气",
     )
-    with pytest.raises(ValueError):
-        validate_proposal(
-            CandidateProposal(guide=guide(), example_ids=("e",), explanation="选择"),
-            (m,),
-            (MaterialAnalysis(example_id="e", role=role, reason="原因"),),
-            "doctor",
-            "v",
-            "医生",
-        )
+    if role != "negative":
+        with pytest.raises(ValueError, match="没有可用"):
+            EvidenceCatalog((m,), (MaterialAnalysis(example_id="e", role=role, reason="原因"),))
+        return
+    catalog = EvidenceCatalog((m,), (MaterialAnalysis(example_id="e", role=role, reason="原因"),))
+    draft = GuideDraft(summary="少铺垫")
+    selection = ExampleSelection(example_ids=("m1",), explanation="选择")
+    assert (
+        catalog.selection_validation(draft, "doctor", "v", "医生").check(selection)[0]["type"]
+        == "unsupported_example"
+    )
 
 
-def test_evidence_must_reference_actual_revision_and_verbatim_text():
+def test_evidence_is_bound_to_actual_revision_and_verbatim_text():
     m = Material(
         id="e",
         revision=2,
@@ -83,15 +85,26 @@ def test_evidence_must_reference_actual_revision_and_verbatim_text():
         original_response="不用客气",
         desired_response="不客气",
     )
-    with pytest.raises(ValueError, match="修订"):
-        validate_proposal(
-            CandidateProposal(guide=guide(), example_ids=("e",), explanation="选择"),
-            (m,),
-            (MaterialAnalysis(example_id="e", role="positive", reason="原因"),),
-            "doctor",
-            "v",
-            "医生",
-        )
+    catalog = EvidenceCatalog(
+        (m,), (MaterialAnalysis(example_id="e", role="positive", reason="原因"),)
+    )
+    draft = GuideDraft.model_validate(
+        {
+            "summary": "简洁",
+            "rules": [
+                {
+                    "rule_id": "r",
+                    "text": "少铺垫",
+                    "boundary": "不删除事实",
+                    "evidence_refs": ["e2"],
+                }
+            ],
+        }
+    )
+    assert catalog.guide_validation(("e2",)).check(draft) == []
+    assert catalog.bind(draft).rules[0].evidence == (
+        Evidence(example_id="e", revision=2, quote="不客气"),
+    )
 
 
 def test_fixed_previews_are_stable_and_known_material_is_labelled_as_replay():

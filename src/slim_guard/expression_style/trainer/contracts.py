@@ -4,9 +4,9 @@ from typing import Literal
 
 from pydantic import Field
 
-from slim_guard.expression_style.package import Artifact, Guide
+from slim_guard.expression_style.package import Artifact
 
-WORKFLOW_VERSION = "style-preview-v3-coach-scope"
+WORKFLOW_VERSION = "style-preview-v4-bound-evidence"
 
 
 class Material(Artifact):
@@ -38,12 +38,6 @@ class MaterialAnalysis(Artifact):
 
 class AnalysisBatch(Artifact):
     items: tuple[MaterialAnalysis, ...]
-
-
-class CandidateProposal(Artifact):
-    guide: Guide
-    example_ids: tuple[str, ...]
-    explanation: str = Field(min_length=1, max_length=2000)
 
 
 class TestCase(Artifact):

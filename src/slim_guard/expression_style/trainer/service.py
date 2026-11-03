@@ -67,7 +67,6 @@ class StyleTrainer:
                 style_id=snapshot["style_id"],
                 version_id=run_id,
                 name=snapshot["style_name"],
-                feedback=snapshot.get("feedback", []),
             )
         suite = replay_suite(
             PreviewSuite.model_validate(snapshot["preview_suite"]),
