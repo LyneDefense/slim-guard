@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import Select, case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from slim_guard.db.models import InteractionTraceRecord
@@ -43,6 +43,33 @@ def totals() -> tuple[Any, ...]:
 class UsageRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
+
+    @staticmethod
+    def failed_turn_ids_query() -> Select[tuple[str | None]]:
+        """Composable read boundary for filtering turns with failed online attempts."""
+        return select(Call.turn_id).where(
+            Call.status.in_(("failed", "cancelled")),
+            Call.job_id.is_(None),
+            Call.category != "background",
+        )
+
+    async def turn_calls(
+        self, *, turn_ids: list[str], user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Public read port for the execution monitor; one row per actual attempt."""
+        if not turn_ids:
+            return []
+        conditions: list[Any] = [Call.turn_id.in_(turn_ids)]
+        if user_id is not None:
+            conditions.append(Call.user_id == user_id)
+        async with self.db.session() as session:
+            rows = await session.scalars(
+                select(Call).where(*conditions).order_by(Call.started_at, Call.id)
+            )
+            return [
+                dated_row({c.name: getattr(row, c.name) for c in Call.__table__.columns})
+                for row in rows
+            ]
 
     async def start(self, values: dict[str, Any]) -> None:
         async with self.db.session() as s, s.begin():

@@ -11,30 +11,15 @@ import {
   useLocation,
   useOutletContext,
   useParams,
-  useSearchParams,
 } from "react-router-dom";
 
 import { api, UnauthorizedError } from "./api";
-import { TaskCards } from "./features/tasks/TaskCards";
 import { UsagePage, UsageDetailPage } from "./features/usage/UsagePage";
 import { StyleProfilePage } from "./components/style/StyleProfilePage";
 import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
-import { AgentInvocationCard } from "./components/trace/AgentInvocationCard";
-import { DishGuidanceTracePanel } from "./components/trace/DishGuidanceTracePanel";
-import { EvidencePanel } from "./components/trace/EvidencePanel";
-import { ReviewerTracePanel } from "./components/trace/ReviewerTracePanel";
-import { StyleTracePanel } from "./components/trace/StyleTracePanel";
-import { TraceOperatorSummary } from "./components/trace/TraceOperatorSummary";
-import { TurnTraceOverview } from "./components/trace/TurnTraceOverview";
-import { TraceFilters, traceFiltersFromParams } from "./components/trace/TraceFilters";
-import { WorkflowGraph } from "./components/trace/WorkflowGraph";
-import { WorkflowMetrics } from "./components/trace/WorkflowMetrics";
-import {
-  AGENT_ROLE_LABELS,
-  buildWorkflowTrace,
-  type WorkflowTraceView,
-} from "./components/trace/model";
-import type { MemoryRecord, TimelineEvent, TraceDetail, TraceSummary, UserDetail } from "./types";
+import { CallListPage } from "./features/traces/CallListPage";
+import { CallDetailPage } from "./features/traces/CallDetailPage";
+import type { MemoryRecord, UserDetail } from "./types";
 
 const STATUS_LABELS: Record<string, string> = {
   accepted: "已送达",
@@ -54,27 +39,6 @@ const STATUS_LABELS: Record<string, string> = {
   deferred_external_session: "人工会话中",
 };
 
-const STAGE_LABELS: Record<string, string> = {
-  input: "输入",
-  context: "上下文",
-  decision: "模型判断",
-  action: "动作",
-  observation: "观察",
-  output: "输出",
-  delivery: "投递",
-  system: "系统",
-};
-
-const TRIGGER_LABELS: Record<string, string> = {
-  user_message: "用户发来消息",
-  user_confirmation: "用户确认操作",
-  daily_reminder: "每日提醒",
-  weight_reminder: "体重提醒",
-  meal_reminder: "饮食提醒",
-  daily_review: "每日复盘",
-  weekly_review: "每周复盘",
-};
-
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -85,12 +49,6 @@ function formatDate(value: string | null | undefined): string {
     second: "2-digit",
     hour12: false,
   }).format(new Date(value));
-}
-
-function formatDuration(value: number | null | undefined): string {
-  if (value == null) return "—";
-  if (value < 1000) return `${value} ms`;
-  return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
 }
 
 function StatusBadge({ value }: { value: string }) {
@@ -174,6 +132,8 @@ function LoginPage() {
 }
 
 function Shell({ username }: { username: string }) {
+  const location = useLocation();
+  const callArea = /^\/users(?:\/directory|\/[^/]+(?:\/traces\/[^/]+)?)?\/?$/.test(location.pathname);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const logout = useMutation({
@@ -184,17 +144,19 @@ function Shell({ username }: { username: string }) {
     },
   });
   return (
-    <div className="app-shell">
+    <div className={`app-shell${callArea ? " call-shell" : ""}`}>
       <aside className="sidebar">
         <Link to="/users" className="brand">
-          <span className="brand-mark">S</span>
-          <span><strong>SlimGuard</strong><small>Trace Console</small></span>
+          <span className="brand-mark">⌁</span>
+          <span><strong>称小二</strong><small>Trace Console</small></span>
         </Link>
         <nav>
-          <NavLink to="/usage" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}><span>◷</span> 模型用量</NavLink>
-          <NavLink to="/users" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
-            <span>◎</span> 用户中心
+          {callArea && <div className="call-nav-label">运行观察</div>}
+          <NavLink to="/users" className={({ isActive }) => isActive && location.pathname !== "/users/directory" ? "nav-item active" : "nav-item"}>
+            <span>◎</span> 调用过程
           </NavLink>
+          <NavLink to="/usage" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}><span>◷</span> 模型用量</NavLink>
+          {callArea && <><div className="call-nav-label">配置与管理</div><NavLink to="/users/directory" className={({isActive}) => isActive ? "nav-item active" : "nav-item"}><span>♙</span> 用户管理</NavLink></>}
           <NavLink to="/styles" className={({ isActive }) => isActive ? "nav-item active" : "nav-item"}>
             <span>✎</span> 表达风格
           </NavLink>
@@ -214,7 +176,7 @@ function Shell({ username }: { username: string }) {
   );
 }
 
-function UsersPage() {
+function UserDirectoryPage() {
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
@@ -261,11 +223,13 @@ function UsersPage() {
 }
 
 function UserLayout() {
+  const location = useLocation();
   const { userId = "" } = useParams();
   const query = useQuery({ queryKey: ["user", userId], queryFn: () => api.user(userId), enabled: Boolean(userId) });
   if (query.isLoading) return <div className="page"><Loading label="正在读取用户" /></div>;
   if (query.error || !query.data) return <div className="page"><Failure error={query.error} /></div>;
   const user = query.data;
+  if (/^\/users\/[^/]+(?:\/traces\/[^/]+)?\/?$/.test(location.pathname)) return <Outlet context={{ user }} />;
   return (
     <div className="page">
       <Link to="/users" className="back-link">← 返回用户列表</Link>
@@ -287,268 +251,6 @@ function UserLayout() {
 
 function useUser(): UserDetail {
   return useOutletContext<{ user: UserDetail }>().user;
-}
-
-function TraceList() {
-  const user = useUser();
-  const [params, setParams] = useSearchParams();
-  const rawOffset = Number(params.get("offset") ?? 0);
-  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-  const filters = traceFiltersFromParams(params);
-  const setOffset = (value: number) => {
-    const next = new URLSearchParams(params);
-    if (value > 0) next.set("offset", String(value));
-    else next.delete("offset");
-    setParams(next);
-  };
-  const query = useQuery({ queryKey: ["traces", user.id, offset, filters], queryFn: () => api.traces(user.id, offset, filters), refetchInterval: 5_000 });
-  return (
-    <section>
-      <div className="metric-grid">
-        <Metric label="输出链路" value={user.counts.trace_count ?? 0} />
-        <Metric label="体重记录" value={user.counts.weight_count ?? 0} />
-        <Metric label="体脂记录" value={user.counts.body_fat_count ?? 0} />
-        <Metric label="饮食记录" value={user.counts.meal_count ?? 0} />
-        <Metric label="当前记忆" value={user.counts.memory_count ?? 0} />
-      </div>
-      {(user.conversation_tasks.length > 0 || user.routine) && (
-        <div className="context-strip">
-          <TaskCards tasks={user.conversation_tasks} />
-          {user.routine && (
-            <article>
-              <span className="eyebrow">ROUTINE</span>
-              <strong>{user.routine.timezone || "已配置提醒"}</strong>
-              <small>进入“提醒日程”查看详细计划</small>
-            </article>
-          )}
-        </div>
-      )}
-      <WorkflowMetrics />
-      <div className="section-heading"><div><h2>输出链路</h2><p>按运行模式、执行结果与版本定位回归；筛选条件保存在链接中。</p></div></div>
-      <TraceFilters params={params} onApply={setParams} />
-      {query.isLoading && <Loading />}
-      {query.error && <Failure error={query.error} />}
-      {query.data && <div className="trace-list">{query.data.items.map((trace) => <TraceRow key={trace.id} trace={trace} userId={user.id} listSearch={params.toString()} />)}</div>}
-      {query.data && query.data.items.length === 0 && <div className="state-card">没有符合当前筛选条件的 Trace</div>}
-      {query.data && <div className="pager"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 30))}>上一页</button><span>{query.data.items.length > 0 ? offset + 1 : 0}–{query.data.items.length > 0 ? Math.min(offset + query.data.items.length, query.data.total) : 0} / {query.data.total}</span><button disabled={offset + 30 >= query.data.total} onClick={() => setOffset(offset + 30)}>下一页</button></div>}
-    </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return <div className="metric"><strong>{value}</strong><span>{label}</span></div>;
-}
-
-function TraceRow({ trace, userId, listSearch }: { trace: TraceSummary; userId: string; listSearch: string }) {
-  return (
-    <Link className="trace-row" to={`/users/${userId}/traces/${trace.id}${listSearch ? `?${listSearch}` : ""}`}>
-      <div className={`trace-icon ${trace.generation_status === "succeeded" ? "ok" : "attention"}`}>{trace.generation_status === "succeeded" ? "✓" : "!"}</div>
-      <div className="trace-primary">
-        <div><strong>{TRIGGER_LABELS[trace.trigger_type] ?? trace.trigger_type}</strong><code>{trace.id.slice(0, 8)}</code></div>
-        <span>{formatDate(trace.created_at)} · {formatDuration(trace.duration_ms)}</span>
-        <div className="trace-workflow-flags">
-          <span>{trace.mode?.toUpperCase() ?? "模式未记录"}</span>
-          {trace.agent_failure && <span>Agent 失败</span>}
-          {trace.rag && <span>RAG</span>}
-          {trace.repair && <span>返回修复</span>}
-          {trace.degraded && <span>工作流降级</span>}
-        </div>
-        {(trace.graph_version || trace.agent_versions?.length || trace.profile_versions?.length) ? (
-          <div className="trace-version-tags">
-            {trace.graph_version && <code>Graph · {trace.graph_version}</code>}
-            {trace.agent_versions?.map((version) => <code key={version}>Agent · {version}</code>)}
-            {trace.profile_versions?.map((version) => <code key={version}>Profile · {version}</code>)}
-          </div>
-        ) : null}
-      </div>
-      <div className="trace-statuses"><label>生成 <StatusBadge value={trace.generation_status} /></label><label>投递 <StatusBadge value={trace.delivery_status} /></label></div>
-      <span className="arrow">→</span>
-    </Link>
-  );
-}
-
-function TracePage() {
-  const user = useUser();
-  const listSearch = useLocation().search;
-  const { traceId = "" } = useParams();
-  const query = useQuery({ queryKey: ["trace", user.id, traceId], queryFn: () => api.trace(user.id, traceId), refetchInterval: 5_000 });
-  if (query.isLoading) return <Loading label="正在重建输出链路" />;
-  if (query.error || !query.data) return <Failure error={query.error} />;
-  const data = query.data;
-  const workflow = buildWorkflowTrace(data);
-  return (
-    <section>
-      <Link to={`/users/${user.id}${listSearch}`} className="back-link">← 返回该用户的链路</Link>
-      <div className="trace-heading">
-        <div><p className="eyebrow">TRACE · {data.trace.id}</p><h2>{TRIGGER_LABELS[data.trace.trigger_type] ?? data.trace.trigger_type}</h2><p>{formatDate(data.trace.created_at)} · 总耗时 {formatDuration(data.trace.duration_ms)}</p></div>
-        <div className="trace-statuses"><label>生成 <StatusBadge value={data.trace.generation_status} /></label><label>投递 <StatusBadge value={data.trace.delivery_status} /></label></div>
-      </div>
-      <TraceOperatorSummary data={data} workflow={workflow} />
-      {data.trace.failure_code && <div className="alert"><strong>{data.trace.failure_code}</strong><span>{data.trace.error_detail}</span></div>}
-      <TurnTraceOverview data={data} workflow={workflow} />
-      <ContextSources data={data} />
-      <details className="trace-technical-details">
-        <summary><span>查看完整流程与工程排障信息</span><small>Agent 节点、RAG 证据、风格、审查、Token 与原始事件</small></summary>
-        <div className="trace-technical-body">
-          <ExecutionOverview data={data} />
-          {workflow.hasAgentTrace && <WorkflowGraph workflow={workflow} />}
-          <DishGuidanceTracePanel workflow={workflow} userId={user.id} traceId={traceId} />
-          <EvidencePanel workflow={workflow} />
-          <StyleTracePanel workflow={workflow} />
-          <ReviewerTracePanel workflow={workflow} />
-          {workflow.hasAgentTrace
-            ? <MultiAgentTimeline workflow={workflow} />
-            : <TurnEventTimeline timeline={data.timeline} />}
-          {data.tool_executions.length > 0 && <section className="detail-block"><h3>工具执行原始账本</h3><p>供工程排障和核对幂等键使用，日常查看以上面的白话步骤为准。</p><JsonView value={data.tool_executions} label="展开原始工具数据" /></section>}
-          {data.turn && <section className="detail-block"><h3>Harness Turn 技术信息</h3><JsonView value={data.turn} label="展开 Turn 原始数据" /></section>}
-        </div>
-      </details>
-      <p className="privacy-footnote">敏感健康数据 · 已脱敏事件 {data.privacy.redacted_item_count} 条 · 本次查看已写入审计记录</p>
-    </section>
-  );
-}
-
-function TurnEventTimeline({ timeline }: { timeline: TimelineEvent[] }) {
-  return (
-    <>
-      <div className="section-heading"><div><h2>Agent 是怎么完成这次回复的</h2><p>按 Harness 的真实事件解释上下文、模型动作、工具观察和投递过程。</p></div><span>{timeline.length} 个步骤</span></div>
-      <TraceBoundary />
-      <div className="timeline">{timeline.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
-    </>
-  );
-}
-
-function MultiAgentTimeline({ workflow }: { workflow: WorkflowTraceView }) {
-  const [role, setRole] = useState("");
-  const [status, setStatus] = useState("");
-  const [repair, setRepair] = useState("");
-  const invocations = workflow.invocations.filter((invocation) =>
-    (!role || invocation.agent_role === role) &&
-    (!status || invocation.status === status) &&
-    (!repair || invocation.repaired === (repair === "yes")),
-  );
-  const roles = [...new Set(workflow.invocations.map((invocation) => invocation.agent_role))];
-  const statuses = [...new Set(workflow.invocations.map((invocation) => invocation.status))];
-
-  return (
-    <>
-      <section className="invocation-section">
-        <div className="section-heading">
-          <div><h2>按 Agent Invocation 查看</h2><p>每组对应一次有边界的 Agent 调用，可展开核对输入类型、动作、结果和失败原因。</p></div>
-          <span>{invocations.length} / {workflow.invocations.length} 次调用</span>
-        </div>
-        <div className="filters invocation-filters">
-          <label>Agent 角色
-            <select value={role} onChange={(event) => setRole(event.target.value)}>
-              <option value="">全部</option>
-              {roles.map((value) => <option value={value} key={value}>{AGENT_ROLE_LABELS[value]}</option>)}
-            </select>
-          </label>
-          <label>运行状态
-            <select value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="">全部</option>
-              {statuses.map((value) => <option value={value} key={value}>{STATUS_LABELS[value] ?? value}</option>)}
-            </select>
-          </label>
-          <label>是否修复
-            <select value={repair} onChange={(event) => setRepair(event.target.value)}>
-              <option value="">全部</option>
-              <option value="yes">有修复</option>
-              <option value="no">无修复</option>
-            </select>
-          </label>
-        </div>
-        <TraceBoundary />
-        <div className="invocation-list">
-          {invocations.map((invocation, index) => (
-            <AgentInvocationCard invocation={invocation} index={index + 1} key={invocation.invocation_id} />
-          ))}
-          {invocations.length === 0 && <div className="state-card">没有符合当前筛选条件的 Agent 调用</div>}
-        </div>
-      </section>
-      {workflow.turnEvents.length > 0 && (
-        <section className="turn-events">
-          <div className="section-heading"><div><h2>Turn 级公共事件</h2><p>这些步骤发生在具体 Agent Invocation 之外，例如输入、安全、记忆与最终投递。</p></div><span>{workflow.turnEvents.length} 个步骤</span></div>
-          <div className="timeline">{workflow.turnEvents.map((event, index) => <TimelineItem key={`${event.event_type}-${event.id}`} event={event} index={index + 1} />)}</div>
-        </section>
-      )}
-      {workflow.artifacts.length > 0 && (
-        <section className="detail-block"><h3>工作流 Artifact 索引</h3><p>这里只展示经过管理端隐私过滤的结构与引用关系。</p><JsonView value={workflow.artifacts} label="展开 Artifact 技术数据" /></section>
-      )}
-    </>
-  );
-}
-
-function TraceBoundary() {
-  return <div className="trace-boundary"><strong>关于“思考”</strong><span>这里展示结构化决策、工具动作和可验证观察，不展示、补写或猜测模型隐藏的逐字思维。</span></div>;
-}
-
-function ContextSources({ data }: { data: TraceDetail }) {
-  if (data.context_sources.length === 0) return null;
-  return (
-    <section className="context-sources">
-      <div className="section-heading">
-        <div><h2>本轮实际使用的记忆与数据来源</h2><p>按保存方式分开显示，避免把最近聊天误认为长期记忆或健康记录。</p></div>
-      </div>
-      <div className="source-grid">
-        {data.context_sources.map((source) => (
-          <article className={`source-card source-${source.kind}`} key={source.kind}>
-            <header><div><h3>{source.title}</h3><p>{source.description}</p></div><span>{source.retention}</span></header>
-            {source.items.length === 0
-              ? <div className="source-empty">本轮没有带入这一类数据</div>
-              : <dl>{source.items.map((item, index) => <div key={`${item.label}-${index}`}><dt>{item.label}</dt><dd>{item.value}</dd><small>{item.detail}</small></div>)}</dl>}
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ExecutionOverview({ data }: { data: TraceDetail }) {
-  const summary = data.execution_summary;
-  const isHarness = summary.architecture === "harness";
-  return (
-    <section className="execution-overview">
-      <div className="overview-copy">
-        <span className="architecture-badge">{isHarness ? "HARNESS ARCHITECTURE" : "SERVICE TRACE"}</span>
-        <h3>{isHarness ? "本轮由 Agent Harness 编排" : "这是一条服务级输出链路"}</h3>
-        <p>{isHarness ? "Harness 先冻结上下文，再让模型选择回复或工具；每次工具结果都会作为新观察返回给模型。" : "这条链路没有关联到可重建的 Harness Turn，通常来自历史数据或非 Agent 流程。"}</p>
-      </div>
-      <div className="overview-metrics">
-        <Metric label="上下文快照" value={summary.context_snapshot_count} />
-        <Metric label="记忆摄取" value={summary.memory_ingestion_count} />
-        <Metric label="记忆召回" value={summary.memory_recall_count} />
-        <Metric label="模型调用" value={summary.model_call_count} />
-        <Metric label="工具动作" value={summary.tool_call_count} />
-        <Metric label="工具观察" value={summary.observation_count} />
-      </div>
-      {data.agent && <dl className="agent-manifest">
-        <div><dt>文本模型</dt><dd>{data.agent.text_model ?? "—"}</dd></div>
-        <div><dt>上下文策略</dt><dd>{data.agent.context_policy_version ?? "—"}</dd></div>
-        <div><dt>记忆策略</dt><dd>{data.agent.memory_policy_version ?? "—"}</dd></div>
-        <div><dt>可用工具</dt><dd>{data.agent.tool_count} 个</dd></div>
-        <div><dt>代码版本</dt><dd>{data.agent.code_revision}</dd></div>
-      </dl>}
-    </section>
-  );
-}
-
-function TimelineItem({ event, index }: { event: TimelineEvent; index: number }) {
-  const failed = ["failed", "unknown"].includes(event.status);
-  const view = event.presentation;
-  return (
-    <article className={`timeline-item stage-${view.stage} ${failed ? "timeline-failed" : ""}`}>
-      <div className="timeline-rail"><span>{failed ? "!" : index}</span></div>
-      <div className="timeline-card">
-        <header><div><span className="stage-label">{STAGE_LABELS[view.stage] ?? view.stage}</span><span className="component">{event.component}</span><h3>{view.title}</h3></div><div className="timeline-meta"><StatusBadge value={event.status} /><span>{formatDuration(event.duration_ms)}</span><time>{formatDate(event.started_at)}</time></div></header>
-        <p className="event-summary">{view.summary}</p>
-        {view.facts.length > 0 && <dl className="event-facts">{view.facts.map((fact, factIndex) => <div key={`${fact.label}-${factIndex}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}
-        {event.error_code && <div className="event-error">{event.error_code} {event.error_detail}</div>}
-        {event.redacted && <div className="redacted">正文已按 {event.redaction_policy} 脱敏</div>}
-        <JsonView value={{ operation: event.operation, details: event.details }} />
-      </div>
-    </article>
-  );
 }
 
 function MemoriesPage() {
@@ -639,7 +341,8 @@ export function App() {
       <Route path="login" element={<LoginPage />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/users" replace />} />
-        <Route path="users" element={<UsersPage />} />
+        <Route path="users" element={<CallListPage />} />
+        <Route path="users/directory" element={<UserDirectoryPage />} />
         <Route path="usage" element={<UsagePage />} />
         <Route path="usage/jobs" element={<UsagePage jobs />} />
         <Route path="usage/jobs/:jobId" element={<UsageDetailPage />} />
@@ -647,8 +350,8 @@ export function App() {
         <Route path="styles/:styleId/:tab" element={<StyleProfilePage />} />
         <Route path="nutrition-knowledge" element={<NutritionKnowledgePage />} />
         <Route path="users/:userId" element={<UserLayout />}>
-          <Route index element={<TraceList />} />
-          <Route path="traces/:traceId" element={<TracePage />} />
+          <Route index element={<CallListPage />} />
+          <Route path="traces/:traceId" element={<CallDetailPage />} />
           <Route path="memories" element={<MemoriesPage />} />
           <Route path="records" element={<RecordsPage />} />
           <Route path="routines" element={<RoutinesPage />} />

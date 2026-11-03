@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from fastapi import FastAPI, Request, Response
 
+from slim_guard.admin.calls.routes import router as call_monitor_router
 from slim_guard.agent.composition import build_agent_runtime
 from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.manifest import build_agent_manifest
@@ -602,6 +603,7 @@ def create_app(
     application.include_router(router)
     application.include_router(expression_style_router)
     application.include_router(admin_router)
+    application.include_router(call_monitor_router)
     application.include_router(usage_router)
     application.include_router(nutrition_knowledge_router)
     application.include_router(mobile_router)

@@ -1,0 +1,791 @@
+.app-shell.call-shell,
+.call-workspace {
+  color-scheme: light dark;
+  --call-bg: light-dark(#f7f8fc, #141821);
+  --call-panel: light-dark(#fff, #1d2330);
+  --call-ink: light-dark(#202d4d, #ecf0fc);
+  --call-sub: light-dark(#65718a, #b2bed6);
+  --call-line: light-dark(#e5e9f2, #354056);
+  --call-navy: light-dark(#354780, #b6c6ff);
+  --call-active: light-dark(#eaf0ff, #303e64);
+  --call-apricot: light-dark(#fff0df, #483426);
+  --call-orange: light-dark(#a34f09, #ffd0a0);
+  --call-good: light-dark(#23654e, #a0dbc1);
+  --call-good-bg: light-dark(#eaf6ef, #203d32);
+  --call-bad: light-dark(#a2373c, #ffc0c3);
+  --call-bad-bg: light-dark(#fff0ef, #442a31);
+  font:
+    13px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    sans-serif;
+  color: var(--call-ink);
+  background: var(--call-bg);
+  width: 100%;
+  box-sizing: border-box;
+}
+.call-workspace * {
+  box-sizing: border-box;
+}
+.call-workspace button,
+.call-workspace input,
+.call-workspace select {
+  font: inherit;
+  color: inherit;
+}
+.call-workspace button {
+  cursor: inherit;
+}
+.call-workspace button:focus-visible,
+.call-workspace select:focus-visible,
+.call-workspace input:focus-visible {
+  outline: 2px solid var(--call-navy);
+  outline-offset: 3px;
+}
+.call-workspace .app-shell.call-shell {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+.call-workspace .call-topbar {
+  padding: 16px 22px;
+  background: var(--call-panel);
+  border-bottom: 1px solid var(--call-line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.call-workspace .call-topbar small {
+  color: var(--call-sub);
+  font-size: 12px;
+}
+.call-workspace .call-main {
+  padding: 22px;
+  min-width: 0;
+}
+.call-workspace h1 {
+  font-size: 21px;
+  line-height: 1.4;
+  font-weight: 500;
+  margin: 0;
+}
+.call-workspace h2 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+}
+.call-workspace h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+.call-workspace p {
+  margin: 0;
+}
+.call-workspace .call-muted {
+  color: var(--call-sub);
+}
+.call-workspace .call-small {
+  font-size: 12px;
+}
+.call-workspace .call-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 17px;
+}
+.call-workspace .call-heading small {
+  display: block;
+  color: var(--call-sub);
+  margin-top: 5px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.call-workspace .call-button {
+  background: var(--call-panel);
+  border: 1px solid var(--call-line);
+  padding: 7px 10px;
+  border-radius: 7px;
+  min-height: 34px;
+}
+.call-workspace .call-button[aria-pressed="true"] {
+  background: var(--call-navy);
+  color: var(--call-panel);
+  border-color: var(--call-navy);
+}
+.call-workspace .call-select,
+.call-workspace .call-input {
+  background: var(--call-panel);
+  border: 1px solid var(--call-line);
+  padding: 7px 10px;
+  border-radius: 7px;
+  max-width: 100%;
+  min-height: 35px;
+}
+.call-workspace .call-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+  background: var(--call-bg);
+  color: var(--call-sub);
+}
+.call-workspace .call-badge.good {
+  background: var(--call-good-bg);
+  color: var(--call-good);
+}
+.call-workspace .call-badge.warn {
+  background: var(--call-apricot);
+  color: var(--call-orange);
+}
+.call-workspace .call-badge.bad {
+  background: var(--call-bad-bg);
+  color: var(--call-bad);
+}
+.call-workspace .call-request {
+  border: 1px solid var(--call-line);
+  background: var(--call-panel);
+  border-radius: 10px;
+  padding: 13px 15px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.call-workspace .call-request .call-quote {
+  font-size: 15px;
+  margin-top: 4px;
+}
+.call-workspace .call-states {
+  display: flex;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--call-line);
+}
+.call-workspace .call-states span {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+}
+.call-workspace .call-statline {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  color: var(--call-sub);
+  font-size: 12px;
+}
+.call-workspace .call-statline strong {
+  font-weight: 500;
+  color: var(--call-ink);
+  font-size: 15px;
+}
+.call-workspace .call-statline > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-alert {
+  padding: 11px 13px;
+  background: var(--call-apricot);
+  border-radius: 8px;
+  color: var(--call-orange);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.call-workspace .call-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(235px, 300px);
+  gap: 16px;
+  align-items: start;
+}
+.call-workspace .call-panel {
+  border: 1px solid var(--call-line);
+  border-radius: 10px;
+  background: var(--call-panel);
+  min-width: 0;
+  overflow: hidden;
+}
+.call-workspace .call-panel-head {
+  padding: 13px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--call-line);
+}
+.call-workspace .call-mode {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.call-workspace .call-mode button {
+  border: 0;
+  background: none;
+  color: var(--call-sub);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.call-workspace .call-mode button[aria-pressed="true"] {
+  background: var(--call-active);
+  color: var(--call-navy);
+}
+.call-workspace .call-flow {
+  padding: 10px;
+}
+.call-workspace .call-node {
+  position: relative;
+  margin: 2px 0;
+}
+.call-workspace .call-node-button {
+  width: 100%;
+  border: 0;
+  background: none;
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 8px;
+  border-radius: 7px;
+}
+.call-workspace .call-node-button:hover {
+  background: var(--call-bg);
+}
+.call-workspace .call-node-button[aria-pressed="true"] {
+  background: var(--call-active);
+}
+.call-workspace .call-dot {
+  flex: 0 0 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--call-good-bg);
+  color: var(--call-good);
+  font-size: 12px;
+  margin-top: 1px;
+}
+.call-workspace .call-dot.warn {
+  background: var(--call-apricot);
+  color: var(--call-orange);
+}
+.call-workspace .call-dot.bad {
+  background: var(--call-bad-bg);
+  color: var(--call-bad);
+}
+.call-workspace .call-node-copy {
+  flex: 1;
+  min-width: 0;
+}
+.call-workspace .call-node-title {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-weight: 500;
+}
+.call-workspace .call-node-summary {
+  display: block;
+  font-size: 12px;
+  color: var(--call-sub);
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-duration {
+  flex: 0 0 auto;
+  color: var(--call-sub);
+  font-size: 12px;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.call-workspace .call-children {
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 1px solid var(--call-line);
+}
+.call-workspace .call-children .call-node-button {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.call-workspace .call-children .call-dot {
+  width: 17px;
+  height: 17px;
+  flex-basis: 17px;
+  font-size: 11px;
+}
+.call-workspace .call-end {
+  padding: 10px 14px;
+  border-top: 1px solid var(--call-line);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--call-sub);
+  font-size: 12px;
+}
+.call-workspace .call-background {
+  border-top: 1px dashed var(--call-line);
+  padding: 11px 14px;
+  color: var(--call-sub);
+  font-size: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.call-workspace .call-inspector-content {
+  padding: 14px;
+  min-height: 340px;
+}
+.call-workspace .call-inspector-title {
+  padding: 14px;
+  border-bottom: 1px solid var(--call-line);
+}
+.call-workspace .call-inspector-title small {
+  display: block;
+  color: var(--call-sub);
+  margin-top: 5px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-inspector-tabs {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--call-line);
+}
+.call-workspace .call-field {
+  margin-bottom: 16px;
+}
+.call-workspace .call-field-label {
+  display: block;
+  color: var(--call-sub);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.call-workspace .call-field-text {
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-note {
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--call-bg);
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-note.warn {
+  background: var(--call-apricot);
+  color: var(--call-orange);
+}
+.call-workspace .call-note.bad {
+  background: var(--call-bad-bg);
+  color: var(--call-bad);
+}
+.call-workspace .call-evidence {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--call-line);
+  background: var(--call-panel);
+  padding: 10px;
+  border-radius: 7px;
+  margin: 8px 0;
+}
+.call-workspace .call-evidence small {
+  display: block;
+  color: var(--call-sub);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.call-workspace pre {
+  margin: 0;
+  background: var(--call-bg);
+  padding: 12px;
+  border-radius: 6px;
+  font:
+    11px/1.6 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-preview {
+  padding: 15px;
+}
+.call-workspace .call-preview-label {
+  font-size: 12px;
+  color: var(--call-sub);
+  margin-bottom: 8px;
+}
+.call-workspace .call-doctor-bubble {
+  background: var(--call-bg);
+  border-radius: 9px;
+  padding: 12px;
+  margin-bottom: 10px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-notice-preview {
+  background: var(--call-apricot);
+  color: var(--call-orange);
+  border-radius: 7px;
+  padding: 10px;
+}
+.call-workspace .call-final {
+  margin-top: 16px;
+}
+.call-workspace .call-waterfall {
+  padding: 15px;
+}
+.call-workspace .call-time-axis {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  color: var(--call-sub);
+  font-size: 11px;
+  margin-bottom: 9px;
+}
+.call-workspace .call-time-axis > div {
+  display: flex;
+  justify-content: space-between;
+}
+.call-workspace .call-time-row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 0;
+  align-items: center;
+  min-height: 35px;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  padding: 4px 0;
+  font-size: 11px;
+}
+.call-workspace .call-time-row[aria-pressed="true"] {
+  background: var(--call-active);
+  border-radius: 4px;
+}
+.call-workspace .call-track {
+  height: 15px;
+  background: var(--call-bg);
+  position: relative;
+  border: 0;
+  border-radius: 3px;
+}
+.call-workspace .call-bar {
+  position: absolute;
+  top: 0;
+  height: 15px;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--call-navy);
+}
+.call-workspace .call-bar.warn {
+  background: var(--call-orange);
+}
+.call-workspace .call-bar.bad {
+  background: var(--call-bad);
+}
+.call-workspace .call-table-wrap {
+  overflow: auto;
+}
+.call-workspace table {
+  border-collapse: collapse;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+}
+.call-workspace th {
+  font-weight: 500;
+  color: var(--call-sub);
+  background: var(--call-bg);
+}
+.call-workspace th,
+.call-workspace td {
+  padding: 13px 12px;
+  border-bottom: 1px solid var(--call-line);
+  vertical-align: top;
+}
+.call-workspace .call-list-input {
+  display: block;
+  margin-top: 5px;
+  color: var(--call-sub);
+  max-width: 240px;
+}
+.call-workspace .call-empty {
+  padding: 25px;
+  text-align: center;
+  color: var(--call-sub);
+}
+@media (max-width: 900px) {
+  .call-workspace .app-shell.call-shell {
+    grid-template-columns: 102px minmax(0, 1fr);
+  }
+  .call-workspace .call-main {
+    padding: 16px;
+  }
+  .call-workspace .call-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+  }
+}
+@media (max-width: 740px) {
+  .call-workspace .app-shell.call-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .call-workspace .call-topbar {
+    padding: 12px 15px;
+  }
+  .call-workspace .call-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .call-workspace .call-inspector-content {
+    min-height: 0;
+  }
+  .call-workspace .call-heading {
+    gap: 10px;
+  }
+  .call-workspace .call-main {
+    padding: 14px;
+  }
+  .call-workspace .call-request {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
+@media (pointer: coarse) {
+  .call-workspace button,
+  .call-workspace select,
+  .call-workspace input {
+    min-height: 44px;
+  }
+  .call-workspace input,
+  .call-workspace select {
+    font-size: 16px;
+  }
+}
+
+.app-shell.call-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+.app-shell.call-shell .sidebar {
+  background: var(--call-panel);
+  color: var(--call-ink);
+  border-right: 1px solid var(--call-line);
+  padding: 23px 12px;
+}
+.app-shell.call-shell .brand {
+  margin: 0 0 28px;
+  gap: 9px;
+  font-size: 17px;
+}
+.app-shell.call-shell .brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--call-apricot);
+  color: var(--call-orange);
+  font-size: 18px;
+}
+.app-shell.call-shell .brand strong {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.app-shell.call-shell .brand small {
+  display: none;
+}
+.app-shell.call-shell .nav-item {
+  font-size: 13px;
+  font-weight: 400;
+  padding: 10px 9px;
+  gap: 6px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  color: var(--call-sub);
+}
+.app-shell.call-shell .nav-item:hover,
+.app-shell.call-shell .nav-item.active {
+  background: var(--call-active);
+  color: var(--call-navy);
+}
+.app-shell.call-shell .sidebar-note {
+  padding: 10px 6px;
+  border: 0;
+  color: var(--call-sub);
+  font-size: 11px;
+}
+.app-shell.call-shell .sidebar-note small {
+  color: var(--call-sub);
+  margin-left: 0;
+}
+.app-shell.call-shell .privacy-dot {
+  box-shadow: none;
+  background: var(--call-good);
+}
+.app-shell.call-shell .account-panel {
+  padding: 8px 3px;
+  background: none;
+  color: var(--call-sub);
+  flex-wrap: wrap;
+}
+.app-shell.call-shell .account-panel small {
+  color: var(--call-sub);
+}
+.app-shell.call-shell .account-panel button {
+  color: var(--call-sub);
+  border: 1px solid var(--call-line);
+}
+.call-workspace .call-topbar small,
+.call-workspace .call-node-title {
+  font-weight: 500;
+}
+.call-workspace .call-quote p {
+  margin: 3px 0;
+}
+.call-workspace .call-images {
+  flex-basis: 100%;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.call-workspace .call-images img {
+  width: 100px;
+  height: 82px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.call-workspace .call-json {
+  max-width: 100%;
+}
+.call-workspace .call-output-message + .call-output-message {
+  margin-top: 12px;
+}
+.call-workspace .call-list-filters {
+  margin-bottom: 16px;
+}
+.call-workspace .call-user-links {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  color: var(--call-navy);
+}
+.call-workspace .call-trace-id {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  margin-top: 4px;
+  color: var(--call-sub);
+}
+.call-workspace .call-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  color: var(--call-sub);
+  font-size: 12px;
+}
+.call-workspace .call-button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  text-decoration: none;
+}
+.call-workspace .call-button:disabled {
+  opacity: 0.45;
+}
+.call-workspace .call-footnote {
+  font-size: 11px;
+  color: var(--call-sub);
+  margin-top: 14px;
+  overflow-wrap: anywhere;
+}
+.call-workspace .call-background {
+  display: block;
+}
+.call-workspace .call-background summary {
+  cursor: pointer;
+}
+.call-workspace .call-background-detail {
+  padding-top: 12px;
+}
+.call-workspace .call-time-row small {
+  display: block;
+  color: var(--call-sub);
+}
+.app-shell.call-shell .call-nav-label {
+  font-size: 11px;
+  color: var(--call-sub);
+  padding: 11px 9px;
+}
+.call-workspace details {
+  overflow-wrap: anywhere;
+}
+@media (min-width: 1300px) {
+  .call-workspace .call-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  }
+}
+@media (max-width: 900px) {
+  .app-shell.call-shell {
+    grid-template-columns: 102px minmax(0, 1fr);
+  }
+}
+@media (max-width: 740px) {
+  .app-shell.call-shell {
+    display: block;
+  }
+  .app-shell.call-shell .sidebar {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 15px;
+    flex-wrap: wrap;
+    border-right: 0;
+    border-bottom: 1px solid var(--call-line);
+  }
+  .app-shell.call-shell .brand {
+    margin: 0;
+    font-size: 15px;
+  }
+  .app-shell.call-shell .sidebar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .app-shell.call-shell .nav-item {
+    margin: 0;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .app-shell.call-shell .sidebar-note,
+  .app-shell.call-shell .account-panel {
+    display: none;
+  }
+}

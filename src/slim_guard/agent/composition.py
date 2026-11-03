@@ -32,6 +32,8 @@ from slim_guard.harness.repository import AgentVersionRepository
 from slim_guard.harness.state_repository import HarnessStateRepository
 from slim_guard.harness.trace import PersistentHarnessRunRecorder
 from slim_guard.memory.engine import MemoryEngine
+from slim_guard.observability.model_exchange import ModelExchangeRecorder
+from slim_guard.observability.tracing import InteractionTraceRepository
 from slim_guard.orchestration.repository import OrchestrationRepository
 from slim_guard.response_pipeline.processor import ResponseProcessor
 from slim_guard.runtime.invocation.core import CoreInvocationRunner
@@ -61,12 +63,15 @@ def build_agent_runtime(
 
     registry = build_core_tool_registry()
     usage = UsageRepository(database)
-    model = build_model_gateway(model, usage, definition.models.provider)
+    exchanges = ModelExchangeRecorder(InteractionTraceRepository(database))
+    model = build_model_gateway(model, usage, definition.models.provider, exchanges=exchanges)
     if vision is not None:
-        vision = build_vision_gateway(vision, usage, definition.models.provider)
+        vision = build_vision_gateway(
+            vision, usage, definition.models.provider, exchanges=exchanges
+        )
     if memory_recall_model is not None:
         memory_recall_model = build_model_gateway(
-            memory_recall_model, usage, definition.models.provider
+            memory_recall_model, usage, definition.models.provider, exchanges=exchanges
         )
     expected_manifest = build_agent_manifest(definition, registry=registry)
     active_manifest = manifest or expected_manifest

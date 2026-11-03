@@ -17,6 +17,10 @@ if TYPE_CHECKING:
         VisionInspectionResponse,
         VisionModelGateway,
     )
+    from slim_guard.observability.ports import ModelExchangeObserver
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from slim_guard.usage.context import context_fields
 from slim_guard.usage.ports import UsageStore
 
@@ -52,8 +56,15 @@ def capture_provider_usage(body: Any) -> None:
 
 
 class MeasuredModelGateway:
-    def __init__(self, gateway: ModelGateway, store: UsageStore, provider: str = "zhipu") -> None:
+    def __init__(
+        self,
+        gateway: ModelGateway,
+        store: UsageStore,
+        provider: str = "zhipu",
+        exchanges: ModelExchangeObserver | None = None,
+    ) -> None:
         self._gateway, self._store, self._provider = gateway, store, provider
+        self._exchanges = exchanges
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         async with ModelCall(
@@ -62,9 +73,11 @@ class MeasuredModelGateway:
             request.model,
             request.output_schema_name or request.purpose.value,
         ) as call:
-            result = await self._gateway.complete(request)
-            call.result(result)
-            return result
+            async with exchange(self._exchanges, call.id, request) as snapshot:
+                result = await self._gateway.complete(request)
+                snapshot["response"] = result
+                call.result(result)
+                return result
 
     async def close(self) -> None:
         await self._gateway.close()
@@ -72,20 +85,38 @@ class MeasuredModelGateway:
 
 class MeasuredVisionGateway:
     def __init__(
-        self, gateway: VisionModelGateway, store: UsageStore, provider: str = "zhipu"
+        self,
+        gateway: VisionModelGateway,
+        store: UsageStore,
+        provider: str = "zhipu",
+        exchanges: ModelExchangeObserver | None = None,
     ) -> None:
         self._gateway, self._store, self._provider = gateway, store, provider
+        self._exchanges = exchanges
 
     async def inspect(self, request: VisionInspectionRequest) -> VisionInspectionResponse:
         async with ModelCall(
             self._store, self._provider, request.model, "vision_inspection"
         ) as call:
-            result = await self._gateway.inspect(request)
-            call.result(result)
-            return result
+            async with exchange(self._exchanges, call.id, request) as snapshot:
+                result = await self._gateway.inspect(request)
+                snapshot["response"] = result
+                call.result(result)
+                return result
 
     async def close(self) -> None:
         await self._gateway.close()
+
+
+@asynccontextmanager
+async def exchange(
+    recorder: ModelExchangeObserver | None, identity: str, request: Any
+) -> AsyncIterator[dict[str, Any]]:
+    if recorder is None:
+        yield {}
+    else:
+        async with recorder.observe(identity, request) as snapshot:
+            yield snapshot
 
 
 class ModelCall:

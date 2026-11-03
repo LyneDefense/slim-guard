@@ -3215,6 +3215,8 @@ class AdminQueryRepository:
         redaction: AgentItemRedactionRecord | None,
     ) -> dict[str, Any]:
         details = cls._admin_safe(cls._json_load(item.payload_json))
+        if redaction is not None:
+            details = {"redacted": True}
         started_at = item.created_at
         completed_at = None
         if isinstance(details, dict):

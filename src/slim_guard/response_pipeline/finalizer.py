@@ -1,5 +1,6 @@
 """Evidence -> direct styled coach reply -> grounding review, plus independent notices."""
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -257,6 +258,16 @@ class AgentResponseFinalizer:
         kind: str,
         parents: tuple[str, ...],
     ) -> AgentArtifact:
+        for rejected in result.validation_errors:
+            await self._recorder.record_workflow_event(
+                turn_id=request.turn_id,
+                event_type=ItemType.STRUCTURED_OUTPUT_REJECTED,
+                payload={
+                    "schema": rejected.get("schema") or kind,
+                    "errors_json": json.dumps(rejected.get("errors", []), ensure_ascii=False),
+                    "attempt": rejected.get("attempt", 1),
+                },
+            )
         payload = {
             "output": result.output.model_dump(mode="json") if result.output else None,
             "failure_code": result.failure_code,

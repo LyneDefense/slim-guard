@@ -91,6 +91,9 @@ async def test_historical_outbound_is_backfilled_without_inventing_agent_link(
                 last_seen_at=now,
             )
         )
+        # These models intentionally have no ORM relationship ordering; persist
+        # the referenced user before creating its identity with FK checks enabled.
+        await session.flush()
         session.add(
             ChannelIdentity(
                 channel_id="default",

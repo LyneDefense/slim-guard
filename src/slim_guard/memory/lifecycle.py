@@ -22,6 +22,7 @@ from slim_guard.db.models import (
     UserMemoryFactRecord,
 )
 from slim_guard.db.session import Database
+from slim_guard.observability.retention import scrub_model_exchanges
 from slim_guard.tool_operations.lifecycle import scrub_operation_bodies
 from slim_guard.tools.contracts import ToolFailure, ToolResult, ToolResultStatus
 
@@ -47,6 +48,7 @@ class TranscriptScrubResult:
     outbound_message_count: int
     proactive_message_count: int
     tool_operation_count: int = 0
+    model_exchange_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +157,7 @@ class MemoryLifecycleRepository:
             for proactive_message in proactive_messages:
                 proactive_message.content = self.redacted_text(proactive_message.content)
             operation_count = await scrub_operation_bodies(session, before=cutoff, limit=limit)
+            exchange_count = await scrub_model_exchanges(session, before=cutoff, limit=limit)
             await session.flush()
             return TranscriptScrubResult(
                 item_count=len(items),
@@ -162,6 +165,7 @@ class MemoryLifecycleRepository:
                 outbound_message_count=len(outbound_messages),
                 proactive_message_count=len(proactive_messages),
                 tool_operation_count=operation_count,
+                model_exchange_count=exchange_count,
             )
 
     async def purge_revoked_values(self, *, before: datetime) -> int:
