@@ -177,6 +177,7 @@ export function BuildPanel({ style }: { style: Style }) {
                     ["queued", "running"].includes(v.preview_retry?.status ?? "") ||
                     !v.report.release_eligible ||
                     !v.role_policy_current ||
+                    v.preview_policy_current === false ||
                     !v.review_summary.total ||
                     v.review_summary.accept !== v.review_summary.total ||
                     !!v.review_summary.auto_failed
@@ -194,6 +195,7 @@ export function BuildPanel({ style }: { style: Style }) {
                 </button>
                 <small>语义检查通过、人工逐条确认语气后可发布；自动风格偏好不阻止发布。</small>
                 {!v.role_policy_current && <p role="alert">此版本未按当前教练职责检查，请重新构建。已有素材和评审反馈保留。</p>}
+                {v.preview_policy_current === false && <p role="alert">此版本仍使用旧改写试答，请新建构建后评审。已发布版本不受影响。</p>}
               </>
             )}
             {v.status === "published" && v.id !== style.active_version_id && (

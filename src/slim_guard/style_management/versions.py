@@ -7,6 +7,7 @@ from sqlalchemy import select
 from slim_guard.db.models import utc_now
 from slim_guard.db.session import Database
 from slim_guard.expression_style.package import StylePackage
+from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION
 from slim_guard.group_chat import ROLE_POLICY_VERSION
 
 from .contracts import ReviewInput
@@ -50,6 +51,8 @@ class VersionRepository:
                         "role_policy_current": row.report.get("role_policy_version")
                         == ROLE_POLICY_VERSION,
                         "preview_retry": retries.get(row.id),
+                        "preview_policy_current": row.report.get("workflow_version")
+                        == WORKFLOW_VERSION,
                     }
                 )
             return result
@@ -130,6 +133,8 @@ class VersionRepository:
                     raise ValueError("失败用例正在重试，完成并重新评审后才能发布")
                 if row.report.get("role_policy_version") != ROLE_POLICY_VERSION:
                     raise ValueError("此版本尚未按当前教练职责检查，请重新构建后评审")
+                if row.report.get("workflow_version") != WORKFLOW_VERSION:
+                    raise ValueError("此版本仍使用旧改写试答，请重新构建；已有反馈和已发布版本保留")
                 cases = list(
                     await s.scalars(select(ReviewCase).where(ReviewCase.version_id == version_id))
                 )

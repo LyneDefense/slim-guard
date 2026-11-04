@@ -225,7 +225,7 @@ test("fallback answers are not shown as successful doctor rewrites or accept but
     passed: false, fallback: true, failure_code: "style_integrity_invalid",
     checks: [{ attempt: 1, passed: false, output: "失败的候选", issues: ["number_changed"] }],
   } });
-  for (const text of ["中性原稿（兜底，非风格改写）", "不是成功的风格改写", "仅重试失败的 2 条", "数字未保持一致", "自动检查未通过"])
+  for (const text of ["未通过检查的试答（不可发布）", "旧版中性原稿兜底", "仅重试失败的 2 条", "数字未保持一致", "自动检查未通过"])
     assert.ok(html.includes(text), text);
   assert.match(html, /<button disabled="">接受当前回答<\/button>/);
 });
@@ -301,7 +301,7 @@ test("build page has three nested tabs and publication waits for review", () => 
     "等待模型",
     "最后产物更新",
     "查看阶段产物",
-    "固定表达示例",
+    "固定对话示例",
   ])
     assert.ok(html.includes(text));
   assert.match(html, /<button disabled="">采纳并发布<\/button>/);
@@ -322,6 +322,38 @@ test("review shows three real texts and three scores without technical hashes", 
   ])
     assert.ok(html.includes(text));
   assert.ok(!html.includes("ResponsePlan"));
+});
+
+test("direct multi-turn preview displays actual trajectory and adopted repair", () => {
+  const html = render("/styles/doctor/review", {}, {}, {
+    original_response: "", doctor_response: "那就散步。",
+    test_case: { context: [], history: [] },
+    automated: { passed: true, mode: "direct_generation", style_advisory: true,
+      dialogue: [{ role: "user", content: "我不爱运动" }, { role: "assistant", content: "散步也不喜欢？" },
+        { role: "user", content: "散步还行" }, { role: "assistant", content: "那就散步。" }],
+      checks: [{ step: 2, attempt: 2, passed: true, adopted: true,
+        output: "那就散步。", issues: [] }],
+    },
+  });
+  for (const text of ["实际对话试答", "接续模型自己的回答", "散步也不喜欢？", "本轮已采用", "仍有表达建议"])
+    assert.ok(html.includes(text), text);
+  assert.ok(!html.includes("中性原稿兜底"));
+});
+
+test("new corpus form supports optional complete exchanges without raw JSON editing", () => {
+  const html = render("/styles/doctor/corrections");
+  assert.ok(html.includes("前置对话（选填）"));
+  assert.ok(html.includes("添加一轮前置对话"));
+  assert.ok(html.includes("当前用户输入和期望回答仍填写在下方"));
+});
+
+test("legacy rewrite previews keep feedback but cannot be newly published", () => {
+  const html = render("/styles/doctor/build", {}, {
+    preview_policy_current: false, report: { release_eligible: true },
+    review_summary: { total: 1, accept: 1, pending: 0, reject: 0, auto_failed: 0 },
+  });
+  assert.ok(html.includes("旧改写试答"));
+  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
 });
 
 test("fixed preview report has no automatic taste ranking and offers guide edits", async () => {

@@ -11,6 +11,7 @@ from slim_guard.agents.contracts import (
     ProfessionalAssessment,
     ResponsePlan,
 )
+from slim_guard.expression_style.dialogue import DialogueMessage, validate_dialogue
 
 
 class StyleProfile(ContractModel):
@@ -43,6 +44,14 @@ class StyleExample(ContractModel):
     style_profile_version: str = Field(min_length=1, max_length=128)
     original_response: str = ""
     text: str = Field(min_length=1, max_length=4000)
+    user_input: str = ""
+    dialogue: tuple[DialogueMessage, ...] = Field(default=(), max_length=24)
+
+    @field_validator("dialogue")
+    @classmethod
+    def complete_exchanges(cls, value: tuple[DialogueMessage, ...]) -> tuple[DialogueMessage, ...]:
+        validate_dialogue(value)
+        return value
 
 
 class StyleContext(ContractModel):

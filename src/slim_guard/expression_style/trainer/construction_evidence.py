@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from slim_guard.expression_style.dialogue import DialogueMessage
 from slim_guard.expression_style.package import (
     Evidence,
     FixedExample,
@@ -84,6 +85,7 @@ class EvidenceCatalog:
                 {
                     "id": ref,
                     "user_input": m.user_input,
+                    "history": [message.model_dump(mode="json") for message in m.history],
                     "role": self.analyses[m.id].role,
                     "analysis": {
                         "reason": self.analyses[m.id].reason,
@@ -215,6 +217,12 @@ class EvidenceCatalog:
                 revision=eligible[ref].revision,
                 original_response=eligible[ref].original_response,
                 desired_response=eligible[ref].desired_response,
+                user_input=eligible[ref].user_input,
+                dialogue=(
+                    *eligible[ref].history,
+                    DialogueMessage(role="user", content=eligible[ref].user_input),
+                    DialogueMessage(role="assistant", content=eligible[ref].desired_response),
+                ),
                 rule_ids=tuple(
                     r.rule_id
                     for r in guide.rules

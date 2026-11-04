@@ -2,7 +2,14 @@
 
 import json
 
-from slim_guard.agent_models.gateway import ModelMessage, ModelResponse, ModelUsage
+from slim_guard.agent.assembly.style_preview import build_coach_preview
+from slim_guard.agent_models.gateway import ModelMessage, ModelPurpose, ModelResponse, ModelUsage
+from slim_guard.style_management.worker import StyleWorker
+
+
+def make_style_worker(*args, **kwargs):
+    return StyleWorker(*args, **kwargs, preview_factory=build_coach_preview)
+
 
 QUESTIONS = [
     "你的名字是什么",
@@ -55,7 +62,10 @@ class TrainerGateway:
         self.requests.append(request)
         if request.output_schema_name == self.fail_schema:
             raise RuntimeError("test provider offline")
-        payload = json.loads(request.messages[1].content)
+        index = (
+            2 if request.purpose in {ModelPurpose.COACH_RESPONSE, ModelPurpose.COACH_REVIEW} else 1
+        )
+        payload = json.loads(request.messages[index].content)
         schema = request.output_schema_name
         if schema == "AnalysisBatch":
             value = {
@@ -111,6 +121,8 @@ class TrainerGateway:
                 ],
                 "used_block_ids": [b["block_id"] for b in plan["content_blocks"]],
             }
+        elif schema == "CoachReply":
+            value = {"text": "先看实际情况。", "source_refs": []}
         elif schema == "ReplyCheck":
             value = {
                 "fidelity_passed": True,

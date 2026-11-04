@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from slim_guard.agent.assembly.style_preview import build_coach_preview
 from slim_guard.agent_models.fake import ScriptedModelGateway
 from slim_guard.agent_models.gateway import ModelMessage, ModelResponse
 from slim_guard.expression_style.package import Guide, content_hash, make_package
@@ -12,7 +13,7 @@ from slim_guard.expression_style.review import policy
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
 from slim_guard.expression_style.trainer.contracts import BuildExecutionConfig
 from slim_guard.expression_style.trainer.contracts import TestCase as RewriteCase
-from slim_guard.expression_style.trainer.evaluation import rewrite_case
+from slim_guard.expression_style.trainer.evaluation import freeze_execution, preview_case
 
 
 class MemoryPort:
@@ -48,7 +49,7 @@ async def test_offline_rewrite_does_not_reuse_counter_failure_or_rebuild_style_p
     case = RewriteCase(
         id="quantity-case",
         family="synthetic",
-        user_input="今天喝水了",
+        user_input="今天喝水1500毫升",
         source_text="今天喝水1500毫升。",
     )
     rewritten = "今天喝水1500毫升，这1500毫升是今天的饮水量。"
@@ -61,8 +62,6 @@ async def test_offline_rewrite_does_not_reuse_counter_failure_or_rebuild_style_p
                     content=json.dumps(
                         {
                             "text": rewritten,
-                            "used_block_ids": ["neutral"],
-                            "style_profile_version": package.version_id,
                         }
                     ),
                 )
@@ -82,7 +81,10 @@ async def test_offline_rewrite_does_not_reuse_counter_failure_or_rebuild_style_p
             ),
         ]
     )
-    client = TrainingClient(TrainingGateway(gateway, port, BuildExecutionConfig()), "test-model")
+    training = TrainingGateway(gateway, port, BuildExecutionConfig())
+    client = TrainingClient(
+        training, "test-model", preview=build_coach_preview(training, "test-model", 120)
+    )
     legacy_key = "rewrite:" + content_hash(
         {
             "package": package.package_hash,
@@ -100,14 +102,29 @@ async def test_offline_rewrite_does_not_reuse_counter_failure_or_rebuild_style_p
         "checks": [{"issues": ["number_changed"]}],
     }
     port.checkpoints[legacy_key] = copy.deepcopy(legacy_failure)
-    result = await rewrite_case(client, package, case, "preview")
+    result = await preview_case(client, package, case, "preview")
     assert result["passed"] and not result["fallback"]
     assert result["text"] == rewritten
     assert result["execution"]["review"] == policy.review_signature(client.model)
-    assert result["checks"][0]["policy_version"] == policy.POLICY_VERSION
-    assert all(c["status"] == "passed" for c in result["checks"][0]["check_results"])
-    assert [r.output_schema_name for r in gateway.requests] == ["StyledResponse", "ReplyCheck"]
+    assert result["execution"]["coach"] == client.preview.signature
+    assert result["checks"][0]["review"]["fidelity_passed"]
+    assert [r.output_schema_name for r in gateway.requests] == ["CoachReply", "ReplyCheck"]
     assert port.checkpoints[legacy_key] == legacy_failure
     assert package.model_dump(mode="json") == original_package
-    assert await rewrite_case(client, package, case, "preview") == result
+    assert await preview_case(client, package, case, "preview") == result
     assert len(gateway.requests) == 2
+
+
+async def test_resume_does_not_silently_switch_generation_or_review_policy():
+    port = MemoryPort()
+    gateway = ScriptedModelGateway([])
+    training = TrainingGateway(gateway, port, BuildExecutionConfig())
+    client = TrainingClient(
+        training, "test-model", preview=build_coach_preview(training, "test-model", 120)
+    )
+    frozen = await freeze_execution(client)
+    assert await freeze_execution(client) == frozen
+    port.checkpoints["coach_execution_signature"] = "retired-direct-generation"
+    with pytest.raises(ValueError, match="新建构建"):
+        await freeze_execution(client)
+    assert gateway.requests == []

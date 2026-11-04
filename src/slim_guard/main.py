@@ -9,6 +9,7 @@ from datetime import timedelta
 from fastapi import FastAPI, Request, Response
 
 from slim_guard.admin.calls.routes import router as call_monitor_router
+from slim_guard.agent.assembly.style_preview import build_coach_preview
 from slim_guard.agent.composition import build_agent_runtime
 from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.manifest import build_agent_manifest
@@ -470,6 +471,7 @@ def create_app(
                 build_model_gateway(active_model_for_services, UsageRepository(database)),
                 app_settings.zhipu_text_model,
                 app_settings.style_iteration_poll_seconds,
+                preview_factory=build_coach_preview,
             )
             style_iteration_stop = asyncio.Event()
             style_iteration_task = asyncio.create_task(

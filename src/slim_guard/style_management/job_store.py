@@ -123,7 +123,11 @@ class JobStore:
                     ReviewCase(
                         version_id=version.id,
                         test_case=case,
-                        user_input=case["user_input"],
+                        user_input=(
+                            item["candidate"]["dialogue"][-2]["content"]
+                            if item["candidate"].get("passed") and item["candidate"].get("dialogue")
+                            else case["user_input"]
+                        ),
                         original_response=case["source_text"],
                         doctor_response=item["candidate"]["text"],
                         baseline_response=item["baseline"]["text"],

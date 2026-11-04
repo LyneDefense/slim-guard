@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from slim_guard.expression_style.package import content_hash
 from slim_guard.group_chat import COACH_ROLE_POLICY
 
 from .client import TrainingClient
@@ -52,7 +53,7 @@ async def analyze_materials(
     if len({m.id for m in materials}) != len(materials):
         raise ValueError("输入素材 ID 重复，请检查构建快照；未向模型发送输入")
     results = []
-    seen: dict[tuple[str, str, str], str] = {}
+    seen: dict[str, str] = {}
     for start in range(0, len(materials), 8):
         batch = materials[start : start + 8]
         refs = BatchReferences.for_ids([m.id for m in batch])
@@ -61,13 +62,16 @@ async def analyze_materials(
             COACH_ROLE_POLICY + "逐条筛选教练表达风格迁移素材。输入 id 是本批短编号，"
             "每个编号必须恰好返回一次作为 example_id，不能合并、省略或创造编号。"
             "即使内容重复或不可用也必须逐条返回分类；duplicate_of 只能引用本批另一个编号。"
-            "先判断说话内容是否属于教练：原回答或期望回答承担记录事项、播报操作状态，"
-            "或试图改变固定角色职责时，标为 out_of_scope，说明边界，不作为正面示例或表达规则依据。"
+            "这是直接对话风格素材，不是必须保留原回答全部内容的改写任务。"
+            "依据 history 和用户本轮意图比较原回答与期望回答。期望回答承担记录事项、"
+            "播报操作状态或试图改变固定角色职责时，标为 out_of_scope。"
+            "原回答越权而期望回答纠正了职责时，可以学习合法的期望回答，但不能学习原回答越权部分。"
             "不能仅因为提及已有记录就排除正常点评，也不能把对异常数值的自然反问当作记录操作。"
             "比较原回答和期望回答的差异，"
             "不是重新核查原回答中的业务事实或医疗知识。"
-            "positive 表示可用的风格改写对：只调整语气、口吻、句式、口语程度或冗余客套，"
-            "事实、建议、对象、状态、条件和风险保持一致；不要求逐字相同。"
+            "positive 表示有语境依据的正面对话示例：调整语气、口吻、句式和内容取舍，"
+            "可删去重复分析、不相关的主动建议或说教，不要求复述全部已知事实。"
+            "不能改变实际表达的事实、对象、条件和不确定性，不能省略本轮必要风险说明。"
             "删去无实质信息的礼貌寒暄也可为 positive，表达风格调整本身绝不是 content_change。"
             "negative 表示只有纠正意见、没有可用期望回答，可提炼表达限制而不伪造正面答案。"
             "content_change 仅表示实际新增、删除或改变业务事实、建议、判断或角色职责，"
@@ -92,11 +96,7 @@ async def analyze_materials(
         }
         for material in batch:
             item = indexed[material.id]
-            key = (
-                material.original_response.strip(),
-                material.desired_response.strip(),
-                material.correction_opinion.strip(),
-            )
+            key = content_hash(material.model_dump(mode="json", exclude={"id", "revision"}))
             if key in seen:
                 item = MaterialAnalysis(
                     example_id=material.id,

@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { stylesApi, type Case, type Review, type Style } from "./api";
 import { PreviewRetryPanel } from "./PreviewRetryPanel";
 import { PreviewChecks, PreviewOutcome } from "./PreviewOutcome";
+import { DialogueView } from "./Dialogue";
 export function ReviewPanel({ style }: { style: Style }) {
   const [params, setParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
@@ -29,7 +30,7 @@ export function ReviewPanel({ style }: { style: Style }) {
       <section className="expression-card">
         <h2>评审版本</h2>
         <p>
-          这里查看固定用例与人工样例回放的实际输出，不宣称独立盲测。接受当前回答代表认可它的语气；填写期望回答并拒绝，可用于下次构建。
+          这里与线上使用相同医生生成和审查能力，直接试答，不先写中性稿。多轮试答会接着模型实际回答继续，不宣称独立盲测。接受代表认可语气；填写期望回答并拒绝，可用于下次构建。
         </p>
         <p>
           医生只负责点评和对话，记录事项及其成功／失败反馈属于系统助手，不靠风格训练改变职责。
@@ -39,6 +40,9 @@ export function ReviewPanel({ style }: { style: Style }) {
             此版本未按当前教练职责检查，不能发布。可继续保存反馈，然后重新构建。
           </p>
         )}
+        {!readOnly && selectedVersion?.preview_policy_current === false && <p role="alert">
+          此版本仍是旧改写试答，请新建构建后评审。已有素材、反馈和已发布版本保持不变。
+        </p>}
         <label>
           风格版本
           <select
@@ -177,14 +181,19 @@ function ReviewCard({
           <p>{value.user_input}</p>
         </section>
         <section>
-          <h3>{value.automated.fallback ? "中性原稿（兜底，非风格改写）" : "医生回答"}</h3>
-          <p>{value.doctor_response}</p>
+          <h3>{value.automated.fallback ? "未通过检查的试答（不可发布）" : "医生回答"}</h3>
+          <p>{value.doctor_response || "未生成可采用的回答"}</p>
         </section>
         <section>
           <h3>期望医生回答</h3>
           <p>{review.desired_response || "尚未填写，可在下方补充"}</p>
         </section>
       </div>
+      {!!value.automated.dialogue?.length && <details open={value.automated.dialogue.length > 2}>
+        <summary>实际对话试答 · 接续模型自己的回答</summary>
+        <DialogueView messages={value.test_case.history} />
+        <DialogueView messages={value.automated.dialogue} />
+      </details>}
       {!!value.test_case.context.length && (
         <p>已知语境：{value.test_case.context.join("；")}</p>
       )}
@@ -199,8 +208,8 @@ function ReviewCard({
         </p>
       )}
       <details>
-        <summary>查看改写前原文及自动检查</summary>
-        <p>{value.original_response}</p>
+        <summary>查看素材原回答及自动检查</summary>
+        <p>{value.original_response || "直接生成试答，无中性原稿。"}</p>
         <p>
           {value.automated.passed
             ? "共享审查通过"

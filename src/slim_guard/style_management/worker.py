@@ -15,7 +15,7 @@ from slim_guard.db.session import Database
 from slim_guard.expression_style.review.policy import review_signature
 from slim_guard.expression_style.trainer.client import TrainingClient, TrainingGateway
 from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION, BuildExecutionConfig
-from slim_guard.expression_style.trainer.ports import BuildInterrupted
+from slim_guard.expression_style.trainer.ports import BuildInterrupted, CoachPreviewFactory
 from slim_guard.expression_style.trainer.preview_retry import retry_previews
 from slim_guard.expression_style.trainer.service import StyleTrainer
 from slim_guard.expression_style.trainer.structured_output import StructuredOutputError
@@ -29,7 +29,13 @@ logger = logging.getLogger(__name__)
 
 class StyleWorker:
     def __init__(
-        self, database: Database, gateway: ModelGateway, model: str, poll_seconds: float = 2
+        self,
+        database: Database,
+        gateway: ModelGateway,
+        model: str,
+        poll_seconds: float = 2,
+        *,
+        preview_factory: CoachPreviewFactory,
     ) -> None:
         self.db, self.gateway, self.model, self.poll_seconds = (
             database,
@@ -37,6 +43,7 @@ class StyleWorker:
             model,
             poll_seconds,
         )
+        self.preview_factory = preview_factory
 
     async def run_once(self) -> bool:
         async with self.db.session() as s, s.begin():
@@ -74,7 +81,12 @@ class StyleWorker:
             remaining = config.max_seconds - elapsed_before
             if remaining <= 0:
                 raise ValueError("构建运行时限已耗尽；恢复不会重置累计执行时间")
-            client = TrainingClient(TrainingGateway(self.gateway, store, config), self.model)
+            training_gateway = TrainingGateway(self.gateway, store, config)
+            client = TrainingClient(
+                training_gateway,
+                self.model,
+                preview=self.preview_factory(training_gateway, self.model, config.request_seconds),
+            )
 
             async def heartbeat() -> None:
                 while True:

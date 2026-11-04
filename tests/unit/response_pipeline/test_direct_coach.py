@@ -145,7 +145,9 @@ async def test_direct_reply_has_no_neutral_stage_or_system_notice(chat, user, an
     assert model.requests[0].output_schema_name == "CoreCompletion"
     payload = json.loads(model.requests[1].messages[-1].content)
     assert payload["evidence"]["context"]["current_user_input"]["text"] == user
-    assert "style" in payload
+    style = json.loads(model.requests[1].messages[1].content)
+    assert style["type"] == "style_reference_only"
+    assert "style" not in payload
     assert "neutral_draft" not in payload
     assert "participant" not in payload["output_schema"]["properties"]
     assert model.requests[1].tools == ()
@@ -338,9 +340,11 @@ async def test_published_style_is_frozen_before_first_generation_and_reused_for_
     assert result.messages[0].style_profile_version == profile.version
     for request in model.requests:
         if request.purpose is ModelPurpose.COACH_RESPONSE:
-            style = json.loads(request.messages[-1].content)["style"]
-            assert style["compiled_prompt"] == snapshot.compiled_prompt
-            assert style["examples"][0]["example_id"] == "fixed-1"
+            style = json.loads(request.messages[1].content)
+            assert style["version"] == snapshot.profile.version
+            assert style["package_hash"] == snapshot.package_hash
+            assert style["dialogue_examples"][0]["example_id"] == "fixed-1"
+            assert "compiled_prompt" not in style
 
 
 async def test_operation_question_binds_current_message_alias(chat):
@@ -372,3 +376,61 @@ async def test_core_format_failure_after_write_keeps_receipt_without_reexecution
     assert len((await WeightRepository(db).recent_trend("user")).records) == 1
     assert any(m.kind.value == "card" for m in result.messages)
     assert any(m.notice_text == "健康记录已更新。" for m in result.messages)
+
+
+async def test_expression_only_rejection_preserves_doctor_and_adoption_trace(chat):
+    db, run = chat
+    text = "有依据的回答，只是语气还不够简洁。"
+    result, _ = await run(
+        [
+            reply({}),
+            reply({"text": text}),
+            reply(rejection(text, dimension="expression")),
+            reply({"text": text}),
+            reply(rejection(text, dimension="expression")),
+        ]
+    )
+    assert result.failure_code is None
+    assert [(m.participant.value, m.text) for m in result.messages] == [("coach", text)]
+    async with db.session() as session:
+        final = await session.scalar(
+            select(AgentArtifactRecord).where(
+                AgentArtifactRecord.turn_id == result.turn_id,
+                AgentArtifactRecord.artifact_type == "outgoing_messages",
+            )
+        )
+        payload = json.loads(final.payload_json)
+        assert payload["style_advisory"] is True and payload["adopted_attempt"] == 2
+
+
+async def test_failed_style_repair_adopts_only_previously_grounded_candidate(chat):
+    db, run = chat
+    safe, unsafe = "可以休息一天。", "虚构的危险回答。"
+    result, _ = await run(
+        [
+            reply({}),
+            reply({"text": safe}),
+            reply(rejection(safe, dimension="expression")),
+            reply({"text": unsafe}),
+            reply(rejection(unsafe, dimension="fidelity", severity="blocking")),
+        ]
+    )
+    assert result.failure_code is None and result.messages[0].text == safe
+    async with db.session() as session:
+        artifacts = list(
+            await session.scalars(
+                select(AgentArtifactRecord).where(
+                    AgentArtifactRecord.turn_id == result.turn_id,
+                )
+            )
+        )
+        final = next(a for a in artifacts if a.artifact_type == "outgoing_messages")
+        assert json.loads(final.payload_json)["adopted_attempt"] == 1
+        adopted_parents = json.loads(final.parent_artifact_ids_json)
+        safe_artifact = next(
+            a
+            for a in artifacts
+            if a.artifact_type == "coach_reply"
+            and json.loads(a.payload_json)["output"]["text"] == safe
+        )
+        assert safe_artifact.id in adopted_parents

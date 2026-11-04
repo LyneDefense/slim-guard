@@ -6,8 +6,8 @@ import json
 import pytest
 from sqlalchemy import func, select
 
+from slim_guard.agent.assembly.style_preview import build_coach_preview
 from slim_guard.agent_models.gateway import ModelMessage
-from slim_guard.agents.style.agent import RESPONSE_STYLE_PROMPT_VERSION
 from slim_guard.expression_style.package import Guide, make_package
 from slim_guard.expression_style.review.policy import review_signature
 from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION
@@ -21,9 +21,9 @@ from slim_guard.style_management.models import BuildRun, ReviewCase, Version
 from slim_guard.style_management.preview_retries import PreviewRetryRepository
 from slim_guard.style_management.runtime import RuntimeStyles
 from slim_guard.style_management.versions import VersionRepository
-from slim_guard.style_management.worker import StyleWorker
 
 from .fakes import TrainerGateway
+from .fakes import make_style_worker as StyleWorker
 
 
 async def seed_preview(db, *, total=17, failed=2):
@@ -75,7 +75,8 @@ async def seed_preview(db, *, total=17, failed=2):
                 "execution": {
                     "model": "test-model",
                     "review": review_signature("test-model"),
-                    "rewrite": RESPONSE_STYLE_PROMPT_VERSION,
+                    "coach": build_coach_preview(TrainerGateway(), "test-model", 120).signature,
+                    "mode": "direct_generation",
                 },
             }
             session.add(
@@ -133,12 +134,11 @@ async def test_only_two_of_seventeen_are_retried_and_other_fifteen_approvals_sur
     assert (await versions.versions("doctor"))[0]["preview_retry"]["id"] == job["id"]
     gateway = TrainerGateway()
     await StyleWorker(style_db, gateway, "test-model").run_once()
-    assert [r.output_schema_name for r in gateway.requests] == ["StyledResponse", "ReplyCheck"] * 2
+    assert [r.output_schema_name for r in gateway.requests] == ["CoachReply", "ReplyCheck"] * 2
     assert all(
-        "number_changed"
-        in json.loads(r.messages[1].content)["review_feedback"]["issues"][0]["explanation"]
+        "number_changed" in json.dumps(json.loads(r.messages[-1].content)["feedback"])
         for r in gateway.requests
-        if r.output_schema_name == "StyledResponse"
+        if r.output_schema_name == "CoachReply"
     )
     after = await rows(style_db)
     assert after[2:] == before[2:]
@@ -274,11 +274,11 @@ async def test_execution_failure_preserves_all_reviews_and_resume_reuses_success
         broken = True
 
         async def complete(self, request):
-            payload = json.loads(request.messages[1].content)
+            payload = json.loads(request.messages[-1].content)
             if (
                 self.broken
-                and request.output_schema_name == "StyledResponse"
-                and payload["style_context"]["user_input"] == "聊聊1"
+                and request.output_schema_name == "CoachReply"
+                and payload["evidence"]["context"]["current_user_input"]["text"] == "聊聊1"
             ):
                 self.requests.append(request)
                 raise RuntimeError("test provider offline")
@@ -302,7 +302,7 @@ async def test_execution_failure_preserves_all_reviews_and_resume_reuses_success
     completed = await builds.detail("doctor", job["id"])
     assert completed["status"] == "completed", completed["error"]
     assert [r.output_schema_name for r in gateway.requests[count:]] == [
-        "StyledResponse",
+        "CoachReply",
         "ReplyCheck",
     ]
     assert completed["usage"]["calls"] == len(gateway.requests)
@@ -313,14 +313,14 @@ async def test_still_invalid_rewrite_remains_unpublishable_and_never_fakes_succe
     class StillWrong(TrainerGateway):
         async def complete(self, request):
             result = await super().complete(request)
-            if request.output_schema_name == "StyledResponse":
+            if request.output_schema_name == "CoachReply":
                 value = json.loads(result.message.content)
                 value["text"] = "无依据省略了原稿数字。"
                 return result.model_copy(
                     update={"message": ModelMessage(role="assistant", content=json.dumps(value))}
                 )
             if request.output_schema_name == "ReplyCheck":
-                payload = json.loads(request.messages[1].content)
+                payload = json.loads(request.messages[-1].content)
                 value = {
                     "fidelity_passed": False,
                     "role_passed": True,
@@ -331,8 +331,8 @@ async def test_still_invalid_rewrite_remains_unpublishable_and_never_fakes_succe
                             "severity": "repairable",
                             "code": "topic_omitted",
                             "explanation": "删除了原稿指定的话题",
-                            "source_excerpt": payload["original"],
-                            "output_excerpt": payload["rewritten"],
+                            "source_excerpt": "",
+                            "output_excerpt": payload["reply"]["text"],
                             "repair_requirement": "保留原稿指定的话题",
                         }
                     ],

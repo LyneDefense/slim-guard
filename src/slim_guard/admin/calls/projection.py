@@ -242,7 +242,13 @@ def project(
             for key in ("fidelity_passed", "role_passed", "expression_passed")
         )
         if rejected and status == "succeeded":
-            status = "rejected"
+            status = (
+                "warning"
+                if invocation.get("agent_role") == "coach_review"
+                and check.get("fidelity_passed") is True
+                and check.get("role_passed") is True
+                else "rejected"
+            )
         node(
             identity,
             ROLE_LABELS.get(invocation.get("agent_role"), invocation.get("agent_role"))

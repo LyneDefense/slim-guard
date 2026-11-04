@@ -9,8 +9,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import StyleExample, StyleProfile, StyleProfileSnapshot
+from .dialogue import DialogueMessage, validate_dialogue
 
-COMPILER_VERSION: Literal["fixed-style-v1"] = "fixed-style-v1"
+CompilerVersion = Literal["fixed-style-v1", "dialogue-style-v2"]
+COMPILER_VERSION: CompilerVersion = "dialogue-style-v2"
 MAX_PROMPT_BYTES = 24_000
 
 
@@ -44,6 +46,18 @@ class FixedExample(Artifact):
     original_response: str = Field(min_length=1, max_length=4000)
     desired_response: str = Field(min_length=1, max_length=4000)
     rule_ids: tuple[str, ...] = Field(min_length=1)
+    user_input: str = Field(default="", max_length=4000)
+    dialogue: tuple[DialogueMessage, ...] = Field(default=(), max_length=24)
+
+    @model_validator(mode="after")
+    def complete_dialogue(self) -> FixedExample:
+        validate_dialogue(self.dialogue)
+        if self.dialogue and (
+            self.dialogue[-2].content != self.user_input
+            or self.dialogue[-1].content != self.desired_response
+        ):
+            raise ValueError("示例末轮必须对应素材的用户输入和期望回答")
+        return self
 
 
 def canonical(value: object) -> str:
@@ -54,16 +68,42 @@ def content_hash(value: object) -> str:
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
-def compile_prompt(guide: Guide, examples: tuple[FixedExample, ...]) -> str:
+def compile_prompt(
+    guide: Guide,
+    examples: tuple[FixedExample, ...],
+    compiler_version: CompilerVersion = COMPILER_VERSION,
+) -> str:
     # Evidence and source records are not copied into the online model context.
-    payload = {
+    payload: dict[str, object] = {
         "summary": guide.summary,
         "rules": [{"text": r.text, "boundary": r.boundary} for r in guide.rules],
         "prohibited_phrases": guide.prohibited_phrases,
-        "fixed_examples": [
-            {"original": e.original_response, "rewritten": e.desired_response} for e in examples
-        ],
     }
+    if compiler_version == "fixed-style-v1":
+        payload["fixed_examples"] = [
+            {"original": e.original_response, "rewritten": e.desired_response} for e in examples
+        ]
+    else:
+        payload["dialogue_examples"] = [
+            {
+                "id": e.id,
+                "messages": [m.model_dump(mode="json") for m in e.dialogue]
+                or (
+                    [
+                        {"role": "user", "content": e.user_input},
+                        {"role": "assistant", "content": e.desired_response},
+                    ]
+                    if e.user_input
+                    else []
+                ),
+                **(
+                    {"utterance": e.desired_response, "context_missing": True}
+                    if not e.user_input and not e.dialogue
+                    else {}
+                ),
+            }
+            for e in examples
+        ]
     prompt = canonical(payload)
     if len(prompt.encode()) > MAX_PROMPT_BYTES:
         raise ValueError("固定风格包超过提示预算，需减少重复规则或示例；不会在线截断")
@@ -72,7 +112,7 @@ def compile_prompt(guide: Guide, examples: tuple[FixedExample, ...]) -> str:
 
 class StylePackage(Artifact):
     schema_version: Literal["1"] = "1"
-    compiler_version: Literal["fixed-style-v1"] = COMPILER_VERSION
+    compiler_version: CompilerVersion = COMPILER_VERSION
     style_id: str
     version_id: str
     display_name: str
@@ -90,11 +130,19 @@ class StylePackage(Artifact):
             raise ValueError("固定示例 ID 重复")
         if any(set(e.rule_ids) - rule_ids for e in self.examples):
             raise ValueError("示例引用了不存在的规则")
-        if self.compiled_prompt != compile_prompt(self.guide, self.examples):
+        if self.compiled_prompt != compile_prompt(self.guide, self.examples, self.compiler_version):
             raise ValueError("风格编译结果与冻结产物不一致")
-        if self.package_hash != content_hash(
-            self.model_dump(mode="json", exclude={"package_hash"})
-        ):
+        values = self.model_dump(mode="json", exclude={"package_hash"})
+        if self.compiler_version == "fixed-style-v1":
+            # Published v1 bytes/hashes are immutable; new optional fields must not
+            # invalidate old releases or silently recompile them.
+            values["examples"] = [
+                {k: v for k, v in e.items() if k not in {"user_input", "dialogue"}}
+                for e in values["examples"]
+            ]
+            if any(e.user_input or e.dialogue for e in self.examples):
+                raise ValueError("旧编译版本不能追加对话；请新建风格版本")
+        if self.package_hash != content_hash(values):
             raise ValueError("风格产物 Hash 不一致")
         return self
 
@@ -115,6 +163,8 @@ class StylePackage(Artifact):
                     style_profile_version=self.version_id,
                     original_response=e.original_response,
                     text=e.desired_response,
+                    user_input=e.user_input,
+                    dialogue=e.dialogue,
                 )
                 for e in self.examples
             ),

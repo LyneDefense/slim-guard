@@ -171,6 +171,40 @@ def test_review_has_chronological_root_and_retains_causal_link():
     assert review["raw"]["parent_invocation_id"] == "coach"
 
 
+@pytest.mark.parametrize(
+    "dimension,expected",
+    [("expression", "warning"), ("role", "rejected"), ("fidelity", "rejected")],
+)
+def test_style_advisory_is_not_presented_as_a_factual_or_generation_failure(dimension, expected):
+    data = trace()
+    data["invocations"] = [
+        {
+            "invocation_id": "review",
+            "agent_role": "coach_review",
+            "status": "succeeded",
+            "output_artifact_id": "check",
+        }
+    ]
+    data["artifacts"] = [
+        {
+            "artifact_id": "check",
+            "invocation_id": "review",
+            "artifact_type": "coach_grounding_review",
+            "payload": {
+                "output": {
+                    "fidelity_passed": dimension != "fidelity",
+                    "role_passed": dimension != "role",
+                    "expression_passed": dimension != "expression",
+                    "issues": [{"dimension": dimension}],
+                }
+            },
+        }
+    ]
+    result = project(data, [], [])
+    review = next(node for node in result["nodes"] if node["id"] == "review")
+    assert review["status"] == expected
+
+
 def test_waiting_for_user_is_not_failure():
     data = trace()
     data["timeline"] = [

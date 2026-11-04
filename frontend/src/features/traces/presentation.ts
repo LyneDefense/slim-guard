@@ -22,6 +22,7 @@ export const labels: Record<string, string> = {
   partial: "部分完成",
   waiting: "等待用户回答",
   rejected: "未通过审查",
+  warning: "表达建议",
   degraded: "已降级",
   unknown: "未记录／未知",
   none: "未执行",
@@ -45,6 +46,7 @@ export function tone(status: string): Tone {
             "running",
             "pending",
             "rejected",
+            "warning",
             "started",
           ].includes(status)
         ? "warn"

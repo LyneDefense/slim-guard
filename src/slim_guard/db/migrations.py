@@ -43,6 +43,7 @@ from slim_guard.nutrition_rag.profiles import (
     NUTRITION_LEXICON_SHA256,
     QUERY_PLAN_VERSION,
 )
+from slim_guard.style_management.dialogue_migration import migrate_dialogue_examples
 from slim_guard.style_management.migration import reset_style_schema
 from slim_guard.style_management.trainer_migration import migrate_trainer_schema
 from slim_guard.tasks.migration import migrate_conversation_tasks
@@ -131,7 +132,7 @@ async def _add_agent_invocation_sequence(connection: AsyncConnection) -> None:
         )
         await connection.execute(text("DROP TABLE agent_invocations"))
         await connection.run_sync(
-            lambda sync_connection: AgentInvocationRecord.__table__.create(
+            lambda sync_connection: cast(Table, AgentInvocationRecord.__table__).create(
                 sync_connection,
                 checkfirst=False,
             )
@@ -619,6 +620,7 @@ MIGRATIONS = (
     SchemaMigration("20261026_01_agent_invocation_sequence", _add_agent_invocation_sequence),
     SchemaMigration("20261028_01_meal_media_and_editor", migrate_meal_media),
     SchemaMigration("20261030_01_daily_insights", migrate_daily_insights),
+    SchemaMigration("20261104_01_style_dialogue_samples", migrate_dialogue_examples),
 )
 
 

@@ -158,7 +158,7 @@ def test_selection_cannot_rewrite_guide_or_choose_unlinked_and_preview_sources()
         ExampleSelection.model_validate({**selection.model_dump(), "guide": {}})
 
 
-def test_prompt_budget_failure_returns_repairable_field_error():
+def test_prompt_budget_failure_returns_repairable_field_error(monkeypatch):
     catalog, _ = catalog_with("positive", original="原" * 4000, desired="期" * 4000)
     value = GuideDraft(
         summary="长" * 1000,
@@ -170,6 +170,7 @@ def test_prompt_budget_failure_returns_repairable_field_error():
     error = catalog.guide_validation(("e1",)).check(value)[0]
     assert error["type"] == "prompt_budget" and error["path"] == "rules"
     selection = ExampleSelection(example_ids=("m1",), explanation="选择")
+    monkeypatch.setattr("slim_guard.expression_style.package.MAX_PROMPT_BYTES", 1000)
     error = catalog.selection_validation(draft("e1"), "doctor", "v", "医生").check(selection)[0]
     assert error["type"] == "package_budget" and error["path"] == "example_ids"
 

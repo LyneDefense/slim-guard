@@ -121,9 +121,6 @@ def scope_sources():
     )
     package = make_package("doctor", "v", "医生", guide(), examples)
     verdicts = {
-        "case:operation": False,
-        "case:water": True,
-        "case:records": True,
         "example:good": True,
         "example:legacy": False,
     }
@@ -143,10 +140,10 @@ async def test_legacy_sources_and_inherited_examples_are_excluded_not_rewritten(
     package, suite, verdict = scope_sources()
     client, gateway, port = client_for([response(verdict)])
     selected, preview, decisions = await scope_preview(client, package, suite)
-    assert [c.id for c in preview.cases] == ["water", "records"]
+    assert [c.id for c in preview.cases] == ["operation", "water", "records"]
     assert [e.id for e in selected.examples] == ["good"]
     assert selected.package_hash != package.package_hash and len(package.examples) == 2
-    assert decisions[0]["source_text"] == "没保存成功。" and not decisions[0]["allowed"]
+    assert decisions[1]["desired_text"] == "记好了。" and not decisions[1]["allowed"]
     assert port.checkpoints["coach_scope"] == decisions
     assert COACH_ROLE_POLICY in gateway.requests[0].messages[0].content
 
@@ -156,7 +153,7 @@ async def test_scope_requires_complete_ids_and_repairs_missing_coverage():
     invalid = {"items": [verdict["items"][0]] * len(verdict["items"])}
     client, gateway, _ = client_for([response(invalid), response(verdict)])
     _, preview, _ = await scope_preview(client, package, suite)
-    assert len(preview.cases) == 2 and len(gateway.requests) == 2
+    assert len(preview.cases) == 3 and len(gateway.requests) == 2
     assert "validation_errors" in gateway.requests[1].messages[-1].content
 
 

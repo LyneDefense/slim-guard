@@ -1,4 +1,20 @@
 /* Expression style library and nested style detail views */
+.style-history-editor {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin: 16px 0;
+}
+.style-history-editor legend { padding: 0 6px; color: var(--ink); font-weight: 600; }
+.style-dialogue { display: grid; gap: 10px; margin: 12px 0; }
+.style-dialogue > section {
+  border-left: 3px solid var(--line);
+  padding: 8px 12px;
+  background: var(--surface-alt, var(--surface));
+  min-width: 0;
+}
+.style-dialogue p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .style-overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

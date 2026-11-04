@@ -8,7 +8,7 @@ from slim_guard.group_chat import ROLE_POLICY_VERSION
 from .client import TrainingClient
 from .construction import construct
 from .contracts import WORKFLOW_VERSION, Material, MaterialAnalysis, PreviewSuite
-from .evaluation import evaluate, summarize
+from .evaluation import evaluate, freeze_execution, summarize
 from .materials import analyze_materials
 from .preview import replay_suite
 from .role_scope import scope_preview
@@ -39,6 +39,7 @@ class StyleTrainer:
         if snapshot.get("workflow_version") != WORKFLOW_VERSION:
             raise ValueError("旧构建流程已停用，请新建构建；素材和评审反馈仍保留")
         client = self.client
+        execution_signature = await freeze_execution(client)
         materials = tuple(Material.model_validate(m) for m in snapshot["materials"])
         if not materials:
             raise ValueError("没有可分析素材")
@@ -79,7 +80,7 @@ class StyleTrainer:
             "selected",
             package.model_dump(mode="json"),
             stage="construction",
-            message=explanation + "；已按固定教练职责筛选示例，不改变原稿含义",
+            message=explanation + "；已按固定教练职责筛选对话示例",
         )
         await client.port.save(
             "preview_suite",
@@ -102,6 +103,7 @@ class StyleTrainer:
         report = {
             "schema_version": "2",
             "workflow_version": WORKFLOW_VERSION,
+            "coach_execution_signature": execution_signature,
             "package_hash": package.package_hash,
             "suite_version": suite.version,
             "conclusion": "存在语义、职责或执行问题，暂不可发布"

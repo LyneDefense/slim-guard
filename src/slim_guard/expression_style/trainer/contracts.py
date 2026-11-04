@@ -2,11 +2,12 @@
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
+from slim_guard.expression_style.dialogue import DialogueMessage, validate_dialogue
 from slim_guard.expression_style.package import Artifact
 
-WORKFLOW_VERSION = "style-preview-v4-bound-evidence"
+WORKFLOW_VERSION = "style-preview-v5-direct-dialogue"
 
 
 class Material(Artifact):
@@ -16,6 +17,13 @@ class Material(Artifact):
     original_response: str
     desired_response: str = ""
     correction_opinion: str = ""
+    history: tuple[DialogueMessage, ...] = Field(default=(), max_length=22)
+
+    @field_validator("history")
+    @classmethod
+    def complete_history(cls, value: tuple[DialogueMessage, ...]) -> tuple[DialogueMessage, ...]:
+        validate_dialogue(value)
+        return value
 
 
 class MaterialAnalysis(Artifact):
@@ -45,9 +53,24 @@ class TestCase(Artifact):
     family: str = Field(min_length=1, max_length=100)
     user_input: str = Field(min_length=1, max_length=4000)
     context: tuple[str, ...] = Field(default=(), max_length=8)
-    source_text: str = Field(min_length=1, max_length=4000)
+    source_text: str = Field(default="", max_length=4000)
     protected_literals: tuple[str, ...] = ()
     origin: Literal["fixed", "material", "feedback"] = "fixed"
+    history: tuple[DialogueMessage, ...] = Field(default=(), max_length=22)
+    follow_up_inputs: tuple[str, ...] = Field(default=(), max_length=8)
+
+    @field_validator("history")
+    @classmethod
+    def complete_history(cls, value: tuple[DialogueMessage, ...]) -> tuple[DialogueMessage, ...]:
+        validate_dialogue(value)
+        return value
+
+    @field_validator("follow_up_inputs")
+    @classmethod
+    def nonblank_inputs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not text.strip() or len(text) > 4000 for text in value):
+            raise ValueError("后续用户消息不能为空或超过 4000 字")
+        return value
 
 
 class PreviewSuite(Artifact):

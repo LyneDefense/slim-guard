@@ -1,6 +1,7 @@
 from httpx import ASGITransport, AsyncClient
 
 from slim_guard.expression_style.package import Guide, make_package
+from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION
 from slim_guard.group_chat import ROLE_POLICY_VERSION
 from slim_guard.main import create_app
 from slim_guard.style_management.models import ReviewCase, Version
@@ -36,6 +37,7 @@ async def test_retry_endpoint_is_scoped_csrf_protected_idempotent_and_does_not_p
                     package=package.model_dump(mode="json"),
                     report={
                         "schema_version": "2",
+                        "workflow_version": WORKFLOW_VERSION,
                         "role_policy_version": ROLE_POLICY_VERSION,
                         "package_hash": package.package_hash,
                         "preview_metrics": {"total": 1},

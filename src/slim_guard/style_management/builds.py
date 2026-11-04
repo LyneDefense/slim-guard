@@ -77,6 +77,7 @@ class BuildRepository:
                     original_response=c.doctor_response,
                     desired_response=c.review.get("desired_response", ""),
                     correction_opinion=c.review.get("reason", ""),
+                    history=c.automated.get("history", c.test_case.get("history", [])),
                 ).model_dump(mode="json")
                 for c in output_feedback
                 if c.review and (c.review.get("desired_response") or c.review.get("reason"))

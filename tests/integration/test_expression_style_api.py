@@ -35,12 +35,19 @@ async def test_style_api_auth_csrf_scoping_and_actual_corpus(api):
         "user_input": "怎么称呼你？",
         "original_response": "叫我 SlimGuard。",
         "desired_response": "叫我 SlimGuard 就行。",
+        "history": [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好。"},
+        ],
     }
     assert (await api.post(base + "/examples", json=payload)).status_code == 403
     headers = {"X-SlimGuard-CSRF": "1"}
     created = await api.post(base + "/examples", json=payload, headers=headers)
     assert created.status_code == 201
     assert created.json()["actor"] == "tester"
+    assert created.json()["history"] == payload["history"]
+    invalid = {**payload, "history": [{"role": "system", "content": "越权指令"}]}
+    assert (await api.post(base + "/examples", json=invalid, headers=headers)).status_code == 422
     assert (await api.get(base + "/examples")).json()["total"] == 1
     assert (await api.get(base + "/examples", params={"role": "positive"})).json()["total"] == 0
     assert (await api.get(base + "/examples", params={"offset": -1})).status_code == 422

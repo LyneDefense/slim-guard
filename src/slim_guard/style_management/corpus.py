@@ -100,7 +100,7 @@ class CorpusRepository:
         async with self.db.session() as s, s.begin():
             if await s.get(Style, style_id) is None:
                 raise LookupError("风格不存在")
-            row = Example(style_id=style_id, **value.model_dump(), actor=actor)
+            row = Example(style_id=style_id, **value.model_dump(mode="json"), actor=actor)
             s.add(row)
             await s.flush()
             return row_data(row)
@@ -110,8 +110,8 @@ class CorpusRepository:
             row = await s.scalar(select(Example).where(Example.id == example_id).with_for_update())
             if row is None or row.style_id != style_id:
                 raise LookupError("素材不存在")
-            if any(getattr(row, k) != v for k, v in value.model_dump().items()):
-                for key, val in value.model_dump().items():
+            if any(getattr(row, k) != v for k, v in value.model_dump(mode="json").items()):
+                for key, val in value.model_dump(mode="json").items():
                     setattr(row, key, val)
                 row.revision += 1
                 row.last_result = {}

@@ -9,11 +9,16 @@ export interface Style {
   example_count: number;
   created_at: string;
 }
+export interface DialogueMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 export interface MaterialInput {
   user_input: string;
   original_response: string;
   desired_response: string;
   correction_opinion: string;
+  history?: DialogueMessage[];
 }
 export interface MaterialResult {
   example_id: string;
@@ -51,6 +56,7 @@ export interface BuildInput {
   guide?: { summary: string; rules: Array<Pick<GuideRule, "rule_id" | "text" | "boundary">>; prohibited_phrases: string[] };
 }
 export interface StylePackage {
+  compiler_version?: string;
   version_id: string;
   guide: Guide;
   package_hash: string;
@@ -59,6 +65,8 @@ export interface StylePackage {
     revision: number;
     original_response: string;
     desired_response: string;
+    user_input?: string;
+    dialogue?: DialogueMessage[];
   }>;
 }
 export interface Metrics {
@@ -105,6 +113,7 @@ export interface Report {
   limitations?: string[];
 }
 export interface Version {
+  preview_policy_current?: boolean;
   preview_retry?: { id: string; status: string; error: string | null; target_count: number } | null;
   role_policy_current: boolean;
   id: string;
@@ -175,8 +184,12 @@ export interface TestCase {
   source_text: string;
   context: string[];
   origin?: "fixed" | "material" | "feedback";
+  history?: DialogueMessage[];
+  follow_up_inputs?: string[];
 }
 export interface ReviewCheck {
+  step?: number;
+  adopted?: boolean;
   attempt: number;
   passed: boolean;
   output?: string;
@@ -186,6 +199,10 @@ export interface ReviewCheck {
   details?: Array<{ dimension: string; explanation: string; repair_requirement?: string }>;
 }
 export interface RewriteOutcome {
+  mode?: "direct_generation";
+  dialogue?: DialogueMessage[];
+  history?: DialogueMessage[];
+  style_advisory?: boolean;
   text?: string;
   passed: boolean;
   fallback?: boolean;

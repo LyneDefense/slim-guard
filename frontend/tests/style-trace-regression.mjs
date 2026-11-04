@@ -52,6 +52,18 @@ test("direct coach trace exposes exact structural diagnostics and an undelivered
   assert.ok(html.includes("医生回复未放行"));
 });
 
+test("style-only disagreement does not mislabel the adopted doctor as generation failure", () => {
+  const html = render({}, { invocations: [{ agent_role: "coach_response", status: "succeeded" }],
+    artifacts: [
+      artifact("TEST-reply", "coach_reply", { attempt: 1, output: { text: "可以休息一天。" } }),
+      artifact("TEST-final", "outgoing_messages", { status: "succeeded", style_advisory: true, adopted_attempt: 1 }),
+    ] });
+  assert.ok(html.includes("仍有表达建议"));
+  assert.ok(html.includes("通过事实与职责审查"));
+  assert.ok(html.includes("最终采用"));
+  assert.ok(!html.includes("医生回复未放行"));
+});
+
 test("Style Trace shows frozen active version, expression IDs without act categories", () => {
   const html = render({
     style_profile_id: "TEST-style", style_profile_version: "TEST-style-v1",

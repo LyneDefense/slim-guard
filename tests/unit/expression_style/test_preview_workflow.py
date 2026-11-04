@@ -12,9 +12,9 @@ from slim_guard.style_management.corpus import CorpusRepository
 from slim_guard.style_management.models import BuildRun, Version
 from slim_guard.style_management.runtime import RuntimeStyles
 from slim_guard.style_management.versions import VersionRepository
-from slim_guard.style_management.worker import StyleWorker
 
 from .fakes import TrainerGateway
+from .fakes import make_style_worker as StyleWorker
 
 
 async def build(db, gateway=None):
@@ -59,7 +59,7 @@ class ReviewGateway(TrainerGateway):
     async def complete(self, request):
         result = await super().complete(request)
         if request.output_schema_name == "ReplyCheck":
-            payload = json.loads(request.messages[1].content)
+            payload = json.loads(request.messages[-1].content)
             value = {
                 "fidelity_passed": self.dimension != "fidelity",
                 "role_passed": self.dimension != "role",
@@ -70,8 +70,8 @@ class ReviewGateway(TrainerGateway):
                         "severity": "blocking",
                         "code": "test_issue",
                         "explanation": "测试审查意见",
-                        "source_excerpt": payload["original"],
-                        "output_excerpt": payload["rewritten"],
+                        "source_excerpt": "",
+                        "output_excerpt": payload["reply"]["text"],
                         "repair_requirement": "核对对应维度",
                     }
                 ],
@@ -94,7 +94,10 @@ async def test_expression_opinion_never_blocks_human_publication(style_db):
     assert report["release_eligible"] and report["preview_metrics"]["expression_advisories"] == 9
     cases = (await VersionRepository(style_db).cases("doctor", run["id"]))["items"]
     assert all(c["automated"]["passed"] and not c["automated"]["fallback"] for c in cases)
-    assert all(len(c["automated"]["checks"]) == 1 for c in cases)
+    assert all(
+        len(c["automated"]["checks"]) == 2 * (1 + len(c["test_case"]["follow_up_inputs"]))
+        for c in cases
+    )
     await accept_all(style_db, run["id"])
     await VersionRepository(style_db).action("doctor", run["id"], "publish")
     assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"
@@ -206,7 +209,7 @@ async def test_guide_edit_creates_new_preview_without_mutating_source_or_online(
     assert (await builds.artifact("doctor", first["id"], "selected"))["value"] == source
     assert await RuntimeStyles(style_db).resolve() == "doctor_builtin_v1"
     assert all(
-        r.output_schema_name in {"CoachScopeBatch", "StyledResponse", "ReplyCheck"}
+        r.output_schema_name in {"CoachScopeBatch", "CoachReply", "ReplyCheck"}
         for r in gateway.requests
     )
     with pytest.raises(ValueError):

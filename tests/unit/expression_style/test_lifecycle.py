@@ -11,9 +11,9 @@ from slim_guard.style_management.corpus import CorpusRepository
 from slim_guard.style_management.models import BuildRun, Example, ReviewCase, Version
 from slim_guard.style_management.runtime import RuntimeStyles
 from slim_guard.style_management.versions import VersionRepository
-from slim_guard.style_management.worker import StyleWorker
 
 from .fakes import TrainerGateway
+from .fakes import make_style_worker as StyleWorker
 
 
 async def material(db, **overrides):
@@ -136,9 +136,10 @@ async def test_full_build_uses_fixed_previews_then_review_publish(style_db):
         await builds.artifact("doctor", run["id"], "model:private-cache")
     # Rewriting receives current context, never test labels or hidden reference answers.
     for request in gateway.requests:
-        if request.output_schema_name == "StyledResponse":
-            raw = json.loads(request.messages[1].content)
+        if request.output_schema_name == "CoachReply":
+            raw = json.loads(request.messages[-1].content)
             assert "acceptance" not in raw and "human_references" not in raw
+            assert "source_text" not in raw and "neutral_draft" not in raw
 
 
 async def test_failed_build_does_not_mark_material_used_and_resume_reuses_cache(style_db):

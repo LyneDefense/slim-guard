@@ -1,19 +1,19 @@
 """Zero-tool direct expression and grounding review capabilities."""
 
-import json
 from collections.abc import Callable
 from typing import TypeVar
 
 from pydantic import BaseModel
 
 from slim_guard.agent_models.gateway import (
-    ModelMessage,
     ModelPurpose,
     ModelRequest,
     ResponseFormat,
     ToolChoice,
 )
+from slim_guard.agents.coach.context import CONTEXT_VERSION, coach_messages
 from slim_guard.agents.coach.contracts import CoachEvidence, CoachReply
+from slim_guard.agents.coach.dialogue import DIALOGUE_POLICY_VERSION
 from slim_guard.agents.coach.prompt import (
     COACH_PROMPT,
     COACH_PROMPT_VERSION,
@@ -22,12 +22,15 @@ from slim_guard.agents.coach.prompt import (
 )
 from slim_guard.agents.coach.validation import reply_errors, review_errors
 from slim_guard.expression_style.contracts import StyleProfileSnapshot
+from slim_guard.expression_style.package import content_hash
 from slim_guard.expression_style.review.contracts import ReplyCheck
 from slim_guard.runtime.contracts import AgentInvocation, AgentRole
 from slim_guard.runtime.invocation import InvocationGrant, InvocationRunner, InvocationRunResult
 from slim_guard.usage.context import usage_scope
 
 Output = TypeVar("Output", bound=BaseModel)
+MAX_OUTPUT_TOKENS = 1800
+TEMPERATURE = 0
 
 
 class CoachResponder:
@@ -36,6 +39,21 @@ class CoachResponder:
     def __init__(self, *, runner: InvocationRunner, model: str) -> None:
         self._runner = runner
         self._model = model
+        self.signature = content_hash(
+            {
+                "model": model,
+                "generation": COACH_PROMPT,
+                "review": COACH_REVIEW_PROMPT,
+                "generation_version": COACH_PROMPT_VERSION,
+                "review_version": COACH_REVIEW_VERSION,
+                "context": CONTEXT_VERSION,
+                "policy": DIALOGUE_POLICY_VERSION,
+                "reply_schema": CoachReply.model_json_schema(),
+                "review_schema": ReplyCheck.model_json_schema(),
+                "temperature": TEMPERATURE,
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
+            }
+        )
 
     async def generate(
         self,
@@ -53,9 +71,9 @@ class CoachResponder:
             prompt=COACH_PROMPT,
             version=COACH_PROMPT_VERSION,
             schema=CoachReply,
+            style=style,
             payload={
                 "evidence": evidence.model_dump(mode="json"),
-                "style": style.model_dump(mode="json"),
                 "feedback": feedback,
                 "previous_reply": previous_reply,
             },
@@ -77,9 +95,9 @@ class CoachResponder:
             prompt=COACH_REVIEW_PROMPT,
             version=COACH_REVIEW_VERSION,
             schema=ReplyCheck,
+            style=style,
             payload={
                 "evidence": evidence.model_dump(mode="json"),
-                "style": style.model_dump(mode="json"),
                 "reply": reply.model_dump(mode="json"),
             },
             validate_output=lambda output: review_errors(output, evidence, style, reply),
@@ -94,6 +112,7 @@ class CoachResponder:
         prompt: str,
         version: str,
         schema: type[Output],
+        style: StyleProfileSnapshot,
         payload: dict[str, object],
         validate_output: Callable[[Output], list[dict[str, object]]],
     ) -> InvocationRunResult[Output]:
@@ -102,22 +121,22 @@ class CoachResponder:
         request = ModelRequest(
             purpose=purpose,
             model=self._model,
-            messages=(
-                ModelMessage(role="system", content=prompt),
-                ModelMessage(
-                    role="user",
-                    content=json.dumps(
-                        {**payload, "output_schema": schema.model_json_schema()}, ensure_ascii=False
-                    ),
-                ),
+            messages=coach_messages(
+                prompt=prompt,
+                style=style,
+                payload={**payload, "output_schema": schema.model_json_schema()},
             ),
             tools=(),
             tool_choice=ToolChoice.NONE,
             response_format=ResponseFormat.JSON_OBJECT,
             output_schema_name=schema.__name__,
-            max_output_tokens=1800,
-            temperature=0,
-            metadata={"invocation_id": invocation.invocation_id, "prompt_version": version},
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+            temperature=TEMPERATURE,
+            metadata={
+                "invocation_id": invocation.invocation_id,
+                "prompt_version": version,
+                "context_version": CONTEXT_VERSION,
+            },
         )
         with usage_scope(
             invocation_id=invocation.invocation_id,

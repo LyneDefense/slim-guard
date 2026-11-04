@@ -36,6 +36,7 @@ class Example(Base):
     original_response: Mapped[str] = mapped_column(Text)
     desired_response: Mapped[str] = mapped_column(Text, default="")
     correction_opinion: Mapped[str] = mapped_column(Text, default="")
+    history: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     processed_revision: Mapped[int] = mapped_column(Integer, default=0)
     last_run_id: Mapped[str | None] = mapped_column(String(36))

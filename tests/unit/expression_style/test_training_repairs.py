@@ -6,9 +6,9 @@ from slim_guard.style_management.contracts import ExampleInput
 from slim_guard.style_management.corpus import CorpusRepository
 from slim_guard.style_management.models import Version
 from slim_guard.style_management.runtime import RuntimeStyles
-from slim_guard.style_management.worker import StyleWorker
 
 from .fakes import TrainerGateway
+from .fakes import make_style_worker as StyleWorker
 
 
 async def material(db, **overrides):

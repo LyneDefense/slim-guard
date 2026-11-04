@@ -12,7 +12,7 @@ from slim_guard.usage.context import usage_scope
 
 from .contracts import BuildExecutionConfig
 from .output_validation import OutputValidation
-from .ports import BuildPort
+from .ports import BuildPort, CoachPreviewPort
 from .structured_output import complete_structured
 
 T = TypeVar("T", bound=BaseModel)
@@ -62,8 +62,11 @@ class TrainingGateway:
 
 
 class TrainingClient:
-    def __init__(self, gateway: TrainingGateway, model: str) -> None:
+    def __init__(
+        self, gateway: TrainingGateway, model: str, *, preview: CoachPreviewPort | None = None
+    ) -> None:
         self.gateway, self.model, self.port = gateway, model, gateway.port
+        self.preview = preview
 
     async def ask(
         self,

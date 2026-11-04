@@ -65,8 +65,11 @@ class PreviewRetryRepository:
             if (
                 version.report.get("schema_version") != "2"
                 or version.report.get("role_policy_version") != ROLE_POLICY_VERSION
+                or version.report.get("workflow_version") != WORKFLOW_VERSION
             ):
-                raise ValueError("此版本未按当前教练职责试答，请重新构建")
+                raise ValueError(
+                    "此版本未按当前医生职责与直接对话流程试答，请重新构建；已有反馈保留"
+                )
             if version.report.get("package_hash") != package.package_hash:
                 raise ValueError("风格包已变化，请重新构建并评审")
             cases = list(

@@ -4,11 +4,13 @@ import { Link, useSearchParams } from "react-router-dom";
 import { stylesApi, type Style, type MaterialInput } from "./api";
 
 import { materialRoles as roles } from "./labels";
+import { DialogueView, HistoryEditor } from "./Dialogue";
 const empty: MaterialInput = {
   user_input: "",
   original_response: "",
   desired_response: "",
   correction_opinion: "",
+  history: [],
 };
 export function CorpusPanel({ style }: { style: Style }) {
   const [params] = useSearchParams();
@@ -51,7 +53,8 @@ export function CorpusPanel({ style }: { style: Style }) {
   const valid =
     form.user_input.trim() &&
     form.original_response.trim() &&
-    (form.desired_response.trim() || form.correction_opinion.trim());
+    (form.desired_response.trim() || form.correction_opinion.trim()) &&
+    (form.history ?? []).every(message => message.content.trim());
   const offset = Number(filters.offset);
   return (
     <>
@@ -66,6 +69,7 @@ export function CorpusPanel({ style }: { style: Style }) {
         <p>
           纯人工填写。下次构建会分析两个 Tab 的全部素材，不立即影响线上风格。
         </p>
+        <HistoryEditor value={form.history ?? []} onChange={history => setForm({ ...form, history })} />
         <div className="expression-columns">
           {(
             [
@@ -196,6 +200,10 @@ export function CorpusPanel({ style }: { style: Style }) {
                 <p>{item.desired_response || "未提供，仅有纠正意见"}</p>
               </section>
             </div>
+            {!!item.history?.length && <details>
+              <summary>查看前置对话 · {item.history.length / 2} 轮</summary>
+              <DialogueView messages={item.history} />
+            </details>}
             {item.correction_opinion && (
               <p>纠正意见：{item.correction_opinion}</p>
             )}
@@ -222,6 +230,7 @@ export function CorpusPanel({ style }: { style: Style }) {
                     original_response: item.original_response,
                     desired_response: item.desired_response,
                     correction_opinion: item.correction_opinion,
+                    history: item.history ?? [],
                   });
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}

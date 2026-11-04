@@ -74,9 +74,8 @@ async def test_edit_during_build_does_not_falsely_mark_new_revision_used(style_d
         material["id"],
         ExampleInput(user_input="谢谢", original_response="不用客气", desired_response="客气了"),
     )
-    from slim_guard.style_management.worker import StyleWorker
-
     from .fakes import TrainerGateway
+    from .fakes import make_style_worker as StyleWorker
 
     await StyleWorker(style_db, TrainerGateway(), "test-model").run_once()
     assert (await builds.detail("doctor", run["id"]))["status"] == "completed"

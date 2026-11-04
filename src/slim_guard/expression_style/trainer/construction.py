@@ -97,6 +97,8 @@ async def construct(
                         "id": ref,
                         "original_response": m.original_response,
                         "desired_response": m.desired_response,
+                        "user_input": m.user_input,
+                        "history": [item.model_dump(mode="json") for item in m.history],
                     }
                     for ref, m in eligible.items()
                 ],

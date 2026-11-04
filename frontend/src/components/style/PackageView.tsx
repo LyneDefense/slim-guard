@@ -1,4 +1,5 @@
 import type { Guide, StylePackage } from "./api";
+import { DialogueView } from "./Dialogue";
 
 export function GuideView({ guide }: { guide: Guide }) {
   return (
@@ -39,13 +40,17 @@ export function PackageView({ value }: { value: StylePackage }) {
   return (
     <>
       <GuideView guide={value.guide} />
-      <h3>固定表达示例 · {value.examples.length} 条</h3>
+      <h3>固定对话示例 · {value.examples.length} 条</h3>
       {value.examples.map((e) => (
-        <div className="expression-columns style-material" key={e.id}>
+        <div className="style-material" key={e.id}>
+          {e.dialogue?.length ? <DialogueView messages={e.dialogue} /> : <>
+          {e.user_input && <p>用户：{e.user_input}</p>}
+          {!e.user_input && <small>旧版示例缺少用户语境，仅作为表达参考，不虚构对话。</small>}
           <section>
             <h4>原回答</h4>
             <p>{e.original_response}</p>
           </section>
+          </>}
           <section>
             <h4>期望表达</h4>
             <p>{e.desired_response}</p>

@@ -3,9 +3,29 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+from slim_guard.admin.coach_trace import direct_style_summary
 from slim_guard.admin.repository import AdminQueryRepository
 from slim_guard.agents.contracts import payload_sha256
 from slim_guard.db.models import AgentArtifactRecord, AgentItemRecord, AgentItemRedactionRecord
+
+
+def test_direct_style_advisory_is_adopted_with_its_actual_attempt():
+    summary = direct_style_summary(
+        [
+            {
+                "artifact_id": "final",
+                "artifact_type": "outgoing_messages",
+                "payload": {
+                    "style_profile_version": "v2",
+                    "style_advisory": True,
+                    "adopted_attempt": 1,
+                    "failure_code": None,
+                },
+            }
+        ]
+    )
+    assert summary["adopted"] is True and summary["degraded"] is False
+    assert summary["style_advisory"] is True and summary["adopted_attempt"] == 1
 
 
 def test_turn_input_view_shows_current_input_without_bypassing_redaction() -> None:

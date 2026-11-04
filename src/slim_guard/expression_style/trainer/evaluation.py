@@ -1,107 +1,79 @@
-"""Offline evaluations execute the same Agent and reviewer as online responses."""
+"""Evaluate direct conversations through the injected online coach preview port."""
 
-from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
 
-from slim_guard.agents.contracts import (
-    AgentInvocation,
-    ResponseContentBlock,
-    ResponsePlan,
-    ReviewerVerdict,
-)
-from slim_guard.agents.style.agent import RESPONSE_STYLE_PROMPT_VERSION, ResponseStyleAgent
-from slim_guard.expression_style.contracts import StyleContext
 from slim_guard.expression_style.package import StylePackage, content_hash
 from slim_guard.expression_style.review.policy import review_signature
-from slim_guard.runtime.invocation import InvocationRunner
 
 from .client import TrainingClient
 from .contracts import TestCase
 
-EXECUTION_FAILURES = frozenset({"style_internal_error", "model_gateway_error", "deadline_exceeded"})
+EXECUTION_FAILURES = frozenset(
+    {
+        "style_internal_error",
+        "model_gateway_error",
+        "deadline_exceeded",
+        "model_request_failed",
+    }
+)
 
 
-async def rewrite_case(
+async def freeze_execution(client: TrainingClient) -> str:
+    if client.preview is None:
+        raise ValueError("未装配医生试答端口")
+    signature = client.preview.signature
+    frozen = await client.port.load("coach_execution_signature")
+    if frozen is not None and frozen != signature:
+        raise ValueError("医生生成或审查配置已变化，请新建构建；不会在恢复时混用旧结果")
+    if frozen is None:
+        await client.port.save(
+            "coach_execution_signature",
+            signature,
+            stage="freeze",
+            message="已冻结与线上一致的医生生成、上下文、审查和修正策略签名",
+        )
+    return signature
+
+
+async def preview_case(
     client: TrainingClient,
     package: StylePackage,
     case: TestCase,
     stage: str,
     *,
-    review_feedback: ReviewerVerdict | None = None,
+    review_feedback: tuple[dict[str, object], ...] = (),
 ) -> dict[str, Any]:
+    preview = client.preview
+    if preview is None:
+        raise ValueError("未装配医生试答端口，不能退回旧改写流程")
     signature = {
         "model": client.model,
         "review": review_signature(client.model),
-        "rewrite": RESPONSE_STYLE_PROMPT_VERSION,
+        "coach": preview.signature,
+        "mode": "direct_generation",
         "temperature": 0,
     }
-    key = "rewrite:" + content_hash(
+    key = "direct-preview:" + content_hash(
         {
             "package": package.package_hash,
             "case": case.model_dump(mode="json"),
             **signature,
-            **(
-                {"repair_feedback": review_feedback.model_dump(mode="json")}
-                if review_feedback
-                else {}
-            ),
+            "repair_feedback": review_feedback,
         }
     )
     cached = await client.port.load(key)
     if cached is not None and cached.get("failure_code") not in EXECUTION_FAILURES:
         return dict(cached)
     client.gateway.stage = stage
-    snapshot = package.runtime_snapshot()
-    turn = str(uuid4())
-    result = await ResponseStyleAgent(
-        runner=InvocationRunner(model=client.gateway),
-        model=client.model,
-    ).run(
-        invocation=AgentInvocation(
-            invocation_id=str(uuid4()),
-            trace_id=str(uuid4()),
-            turn_id=turn,
-            graph_version="style-trainer-v1",
-            agent_role="response_style",
-            agent_version=RESPONSE_STYLE_PROMPT_VERSION,
-            deadline_at=datetime.now(UTC)
-            + timedelta(seconds=client.gateway.config.request_seconds),
-        ),
-        context=StyleContext(
-            turn_id=turn,
-            profile=snapshot.profile,
-            examples=snapshot.examples,
-            compiled_prompt=snapshot.compiled_prompt,
-            package_hash=snapshot.package_hash,
-            user_input=case.user_input,
-            minimal_context=case.context,
-            protected_literals=case.protected_literals,
-            response_plan=ResponsePlan(
-                content_blocks=(
-                    ResponseContentBlock(
-                        block_id="neutral",
-                        kind="social_act",
-                        text=case.source_text,
-                    ),
-                )
-            ),
-        ),
-        review_feedback=review_feedback,
-    )
     outcome = {
+        **await preview.run(case=case, style=package.runtime_snapshot(), feedback=review_feedback),
         "package_hash": package.package_hash,
-        "text": result.response.text,
-        "passed": not result.used_fallback,
-        "fallback": result.used_fallback,
-        "failure_code": result.failure_code,
-        "checks": list(result.checks),
-        "tokens": result.total_token_count,
-        "model_calls": result.model_call_count,
         "execution": signature,
     }
-    if outcome["failure_code"] not in EXECUTION_FAILURES:
-        await client.port.save(key, outcome, stage=stage, message="已保存改写及共享审查结果")
+    if outcome.get("failure_code") not in EXECUTION_FAILURES:
+        await client.port.save(
+            key, outcome, stage=stage, message="已保存医生直接试答及共享审查结果"
+        )
     return outcome
 
 
@@ -113,22 +85,23 @@ async def evaluate(
 ) -> list[dict[str, Any]]:
     results = []
     for index, case in enumerate(cases):
-        before = await rewrite_case(client, baseline, case, "preview")
-        after = await rewrite_case(client, candidate, case, "preview")
-        item = {
-            "case": case.model_dump(mode="json"),
-            "baseline": before,
-            "candidate": after,
-            "reason": "语义与职责检查通过，语气请人工确认"
-            if after["passed"]
-            else "语义、职责或执行检查未通过",
-        }
-        results.append(item)
+        before = await preview_case(client, baseline, case, "preview")
+        after = await preview_case(client, candidate, case, "preview")
+        results.append(
+            {
+                "case": case.model_dump(mode="json"),
+                "baseline": before,
+                "candidate": after,
+                "reason": "事实与职责检查通过，语气请人工确认"
+                if after["passed"]
+                else "事实、职责或执行检查未通过",
+            }
+        )
         await client.port.save(
             "evaluation:preview",
             results,
             stage="preview",
-            message=f"试答：{index + 1}／{len(cases)}，不进行自动排名或调参",
+            message=f"直接试答：{index + 1}／{len(cases)}，不进行自动排名或调参",
         )
     return results
 
@@ -137,7 +110,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total": len(results),
         "content_failed": sum(not r["candidate"]["passed"] for r in results),
-        "changed": sum(r["candidate"]["text"] != r["case"]["source_text"] for r in results),
+        "changed": sum(r["candidate"]["text"] != r["baseline"]["text"] for r in results),
         "expression_advisories": sum(
             any(
                 d.get("dimension") == "expression"

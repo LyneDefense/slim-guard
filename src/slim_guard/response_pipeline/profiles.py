@@ -6,8 +6,11 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 
-from slim_guard.agents.style import SLIMGUARD_DEFAULT_V1, StyleProfileRepository
-from slim_guard.expression_style.contracts import StyleProfileSnapshot
+from slim_guard.expression_style.contracts import (
+    SLIMGUARD_DEFAULT_V1,
+    StyleProfileRepository,
+    StyleProfileSnapshot,
+)
 
 logger = logging.getLogger(__name__)
 

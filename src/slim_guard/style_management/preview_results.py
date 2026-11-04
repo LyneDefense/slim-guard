@@ -90,6 +90,8 @@ async def finish_retry(db: Database, run_id: str, token: str, result: dict[str, 
             ):
                 raise ValueError("重试结果的风格包或检查签名不匹配")
             case.doctor_response = outcome["text"]
+            if outcome.get("passed") and outcome.get("dialogue"):
+                case.user_input = outcome["dialogue"][-2]["content"]
             case.automated = {
                 **outcome,
                 "output_revision": before["output_revision"] + 1,
@@ -102,7 +104,14 @@ async def finish_retry(db: Database, run_id: str, token: str, result: dict[str, 
             # Old answers/approvals are frozen in retry_inputs, not silently reused for new output.
             case.review = None
         metrics = summarize(
-            [{"case": case.test_case, "candidate": case.automated} for case in cases]
+            [
+                {
+                    "case": case.test_case,
+                    "candidate": case.automated,
+                    "baseline": {"text": case.baseline_response},
+                }
+                for case in cases
+            ]
         )
         eligible = not metrics["content_failed"] and not any(
             c.automated.get("fallback") for c in cases

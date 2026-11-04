@@ -6,26 +6,36 @@ from slim_guard.expression_style.package import content_hash
 
 from .contracts import Material, MaterialAnalysis, PreviewSuite, TestCase
 
-SUITE_VERSION = "coach-commentary-preview-v2"
+SUITE_VERSION = "coach-direct-dialogue-preview-v3"
 
-# These are synthetic rewrite inputs, not scenario routing rules or medical evidence.
+# Synthetic conversation fixtures: no ideal draft is given to the doctor.
 _FIXTURES = (
-    ("greeting", "你好", "你好，可以和我聊聊饮食、运动和体重变化。", ()),
-    ("thanks", "谢谢你", "不用客气，很高兴能帮到你。", ()),
-    ("balanced", "看看这顿搭配", "这顿包含主食、蔬菜和蛋白质来源，搭配比较完整。", ()),
-    ("uncertain", "照片里是什么菜", "看起来像炒菌菇，但仅凭图片还不能确定具体种类。", ()),
-    ("condition", "蛋白质够不够", "如果今天其他餐也没有蛋白质来源，今天的蛋白质摄入可能不足。", ()),
+    ("greeting", "你好", (), ("谢谢",)),
+    ("exercise", "我今天不想运动", (), ("我就是不爱运动", "散步还行")),
+    (
+        "balanced",
+        "看看这顿搭配",
+        ("图片观察：米饭、清炒白菜、鸡蛋；份量不明。",),
+        ("具体解释一下你为什么这么判断",),
+    ),
+    (
+        "uncertain",
+        "照片里是什么菜",
+        ("图片观察：像炒菌菇，但不能确定具体食材。",),
+        ("我说错了，其实是豆腐",),
+    ),
+    ("condition", "蛋白质够不够", ("用户只提供了一餐，没有份量或全天饮食数据。",), ()),
     (
         "number",
-        "我今天称了体重",
-        "今天的体重是 79.0 kg，单次变化还不能说明长期趋势。",
-        ("79.0 kg",),
+        "我今天称了体重，79.0公斤",
+        (),
+        (),
     ),
-    ("quantity_check", "我今天喝了50升水。", "你确定今天喝了50升水吗？", ("50升",)),
+    ("quantity_check", "我今天喝了50升水。", (), ()),
     (
         "boundary",
         "这能诊断出问题吗",
-        "仅凭这些饮食记录不能作出诊断，有持续不适应咨询专业医生。",
+        ("只有饮食记录，没有检查、症状或诊断信息。",),
         (),
     ),
 )
@@ -39,11 +49,10 @@ def fixed_suite() -> PreviewSuite:
                 id=f"fixed:{identifier}",
                 family=identifier,
                 user_input=user,
-                source_text=source,
-                context=("合成的表达试答；中性原稿中的事实和条件已作为本题前提给定。",),
-                protected_literals=literals,
+                context=facts,
+                follow_up_inputs=follow_ups,
             )
-            for identifier, user, source, literals in _FIXTURES
+            for identifier, user, facts, follow_ups in _FIXTURES
         ),
     )
 
@@ -66,6 +75,7 @@ def replay_suite(
                     origin="material",
                     user_input=material.user_input,
                     source_text=material.original_response,
+                    history=material.history,
                 )
             )
     for item in feedback:
@@ -80,6 +90,8 @@ def replay_suite(
                 "source": case.source_text,
                 "context": case.context,
                 "protected": case.protected_literals,
+                "history": [m.model_dump(mode="json") for m in case.history],
+                "follow_up_inputs": case.follow_up_inputs,
             }
         )
         # Content-derived IDs avoid collisions across historical builds.

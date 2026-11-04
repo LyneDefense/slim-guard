@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from slim_guard.expression_style.dialogue import DialogueMessage, validate_dialogue
 from slim_guard.expression_style.trainer.guide_edit import EditableGuide
 
 
@@ -32,9 +33,11 @@ class ExampleInput(Input):
     original_response: str = Field(min_length=1, max_length=4000)
     desired_response: str = Field(default="", max_length=4000)
     correction_opinion: str = Field(default="", max_length=2000)
+    history: tuple[DialogueMessage, ...] = Field(default=(), max_length=22)
 
     @model_validator(mode="after")
     def needs_feedback(self) -> "ExampleInput":
+        validate_dialogue(self.history)
         if not self.desired_response and not self.correction_opinion:
             raise ValueError("期望回答与纠正意见至少填写一项")
         return self

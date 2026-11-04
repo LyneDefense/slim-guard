@@ -21,4 +21,6 @@ def direct_style_summary(artifacts: list[dict[str, Any]]) -> dict[str, Any] | No
         "adopted_artifact_id": final.get("artifact_id"),
         "adoption_mode": "coach_direct",
         "final": True,
+        "style_advisory": payload.get("style_advisory"),
+        "adopted_attempt": payload.get("adopted_attempt"),
     }
