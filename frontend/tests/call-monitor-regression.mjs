@@ -22,6 +22,12 @@ const model = await server.ssrLoadModule(
   "/src/features/traces/presentation.ts",
 );
 const api = await server.ssrLoadModule("/src/features/traces/api.ts");
+const navigation = await server.ssrLoadModule(
+  "/src/features/traces/navigation.ts",
+);
+const userNavigation = await server.ssrLoadModule(
+  "/src/features/users/navigation.ts",
+);
 const page = await server.ssrLoadModule(
   "/src/features/traces/CallDetailPage.tsx",
 );
@@ -232,6 +238,7 @@ test("API filters are encoded, scoped, and independent of inspector state", asyn
         step: "secret",
         return: "ignored",
         offset: "30",
+        user_id: "another-user",
       }),
       "user / a",
     );
@@ -245,4 +252,45 @@ test("API filters are encoded, scoped, and independent of inspector state", asyn
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("call API refuses a missing owner instead of fetching a global list", () => {
+  assert.throws(
+    () => api.callApi.list(new URLSearchParams(), ""),
+    /请先选择用户/,
+  );
+});
+
+test("detail back navigation retains only the current user's list and filters", () => {
+  const target =
+    "/users/user-a?result=issues&offset=30&search=%E6%99%9A%E9%A4%90";
+  assert.equal(navigation.callListReturn(target, "user-a"), target);
+  for (const other of [
+    null,
+    "/users",
+    "/users/user-b?result=issues",
+    "/users/user-a/traces/t",
+    "https://other.test/users/user-a",
+    "//other.test/users/user-a",
+  ]) {
+    assert.equal(navigation.callListReturn(other, "user-a"), "/users/user-a");
+  }
+});
+
+test("directory back navigation preserves user search without accepting other destinations", () => {
+  assert.equal(
+    userNavigation.userDirectoryReturn("/users?q=小林&offset=30"),
+    "/users?q=%E5%B0%8F%E6%9E%97&offset=30",
+  );
+  assert.equal(
+    userNavigation.userDirectoryReturn("/users/directory?q=demo"),
+    "/users/directory?q=demo",
+  );
+  for (const target of [
+    null,
+    "/users/user-b",
+    "/usage",
+    "https://other.test/users",
+  ])
+    assert.equal(userNavigation.userDirectoryReturn(target), "/users");
 });

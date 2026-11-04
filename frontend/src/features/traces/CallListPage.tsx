@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
+  Navigate,
   useLocation,
   useParams,
   useSearchParams,
@@ -10,16 +11,29 @@ import { callApi } from "./api";
 import { Badge, CallState } from "./components";
 import { date, elapsed } from "./presentation";
 import { Workspace } from "../../app/Workspace";
+import { useUser } from "../users/context";
+import { userCallsPath, userDirectoryReturn } from "../users/navigation";
 import "./calls.css";
 
 export function CallListPage() {
   const { userId } = useParams();
+  if (!userId) return <Navigate to="/users" replace />;
+  return <UserCallList key={userId} userId={userId} />;
+}
+
+function UserCallList({ userId }: { userId: string }) {
+  const user = useUser();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const [draft, setDraft] = useState(params.get("search") || "");
+  const search = params.get("search") || "";
+  useEffect(() => setDraft(search), [search]);
+  const hasFilters = ["search", "result", "start", "end", "offset"].some(
+    (key) => params.has(key),
+  );
   const offset = Math.max(0, Number(params.get("offset")) || 0);
   const query = useQuery({
-    queryKey: ["call-list", userId || "all", params.toString()],
+    queryKey: ["call-list", userId, params.toString()],
     queryFn: () => callApi.list(params, userId),
     refetchInterval: 5000,
   });
@@ -38,34 +52,30 @@ export function CallListPage() {
   return (
     <Workspace
       className="call-workspace"
-      title={<>调用过程{userId ? " / 当前用户" : ""}</>}
+      title={<>调用过程 / {user.nickname || user.user_ref}</>}
       note="每 5 秒自动更新"
     >
       <div className="call-main">
         <div className="call-heading">
           <div>
-            <h1>调用过程</h1>
-            <small>按用户每一轮消息查看，而不是按日志行查看</small>
+            <h1>{user.nickname || "未命名用户"}的调用过程</h1>
+            <small>{user.user_ref} · 仅展示当前用户每一轮消息的处理过程</small>
           </div>
           <div className="call-actions">
-            <Link className="call-button" to="/users/directory">
-              用户资料
+            <Link
+              className="call-button"
+              to={userDirectoryReturn(params.get("users_return"))}
+            >
+              ← 用户列表
             </Link>
-            {userId && (
-              <Link className="call-button" to="/users">
-                查看所有用户
-              </Link>
-            )}
           </div>
         </div>
-        {userId && (
-          <nav className="call-user-links" aria-label="当前用户管理">
-            <Link to={`/users/${userId}/memories`}>记忆</Link>
-            <Link to={`/users/${userId}/records`}>健康记录</Link>
-            <Link to={`/users/${userId}/routines`}>提醒日程</Link>
-            <Link to={`/users/${userId}/usage`}>问答用量</Link>
-          </nav>
-        )}
+        <nav className="call-user-links" aria-label="当前用户管理">
+          <Link to={`/users/${userId}/memories`}>记忆</Link>
+          <Link to={`/users/${userId}/records`}>健康记录</Link>
+          <Link to={`/users/${userId}/routines`}>提醒日程</Link>
+          <Link to={`/users/${userId}/usage`}>问答用量</Link>
+        </nav>
         <form
           className="call-actions call-list-filters"
           onSubmit={(e) => {
@@ -75,8 +85,8 @@ export function CallListPage() {
         >
           <input
             className="call-input"
-            aria-label="搜索消息、用户或 Trace ID"
-            placeholder="消息 / 用户 / Trace ID"
+            aria-label="搜索当前用户的消息或 Trace ID"
+            placeholder="消息 / Trace ID"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -116,13 +126,16 @@ export function CallListPage() {
             <option value="7">近 7 天</option>
             <option value="30">近 30 天</option>
           </select>
-          {params.toString() && (
+          {hasFilters && (
             <button
               className="call-button"
               type="button"
               onClick={() => {
                 setDraft("");
-                setParams({});
+                const next = new URLSearchParams();
+                const directory = params.get("users_return");
+                if (directory) next.set("users_return", directory);
+                setParams(next);
               }}
             >
               清除筛选
@@ -155,13 +168,10 @@ export function CallListPage() {
                 <tbody>
                   {query.data.items.map((row) => {
                     const back = `${location.pathname}${location.search}`;
-                    const detail = `/users/${row.user_id}/traces/${row.id}?return=${encodeURIComponent(back)}`;
+                    const detail = `${userCallsPath(userId)}/traces/${encodeURIComponent(row.id)}?return=${encodeURIComponent(back)}`;
                     return (
                       <tr key={row.id}>
                         <td>
-                          <Link to={`/users/${row.user_id}`}>
-                            {row.nickname || row.user_id.slice(0, 8)}
-                          </Link>
                           <small className="call-list-input">
                             {date(row.created_at)}
                           </small>

@@ -50,7 +50,7 @@ function render(path) {
     [["expression-builds", "doctor", 0], { items: [], total: 0 }],
     [["nutrition-dashboard"], nutrition],
     [
-      ["call-list", "all", ""],
+      ["call-list", user.id, ""],
       { items: [call], total: 1, offset: 0, limit: 30 },
     ],
   ])
@@ -70,7 +70,8 @@ function render(path) {
   return html;
 }
 for (const [path, active, title] of [
-  ["/users", "调用过程", "调用过程"],
+  ["/users", "调用过程", "选择用户"],
+  ["/users/demo-user", "调用过程", "测试用户的调用过程"],
   ["/usage", "模型用量", "用户用量统计"],
   ["/users/directory", "用户管理", "用户中心"],
   ["/users/demo-user/memories", "用户管理", "用户记忆"],
@@ -99,6 +100,24 @@ for (const [path, active, title] of [
       new RegExp(`aria-current="page"[^>]*>[^]*?${active}</a>`),
     );
   });
+
+test("call monitor entry lists users rather than mixing their message rows", () => {
+  const html = render("/users");
+  assert.ok(html.includes("选择用户"));
+  assert.ok(html.includes("测试用户"));
+  assert.ok(html.includes("查看调用 →"));
+  assert.match(html, /href="\/users\/demo-user\?users_return=%2Fusers"/);
+  assert.doesNotMatch(html, /这是我今天的晚餐|call-table-wrap/);
+});
+
+test("selected user owns the call list and all of its navigation", () => {
+  const html = render("/users/demo-user");
+  assert.ok(html.includes("测试用户的调用过程"));
+  assert.ok(html.includes("这是我今天的晚餐"));
+  assert.match(html, /\/users\/demo-user\/traces\/demo-trace\?return=/);
+  assert.match(html, /\/users\/demo-user\/memories/);
+  assert.doesNotMatch(html, /查看所有用户|消息 \/ 用户 \/ Trace ID/);
+});
 
 test("login retains accessible credential controls in the shared theme", () => {
   const client = new QueryClient({

@@ -1,79 +1,17 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
   NavLink,
   Outlet,
   useLocation,
-  useOutletContext,
   useParams,
 } from "react-router-dom";
 import { api } from "../../api";
-import type { MemoryRecord, UserDetail } from "../../types";
+import type { MemoryRecord } from "../../types";
+import { useUser } from "./context";
+import { formatDate, StatusBadge, Loading, Failure } from "./components";
 import { Workspace } from "../../app/Workspace";
 import "./users.css";
-
-const STATUS_LABELS: Record<string, string> = {
-  accepted: "已送达",
-  completed: "完成",
-  succeeded: "成功",
-  running: "处理中",
-  started: "处理中",
-  sending: "发送中",
-  planned: "已计划",
-  pending: "等待中",
-  pending_review: "待审核",
-  waiting: "等待确认",
-  degraded: "已降级",
-  failed: "失败",
-  unknown: "结果未知",
-  skipped: "已跳过",
-  deferred_external_session: "人工会话中",
-};
-
-function formatDate(value: string | null | undefined): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
-}
-
-function StatusBadge({ value }: { value: string }) {
-  const tone = ["accepted", "completed", "succeeded"].includes(value)
-    ? "good"
-    : ["failed", "unknown", "degraded"].includes(value)
-      ? "bad"
-      : ["waiting", "pending_review", "sending", "running"].includes(value)
-        ? "warn"
-        : "neutral";
-  return (
-    <span className={`status status-${tone}`}>
-      {STATUS_LABELS[value] ?? value}
-    </span>
-  );
-}
-
-function Loading({ label = "正在读取数据" }: { label?: string }) {
-  return (
-    <div className="state-card">
-      <span className="spinner" />
-      {label}
-    </div>
-  );
-}
-
-function Failure({ error }: { error: unknown }) {
-  return (
-    <div className="state-card state-error">
-      {error instanceof Error ? error.message : "读取失败"}
-    </div>
-  );
-}
 
 function JsonView({
   value,
@@ -87,108 +25,6 @@ function JsonView({
       <summary>{label}</summary>
       <pre>{JSON.stringify(value, null, 2)}</pre>
     </details>
-  );
-}
-
-export function UserDirectoryPage() {
-  const [draft, setDraft] = useState("");
-  const [search, setSearch] = useState("");
-  const [offset, setOffset] = useState(0);
-  const query = useQuery({
-    queryKey: ["users", search, offset],
-    queryFn: () => api.users(search, offset),
-    refetchInterval: 15_000,
-  });
-
-  return (
-    <div className="page">
-      <header className="page-header">
-        <div>
-          <p className="eyebrow">USER OBSERVABILITY</p>
-          <h1>用户中心</h1>
-          <p>从用户进入，查看其独立的对话、记忆与输出链路。</p>
-        </div>
-        {query.data && (
-          <div className="count-chip">
-            <strong>{query.data.total}</strong>
-            <span>用户</span>
-          </div>
-        )}
-      </header>
-      <form
-        className="search-bar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setOffset(0);
-          setSearch(draft.trim());
-        }}
-      >
-        <span>⌕</span>
-        <input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="搜索昵称或内部用户 UUID"
-        />
-        <button type="submit">搜索</button>
-      </form>
-      {query.isLoading && <Loading />}
-      {query.error && <Failure error={query.error} />}
-      {query.data && (
-        <>
-          <div className="user-grid">
-            {query.data.items.map((user) => (
-              <Link
-                className="user-card"
-                to={`/users/${user.id}`}
-                key={user.id}
-              >
-                <div className="avatar">
-                  {(user.nickname || "匿").slice(0, 1)}
-                </div>
-                <div className="user-main">
-                  <div className="user-title">
-                    <h2>{user.nickname || "未命名用户"}</h2>
-                    {user.issue_count > 0 && (
-                      <span className="issue">{user.issue_count} 异常</span>
-                    )}
-                  </div>
-                  <code>{user.user_ref}</code>
-                  <div className="user-meta">
-                    <span>最近活跃 {formatDate(user.last_seen_at)}</span>
-                    <span>{user.trace_count} 条链路</span>
-                    {user.last_delivery_status && (
-                      <StatusBadge value={user.last_delivery_status} />
-                    )}
-                  </div>
-                </div>
-                <span className="arrow">→</span>
-              </Link>
-            ))}
-          </div>
-          {query.data.items.length === 0 && (
-            <div className="state-card">没有找到用户</div>
-          )}
-          <div className="pager">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - 30))}
-            >
-              上一页
-            </button>
-            <span>
-              {offset + 1}–{Math.min(offset + 30, query.data.total)} /{" "}
-              {query.data.total}
-            </span>
-            <button
-              disabled={offset + 30 >= query.data.total}
-              onClick={() => setOffset(offset + 30)}
-            >
-              下一页
-            </button>
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 
@@ -247,10 +83,6 @@ export function UserLayout() {
       </div>
     </Workspace>
   );
-}
-
-function useUser(): UserDetail {
-  return useOutletContext<{ user: UserDetail }>().user;
 }
 
 export function MemoriesPage() {

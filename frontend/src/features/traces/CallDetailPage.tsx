@@ -20,6 +20,7 @@ import {
 } from "./presentation";
 import type { CallDetail } from "./types";
 import { Workspace } from "../../app/Workspace";
+import { callListReturn } from "./navigation";
 import "./calls.css";
 
 export function CallDetailPage() {
@@ -84,10 +85,7 @@ export function CallDetailView({ data }: { data: CallDetail }) {
     next.set("view", value);
     setParams(next, { replace: true });
   };
-  const requestedBack = params.get("return") || "/users";
-  const back = /^\/users(?:[/?]|$)/.test(requestedBack)
-    ? requestedBack
-    : "/users";
+  const back = callListReturn(params.get("return"), data.trace.user_id);
   const style = process.artifacts.find(
     (a) => a.artifact_type === "style_resolution",
   );

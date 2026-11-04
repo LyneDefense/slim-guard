@@ -2,12 +2,12 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedShell, LoginPage } from "./app/AuthPages";
 import { Workspace } from "./app/Workspace";
 import {
-  UserDirectoryPage,
   UserLayout,
   MemoriesPage,
   RecordsPage,
   RoutinesPage,
 } from "./features/users/UserPages";
+import { UserDirectoryPage } from "./features/users/UserDirectoryPage";
 import { UsagePage, UsageDetailPage } from "./features/usage/UsagePage";
 import { StyleProfilePage } from "./components/style/StyleProfilePage";
 import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
@@ -20,7 +20,14 @@ export function App() {
       <Route path="login" element={<LoginPage />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/users" replace />} />
-        <Route path="users" element={<CallListPage />} />
+        <Route
+          path="users"
+          element={
+            <Workspace title="调用过程 / 用户列表">
+              <UserDirectoryPage mode="calls" />
+            </Workspace>
+          }
+        />
         <Route
           path="users/directory"
           element={

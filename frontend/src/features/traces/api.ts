@@ -2,14 +2,14 @@ import { request } from "../../api";
 import type { CallDetail, CallPage } from "./types";
 
 export const callApi = {
-  list: (params: URLSearchParams, userId?: string) => {
+  list: (params: URLSearchParams, userId: string) => {
+    if (!userId) throw new Error("请先选择用户");
     const query = new URLSearchParams();
     for (const key of ["search", "result", "start", "end", "offset"]) {
       const value = params.get(key);
       if (value) query.set(key, value);
     }
-    if (userId || params.get("user_id"))
-      query.set("user_id", userId || params.get("user_id")!);
+    query.set("user_id", userId);
     query.set("limit", "30");
     return request<CallPage>(`/calls?${query}`);
   },
