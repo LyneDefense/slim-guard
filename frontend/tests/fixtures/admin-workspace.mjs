@@ -27,6 +27,34 @@ export const style = {
   active_version: "医生风格 v3",
   example_count: 31,
 };
+export const studio = {
+  draft: {
+    revision: 1,
+    content: {
+      expression: "简短直接，先回应眼前的事。",
+      avoid: "避免机械鼓励。",
+      examples: [],
+    },
+    content_hash: "TEST-studio-hash",
+    updated_at: "2026-11-10T01:00:00Z",
+    actor: "TEST",
+    source_version_id: "published",
+  },
+  active_version: {
+    id: "published",
+    name: "医生风格 v3",
+    status: "published",
+    created_at: "2026-11-10T00:00:00Z",
+    actor: "TEST",
+    content: {
+      expression: "简短直接，先回应眼前的事。",
+      avoid: "避免机械鼓励。",
+      examples: [],
+    },
+    legacy: false,
+    active: true,
+  },
+};
 export const version = {
   id: "published",
   name: "医生风格 v3",
@@ -235,6 +263,7 @@ export function fixtureResponse(url) {
     ]);
   }
   if (path === "/styles") return { items: [style] };
+  if (path === "/styles/doctor/studio") return studio;
   if (path.endsWith("/versions"))
     return {
       items: [

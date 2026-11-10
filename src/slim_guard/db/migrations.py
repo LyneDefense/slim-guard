@@ -45,6 +45,7 @@ from slim_guard.nutrition_rag.profiles import (
 )
 from slim_guard.style_management.dialogue_migration import migrate_dialogue_examples
 from slim_guard.style_management.migration import reset_style_schema
+from slim_guard.style_management.studio.migration import migrate_style_studio
 from slim_guard.style_management.trainer_migration import migrate_trainer_schema
 from slim_guard.tasks.migration import migrate_conversation_tasks
 from slim_guard.tool_operations.migration import migrate_tool_operations
@@ -621,6 +622,7 @@ MIGRATIONS = (
     SchemaMigration("20261028_01_meal_media_and_editor", migrate_meal_media),
     SchemaMigration("20261030_01_daily_insights", migrate_daily_insights),
     SchemaMigration("20261104_01_style_dialogue_samples", migrate_dialogue_examples),
+    SchemaMigration("20261110_01_style_studio", migrate_style_studio),
 )
 
 

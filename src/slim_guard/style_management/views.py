@@ -2,8 +2,6 @@
 
 from typing import Any
 
-from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION
-
 from .models import BuildRun
 
 
@@ -23,16 +21,9 @@ def build_summary(row: BuildRun) -> dict[str, Any]:
     data["workflow_version"] = row.snapshot.get("workflow_version", "legacy")
     data["job_kind"] = row.snapshot.get("job_kind", "build")
     data["target_version_id"] = row.snapshot.get("retry_version_id")
-    data["can_resume"] = data["workflow_version"] == WORKFLOW_VERSION and (
-        row.status != "failed" or row.activity.get("retryable") is not False
-    )
-    data["resume_block_reason"] = (
-        "workflow_changed"
-        if data["workflow_version"] != WORKFLOW_VERSION
-        else "not_retryable"
-        if not data["can_resume"]
-        else None
-    )
+    data["retired"] = True
+    data["can_resume"] = False
+    data["resume_block_reason"] = "workflow_retired"
     data["preview_count"] = (
         len(row.snapshot.get("retry_cases", []))
         if data["job_kind"] == "preview_retry"

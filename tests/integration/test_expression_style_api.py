@@ -14,7 +14,6 @@ async def api(test_settings):
         update={
             "admin_username": "tester",
             "admin_password": "test-style-password",
-            "style_iteration_worker_enabled": False,
         }
     )
     app = create_app(settings)
@@ -23,7 +22,7 @@ async def api(test_settings):
             yield client
 
 
-async def test_style_api_auth_csrf_scoping_and_actual_corpus(api):
+async def test_style_catalog_requires_auth_and_keeps_history_read_only(api):
     assert (await api.get("/api/admin/styles")).status_code == 401
     assert (
         await api.post(
@@ -31,48 +30,42 @@ async def test_style_api_auth_csrf_scoping_and_actual_corpus(api):
         )
     ).status_code == 200
     base = "/api/admin/styles/doctor"
-    payload = {
-        "user_input": "怎么称呼你？",
-        "original_response": "叫我 SlimGuard。",
-        "desired_response": "叫我 SlimGuard 就行。",
-        "history": [
-            {"role": "user", "content": "你好"},
-            {"role": "assistant", "content": "你好。"},
-        ],
-    }
-    assert (await api.post(base + "/examples", json=payload)).status_code == 403
+    assert (await api.get("/api/admin/styles")).json()["items"][0]["id"] == "doctor"
+    assert (
+        await api.post("/api/admin/styles", json={"name": "简洁风格"})
+    ).status_code == 403
     headers = {"X-SlimGuard-CSRF": "1"}
-    created = await api.post(base + "/examples", json=payload, headers=headers)
-    assert created.status_code == 201
-    assert created.json()["actor"] == "tester"
-    assert created.json()["history"] == payload["history"]
-    invalid = {**payload, "history": [{"role": "system", "content": "越权指令"}]}
-    assert (await api.post(base + "/examples", json=invalid, headers=headers)).status_code == 422
-    assert (await api.get(base + "/examples")).json()["total"] == 1
+    assert (await api.get(base + "/examples")).json()["total"] == 0
     assert (await api.get(base + "/examples", params={"role": "positive"})).json()["total"] == 0
     assert (await api.get(base + "/examples", params={"offset": -1})).status_code == 422
-    assert (await api.post(base + "/builds", headers=headers)).status_code == 409
+    # GET history remains, so FastAPI returns 405 for the removed same-path POSTs.
+    assert (await api.post(base + "/examples", json={}, headers=headers)).status_code == 405
+    assert (await api.post(base + "/builds", headers=headers)).status_code == 405
+    for method, endpoint in (
+        ("PUT", "/examples/historical-example"),
+        ("DELETE", "/examples/historical-example"),
+        ("POST", "/reviews/historical-case"),
+        ("POST", "/builds/historical-build/cancel"),
+        ("POST", "/builds/historical-build/resume"),
+        ("POST", "/versions/doctor_builtin_v1/publish"),
+        ("POST", "/versions/doctor_builtin_v1/activate"),
+        ("POST", "/versions/doctor_builtin_v1/retry-failed"),
+    ):
+        response = await api.request(method, base + endpoint, json={}, headers=headers)
+        assert response.status_code == 404, (method, endpoint, response.text)
     other = await api.post("/api/admin/styles", json={"name": "简洁风格"}, headers=headers)
     assert other.status_code == 201
     other_id = other.json()["id"]
     assert (await api.get(f"/api/admin/styles/{other_id}/examples")).json()["total"] == 0
-    assert (
-        await api.put(
-            f"/api/admin/styles/{other_id}/examples/{created.json()['id']}",
-            json=payload,
-            headers=headers,
-        )
-    ).status_code == 404
     assert (await api.get("/api/admin/style-ab/cases")).status_code == 404
 
 
-async def test_build_process_api_hides_private_state_and_requires_csrf(test_settings):
+async def test_build_history_is_scoped_read_only_and_hides_private_state(test_settings):
     app = create_app(
         test_settings.model_copy(
             update={
                 "admin_username": "tester",
                 "admin_password": "test-style-password",
-                "style_iteration_worker_enabled": False,
             }
         )
     )
@@ -121,6 +114,8 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
             )
             data = (await client.get(base)).json()
             assert data["material_count"] == 1 and data["unused_count"] == 1
+            assert data["retired"] is True and data["can_resume"] is False
+            assert data["resume_block_reason"] == "workflow_retired"
             assert not {"worker_token", "snapshot", "checkpoints", "lease_until"} & data.keys()
             assert diagnostic_key in data["artifacts"]
             assert "private-model-output" not in str(data)
@@ -147,69 +142,38 @@ async def test_build_process_api_hides_private_state_and_requires_csrf(test_sett
             artifact = (await client.get(base + "/artifacts?key=input_materials")).json()
             assert artifact["items"][0]["user_input"] == "谢谢"
             assert (await client.get(base + "/artifacts?key=model:private")).status_code == 404
-            assert (await client.post(base + "/cancel")).status_code == 403
+            examples = (await client.get("/api/admin/styles/doctor/examples")).json()
+            assert examples["total"] == 1
+            assert examples["items"][0]["desired_response"] == "不客气"
+            listed = (await client.get("/api/admin/styles/doctor/builds")).json()
+            assert listed["items"][0]["id"] == run["id"]
+            assert listed["items"][0]["retired"] is True
+            assert (await client.post(base + "/cancel")).status_code == 404
             assert (
                 await client.post(base + "/cancel", headers={"X-SlimGuard-CSRF": "1"})
-            ).status_code == 200
+            ).status_code == 404
             assert (
                 await client.post(base + "/resume", headers={"X-SlimGuard-CSRF": "1"})
-            ).status_code == 200
+            ).status_code == 404
+        async with db.session() as session:
+            assert (await session.get(BuildRun, run["id"])).status == "queued"
 
 
-async def test_manual_guide_build_api_validates_input_and_freezes_new_version(test_settings):
-    app = create_app(
-        test_settings.model_copy(
-            update={
-                "admin_username": "tester",
-                "admin_password": "test-style-password",
-                "style_iteration_worker_enabled": False,
-            }
-        )
-    )
-    async with app.router.lifespan_context(app):
-        # Enable the endpoint after startup, without starting a real model worker.
-        app.state.settings = app.state.settings.model_copy(
-            update={
-                "style_iteration_worker_enabled": True,
-                "zhipu_api_key": "test-only",
-            }
-        )
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/admin/auth/login",
-                json={
-                    "username": "tester",
-                    "password": "test-style-password",
-                },
-            )
-            url = "/api/admin/styles/doctor/builds"
-            payload = {
-                "source_version_id": "doctor_builtin_v1",
-                "guide": {
-                    "summary": "直接自然",
-                    "rules": [
-                        {
-                            "rule_id": "plain",
-                            "text": "不加客套开场",
-                            "boundary": "不删事实",
-                        }
-                    ],
-                    "prohibited_phrases": [],
-                },
-            }
-            assert (await client.post(url, json=payload)).status_code == 403
-            headers = {"X-SlimGuard-CSRF": "1", "Idempotency-Key": "manual-guide"}
-            bad = await client.post(url, headers=headers, json={"guide": payload["guide"]})
-            assert bad.status_code == 422
-            response = await client.post(url, headers=headers, json=payload)
-            assert response.status_code == 202
-            run = response.json()
-            replay = await client.post(url, headers=headers, json=payload)
-            assert replay.json()["id"] == run["id"]
-            assert (await CorpusRepository(app.state.database).examples("doctor"))["total"] == 2
-            async with app.state.database.session() as session:
-                snapshot = (await session.get(BuildRun, run["id"])).snapshot
-            assert snapshot["edited_package"]["version_id"] == run["id"]
-            assert snapshot["source_version_id"] == "doctor_builtin_v1"
-            assert snapshot["preview_suite"]["cases"]
-            assert snapshot["baseline"]["version_id"] == "doctor_builtin_v1"
+def test_openapi_exposes_catalog_and_read_only_legacy_history(test_settings):
+    paths = create_app(test_settings).openapi()["paths"]
+    legacy = {
+        path: set(operations)
+        for path, operations in paths.items()
+        if path.startswith("/api/admin/styles") and "/studio" not in path
+    }
+    assert legacy.pop("/api/admin/styles") == {"get", "post"}
+    assert set(legacy) == {
+        "/api/admin/styles/{style_id}/examples",
+        "/api/admin/styles/{style_id}/builds",
+        "/api/admin/styles/{style_id}/builds/{run_id}",
+        "/api/admin/styles/{style_id}/builds/{run_id}/events",
+        "/api/admin/styles/{style_id}/builds/{run_id}/artifacts",
+        "/api/admin/styles/{style_id}/versions",
+        "/api/admin/styles/{style_id}/versions/{version_id}/cases",
+    }
+    assert all(methods == {"get"} for methods in legacy.values())

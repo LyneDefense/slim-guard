@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from slim_guard.db.session import Database
 from slim_guard.expression_style.contracts import StyleProfileSnapshot
-from slim_guard.expression_style.package import StylePackage
+from slim_guard.expression_style.persona import read_package
 
 from .models import Style, Version
 
@@ -28,7 +28,7 @@ class RuntimeStyles:
             # not invalidate a Turn's frozen choice between resolve() and this read.
             if style is None:
                 return None
-            package = StylePackage.model_validate(row.package)
+            package = read_package(row.package)
             if package.style_id != row.style_id or package.version_id != row.id:
                 raise ValueError("风格产物归属错误")
             return package.runtime_snapshot()

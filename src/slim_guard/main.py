@@ -9,7 +9,7 @@ from datetime import timedelta
 from fastapi import FastAPI, Request, Response
 
 from slim_guard.admin.calls.routes import router as call_monitor_router
-from slim_guard.agent.assembly.style_preview import build_coach_preview
+from slim_guard.agent.assembly.style_studio import build_style_studio
 from slim_guard.agent.composition import build_agent_runtime
 from slim_guard.agent.definition import AgentRuntimeDefinition
 from slim_guard.agent.manifest import build_agent_manifest
@@ -81,7 +81,6 @@ from slim_guard.services.reply_agent import (
 )
 from slim_guard.services.routine_scheduler import RoutineSchedulerService
 from slim_guard.style_management.routes import router as expression_style_router
-from slim_guard.style_management.worker import StyleWorker
 from slim_guard.tasks.config import TaskRuntimeConfig
 from slim_guard.tasks.repository import ConversationTaskRepository
 from slim_guard.usage.repository import UsageRepository
@@ -149,11 +148,7 @@ def create_app(
         traces = InteractionTraceRepository(database)
         nutrition_control = NutritionRagRepository(database)
         active_model_for_services = model_gateway
-        if (
-            active_model_for_services is None
-            and app_settings.zhipu_is_configured
-            and app_settings.nutrition_rag_engine == "v2"
-        ):
+        if active_model_for_services is None and app_settings.zhipu_is_configured:
             owned_model_gateway = ZhipuModelGateway(
                 api_key=app_settings.zhipu_api_key,
                 base_url=app_settings.zhipu_base_url,
@@ -308,8 +303,6 @@ def create_app(
         memory_index_task: asyncio.Task[None] | None = None
         memory_extraction_stop: asyncio.Event | None = None
         memory_extraction_task: asyncio.Task[None] | None = None
-        style_iteration_stop: asyncio.Event | None = None
-        style_iteration_task: asyncio.Task[None] | None = None
         nutrition_knowledge_stop: asyncio.Event | None = None
         nutrition_knowledge_task: asyncio.Task[None] | None = None
         if app_settings.wecom_callback_is_configured:
@@ -457,27 +450,6 @@ def create_app(
                 memory_index_sync.run_forever(memory_index_stop),
                 name="slim-guard-memory-index-sync",
             )
-        if app_settings.style_iteration_worker_enabled and app_settings.zhipu_is_configured:
-            if active_model_for_services is None:
-                owned_model_gateway = ZhipuModelGateway(
-                    api_key=app_settings.zhipu_api_key,
-                    base_url=app_settings.zhipu_base_url,
-                    timeout_seconds=app_settings.zhipu_http_timeout_seconds,
-                    thinking_enabled=False,
-                )
-                active_model_for_services = owned_model_gateway
-            style_iteration_worker = StyleWorker(
-                database,
-                build_model_gateway(active_model_for_services, UsageRepository(database)),
-                app_settings.zhipu_text_model,
-                app_settings.style_iteration_poll_seconds,
-                preview_factory=build_coach_preview,
-            )
-            style_iteration_stop = asyncio.Event()
-            style_iteration_task = asyncio.create_task(
-                style_iteration_worker.run_forever(style_iteration_stop),
-                name="slim-guard-style-iteration",
-            )
         if app_settings.nutrition_knowledge_worker_enabled:
             if nutrition_object_store is None or owned_nutrition_embedding is None:
                 raise RuntimeError("Nutrition knowledge worker dependencies are not configured")
@@ -512,6 +484,18 @@ def create_app(
                 name="slim-guard-nutrition-knowledge",
             )
 
+        app.state.style_studio_model = (
+            build_style_studio(
+                build_model_gateway(active_model_for_services, UsageRepository(database)),
+                app_settings.zhipu_text_model,
+                max(
+                    app_settings.agent_specialist_timeout_seconds,
+                    app_settings.zhipu_http_timeout_seconds * 2,
+                ),
+            )
+            if active_model_for_services is not None
+            else None
+        )
         app.state.settings = app_settings
         app.state.database = database
         app.state.traces = traces
@@ -545,8 +529,6 @@ def create_app(
                 memory_index_stop.set()
             if memory_extraction_stop is not None:
                 memory_extraction_stop.set()
-            if style_iteration_stop is not None:
-                style_iteration_stop.set()
             if nutrition_knowledge_stop is not None:
                 nutrition_knowledge_stop.set()
             if watchdog_task is not None:
@@ -563,8 +545,6 @@ def create_app(
                 await memory_index_task
             if memory_extraction_task is not None:
                 await memory_extraction_task
-            if style_iteration_task is not None:
-                await style_iteration_task
             if nutrition_knowledge_task is not None:
                 await nutrition_knowledge_task
             if owned_client is not None:

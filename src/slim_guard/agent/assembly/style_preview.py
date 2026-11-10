@@ -1,71 +1,19 @@
 """Wire offline previews to the same doctor capability, without business tools or writes."""
 
-from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
 
+from slim_guard.agent.assembly.coach_sandbox import PreviewTurn
 from slim_guard.agent_models.gateway import ModelGateway
 from slim_guard.agents.coach import (
-    COACH_PROMPT_VERSION,
-    COACH_REVIEW_VERSION,
     CoachEvidence,
-    CoachReply,
     CoachResponder,
     respond,
 )
 from slim_guard.expression_style.contracts import StyleProfileSnapshot
 from slim_guard.expression_style.dialogue import DialogueMessage
-from slim_guard.expression_style.review.contracts import ReplyCheck
 from slim_guard.expression_style.trainer.contracts import TestCase
 from slim_guard.expression_style.trainer.ports import CoachPreviewPort
-from slim_guard.runtime.contracts import AgentInvocation, AgentRole
-from slim_guard.runtime.invocation import InvocationRunner, InvocationRunResult
-
-
-class _PreviewTurn:
-    def __init__(
-        self,
-        coach: CoachResponder,
-        evidence: CoachEvidence,
-        style: StyleProfileSnapshot,
-        seconds: int,
-    ) -> None:
-        self.coach, self.evidence, self.style = coach, evidence, style
-        self.deadline = datetime.now(UTC) + timedelta(seconds=seconds)
-        self.turn_id, self.trace_id = str(uuid4()), str(uuid4())
-
-    def invocation(self, role: AgentRole, version: str, attempt: int) -> AgentInvocation:
-        return AgentInvocation(
-            invocation_id=str(uuid4()),
-            turn_id=self.turn_id,
-            trace_id=self.trace_id,
-            agent_role=role,
-            agent_version=version,
-            graph_version="coach-preview-v1",
-            deadline_at=self.deadline,
-            attempt=attempt,
-            caller="style_preview",
-            privacy_scopes=("current_user_input", "working_memory", "style_profile"),
-        )
-
-    async def generate(
-        self, *, attempt: int, feedback: tuple[dict[str, object], ...], previous_reply: str | None
-    ) -> InvocationRunResult[CoachReply]:
-        return await self.coach.generate(
-            invocation=self.invocation(AgentRole.COACH_RESPONSE, COACH_PROMPT_VERSION, attempt),
-            evidence=self.evidence,
-            style=self.style,
-            feedback=feedback,
-            previous_reply=previous_reply,
-        )
-
-    async def review(self, *, attempt: int, reply: CoachReply) -> InvocationRunResult[ReplyCheck]:
-        return await self.coach.review(
-            invocation=self.invocation(AgentRole.COACH_REVIEW, COACH_REVIEW_VERSION, attempt),
-            evidence=self.evidence,
-            style=self.style,
-            reply=reply,
-        )
+from slim_guard.runtime.invocation import InvocationRunner
 
 
 class DirectCoachPreview:
@@ -90,7 +38,7 @@ class DirectCoachPreview:
         for step, user_input in enumerate((case.user_input, *case.follow_up_inputs), 1):
             evidence = self._evidence(case, history, user_input)
             result = await respond(
-                _PreviewTurn(self.coach, evidence, style, self.seconds),
+                PreviewTurn(self.coach, evidence, style, self.seconds),
                 feedback=feedback if step == 1 else (),
             )
             calls += result.model_call_count

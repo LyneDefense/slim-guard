@@ -4,10 +4,10 @@ from slim_guard.expression_style.package import Guide, make_package
 from slim_guard.expression_style.trainer.contracts import WORKFLOW_VERSION
 from slim_guard.group_chat import ROLE_POLICY_VERSION
 from slim_guard.main import create_app
-from slim_guard.style_management.models import ReviewCase, Version
+from slim_guard.style_management.models import ReviewCase, Style, Version
 
 
-async def test_retry_endpoint_is_scoped_csrf_protected_idempotent_and_does_not_publish(
+async def test_failed_preview_history_remains_readable_after_retry_and_publish_retirement(
     test_settings,
 ):
     app = create_app(
@@ -15,17 +15,10 @@ async def test_retry_endpoint_is_scoped_csrf_protected_idempotent_and_does_not_p
             update={
                 "admin_username": "tester",
                 "admin_password": "test-style-password",
-                "style_iteration_worker_enabled": False,
             }
         )
     )
     async with app.router.lifespan_context(app):
-        app.state.settings = app.state.settings.model_copy(
-            update={
-                "style_iteration_worker_enabled": True,
-                "zhipu_api_key": "test-only",
-            }
-        )
         package = make_package("doctor", "retry-api-v", "重试测试", Guide(summary="不改变原意"))
         async with app.state.database.session() as session, session.begin():
             session.add(
@@ -71,37 +64,36 @@ async def test_retry_endpoint_is_scoped_csrf_protected_idempotent_and_does_not_p
             )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             endpoint = f"/api/admin/styles/doctor/versions/{package.version_id}/retry-failed"
-            assert (await client.post(endpoint)).status_code == 401
+            cases_url = f"/api/admin/styles/doctor/versions/{package.version_id}/cases"
+            assert (await client.get(cases_url)).status_code == 401
             await client.post(
                 "/api/admin/auth/login",
                 json={"username": "tester", "password": "test-style-password"},
             )
-            assert (await client.post(endpoint)).status_code == 403
-            assert (
-                await client.post(
-                    endpoint, headers={"X-SlimGuard-CSRF": "1", "Idempotency-Key": " "}
-                )
-            ).status_code == 422
+            assert (await client.post(endpoint)).status_code == 404
             headers = {"X-SlimGuard-CSRF": "1", "Idempotency-Key": "retry-one"}
             assert (
                 await client.post(endpoint.replace("/doctor/", "/another/"), headers=headers)
             ).status_code == 404
-            response = await client.post(endpoint, headers=headers)
-            assert response.status_code == 202, response.text
-            job = response.json()
-            assert job["job_kind"] == "preview_retry" and job["preview_count"] == 1
-            assert not {"snapshot", "checkpoints", "worker_token"} & job.keys()
-            assert (await client.post(endpoint, headers=headers)).json()["id"] == job["id"]
+            assert (await client.post(endpoint, headers=headers)).status_code == 404
+            versions = (await client.get("/api/admin/styles/doctor/versions")).json()["items"]
+            historical = next(row for row in versions if row["id"] == package.version_id)
+            assert historical["review_summary"]["auto_failed"] == 1
+            assert historical["package"]["package_hash"] == package.package_hash
+            cases = (await client.get(cases_url)).json()
+            assert cases["total"] == 1 and cases["counts"]["pending"] == 1
+            assert cases["items"][0]["id"] == "retry-api-case"
+            assert cases["items"][0]["doctor_response"] == "不客气。"
             assert (
-                await client.post(endpoint, headers={"X-SlimGuard-CSRF": "1"})
-            ).status_code == 409
-            base = f"/api/admin/styles/doctor/builds/{job['id']}"
-            data = (await client.get(base + "/artifacts?key=retry_inputs")).json()
-            assert data["items"][0]["case_id"] == "retry-api-case"
+                await client.get(cases_url.replace("/doctor/", "/another/"))
+            ).status_code == 404
             assert (
                 await client.post(
                     f"/api/admin/styles/doctor/versions/{package.version_id}/publish",
                     headers=headers,
                 )
-            ).status_code == 409
-            assert (await client.post(base + "/cancel", headers=headers)).status_code == 200
+            ).status_code == 404
+        async with app.state.database.session() as session:
+            assert (await session.get(Version, package.version_id)).status == "ready_for_review"
+            assert (await session.get(ReviewCase, "retry-api-case")).review is None
+            assert (await session.get(Style, "doctor")).active_version_id == "doctor_builtin_v1"

@@ -58,15 +58,6 @@ def test_agent_runtime_defaults_to_harness() -> None:
     assert settings.mobile_is_configured is False
 
 
-def test_style_training_execution_config_accepts_environment_strings(monkeypatch):
-    monkeypatch.setenv("STYLE_TRAINING_MAX_SECONDS", "1200")
-    settings = Settings(_env_file=None)
-    assert settings.style_training_max_seconds == 1200
-    monkeypatch.setenv("STYLE_TRAINING_MAX_SECONDS", "100")
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None)
-
-
 def test_embedding_dimensions_accepts_env_style_string() -> None:
     settings = Settings(
         _env_file=None,

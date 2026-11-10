@@ -10,7 +10,7 @@ import { createServer } from "vite";
 import {
   user,
   style,
-  version,
+  studio,
   totals,
   nutrition,
   call,
@@ -46,8 +46,7 @@ function render(path) {
       { items: [], total: 0 },
     ],
     [["expression-styles"], { items: [style] }],
-    [["expression-versions", "doctor"], { items: [version] }],
-    [["expression-builds", "doctor", 0], { items: [], total: 0 }],
+    [["style-studio", "doctor"], studio],
     [["nutrition-dashboard"], nutrition],
     [
       ["call-list", user.id, ""],
@@ -77,7 +76,7 @@ for (const [path, active, title] of [
   ["/users/demo-user/memories", "用户管理", "用户记忆"],
   ["/users/demo-user/usage", "模型用量", "问答用量"],
   ["/styles", "表达风格", "风格列表"],
-  ["/styles/doctor/build", "表达风格", "构建新版本"],
+  ["/styles/doctor", "表达风格", "角色设定"],
   ["/nutrition-knowledge", "营养知识库", "可检索向量"],
 ])
   test(`workspace and full navigation persist on ${path}`, () => {

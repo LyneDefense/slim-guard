@@ -70,9 +70,6 @@ class Settings(DatabaseSettings):
     nutrition_embedding_dimensions: int = Field(default=1024, ge=1024, le=1024)
     nutrition_rerank_provider: Literal["zhipu"] = "zhipu"
     nutrition_rerank_model: str = Field(default="rerank", min_length=1, max_length=128)
-    style_iteration_worker_enabled: bool = True
-    style_iteration_poll_seconds: float = Field(default=2.0, ge=0.25, le=60)
-    style_training_max_seconds: int = Field(default=3600, ge=120, le=7200)
     agent_fallback_reply_text: str = "抱歉，我刚才没有成功分析这条记录，请稍后再发一次。"
     reply_delivery_mode: Literal["automatic", "internal_review"] = "automatic"
     wecom_human_idle_timeout_seconds: int = Field(default=600, ge=60, le=86_400)

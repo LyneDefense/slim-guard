@@ -8,6 +8,7 @@ from slim_guard.db.session import Database
 
 from .contracts import ExampleInput, StyleInput
 from .models import Example, Style, Version
+from .studio.models import StudioDraft
 from .views import row_data
 
 
@@ -24,15 +25,18 @@ class CorpusRepository:
                     if style.active_version_id
                     else None
                 )
+                draft = await s.get(StudioDraft, style.id)
+                legacy_count = await s.scalar(
+                    select(func.count()).select_from(Example).where(Example.style_id == style.id)
+                )
                 items.append(
                     {
                         **row_data(style),
                         "active_version": active.name if active else None,
-                        "example_count": await s.scalar(
-                            select(func.count())
-                            .select_from(Example)
-                            .where(Example.style_id == style.id)
-                        ),
+                        "example_count": len(draft.content.get("examples", []))
+                        if draft
+                        else legacy_count,
+                        "legacy_example_count": legacy_count,
                     }
                 )
             return items

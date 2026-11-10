@@ -1,0 +1,329 @@
+<div id="cx-style-studio" aria-label="称小二表达风格工作台交互原型">
+  <div class="viz-carousel" aria-label="表达风格工作台布局选择" data-previous-label="上一种布局" data-next-label="下一种布局">
+    <section data-variant="并排编辑" aria-label="并排编辑布局"></section>
+    <section data-variant="聚焦试聊" aria-label="聚焦试聊布局" hidden></section>
+  </div>
+</div>
+<style>
+#cx-style-studio{color-scheme:light dark;--cx-page:light-dark(#f6f7fc,#151b28);--cx-surface:light-dark(#ffffff,#1f2838);--cx-ink:light-dark(#202e50,#ebeffa);--cx-muted:light-dark(#64718a,#b2bdd3);--cx-line:light-dark(#e2e7f2,#354158);--cx-primary:light-dark(#354780,#c0ceff);--cx-on-primary:light-dark(#ffffff,#182447);--cx-selected:light-dark(#edf1ff,#303e60);--cx-warm:light-dark(#fff0e2,#473527);--cx-warm-ink:light-dark(#a45018,#ffd2a8);--cx-good:light-dark(#246b55,#abe1c9);--cx-good-bg:light-dark(#edf7f1,#243f36);--cx-danger:light-dark(#ae4148,#ffb4bb);--cx-overlay:light-dark(#14213b50,#080d17b8);--cx-shadow:light-dark(#21325316,#00000038);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--cx-ink);width:100%}
+#cx-style-studio *{box-sizing:border-box}
+#cx-style-studio [hidden]{display:none!important}
+#cx-style-studio button,#cx-style-studio input,#cx-style-studio textarea{font:inherit;color:inherit}
+#cx-style-studio button{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--cx-surface);border:1px solid var(--cx-line);border-radius:7px;padding:8px 11px;min-height:36px;text-align:center}
+#cx-style-studio button:hover{background:var(--cx-selected)}
+#cx-style-studio button:disabled{opacity:.5;cursor:not-allowed}
+#cx-style-studio button.cx-primary{background:var(--cx-primary);color:var(--cx-on-primary);border-color:var(--cx-primary)}
+#cx-style-studio button.cx-quiet{background:transparent;border-color:transparent;color:var(--cx-muted)}
+#cx-style-studio button.cx-small{min-height:30px;padding:5px 7px;font-size:12px}
+#cx-style-studio button.cx-icon{padding:7px;min-width:34px;flex-shrink:0}
+#cx-style-studio button.cx-danger{color:var(--cx-danger)}
+#cx-style-studio svg{flex-shrink:0;width:16px;height:16px}
+#cx-style-studio h1,#cx-style-studio h2,#cx-style-studio h3,#cx-style-studio p{margin:0}
+#cx-style-studio h1{font-size:22px;font-weight:500;line-height:1.4}
+#cx-style-studio h2{font-size:15px;font-weight:500;line-height:1.5}
+#cx-style-studio h3{font-size:14px;font-weight:500;line-height:1.5}
+#cx-style-studio strong{font-weight:500}
+#cx-style-studio .cx-smalltext{font-size:12px}
+#cx-style-studio .cx-muted{color:var(--cx-muted)}
+#cx-style-studio .cx-window{position:relative;min-height:920px;background:var(--cx-page);border:1px solid var(--cx-line);border-radius:12px;overflow:clip}
+#cx-style-studio .cx-shell{display:grid;grid-template-columns:132px minmax(0,1fr);min-height:920px}
+#cx-style-studio .cx-sidebar{background:var(--cx-surface);border-right:1px solid var(--cx-line);padding:22px 12px;display:flex;flex-direction:column;gap:8px}
+#cx-style-studio .cx-brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:500;margin-bottom:22px;white-space:nowrap}
+#cx-style-studio .cx-brandmark{background:var(--cx-warm);color:var(--cx-warm-ink);width:29px;height:29px;border-radius:9px;display:grid;place-items:center}
+#cx-style-studio .cx-navlabel{font-size:11px;color:var(--cx-muted);margin:10px 8px 4px}
+#cx-style-studio .cx-navitem{display:flex;align-items:center;gap:8px;padding:10px 8px;color:var(--cx-muted);border-radius:7px;font-size:12px;white-space:nowrap}
+#cx-style-studio .cx-navitem.cx-current{color:var(--cx-primary);background:var(--cx-selected);font-weight:500}
+#cx-style-studio .cx-sidebar-foot{margin-top:auto;padding:30px 6px 0;color:var(--cx-muted);font-size:11px}
+#cx-style-studio .cx-page{min-width:0}
+#cx-style-studio .cx-topbar{min-height:52px;padding:13px 110px 13px 22px;border-bottom:1px solid var(--cx-line);background:var(--cx-surface);display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--cx-muted)}
+#cx-style-studio .cx-topbar strong{color:var(--cx-ink)}
+#cx-style-studio .cx-prototype{margin-left:auto;font-size:11px;color:var(--cx-muted)}
+#cx-style-studio .cx-main{padding:22px;min-width:0}
+#cx-style-studio .cx-titlebar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+#cx-style-studio .cx-titlebar p{color:var(--cx-muted);font-size:12px;margin-top:5px}
+#cx-style-studio .cx-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+#cx-style-studio .cx-statusbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:18px;padding:11px 13px;background:var(--cx-surface);border:1px solid var(--cx-line);border-radius:8px;font-size:12px}
+#cx-style-studio .cx-statusgroup{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#cx-style-studio .cx-badge{display:inline-flex;gap:6px;align-items:center;border-radius:5px;padding:3px 7px;background:var(--cx-selected);color:var(--cx-primary);font-size:11px}
+#cx-style-studio .cx-badge.cx-warm{background:var(--cx-warm);color:var(--cx-warm-ink)}
+#cx-style-studio .cx-badge.cx-good{background:var(--cx-good-bg);color:var(--cx-good)}
+#cx-style-studio .cx-dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;flex-shrink:0}
+#cx-style-studio .cx-workspace{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:16px;align-items:start}
+#cx-style-studio .cx-editor{display:grid;gap:16px;min-width:0}
+#cx-style-studio .cx-panel{border:1px solid var(--cx-line);border-radius:9px;background:var(--cx-surface);min-width:0}
+#cx-style-studio .cx-panelhead{padding:15px 16px;border-bottom:1px solid var(--cx-line);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+#cx-style-studio .cx-panelhead p{margin-top:3px;font-size:12px;color:var(--cx-muted)}
+#cx-style-studio .cx-paneltitle{display:flex;gap:8px;align-items:center}
+#cx-style-studio .cx-panelbody{padding:16px}
+#cx-style-studio .cx-field{display:block;margin-bottom:15px}
+#cx-style-studio .cx-field>span{display:block;margin-bottom:7px;font-size:12px;color:var(--cx-muted)}
+#cx-style-studio input,#cx-style-studio textarea{display:block;width:100%;max-width:100%;border:1px solid var(--cx-line);border-radius:6px;background:var(--cx-surface);padding:10px 11px;resize:vertical}
+#cx-style-studio textarea{min-height:82px}
+#cx-style-studio .cx-styleinput{min-height:134px;line-height:1.7}
+#cx-style-studio .cx-roleboundary{padding:12px 16px;background:var(--cx-page);border-radius:0 0 9px 9px;color:var(--cx-muted);font-size:12px;display:flex;gap:8px;align-items:flex-start}
+#cx-style-studio .cx-roleboundary svg{margin-top:2px}
+#cx-style-studio details>summary{color:var(--cx-muted);font-size:12px}
+#cx-style-studio details[open]>summary{margin-bottom:10px}
+#cx-style-studio .cx-examplelist{padding:0 16px}
+#cx-style-studio .cx-example{padding:14px 0;border-bottom:1px solid var(--cx-line)}
+#cx-style-studio .cx-example:last-child{border-bottom:0}
+#cx-style-studio .cx-examplehead{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:9px;font-size:12px}
+#cx-style-studio .cx-sampleline{display:grid;grid-template-columns:29px minmax(0,1fr);gap:8px;margin-top:7px;font-size:12px;overflow-wrap:anywhere}
+#cx-style-studio .cx-sampleline>span{color:var(--cx-muted)}
+#cx-style-studio .cx-examplefoot{padding:11px 16px;border-top:1px solid var(--cx-line);color:var(--cx-muted);font-size:11px}
+#cx-style-studio .cx-preview{display:flex;flex-direction:column;min-height:682px}
+#cx-style-studio .cx-previewmeta{padding:11px 16px;color:var(--cx-muted);font-size:11px;border-bottom:1px solid var(--cx-line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+#cx-style-studio .cx-chat{padding:22px 16px;display:flex;flex-direction:column;gap:18px;flex:1;min-height:310px}
+#cx-style-studio .cx-messagelabel{font-size:11px;color:var(--cx-muted);margin-bottom:6px}
+#cx-style-studio .cx-message{max-width:92%;min-width:0;overflow-wrap:anywhere}
+#cx-style-studio .cx-message.cx-user{align-self:flex-end;text-align:right}
+#cx-style-studio .cx-bubble{border:1px solid var(--cx-line);padding:12px 14px;background:var(--cx-page);border-radius:10px;text-align:left;white-space:pre-wrap}
+#cx-style-studio .cx-user .cx-bubble{background:var(--cx-primary);color:var(--cx-on-primary);border-color:var(--cx-primary)}
+#cx-style-studio .cx-exampleaction{margin-top:5px;display:flex;justify-content:flex-start}
+#cx-style-studio .cx-stale{margin:12px 16px 0;padding:10px;background:var(--cx-warm);color:var(--cx-warm-ink);border-radius:6px;font-size:12px}
+#cx-style-studio .cx-suggestions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 16px 13px}
+#cx-style-studio .cx-suggestions button{border-radius:20px;padding:5px 10px;font-size:12px;min-height:30px}
+#cx-style-studio .cx-compose{border-top:1px solid var(--cx-line);padding:14px 16px}
+#cx-style-studio .cx-compose textarea{min-height:68px}
+#cx-style-studio .cx-composefoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+#cx-style-studio .cx-bottomnote{margin-top:13px;font-size:11px;color:var(--cx-muted);display:flex;gap:7px;align-items:flex-start}
+#cx-style-studio .cx-prototypestatus{min-height:26px;margin-top:12px;color:var(--cx-primary);font-size:12px}
+#cx-style-studio .cx-tabs{display:flex;gap:20px;border-bottom:1px solid var(--cx-line);margin-bottom:16px}
+#cx-style-studio .cx-tabs button{border:0;border-radius:0;background:transparent;padding:10px 2px;color:var(--cx-muted);border-bottom:2px solid transparent}
+#cx-style-studio .cx-tabs button[aria-selected=true]{color:var(--cx-primary);border-bottom-color:var(--cx-primary);font-weight:500}
+#cx-style-studio .cx-focus .cx-workspace{display:block;max-width:760px;margin:0 auto}
+#cx-style-studio .cx-focus .cx-preview{min-height:620px}
+#cx-style-studio .cx-focus .cx-chat{padding:28px 25px;gap:22px}
+#cx-style-studio .cx-focus .cx-message{max-width:78%}
+#cx-style-studio .cx-focus .cx-compose{padding:17px 25px}
+#cx-style-studio .cx-focus .cx-suggestions{padding-left:25px}
+#cx-style-studio .cx-layer{position:absolute;inset:0;background:var(--cx-overlay);z-index:6;display:flex;justify-content:center;align-items:flex-start;padding:72px 22px 22px}
+#cx-style-studio .cx-dialog{width:min(100%,510px);background:var(--cx-surface);border:1px solid var(--cx-line);border-radius:11px;box-shadow:0 15px 50px var(--cx-shadow);overflow-wrap:anywhere}
+#cx-style-studio .cx-dialoghead{padding:18px 20px;display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--cx-line)}
+#cx-style-studio .cx-dialogbody{padding:20px}
+#cx-style-studio .cx-dialogbody>p{font-size:12px;color:var(--cx-muted);margin-bottom:16px}
+#cx-style-studio .cx-dialogfoot{border-top:1px solid var(--cx-line);padding:14px 20px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+#cx-style-studio .cx-layer.cx-drawerlayer{justify-content:flex-end;padding:0}
+#cx-style-studio .cx-drawer{border-radius:0;min-height:920px;width:min(100%,420px)}
+#cx-style-studio .cx-versionrow{padding:19px 0;border-bottom:1px solid var(--cx-line)}
+#cx-style-studio .cx-versionrow:first-child{padding-top:0}
+#cx-style-studio .cx-versionrow:last-child{border-bottom:0}
+#cx-style-studio .cx-versiontop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+#cx-style-studio .cx-versionrow p{font-size:12px;color:var(--cx-muted);margin:8px 0 12px}
+#cx-style-studio .cx-versionrow details{margin:12px 0}
+#cx-style-studio .cx-formerror{font-size:12px;color:var(--cx-danger);margin-top:10px;min-height:18px}
+#cx-style-studio .cx-dialognote{padding:12px;background:var(--cx-page);border-radius:7px;font-size:12px;color:var(--cx-muted)}
+#cx-style-studio .cx-confirmitem{display:flex;justify-content:space-between;gap:15px;padding:11px 0;border-bottom:1px solid var(--cx-line);font-size:12px}
+#cx-style-studio .cx-confirmitem span:first-child{color:var(--cx-muted)}
+#cx-style-studio .cx-confirmlist{margin-bottom:16px}
+#cx-style-studio .cx-turnedit{padding:12px;background:var(--cx-page);border-radius:7px;margin-bottom:12px}
+#cx-style-studio .cx-turnedit:last-child .cx-field:last-child{margin-bottom:0}
+@media(min-width:850px){#cx-style-studio .cx-window[data-dense=true] .cx-panelhead{padding:11px 14px}#cx-style-studio .cx-window[data-dense=true] .cx-panelbody{padding:13px}#cx-style-studio .cx-window[data-dense=true] .cx-example{padding:11px 0}}
+@media(max-width:850px){#cx-style-studio .cx-shell{grid-template-columns:112px minmax(0,1fr)}#cx-style-studio .cx-sidebar{padding:20px 9px}#cx-style-studio .cx-main{padding:18px}#cx-style-studio .cx-titlebar{gap:12px}#cx-style-studio .cx-workspace{grid-template-columns:1fr}#cx-style-studio .cx-preview{min-height:530px}#cx-style-studio .cx-window,#cx-style-studio .cx-shell{min-height:1430px}#cx-style-studio .cx-focus.cx-window,#cx-style-studio .cx-focus .cx-shell{min-height:1430px}}
+@media(max-width:560px){#cx-style-studio .cx-shell{display:block}#cx-style-studio .cx-sidebar{display:none}#cx-style-studio .cx-topbar{padding:13px 95px 13px 14px;min-height:64px}#cx-style-studio .cx-topbar .cx-breadcrumb-extra{display:none}#cx-style-studio .cx-prototype{margin-left:0}#cx-style-studio .cx-main{padding:15px 12px}#cx-style-studio h1{font-size:20px}#cx-style-studio .cx-titlebar .cx-actions{width:100%}#cx-style-studio .cx-statusbar{padding:11px}#cx-style-studio .cx-panelhead{padding:13px}#cx-style-studio .cx-panelbody{padding:13px}#cx-style-studio .cx-previewmeta{padding:10px 13px}#cx-style-studio .cx-focus .cx-chat,#cx-style-studio .cx-chat{padding:18px 13px}#cx-style-studio .cx-focus .cx-message{max-width:94%}#cx-style-studio .cx-focus .cx-compose,#cx-style-studio .cx-compose{padding:13px}#cx-style-studio .cx-focus .cx-suggestions{padding-left:13px}#cx-style-studio .cx-layer{padding:32px 10px 20px}#cx-style-studio .cx-dialogbody{padding:16px}#cx-style-studio .cx-dialoghead{padding:14px 16px}#cx-style-studio .cx-tabs{gap:17px}#cx-style-studio input,#cx-style-studio textarea{font-size:16px}#cx-style-studio .cx-window,#cx-style-studio .cx-shell,#cx-style-studio .cx-focus.cx-window,#cx-style-studio .cx-focus .cx-shell{min-height:1530px}}
+@media(pointer:coarse){#cx-style-studio button{min-height:44px}#cx-style-studio button.cx-small{min-height:44px}#cx-style-studio .cx-suggestions button{min-height:44px}#cx-style-studio button.cx-icon{min-width:44px}}
+</style>
+<script>
+(() => {
+  const root = document.getElementById('cx-style-studio');
+  const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
+  const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const initialTone = '简短、克制、直接，像一个不多话但有判断的医生。\n先回应眼前这件事，不重复整段背景，不主动展开一堂课。\n可以冷淡，不敷衍、不挖苦；需要解释或提示风险时，说清楚。';
+  const initialAvoid = '不套用鼓励和安慰，不在结尾机械追问，不用训话口吻。';
+  const initialExamples = [
+    {id:'exercise', turns:[{user:'我今天不想运动。', doctor:'今天休息。别一直休息。'}]},
+    {id:'meal', turns:[{user:'晚餐吃了米饭、鸡蛋和白菜。', doctor:'搭配可以。份量还不清楚。'}]},
+    {id:'greeting', turns:[{user:'你好。', doctor:'来了。今天怎么样？'},{user:'今天没什么特别的。',doctor:'那就照常。'}]}
+  ];
+  const stores = {};
+  const restorers = {};
+  const remembered = window.openai?.widgetState;
+  const savedState = remembered?.privateContent?.studios || {};
+  function persist() {
+    const reduced = {};
+    Object.entries(stores).forEach(([key, state]) => { reduced[key] = {tone:state.tone,avoid:state.avoid,examples:state.examples,rev:state.rev,savedRev:state.savedRev,publishedRev:state.publishedRev,active:state.active,activeTone:state.activeTone,tab:state.tab}; });
+    const current = root.querySelector('[data-variant]:not([hidden])')?.dataset.variant;
+    const privateContent = new TextEncoder().encode(JSON.stringify(reduced)).length<14000 ? {studios:reduced} : {layout:current};
+    const request = window.openai?.setWidgetState?.({modelContent:{prototype:'医生表达风格工作台',layout:current,realModelCalls:false,realPublication:false},privateContent});
+    request?.catch?.(() => {});
+  }
+  function refreshIcons() { if (globalThis.lucide) lucide.createIcons({attrs:{width:16,height:16}}); }
+  root.querySelectorAll('[data-variant]').forEach((variant, index) => {
+    const key = index ? 'focus' : 'split';
+    const old = savedState[key];
+    const validSaved = old && typeof old.tone==='string' && Array.isArray(old.examples) && old.examples.length<15;
+    const state = stores[key] = {
+      tone:validSaved?old.tone:initialTone, avoid:validSaved?old.avoid:initialAvoid,
+      examples:validSaved?old.examples:structuredClone(initialExamples), rev:validSaved?old.rev:2,
+      savedRev:validSaved?old.savedRev:2, publishedRev:validSaved?old.publishedRev:1,
+      active:validSaved?old.active:3, activeTone:validSaved&&typeof old.activeTone==='string'?old.activeTone:'自然、直接，回答问题时保留必要的解释。', tab:validSaved?old.tab:'chat', chatRev:2,
+      messages:[{role:'user',text:'我今天不想运动。'},{role:'doctor',text:'今天休息。别一直休息。',user:'我今天不想运动。'}], dense:false
+    };
+    state.chatRev = state.rev;
+    variant.innerHTML = `
+      <div class="cx-window ${index?'cx-focus':''}" aria-label="${index?'聚焦试聊':'并排编辑'}工作台">
+        <div class="cx-shell">
+          <aside class="cx-sidebar" aria-label="管理后台导航">
+            <div class="cx-brand"><span class="cx-brandmark">${icon('scale')}</span>称小二</div>
+            <div class="cx-navlabel">运行观察</div>
+            <div class="cx-navitem">${icon('workflow')}调用过程</div>
+            <div class="cx-navitem">${icon('chart-no-axes-column')}模型用量</div>
+            <div class="cx-navlabel">配置与管理</div>
+            <div class="cx-navitem">${icon('users')}用户管理</div>
+            <div class="cx-navitem cx-current" aria-current="page">${icon('messages-square')}表达风格</div>
+            <div class="cx-navitem">${icon('library')}营养知识库</div>
+            <div class="cx-sidebar-foot">${icon('shield-check')} 管理操作留痕<br><br>当前账号<br>operator</div>
+          </aside>
+          <div class="cx-page">
+            <header class="cx-topbar"><span class="cx-breadcrumb-extra">配置与管理 /</span><span>表达风格 /</span><strong>医生教练</strong><span class="cx-prototype">交互原型 · 示例数据</span></header>
+            <main class="cx-main">
+              <header class="cx-titlebar"><div><h1>医生表达风格</h1><p>设定怎么说，用实际对话试一试。</p></div><div class="cx-actions"><button type="button" class="cursor-interaction cx-quiet" data-action="history">${icon('history')}历史版本</button><button type="button" class="cursor-interaction" data-action="save">保存草稿</button><button type="button" class="cursor-interaction cx-primary" data-action="publish">发布并启用${icon('arrow-up-right')}</button></div></header>
+              <div class="cx-statusbar"><div class="cx-statusgroup"><span class="cx-badge cx-good"><span class="cx-dot"></span><span data-active></span></span><span class="cx-muted">→</span><span class="cx-badge cx-warm" data-draftstatus></span></div><span class="cx-muted" data-savehint></span></div>
+              ${index?`<div class="cx-tabs" role="tablist" aria-label="风格工作区"><button type="button" class="cursor-interaction" role="tab" data-tab="chat" id="cx-${key}-chat-tab" aria-controls="cx-${key}-preview">试聊</button><button type="button" class="cursor-interaction" role="tab" data-tab="tone" id="cx-${key}-tone-tab" aria-controls="cx-${key}-tone">角色设定</button><button type="button" class="cursor-interaction" role="tab" data-tab="examples" id="cx-${key}-examples-tab" aria-controls="cx-${key}-examples">对话示例</button></div>`:''}
+              <div class="cx-workspace">
+                <div class="cx-editor">
+                  <section class="cx-panel" id="cx-${key}-tone" ${index?`role="tabpanel" aria-labelledby="cx-${key}-tone-tab"`:''}>
+                    <header class="cx-panelhead"><div class="cx-paneltitle">${icon('sliders-horizontal')}<h2>角色设定</h2></div><button type="button" class="cursor-interaction cx-small cx-quiet" data-action="organize">${icon('sparkles')}AI 帮我整理</button></header>
+                    <div class="cx-panelbody"><label class="cx-field"><span>表达方式</span><textarea class="cx-styleinput" data-tone maxlength="1000" aria-label="表达方式">${escape(state.tone)}</textarea></label><details><summary class="cursor-interaction">避免的表达</summary><label class="cx-field"><span>可选，描述不希望出现的口吻</span><textarea data-avoid maxlength="1000" aria-label="避免的表达">${escape(state.avoid)}</textarea></label></details></div>
+                    <div class="cx-roleboundary">${icon('shield-check')}<div><strong>固定职责</strong><br>只点评和对话，不执行记录、不播报操作结果。事实与医疗安全边界不随风格改变。</div></div>
+                  </section>
+                  <section class="cx-panel" id="cx-${key}-examples" ${index?`role="tabpanel" aria-labelledby="cx-${key}-examples-tab"`:''}>
+                    <header class="cx-panelhead"><div><h2>对话示例 <span class="cx-muted cx-smalltext" data-count></span></h2><p>直接写你认可的回答，支持多轮。</p></div><button type="button" class="cursor-interaction cx-small" data-action="add">${icon('plus')}添加</button></header>
+                    <div class="cx-examplelist" data-examples></div><div class="cx-examplefoot">示例只用于学习表达，不作为当前用户的事实。</div>
+                  </section>
+                </div>
+                <section class="cx-panel cx-preview" id="cx-${key}-preview" ${index?`role="tabpanel" aria-labelledby="cx-${key}-chat-tab"`:''}>
+                  <header class="cx-panelhead"><div class="cx-paneltitle">${icon('message-circle')}<h2>试聊</h2><span class="cx-badge">当前草稿</span></div><button type="button" class="cursor-interaction cx-quiet cx-small" data-action="restart">${icon('rotate-ccw')}新对话</button></header>
+                  <div class="cx-previewmeta"><span>示例对话演示 · 不调用模型</span><span>不写入用户记录</span></div>
+                  <div class="cx-stale" data-stale hidden>草稿已更新，已有对话使用的是旧设定。<button type="button" class="cursor-interaction cx-small cx-quiet" data-action="restart">用新草稿重新试聊${icon('arrow-right')}</button></div>
+                  <div class="cx-chat" data-chat aria-live="polite"></div>
+                  <div class="cx-suggestions"><button type="button" class="cursor-interaction" data-scene="greeting">日常聊天</button><button type="button" class="cursor-interaction" data-scene="exercise">不想运动</button><button type="button" class="cursor-interaction" data-scene="meal">一餐点评</button></div>
+                  <div class="cx-compose"><label><span class="cx-muted cx-smalltext">试聊消息</span><textarea data-input placeholder="输入一句话，看看医生会怎么回应…" aria-label="试聊消息" maxlength="500"></textarea></label><div class="cx-composefoot"><span class="cx-muted cx-smalltext">原型为预设演示，不代表真实生成效果</span><button type="button" data-send class="cursor-interaction cx-primary">发送${icon('arrow-up')}</button></div></div>
+                </section>
+              </div>
+              <div class="cx-bottomnote">${icon('lock-keyhole')}<span>保存草稿不会影响线上。发布并启用后，仅后续新回复使用新版本。</span></div>
+              <div class="cx-prototypestatus" data-status role="status" aria-live="polite"></div>
+            </main>
+          </div>
+        </div>
+        <div class="cx-overlayhost"></div>
+      </div>`;
+    const windowRoot = variant.querySelector('.cx-window');
+    const query = selector => windowRoot.querySelector(selector);
+    let previousFocus = null;
+    function status(message) { query('[data-status]').textContent = message; }
+    function renderState() {
+      query('[data-active]').textContent = `线上启用 · 示例 V${state.active}`;
+      query('[data-draftstatus]').textContent = state.rev===state.publishedRev?'与启用版本一致':state.rev===state.savedRev?'草稿未发布':'草稿有未保存修改';
+      query('[data-draftstatus]').classList.toggle('cx-warm',state.rev!==state.publishedRev);
+      query('[data-savehint]').textContent = state.rev===state.savedRev?'已保存草稿':'修改仅保留在本次预览';
+      query('[data-action="save"]').disabled = state.rev===state.savedRev;
+      query('[data-stale]').hidden = state.chatRev===state.rev;
+      query('[data-send]').disabled = state.chatRev!==state.rev;
+      query('[data-count]').textContent = `${state.examples.length} 组`;
+      if(index){
+        windowRoot.querySelectorAll('[data-tab]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.tab===state.tab)));
+        query(`#cx-${key}-tone`).hidden = state.tab!=='tone';
+        query(`#cx-${key}-examples`).hidden = state.tab!=='examples';
+        query(`#cx-${key}-preview`).hidden = state.tab!=='chat';
+        query('.cx-editor').hidden = state.tab==='chat';
+      }
+    }
+    function renderExamples() {
+      query('[data-examples]').innerHTML = state.examples.length?state.examples.map((example,i)=>`<article class="cx-example"><div class="cx-examplehead"><strong>示例 ${i+1}${example.turns.length>1?` · ${example.turns.length} 轮对话`:''}</strong><button type="button" class="cursor-interaction cx-icon cx-small cx-quiet" data-edit="${escape(example.id)}" aria-label="编辑示例 ${i+1}">${icon('pencil')}</button></div>${example.turns.slice(0,1).map(turn=>`<p class="cx-sampleline"><span>用户</span><span style="color:inherit">${escape(turn.user)}</span></p><p class="cx-sampleline"><span>医生</span><strong>${escape(turn.doctor)}</strong></p>`).join('')}</article>`).join(''):'<p class="cx-muted cx-smalltext" style="padding:18px 0">还没有示例。可以直接添加一段认可的对话。</p>';
+      renderState(); refreshIcons();
+    }
+    function renderChat() {
+      query('[data-chat]').innerHTML = state.messages.length?state.messages.slice(-8).map((message,i)=>`<div class="cx-message ${message.role==='user'?'cx-user':''}"><div class="cx-messagelabel">${message.role==='user'?'你':message.demo?'原型说明':'医生教练'}</div><div class="cx-bubble">${escape(message.text)}</div>${message.role==='doctor'&&!message.demo?`<div class="cx-exampleaction"><button type="button" class="cursor-interaction cx-quiet cx-small" data-adopt="${i}">${icon('bookmark-plus')}保存为示例</button></div>`:''}</div>`).join(''):'<div class="cx-muted cx-smalltext">当前草稿已就绪。选择下方场景，或输入一条消息。</div>';
+      refreshIcons();
+    }
+    function changed() { state.rev++; renderState(); persist(); }
+    function closeLayer() { query('.cx-overlayhost').innerHTML=''; query('.cx-shell').inert=false; if(previousFocus?.isConnected)previousFocus.focus(); }
+    function layer(title,body,footer,{drawer=false,onSubmit}={}) {
+      previousFocus=document.activeElement;
+      query('.cx-shell').inert=true;
+      const actions = footer?.replaceAll('type="submit"','type="button" data-confirm');
+      query('.cx-overlayhost').innerHTML=`<div class="cx-layer ${drawer?'cx-drawerlayer':''}"><section class="cx-dialog ${drawer?'cx-drawer':''}" role="dialog" aria-modal="true" aria-labelledby="cx-${key}-dialogtitle"><header class="cx-dialoghead"><h2 id="cx-${key}-dialogtitle">${title}</h2><button type="button" class="cursor-interaction cx-icon cx-quiet" data-close aria-label="关闭">${icon('x')}</button></header><div data-dialogform><div class="cx-dialogbody">${body}</div>${actions?`<footer class="cx-dialogfoot">${actions}</footer>`:''}</div></section></div>`;
+      query('[data-confirm]')?.addEventListener('click',event=>onSubmit?.(event));
+      refreshIcons(); query('[data-close]').focus();
+    }
+    const cancel = '<button type="button" class="cursor-interaction" data-close>取消</button>';
+    function editExample(id,seed) {
+      const example=state.examples.find(item=>item.id===id);
+      let turns=structuredClone(example?.turns||seed||[{user:'',doctor:''}]);
+      function show(){
+        layer(example?'编辑对话示例':'添加对话示例',`<p>填写一段你认可的对话。不需要原回答，也不需要关联规则。</p><div data-turns>${turns.map((turn,i)=>`<div class="cx-turnedit"><label class="cx-field"><span>第 ${i+1} 轮 · 用户</span><textarea data-turn-user="${i}" maxlength="500" required>${escape(turn.user)}</textarea></label><label class="cx-field"><span>医生回答</span><textarea data-turn-doctor="${i}" maxlength="500" required>${escape(turn.doctor)}</textarea></label></div>`).join('')}</div><button type="button" class="cursor-interaction cx-small" data-addturn>${icon('plus')}添加一轮</button><div class="cx-formerror" data-formerror role="alert"></div>`,`${example?'<button type="button" class="cursor-interaction cx-quiet cx-danger" data-delete>删除示例</button>':''}${cancel}<button type="submit" class="cursor-interaction cx-primary">保存到草稿</button>`,{onSubmit:()=>{
+          const pairs=turns.map((turn,i)=>({user:query(`[data-turn-user="${i}"]`).value.trim(),doctor:query(`[data-turn-doctor="${i}"]`).value.trim()}));
+          if(pairs.some(pair=>!pair.user||!pair.doctor)){query('[data-formerror]').textContent='请填写完整的用户输入和医生回答。';return;}
+          if(example)state.examples=state.examples.map(item=>item.id===id?{...item,turns:pairs}:item);else state.examples.push({id:`example-${Date.now()}`,turns:pairs});
+          closeLayer();changed();renderExamples();status('示例已保存到草稿，线上版本未改变。');
+        }});
+        query('[data-addturn]').addEventListener('click',()=>{
+          turns=turns.map((turn,i)=>({user:query(`[data-turn-user="${i}"]`).value,doctor:query(`[data-turn-doctor="${i}"]`).value}));
+          if(turns.length>=3){query('[data-formerror]').textContent='原型最多演示三轮。';return;}
+          turns.push({user:'',doctor:''});show();
+        });
+        query('[data-delete]')?.addEventListener('click',()=>{
+          state.examples=state.examples.filter(item=>item.id!==id);closeLayer();changed();renderExamples();status('已从草稿移除示例，已发布版本不受影响。');
+        });
+      }
+      show();
+    }
+    function restart() { state.messages=[];state.chatRev=state.rev;renderChat();renderState();status('已用最新草稿开始新对话。');persist(); }
+    function submitChat(text) {
+      if(state.chatRev!==state.rev){status('请先用最新草稿开始新对话。');return;}
+      const example=state.examples.find(item=>item.turns[0]?.user===text);
+      state.messages.push({role:'user',text});
+      state.messages.push(example?{role:'doctor',text:example.turns[0].doctor,user:text}:{role:'doctor',text:'本原型不调用模型。正式试聊会在这里按当前草稿生成回复。',demo:true});
+      renderChat();query('[data-input]').value='';persist();
+    }
+    query('[data-tone]').addEventListener('input',event=>{state.tone=event.target.value;changed();});
+    query('[data-avoid]').addEventListener('input',event=>{state.avoid=event.target.value;changed();});
+    query('[data-send]').addEventListener('click',()=>{const value=query('[data-input]').value.trim();if(value)submitChat(value);else query('[data-input]').focus();});
+    windowRoot.addEventListener('click',event=>{
+      const button=event.target.closest('button');if(!button)return;
+      if(button.hasAttribute('data-close')){closeLayer();return;}
+      if(button.dataset.tab){state.tab=button.dataset.tab;renderState();persist();return;}
+      if(button.dataset.edit){editExample(button.dataset.edit);return;}
+      if(button.dataset.adopt!==undefined){const message=state.messages.slice(-8)[Number(button.dataset.adopt)];if(message?.user)editExample(null,[{user:message.user,doctor:message.text}]);return;}
+      if(button.dataset.scene){const item=state.examples.find(example=>example.id===button.dataset.scene)||initialExamples.find(example=>example.id===button.dataset.scene);if(state.chatRev!==state.rev)restart();submitChat(item.turns[0].user);return;}
+      switch(button.dataset.action){
+        case 'save':state.savedRev=state.rev;renderState();persist();status('模拟：草稿已保存，线上版本未改变。');break;
+        case 'restart':restart();break;
+        case 'add':editExample(null);break;
+        case 'organize':
+          layer('AI 帮我整理',`<p>这是可选辅助。正式功能根据你的文字和示例提出修改，不会自动覆盖。</p><label class="cx-field"><span>建议的表达说明 · 原型示例</span><textarea data-suggested class="cx-styleinput">${escape(state.tone)}</textarea></label><div class="cx-dialognote">本原型没有调用模型。你可以修改以上文字，确认后合入草稿。</div>`,`${cancel}<button type="submit" class="cursor-interaction cx-primary">采用到草稿</button>`,{onSubmit:()=>{const value=query('[data-suggested]').value.trim();if(!value)return;state.tone=value;query('[data-tone]').value=value;closeLayer();changed();status('建议已合入草稿，还没有发布。');}});break;
+        case 'publish':
+          if(!state.tone.trim()){status('请先填写表达方式。');query('[data-tone]').focus();break;}
+          layer('发布并启用',`<p>确认这份草稿将成为后续新回复使用的版本。历史对话不会重写。</p><div class="cx-confirmlist"><div class="cx-confirmitem"><span>风格</span><strong>医生教练</strong></div><div class="cx-confirmitem"><span>替换版本</span><strong>示例 V${state.active} → 示例 V${state.active+1}</strong></div><div class="cx-confirmitem"><span>对话示例</span><strong>${state.examples.length} 组</strong></div><div class="cx-confirmitem"><span>生效范围</span><strong>后续新回复</strong></div></div><div class="cx-dialognote">交互演示，不会真正发布。正式功能需完成配置校验和必要的职责／安全检查；本原型未执行这些检查。</div>`,`${cancel}<button type="submit" class="cursor-interaction cx-primary">模拟发布并启用</button>`,{onSubmit:()=>{state.active++;state.activeTone=state.tone;state.publishedRev=state.rev;state.savedRev=state.rev;closeLayer();renderState();persist();status(`模拟完成：示例 V${state.active} 已启用。没有修改真实后台。`);}});break;
+        case 'history':
+          layer('历史版本',`<p>保留每次发布时的设定和示例。旧版本可先加载为草稿，试聊后再发布。</p>${[state.active,state.active-1,state.active-2].filter(number=>number>0).map((number,i)=>`<article class="cx-versionrow"><div class="cx-versiontop"><strong>示例 V${number}</strong>${i===0?'<span class="cx-badge cx-good">当前启用</span>':'<span class="cx-muted cx-smalltext">历史版本</span>'}</div><p>${i===0?'当前线上使用的表达配置。':'上一版表达设定与对话示例。'}</p><details><summary class="cursor-interaction">查看配置</summary><p>${escape(i===0?state.activeTone:'说话自然直接，减少解释和重复。')}</p></details>${i?`<button type="button" class="cursor-interaction cx-small" data-loadversion="${number}">${icon('corner-up-left')}加载为草稿</button>`:''}</article>`).join('')}`,null,{drawer:true});
+          windowRoot.querySelectorAll('[data-loadversion]').forEach(load=>load.addEventListener('click',()=>{state.tone='说话自然直接，减少解释和重复。';query('[data-tone]').value=state.tone;closeLayer();changed();if(index){state.tab='tone';renderState();}status(`已将示例 V${load.dataset.loadversion} 的配置加载为草稿，线上版本未改变。`);}));break;
+      }
+    });
+    windowRoot.addEventListener('keydown',event=>{
+      if(!query('[role="dialog"]'))return;
+      if(event.key==='Escape'){closeLayer();event.preventDefault();}
+      if(event.key==='Tab'){
+        const controls=[...query('[role="dialog"]').querySelectorAll('button:not(:disabled),input,textarea,select,summary')];
+        const first=controls[0],last=controls.at(-1);
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+        else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+      }
+    });
+    restorers[key] = value => {
+      if(!value||typeof value.tone!=='string'||typeof value.avoid!=='string'||!Array.isArray(value.examples))return;
+      Object.assign(state,{tone:value.tone,avoid:value.avoid,examples:value.examples,rev:value.rev,savedRev:value.savedRev,publishedRev:value.publishedRev,active:value.active,activeTone:value.activeTone||state.activeTone,tab:value.tab});
+      query('[data-tone]').value=state.tone;query('[data-avoid]').value=state.avoid;
+      renderExamples();renderState();
+    };
+    renderExamples();renderChat();renderState();
+    if(globalThis.Tweak){const tweak=new Tweak({container:windowRoot,onChange:()=>{windowRoot.dataset.dense=String(state.dense);}});tweak.addToggle(state,'dense',{label:'紧凑间距'});}
+  });
+  window.addEventListener('openai:set_globals',event=>{
+    const update=event.detail?.globals?.widgetState?.privateContent?.studios;
+    if(!update)return;
+    Object.entries(update).forEach(([key,value])=>restorers[key]?.(value));
+  });
+})();
+</script>

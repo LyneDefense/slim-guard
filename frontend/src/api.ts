@@ -32,6 +32,13 @@ export type AdminSession = {
 
 export class UnauthorizedError extends Error {}
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -59,7 +66,11 @@ export async function request<T>(
       }
       throw new UnauthorizedError("登录已失效，请重新登录");
     }
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw new ApiError(
+      detail || `HTTP ${response.status}`,
+      response.status,
+      response.headers.get("X-SlimGuard-Error") ?? undefined,
+    );
   }
   return response.json() as Promise<T>;
 }

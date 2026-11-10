@@ -293,7 +293,9 @@ async def test_execution_failure_preserves_all_reviews_and_resume_reuses_success
     worker, builds = StyleWorker(style_db, gateway, "test-model"), BuildRepository(style_db)
     await worker.run_once()
     failed = await builds.detail("doctor", job["id"])
-    assert failed["status"] == "failed" and failed["can_resume"]
+    assert failed["status"] == "failed"
+    assert failed["retired"] and not failed["can_resume"]
+    assert failed["resume_block_reason"] == "workflow_retired"
     assert await rows(style_db) == before
     count = len(gateway.requests)
     gateway.broken = False

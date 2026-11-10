@@ -154,7 +154,9 @@ async def test_exhausted_guide_validation_resumes_only_failed_step(style_db, pha
     worker = StyleWorker(style_db, gateway, "test-model")
     await worker.run_once()
     failed = await builds.detail("doctor", run["id"])
-    assert failed["status"] == "failed" and failed["can_resume"]
+    assert failed["status"] == "failed"
+    assert failed["retired"] and not failed["can_resume"]
+    assert failed["resume_block_reason"] == "workflow_retired"
     assert failed["analyzed_count"] == 17
     key = next(k for k in failed["artifacts"] if k.startswith("validation:GuideDraft:"))
     diagnostic = (await builds.artifact("doctor", run["id"], key))["value"]

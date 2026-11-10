@@ -1,13 +1,12 @@
+// Synthetic UI/API acceptance data only. These tests never call a model.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-
 const server = await createServer({
   root: fileURLToPath(new URL("../", import.meta.url)),
   appType: "custom",
@@ -16,155 +15,79 @@ const server = await createServer({
   server: { middlewareMode: true, hmr: false, ws: false, watch: null },
 });
 after(() => server.close());
-const { StyleProfilePage } = await server.ssrLoadModule(
-  "/src/components/style/StyleProfilePage.tsx",
+const { StyleDirectoryPage } = await server.ssrLoadModule(
+  "/src/features/style-management/pages/StyleDirectoryPage.tsx",
 );
-const { stylesApi } = await server.ssrLoadModule(
-  "/src/components/style/api.ts",
+const { StyleStudioPage, StudioEditor } = await server.ssrLoadModule(
+  "/src/features/style-management/pages/StyleStudioPage.tsx",
 );
+const { styleStudioApi } = await server.ssrLoadModule(
+  "/src/features/style-management/api.ts",
+);
+const { ApiError } = await server.ssrLoadModule("/src/api.ts");
+const { ChatPanel } = await server.ssrLoadModule(
+  "/src/features/style-management/components/ChatPanel.tsx",
+);
+const { CheckResult } = await server.ssrLoadModule(
+  "/src/features/style-management/components/CheckResult.tsx",
+);
+const {
+  validateExample,
+  exampleFromChat,
+  sameContent,
+  publicationState,
+  dateLabel,
+} = await server.ssrLoadModule("/src/features/style-management/model.ts");
+const content = {
+  expression: "简短、克制，先回应眼前的事。",
+  avoid: "避免机械鼓励。",
+  examples: [
+    {
+      id: "example-1",
+      title: "休息",
+      messages: [
+        { role: "user", content: "我今天不想运动。" },
+        { role: "assistant", content: "今天休息。别一直休息。" },
+        { role: "user", content: "明天呢？" },
+        { role: "assistant", content: "明天出去走走。" },
+      ],
+    },
+  ],
+};
+const draft = {
+  revision: 3,
+  content,
+  content_hash: "hash-test",
+  updated_at: "2026-11-10T01:00:00Z",
+  actor: "TEST",
+  source_version_id: "v1",
+};
+const active = {
+  id: "v1",
+  name: "医生 v1",
+  status: "published",
+  created_at: draft.updated_at,
+  actor: "TEST",
+  content,
+  legacy: false,
+  active: true,
+};
+const studio = { draft, active_version: active };
 const style = {
   id: "doctor",
   name: "医生风格",
-  description: "自然简短",
+  description: "简短自然",
   is_default: true,
-  active_version_id: "builtin",
-  example_count: 21,
-  active_version: "基础版本",
+  active_version_id: "v1",
+  example_count: 1,
+  active_version: "医生 v1",
 };
-const version = {
-  role_policy_current: true,
-  id: "test-v1",
-  name: "测试风格 v1",
-  status: "ready_for_review",
-  build_run_id: "run-1",
-  package: {
-    version_id: "test-v1",
-    guide: { summary: "简洁", rules: [], prohibited_phrases: [] },
-    examples: [],
-  },
-  report: { conclusion: "无明确提升", release_eligible: true },
-  review_summary: {
-    total: 1,
-    pending: 1,
-    accept: 0,
-    reject: 0,
-    auto_failed: 0,
-  },
-};
-const baseRun = {
-  id: "run-1",
-  name: "本次训练",
-  status: "running",
-  stage: "construction",
-  material_count: 21,
-  library_count: 20,
-  human_feedback_count: 1,
-  unused_count: 2,
-  analyzed_count: 21,
-  workflow_version: "style-preview-v4-bound-evidence",
-  can_resume: true,
-  preview_count: 8,
-  baseline_version: "builtin",
-  last_event_sequence: 1,
-  report: {},
-  activity: {
-    state: "waiting_model",
-    message: "等待模型返回",
-    purpose: "GuideDraft",
-    request_started_at: new Date().toISOString(),
-    timeout_seconds: 120,
-  },
-  usage: { calls: 3, tokens: 900, seconds: 12 },
-  heartbeat_at: new Date().toISOString(),
-  progress_at: new Date().toISOString(),
-  artifacts: ["input_materials", "materials"],
-  error: null,
-};
-function render(path, runOverrides = {}, versionOverrides = {}, caseOverrides = {}) {
-  const run = { ...baseRun, ...runOverrides };
+function render(path, studioData = studio, styleData = style) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  client.setQueryData(["expression-styles"], { items: [style] });
-  client.setQueryData(["expression-versions", "doctor"], { items: [{ ...version, ...versionOverrides }] });
-  client.setQueryData(["expression-builds", "doctor", 0], {
-    items: [run],
-    total: 1,
-  });
-  client.setQueryData(["build-detail", "doctor", "run-1"], run);
-  client.setQueryData(["build-events", "doctor", "run-1", 0, 1], {
-    items: [],
-    total: 0,
-    next_sequence: 0,
-  });
-  client.setQueryData(
-    [
-      "build-artifact",
-      "doctor",
-      "run-1",
-      "input_materials",
-      0,
-      run.progress_at,
-    ],
-    {
-      items: [
-        {
-          user_input: "谢谢",
-          original_response: "不用客气",
-          desired_response: "不客气",
-          correction_opinion: "减少套话",
-        },
-      ],
-      total: 1,
-    },
-  );
-  client.setQueryData(["expression-cases", "doctor", "test-v1", 0], {
-    items: [
-      {
-        id: "case",
-        user_input: "怎么称呼你",
-        original_response: "我是 SlimGuard。",
-        doctor_response: "叫我 SlimGuard 就行。",
-        baseline_response: "我是 SlimGuard。",
-        test_case: { context: ["这是独立身份问答测试"] },
-        automated: { passed: true },
-        review: null,
-        ...caseOverrides,
-      },
-    ],
-    total: 1,
-    counts: { pending: 1, accept: 0, reject: 0 },
-  });
-  client.setQueryData(
-    [
-      "expression-examples",
-      "doctor",
-      { q: "", role: "", participation: "unused", offset: "0", limit: "20" },
-    ],
-    {
-      items: [
-        {
-          id: "example",
-          user_input: "<script>TEST</script>",
-          original_response: "历史回答",
-          desired_response: "期望回答",
-          revision: 2,
-          processed_revision: 1,
-          correction_opinion: "少说套话",
-          last_result: {
-            role: "negative",
-            reason: "只有负面意见，不作为正面示例",
-          },
-          source: "correction",
-          actor: "TEST",
-          created_at: "2026-09-18T00:00:00Z",
-        },
-      ],
-      total: 21,
-      offset: 0,
-      limit: 20,
-    },
-  );
+  client.setQueryData(["expression-styles"], { items: [styleData] });
+  client.setQueryData(["style-studio", "doctor"], studioData);
   const html = renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -177,11 +100,11 @@ function render(path, runOverrides = {}, versionOverrides = {}, caseOverrides = 
           null,
           createElement(Route, {
             path: "/styles",
-            element: createElement(StyleProfilePage),
+            element: createElement(StyleDirectoryPage),
           }),
           createElement(Route, {
-            path: "/styles/:styleId/:tab",
-            element: createElement(StyleProfilePage),
+            path: "/styles/:styleId",
+            element: createElement(StyleStudioPage),
           }),
         ),
       ),
@@ -190,478 +113,366 @@ function render(path, runOverrides = {}, versionOverrides = {}, caseOverrides = 
   client.clear();
   return html;
 }
-test("construction artifacts display program-owned source locations and escape source text", async () => {
-  const { EvidenceCatalogView, ConstructionGuidesView } = await server.ssrLoadModule(
-    "/src/components/style/ConstructionArtifacts.tsx",
-  );
-  const html = renderToStaticMarkup(createElement(EvidenceCatalogView, { items: [{
-    ref: "e2", material_ref: "m1", example_id: "sample-a", revision: 3,
-    field: "desired_response", start: 0, end: 4, quote: "<script>untrusted</script>",
-  }] }));
-  for (const text of ["e2", "期望回答", "sample-a", "修订 3", "[0, 4)"])
-    assert.ok(html.includes(text));
-  assert.ok(!html.includes("<script>"));
-  assert.ok(html.includes("&lt;script&gt;"));
-  const guide = renderToStaticMarkup(createElement(ConstructionGuidesView, { items: [{
-    phase: "merge", level: 1, batch: 2,
-    guide: { summary: "验证后的指引", rules: [], prohibited_phrases: [] },
-  }] }));
-  assert.ok(guide.includes("第 1 层合并"));
-  assert.ok(guide.includes("验证后的指引"));
-});
-
-test("build offers evidence and intermediate validated guide artifacts", () => {
-  const html = render("/styles/doctor/build", {
-    artifacts: ["input_materials", "evidence_catalog", "construction_guides"],
-  });
-  assert.ok(html.includes("可用证据目录（程序绑定）"));
-  assert.ok(html.includes("已验证的分批／合并指引"));
-});
-
-test("fallback answers are not shown as successful doctor rewrites or accept buttons", () => {
-  const html = render("/styles/doctor/review", {}, {
-    review_summary: { total: 17, accept: 17, pending: 0, reject: 0, auto_failed: 2 },
-  }, { automated: {
-    passed: false, fallback: true, failure_code: "style_integrity_invalid",
-    checks: [{ attempt: 1, passed: false, output: "失败的候选", issues: ["number_changed"] }],
-  } });
-  for (const text of ["未通过检查的试答（不可发布）", "旧版中性原稿兜底", "仅重试失败的 2 条", "数字未保持一致", "自动检查未通过"])
-    assert.ok(html.includes(text), text);
-  assert.match(html, /<button disabled="">接受当前回答<\/button>/);
-});
-
-test("retry task does not pretend to analyze materials and keeps task history visible", () => {
-  const html = render("/styles/doctor/build", {
-    job_kind: "preview_retry", preview_count: 2,
-    artifacts: ["retry_inputs", "retry_results"],
-  }, {
-    preview_retry: { id: "run-1", status: "running", target_count: 2, error: null },
-    review_summary: { total: 17, accept: 17, pending: 0, reject: 0, auto_failed: 2 },
-  });
-  for (const text of ["只重试 2 条失败用例", "未重试的评审保留", "失败用例重试中", "重试前的回答与评审（历史保留）", "查看重试进度与历史结果"])
-    assert.ok(html.includes(text), text);
-  assert.ok(!html.includes("冻结素材 21 条"));
-  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
-});
-
-test("retry artifacts distinguish old approval from a new unapproved candidate", async () => {
-  const { RetryInputsView, RetryResultsView } = await server.ssrLoadModule("/src/components/style/PreviewRetryArtifacts.tsx");
-  const old = renderToStaticMarkup(createElement(RetryInputsView, { items: [{
-    case_id: "failed", test_case: { user_input: "<script>old</script>", source_text: "原稿" },
-    automated: { passed: false, fallback: true }, doctor_response: "旧兜底",
-    review: { decision: "accept", reason: "原评审" }, output_revision: 1,
-  }] }));
-  assert.ok(old.includes("旧评审：已接受"));
-  assert.ok(old.includes("不代表新回答已获接受"));
-  assert.ok(!old.includes("<script>"));
-  const updated = renderToStaticMarkup(createElement(RetryResultsView, { items: [{
-    case_id: "failed", candidate: { passed: true, fallback: false, text: "新改写" },
-  }] }));
-  assert.ok(updated.includes("取消或执行失败不会覆盖原回答"));
-  assert.ok(updated.includes("新改写"));
-});
-
-test("retry API sends CSRF and idempotency while reviews bind the visible answer revision", async () => {
-  const original = globalThis.fetch;
+async function withFetch(fn) {
+  const previous = globalThis.fetch;
   const calls = [];
-  globalThis.fetch = async (url, options) => {
-    calls.push({ url, options });
-    return new Response(JSON.stringify({ id: "retry-run" }), { headers: { "content-type": "application/json" } });
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({
+      url,
+      options,
+      body: options.body ? JSON.parse(options.body) : null,
+    });
+    return Response.json({});
   };
   try {
-    await stylesApi.retryFailed("doctor", "version-a", "stable-key");
-    assert.ok(calls[0].url.endsWith("/styles/doctor/versions/version-a/retry-failed"));
-    assert.equal(new Headers(calls[0].options.headers).get("X-SlimGuard-CSRF"), "1");
-    assert.equal(new Headers(calls[0].options.headers).get("Idempotency-Key"), "stable-key");
-    await stylesApi.review("doctor", "case-a", {
-      style_match: 4, fidelity: 5, appropriateness: 4, decision: "accept", reason: "", desired_response: "",
-      output_revision: 2,
-    });
-    assert.equal(JSON.parse(calls[1].options.body).output_revision, 2);
+    await fn(calls);
   } finally {
-    globalThis.fetch = original;
+    globalThis.fetch = previous;
   }
-});
-
-test("style list precedes detail tabs and uses actual API counts", () => {
+}
+test("style directory opens the role workbench and uses actual draft example counts", () => {
   const html = render("/styles");
   assert.ok(html.includes("医生风格"));
-  assert.ok(html.includes("21 条示例"));
-  assert.ok(html.includes("/styles/doctor/build"));
-  assert.ok(!html.includes("追加纠正素材"));
+  assert.ok(html.includes("1 条示例"));
+  assert.ok(html.includes('href="/styles/doctor"'));
+  assert.doesNotMatch(html, /构建版本|追加纠正素材/);
 });
-test("build page has three nested tabs and publication waits for review", () => {
-  const html = render("/styles/doctor/build");
+test("workbench shows side by side role editing, independent examples, draft chat and release actions", () => {
+  const html = render("/styles/doctor");
   for (const text of [
-    "构建版本",
-    "评审版本",
-    "追加纠正素材",
-    "构建新版本",
-    "风格构建过程",
-    "等待模型",
-    "最后产物更新",
-    "查看阶段产物",
-    "固定对话示例",
+    "角色设定",
+    "表达方式",
+    "对话示例",
+    "2 轮",
+    "试聊",
+    "当前草稿",
+    "保存草稿",
+    "发布并启用",
+    "历史版本",
+    "必要检查",
+    "AI 帮我整理",
+    "不写入真实用户记录",
+    "与启用版本一致",
   ])
-    assert.ok(html.includes(text));
-  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
-  for (const text of ["Baseline", "Candidate", "沟通行为", "A/B 人评"])
-    assert.ok(!html.includes(text));
-});
-test("review shows three real texts and three scores without technical hashes", () => {
-  const html = render("/styles/doctor/review");
-  for (const text of [
-    "怎么称呼你",
-    "叫我 SlimGuard 就行。",
-    "期望医生回答",
-    "风格匹配",
-    "语义忠实",
-    "表达适宜",
-    "接受",
-    "拒绝",
-  ])
-    assert.ok(html.includes(text));
-  assert.ok(!html.includes("ResponsePlan"));
-});
-
-test("direct multi-turn preview displays actual trajectory and adopted repair", () => {
-  const html = render("/styles/doctor/review", {}, {}, {
-    original_response: "", doctor_response: "那就散步。",
-    test_case: { context: [], history: [] },
-    automated: { passed: true, mode: "direct_generation", style_advisory: true,
-      dialogue: [{ role: "user", content: "我不爱运动" }, { role: "assistant", content: "散步也不喜欢？" },
-        { role: "user", content: "散步还行" }, { role: "assistant", content: "那就散步。" }],
-      checks: [{ step: 2, attempt: 2, passed: true, adopted: true,
-        output: "那就散步。", issues: [] }],
-    },
-  });
-  for (const text of ["实际对话试答", "接续模型自己的回答", "散步也不喜欢？", "本轮已采用", "仍有表达建议"])
     assert.ok(html.includes(text), text);
-  assert.ok(!html.includes("中性原稿兜底"));
+  assert.doesNotMatch(html, /构建新版本|原回答|关联规则|追加纠正素材/);
 });
-
-test("new corpus form supports optional complete exchanges without raw JSON editing", () => {
-  const html = render("/styles/doctor/corrections");
-  assert.ok(html.includes("前置对话（选填）"));
-  assert.ok(html.includes("添加一轮前置对话"));
-  assert.ok(html.includes("当前用户输入和期望回答仍填写在下方"));
+test("unpublished roles can start editing and do not pretend to be enabled", () => {
+  const html = render("/styles/doctor", { ...studio, active_version: null });
+  assert.ok(html.includes("尚未启用"));
+  assert.ok(html.includes("草稿未发布"));
+  assert.doesNotMatch(html, /线上启用 ·/);
 });
-
-test("legacy rewrite previews keep feedback but cannot be newly published", () => {
-  const html = render("/styles/doctor/build", {}, {
-    preview_policy_current: false, report: { release_eligible: true },
-    review_summary: { total: 1, accept: 1, pending: 0, reject: 0, auto_failed: 0 },
+test("nondefault roles explain that publication only changes this role", () => {
+  const html = render("/styles/doctor", studio, {
+    ...style,
+    is_default: false,
   });
-  assert.ok(html.includes("旧改写试答"));
-  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
+  assert.ok(html.includes("非线上默认"));
+  assert.ok(html.includes("当前线上默认风格不改变"));
+  assert.doesNotMatch(html, /仅后续新回复使用新版本/);
 });
-
-test("fixed preview report has no automatic taste ranking and offers guide edits", async () => {
-  const { ReportView } = await server.ssrLoadModule("/src/components/style/TrainingReport.tsx");
-  const html = renderToStaticMarkup(createElement(ReportView, { report: {
-    schema_version: "2", conclusion: "试答完成，请人工确认语气",
-    preview_metrics: { total: 8, content_failed: 0, changed: 6, expression_advisories: 3 },
-  } }));
-  assert.ok(html.includes("表达建议（仅供参考）"));
-  assert.ok(!html.includes("候选更好"));
-  const build = render("/styles/doctor/build", {}, { review_summary: {
-    total: 8, accept: 8, pending: 0, reject: 0, auto_failed: 0,
-  } });
-  assert.ok(build.includes("编辑表达指引并重新试答"));
-  assert.ok(build.includes("保存为新版本并试答"));
-  assert.match(build, /<button>采纳并发布<\/button>/);
-  assert.ok(!build.includes("独立测试准备"));
-});
-
-test("old workflow failures cannot be endlessly resumed", () => {
-  const html = render("/styles/doctor/build", {
-    status: "failed", workflow_version: "legacy", can_resume: false, resume_block_reason: "workflow_changed",
-    error: "开发题与最终验收题题族重叠",
-  });
-  assert.ok(!html.includes("恢复本次构建"));
-  assert.ok(html.includes("构建流程已更新，请新建构建"));
-});
-
-test("model output failures offer batch recovery without blaming user materials", () => {
-  const html = render("/styles/doctor/build", {
-    status: "failed", can_resume: true, resume_block_reason: null,
-    error: "AnalysisBatch 输出校验失败，本次 3 次尝试已用尽",
-    artifacts: ["input_materials", "validation:AnalysisBatch:abcdef1234"],
-  });
-  assert.ok(html.includes("失败批次会携带具体错误重新请求模型"));
-  assert.ok(html.includes("已通过的批次不重跑"));
-  assert.ok(html.includes("恢复本次构建"));
-  assert.ok(!html.includes("请调整素材／指引"));
-  assert.ok(!html.includes("旧流程也需"));
-  const terminal = render("/styles/doctor/build", {
-    status: "failed", can_resume: false, resume_block_reason: "not_retryable", error: "运行时限已耗尽",
-  });
-  assert.ok(!terminal.includes("构建流程已更新"));
-  assert.ok(!terminal.includes("请调整素材／指引"));
-});
-
-test("legacy pending versions keep feedback but cannot bypass the coach duty check", () => {
-  const html = render("/styles/doctor/build", {}, {
-    role_policy_current: false,
-    review_summary: { total: 8, accept: 8, pending: 0, reject: 0, auto_failed: 0 },
-  });
-  assert.match(html, /<button disabled="">采纳并发布<\/button>/);
-  assert.ok(html.includes("当前教练职责"));
-  const review = render("/styles/doctor/review", {}, { role_policy_current: false });
-  assert.ok(review.includes("记录事项及其成功／失败反馈属于系统助手"));
-  assert.ok(review.includes("可继续保存反馈，然后重新构建"));
-});
-
-test("excluded role sources remain inspectable and escaped in build artifacts", async () => {
-  const { BuildArtifact } = await server.ssrLoadModule("/src/components/style/BuildArtifacts.tsx");
-  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
-  client.setQueryData(["build-artifact", "doctor", "run-1", "coach_scope", 0, undefined], {
-    items: [{ source_id: "example:old", source_text: "<script>已记录</script>", allowed: false, reason: "操作反馈属于系统助手" }],
-    total: 1,
-  });
-  const html = renderToStaticMarkup(createElement(QueryClientProvider, { client },
-    createElement(BuildArtifact, { styleId: "doctor", runId: "run-1", artifactKey: "coach_scope" })));
-  assert.ok(html.includes("已排除：非教练职责"));
-  assert.ok(html.includes("操作反馈属于系统助手"));
-  assert.ok(html.includes("&lt;script&gt;已记录&lt;/script&gt;"));
-  assert.ok(!html.includes("<script>"));
-  client.clear();
-});
-
-test("manual guide revisions send a new build input, not a mutation of a released version", async () => {
-  const original = globalThis.fetch;
-  let submitted;
-  globalThis.fetch = async (url, options) => {
-    submitted = { url, options };
-    return new Response(JSON.stringify({ id: "new-run" }), { status: 202 });
-  };
-  const value = { source_version_id: "released", guide: { summary: "直接自然", rules: [], prohibited_phrases: [] } };
-  try {
-    await stylesApi.build("doctor", "unique-key", value);
-    assert.ok(submitted.url.endsWith("/styles/doctor/builds"));
-    assert.deepEqual(JSON.parse(submitted.options.body), value);
-    assert.equal(submitted.options.headers.get("X-SlimGuard-CSRF"), "1");
-    assert.equal(submitted.options.headers.get("Idempotency-Key"), "unique-key");
-  } finally { globalThis.fetch = original; }
-});
-test("corrections contains full searchable paginated library and escapes input", () => {
-  const html = render("/styles/doctor/corrections");
-  for (const text of [
-    "全部素材",
-    "未参与构建",
-    "已参与构建",
-    "正面表达",
-    "负面意见",
-    "历史回答",
-    "期望回答",
-    "少说套话",
-    "下一页",
-  ])
-    assert.ok(html.includes(text));
-  assert.ok(html.includes("&lt;script&gt;TEST&lt;/script&gt;"));
-  assert.ok(!html.includes("<script>"));
-});
-test("review submits only writable scores, not server actor metadata", async () => {
-  const original = globalThis.fetch;
-  let submitted;
-  globalThis.fetch = async (url, options) => {
-    submitted = { url, options };
-    return new Response(JSON.stringify({ id: "case" }), { status: 200 });
-  };
-  try {
-    await stylesApi.review("doctor", "case", {
-      style_match: 4,
-      fidelity: 5,
-      appropriateness: 4,
-      decision: "accept",
-      reason: "",
-      desired_response: "",
-      actor: "server",
-      time: "server",
-    });
-    const body = JSON.parse(submitted.options.body);
-    assert.equal(body.reason, "");
-    assert.ok(!("actor" in body));
-    assert.equal(submitted.options.headers.get("X-SlimGuard-CSRF"), "1");
-  } finally {
-    globalThis.fetch = original;
-  }
-});
-test("old style routes and menu pages are not retained", async () => {
-  const source = await readFile(
-    new URL("../src/App.tsx", import.meta.url),
-    "utf8",
-  );
-  for (const name of [
-    "StyleABReviewPage",
-    "StyleIterationPage",
-    "StyleFeedbackPage",
-    "style-ab",
-    "style-feedback",
-    "style-iterations",
-  ])
-    assert.ok(!source.includes(name));
-  const review = await readFile(
-    new URL("../src/components/style/ReviewPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  assert.ok(review.includes('role="dialog"'));
-  assert.ok(review.includes("!review.reason.trim()"));
-});
-
-test("report shows actual comparison, regressions, dimensions and feedback without claiming success", async () => {
-  const { ReportView } = await server.ssrLoadModule(
-    "/src/components/style/TrainingReport.tsx",
-  );
-  const metrics = {
-    total: 12,
-    candidate_better: 3,
-    baseline_better: 2,
-    tie: 6,
-    uncertain: 1,
-    candidate_failed: 1,
-    regressions: 1,
-    repairs: 2,
-    fallbacks: 1,
-    dimensions: { baseline: {}, candidate: {} },
-  };
-  const html = renderToStaticMarkup(
-    createElement(ReportView, {
-      report: {
-        conclusion: "不建议采用",
-        metrics,
-        regression: { ...metrics, total: 2 },
-        difference: {
-          rules_added: [],
-          rules_removed: [],
-          rules_changed: [],
-          examples_before: ["a"],
-          examples_after: ["b"],
-          prompt_changed: false,
-        },
-        feedback_outcomes: [
+test("role and example text are escaped", () => {
+  const html = render("/styles/doctor", {
+    ...studio,
+    draft: {
+      ...draft,
+      content: {
+        ...content,
+        expression: "<script>PRIVATE</script>",
+        examples: [
           {
-            example_id: "review:1",
-            role: "negative",
-            reason: "未作为正面表达对",
-            used_for_rule: true,
-          },
-        ],
-      },
-    }),
-  );
-  for (const text of [
-    "不建议采用",
-    "新增关键退步",
-    "原稿兜底",
-    "自然程度",
-    "历史拒绝用例回归",
-    "固定 Prompt 无变化",
-    "已用于 Guide",
-  ])
-    assert.ok(html.includes(text), text);
-});
-
-test("test preparation displays both isolated suites and minimal context", async () => {
-  const { TestSuiteView } = await server.ssrLoadModule(
-    "/src/components/style/TestSuiteView.tsx",
-  );
-  const item = {
-    id: "1",
-    user_input: "名字是什么",
-    source_text: "我是助手",
-    family: "身份",
-    context: ["无额外用户档案"],
-  };
-  const html = renderToStaticMarkup(
-    createElement(TestSuiteView, {
-      suite: { development: [item], acceptance: [{ ...item, id: "2" }] },
-    }),
-  );
-  for (const text of [
-    "开发评测题",
-    "独立验收题",
-    "我是助手",
-    "无额外用户档案",
-    "不会用于本轮优化",
-  ])
-    assert.ok(html.includes(text), text);
-});
-
-test("build progress links to persisted format errors without displaying raw output", () => {
-  const html = render("/styles/doctor/build", {
-    status: "failed",
-    error: "Comparison 结构校验失败，本次 3 次尝试已用尽",
-    artifacts: ["input_materials", "validation:Comparison:abcdef1234"],
-  });
-  for (const text of [
-    "查看输出校验详情",
-    "输出校验详情：Comparison",
-    "恢复本次构建",
-    "3 次尝试已用尽",
-  ])
-    assert.ok(html.includes(text), text);
-});
-
-test("diagnostic artifact renders field errors and escapes raw model output for both states", async () => {
-  const { BuildArtifact } = await server.ssrLoadModule(
-    "/src/components/style/BuildArtifacts.tsx",
-  );
-  for (const status of ["unresolved", "repaired"]) {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-    });
-    const key = "validation:Comparison:abcdef";
-    client.setQueryData(["build-artifact", "doctor", "run-1", key, 0, undefined], {
-      value: {
-        schema_name: "Comparison",
-        contract: { version: "test-v1", references: { m1: "review:source-a", m2: "<script>source-b</script>" } },
-        status,
-        max_attempts_per_execution: 3,
-        failures: [
-          {
-            number: 1,
-            execution_attempt: 1,
-            time: "2026-09-18T00:00:00Z",
-            raw_output: "<script>alert('model')</script>",
-            tool_calls: [],
-            finish_reason: "stop",
-            errors: [
-              {
-                path: "left_scores.fidelity",
-                type: "less_than_equal",
-                message: "必须小于等于 5",
-              },
+            id: "x",
+            title: "<img src=x>",
+            messages: [
+              { role: "user", content: "<script>U</script>" },
+              { role: "assistant", content: "<script>A</script>" },
             ],
           },
         ],
       },
+    },
+  });
+  assert.doesNotMatch(html, /<script>|<img src=x>/);
+  assert.ok(html.includes("&lt;script&gt;"));
+});
+test("examples accept independent complete dialogues without correction material", () => {
+  assert.equal(validateExample(content.examples[0]), null);
+  assert.equal(
+    validateExample({
+      id: "one",
+      title: "",
+      messages: content.examples[0].messages.slice(0, 2),
+    }),
+    null,
+  );
+});
+test("examples reject incomplete, nonalternating and blank exchanges", () => {
+  for (const messages of [
+    [],
+    [{ role: "user", content: "hi" }],
+    [
+      { role: "assistant", content: "hi" },
+      { role: "user", content: "hi" },
+    ],
+    [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: " " },
+    ],
+  ])
+    assert.ok(validateExample({ id: "bad", title: "", messages }));
+});
+test("saving an answer as example preserves its whole independent conversation and removes preview diagnostics", () => {
+  const transcript = content.examples[0].messages.map((message, i) => ({
+    ...message,
+    ...(i % 2 ? { preview: { passed: true, checks: ["TEST"] } } : {}),
+  }));
+  const example = exampleFromChat(transcript, 3);
+  assert.deepEqual(example.messages, content.examples[0].messages);
+  assert.ok(example.id);
+  assert.equal(
+    example.messages.some((message) => "preview" in message),
+    false,
+  );
+});
+test("saving a long dialogue fails explicitly instead of silently truncating context", () => {
+  const messages = Array.from({ length: 26 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: `TEST ${i}`,
+  }));
+  assert.throws(() => exampleFromChat(messages, 25), /12 轮上限/);
+  assert.throws(() => exampleFromChat(messages, 24), /只能保存/);
+  assert.throws(
+    () =>
+      exampleFromChat(
+        [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "bad", preview: { passed: false } },
+        ],
+        1,
+      ),
+    /只能保存/,
+  );
+});
+test("draft comparison includes examples and every message, so followup edits stale the preview", () => {
+  assert.equal(sameContent(content, structuredClone(content)), true);
+  const changed = structuredClone(content);
+  changed.examples[0].messages[3].content = "换一句";
+  assert.equal(sameContent(content, changed), false);
+});
+test("stale chat locks send and offers a restart while retaining the visible trajectory", () => {
+  const html = renderToStaticMarkup(
+    createElement(ChatPanel, {
+      messages: content.examples[0].messages,
+      pending: false,
+      stale: true,
+      error: "",
+      onSend: async () => true,
+      onRestart() {},
+      onAdopt() {},
+    }),
+  );
+  assert.ok(html.includes("已有对话使用的是旧设定"));
+  assert.ok(html.includes("用新草稿重新试聊"));
+  assert.match(
+    html,
+    /<button type="submit" class="studio-primary" disabled="">发送/,
+  );
+  assert.ok(html.includes("明天出去走走。"));
+});
+test("failed necessary checks expose issues without claiming publication eligibility", () => {
+  const html = renderToStaticMarkup(
+    createElement(CheckResult, {
+      result: {
+        passed: false,
+        checks: [
+          {
+            source_id: "persona",
+            role_passed: false,
+            safety_passed: true,
+            issues: [
+              {
+                dimension: "role",
+                code: "unsafe_operation",
+                explanation: "不能声称已记录",
+              },
+            ],
+          },
+        ],
+        warnings: ["先修改示例"],
+      },
+    }),
+  );
+  assert.ok(html.includes("必要检查未通过"));
+  assert.ok(html.includes("不能声称已记录"));
+  assert.ok(html.includes("先修改示例"));
+  assert.ok(html.includes("角色设定"));
+  assert.ok(html.includes("职责边界：不能声称已记录"));
+  assert.doesNotMatch(html, /<details open/);
+  const main = html.replace(/<details>[\s\S]*?<\/details>/g, "");
+  assert.ok(!main.includes("unsafe_operation"));
+  assert.ok(!main.includes("source_id"));
+});
+
+test("successful checks report passed quantities with technical diagnostics collapsed", () => {
+  const html = renderToStaticMarkup(
+    createElement(CheckResult, {
+      result: {
+        passed: true,
+        warnings: [],
+        checks: [
+          {
+            source_id: "persona",
+            role_passed: true,
+            safety_passed: true,
+            issues: [],
+          },
+        ],
+      },
+    }),
+  );
+  assert.match(html, /已通过 1 \/ 1 项/);
+  assert.ok(html.includes("详细诊断"));
+  assert.doesNotMatch(html, /<details open/);
+});
+
+test("database UTC timestamps without offsets display the same Shanghai time as explicit UTC", () => {
+  const expected = dateLabel("2026-11-10T11:00:00Z");
+  assert.equal(dateLabel("2026-11-10T11:00:00"), expected);
+  assert.equal(dateLabel("2026-11-10T19:00:00+08:00"), expected);
+  assert.ok(expected.includes("19:00:00"));
+  assert.equal(dateLabel("not-a-date"), "not-a-date");
+});
+test("saving uses revision CAS and the complete independent example payload", async () =>
+  withFetch(async (calls) => {
+    await styleStudioApi.save("doctor", 3, content);
+    assert.equal(calls[0].url, "/api/admin/styles/doctor/studio/draft");
+    assert.equal(calls[0].options.method, "PUT");
+    assert.deepEqual(calls[0].body, { revision: 3, content });
+    assert.equal(
+      new Headers(calls[0].options.headers).get("X-SlimGuard-CSRF"),
+      "1",
+    );
+  }));
+test("preview sends unsaved content and real prior turns without writing a user record", async () =>
+  withFetch(async (calls) => {
+    const unsaved = { ...content, expression: "新的未保存设定" };
+    await styleStudioApi.preview(
+      "doctor",
+      unsaved,
+      content.examples[0].messages,
+      "那今天呢？",
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "/api/admin/styles/doctor/studio/preview");
+    assert.deepEqual(calls[0].body, {
+      content: unsaved,
+      history: content.examples[0].messages,
+      user_input: "那今天呢？",
     });
-    const html = renderToStaticMarkup(
-      createElement(
-        QueryClientProvider,
-        { client },
-        createElement(BuildArtifact, {
-          styleId: "doctor",
-          runId: "run-1",
-          artifactKey: key,
-        }),
+  }));
+test("necessary checks bind the persisted revision and hash; publication binds that check", async () =>
+  withFetch(async (calls) => {
+    await styleStudioApi.check("doctor", draft);
+    await styleStudioApi.publish("doctor", draft, { id: "check-TEST" });
+    assert.deepEqual(calls[0].body, { revision: 3, content_hash: "hash-test" });
+    assert.deepEqual(calls[1].body, {
+      revision: 3,
+      content_hash: "hash-test",
+      check_id: "check-TEST",
+    });
+    assert.ok(
+      calls.every(
+        (call) =>
+          new Headers(call.options.headers).get("X-SlimGuard-CSRF") === "1",
       ),
     );
-    for (const text of [
-      "left_scores.fidelity",
-      "less_than_equal",
-      "必须小于等于 5",
-      "查看模型原始输出",
-      "查看本批短编号与原始来源映射",
-      "review:source-a",
-      "&lt;script&gt;",
-    ])
-      assert.ok(html.includes(text), text);
-    assert.ok(
-      html.includes(status === "repaired" ? "已修复，失败记录仍保留" : "尚未修复"),
+  }));
+test("AI organization requests a suggestion without implicitly saving or publishing", async () =>
+  withFetch(async (calls) => {
+    await styleStudioApi.organize("doctor", content);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.endsWith("/studio/organize"));
+    assert.deepEqual(calls[0].body, { content });
+  }));
+test("history and old material are read only; restoration only requests a new draft", async () =>
+  withFetch(async (calls) => {
+    await styleStudioApi.versions("doctor");
+    await styleStudioApi.legacyExamples("doctor");
+    await styleStudioApi.restore("doctor", 3, "v0");
+    assert.ok(calls[0].url.endsWith("/studio/versions"));
+    assert.ok(calls[1].url.endsWith("/studio/legacy-examples"));
+    assert.equal(calls[0].body, null);
+    assert.equal(calls[1].body, null);
+    assert.deepEqual(calls[2].body, { revision: 3, version_id: "v0" });
+  }));
+test("draft conflicts keep status and explicit error code for preserving local edits", async () => {
+  const previous = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json(
+      { detail: "草稿已被其他管理员更新" },
+      { status: 409, headers: { "X-SlimGuard-Error": "draft_conflict" } },
     );
-    assert.ok(!html.includes("<script>"));
-    client.clear();
+  try {
+    await assert.rejects(
+      styleStudioApi.save("doctor", 3, content),
+      (error) =>
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.code === "draft_conflict",
+    );
+    assert.equal(content.expression, "简短、克制，先回应眼前的事。");
+  } finally {
+    globalThis.fetch = previous;
   }
+});
+test("model configuration conflicts have no draft conflict code", async () => {
+  const previous = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({ detail: "未配置模型" }, { status: 409 });
+  try {
+    await assert.rejects(
+      styleStudioApi.check("doctor", draft),
+      (error) =>
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.code === undefined,
+    );
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test("replaying an old publication uses the actual active version and never claims to switch back", () => {
+  const current = { ...active, id: "v2", name: "医生 v2" };
+  const result = publicationState(
+    {
+      version: active,
+      active_version: current,
+      draft,
+      already_published: true,
+    },
+    true,
+  );
+  assert.equal(result.active.id, "v2");
+  assert.ok(result.notice.includes("当前启用的是 医生 v2"));
+  assert.ok(result.notice.includes("没有重新切回旧版"));
+  assert.ok(!result.notice.includes("医生 v1 已发布并启用"));
+});
+
+test("publication success distinguishes default and nondefault activation", () => {
+  const publication = {
+    version: active,
+    active_version: active,
+    draft,
+    already_published: false,
+  };
+  assert.match(
+    publicationState(publication, true).notice,
+    /仅后续新回复使用新版本/,
+  );
+  assert.match(
+    publicationState(publication, false).notice,
+    /当前线上默认风格未改变/,
+  );
 });

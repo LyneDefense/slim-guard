@@ -9,7 +9,11 @@ import {
 } from "./features/users/UserPages";
 import { UserDirectoryPage } from "./features/users/UserDirectoryPage";
 import { UsagePage, UsageDetailPage } from "./features/usage/UsagePage";
-import { StyleProfilePage } from "./components/style/StyleProfilePage";
+import { StyleDirectoryPage } from "./features/style-management/pages/StyleDirectoryPage";
+import {
+  StyleStudioPage,
+  LegacyStyleRedirect,
+} from "./features/style-management/pages/StyleStudioPage";
 import { NutritionKnowledgePage } from "./components/nutrition/NutritionKnowledgePage";
 import { CallListPage } from "./features/traces/CallListPage";
 import { CallDetailPage } from "./features/traces/CallDetailPage";
@@ -64,18 +68,19 @@ export function App() {
           path="styles"
           element={
             <Workspace title="表达风格">
-              <StyleProfilePage />
+              <StyleDirectoryPage />
             </Workspace>
           }
         />
         <Route
-          path="styles/:styleId/:tab"
+          path="styles/:styleId"
           element={
-            <Workspace title="表达风格 / 版本与素材">
-              <StyleProfilePage />
+            <Workspace title="表达风格 / 角色编辑与试聊">
+              <StyleStudioPage />
             </Workspace>
           }
         />
+        <Route path="styles/:styleId/:tab" element={<LegacyStyleRedirect />} />
         <Route
           path="nutrition-knowledge"
           element={

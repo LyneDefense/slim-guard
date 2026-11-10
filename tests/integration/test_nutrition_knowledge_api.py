@@ -88,7 +88,6 @@ async def test_admin_can_import_review_build_and_inspect_hybrid_rag(
             database_url=f"sqlite+aiosqlite:///{tmp_path / 'nutrition-api.sqlite3'}",
             admin_username="admin",
             admin_password="test-password",
-            style_iteration_worker_enabled=False,
             routine_scheduler_enabled=False,
             _env_file=None,
         )

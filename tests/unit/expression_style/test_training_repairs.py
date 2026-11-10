@@ -92,7 +92,9 @@ async def test_schema_failure_resume_reuses_analysis_and_retains_diagnostics(sty
     worker = StyleWorker(style_db, gateway, "test-model")
     await worker.run_once()
     detail = await builds.detail("doctor", run["id"])
-    assert detail["status"] == "failed" and detail["can_resume"]
+    assert detail["status"] == "failed"
+    assert detail["retired"] and not detail["can_resume"]
+    assert detail["resume_block_reason"] == "workflow_retired"
     key = next(k for k in detail["artifacts"] if k.startswith("validation:ExampleSelection:"))
     failure = (await builds.artifact("doctor", run["id"], key))["value"]
     assert len(failure["failures"]) == 3 and failure["status"] == "unresolved"
@@ -153,8 +155,10 @@ async def test_material_identity_failure_is_resumable_and_completed_batches_are_
     worker = StyleWorker(style_db, gateway, "test-model")
     await worker.run_once()
     failed = await builds.detail("doctor", run["id"])
-    assert failed["status"] == "failed" and failed["can_resume"]
-    assert failed["resume_block_reason"] is None and failed["analyzed_count"] == 8
+    assert failed["status"] == "failed"
+    assert failed["retired"] and not failed["can_resume"]
+    assert failed["resume_block_reason"] == "workflow_retired"
+    assert failed["analyzed_count"] == 8
     assert "输出校验失败" in failed["error"]
     key = next(k for k in failed["artifacts"] if k.startswith("validation:AnalysisBatch:"))
     diagnostic = (await builds.artifact("doctor", run["id"], key))["value"]

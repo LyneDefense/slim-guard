@@ -1,3 +1,5 @@
+> 历史设计：本文的“构建—评审—素材”流程已被角色编辑与试聊工作台替代。当前实现与操作请看 [STYLE_MANAGEMENT.md](STYLE_MANAGEMENT.md)，最新交互参考为 `review/style-studio-reference/doctor-style-studio.html`。
+
 # 表达风格管理 UI 设计
 
 本页按最新讨论同步目标交互，技术方案以 [风格训练器、Style Agent 与共享审查组件设计](STYLE_TRAINER_SHARED_REVIEW_DESIGN.md) 为准，不能视为已经上线。[独立评测旧草案](STYLE_EVALUATION_ITERATION_DESIGN.md) 仅作历史参考，不作为本轮需求或验收依据。四张效果图继续作为布局参考，旧字段和分类不覆盖最新文字要求。
