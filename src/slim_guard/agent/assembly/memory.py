@@ -79,6 +79,7 @@ def build_memory_components(
                 engine=engine,
                 search_limit=config.recall_search_limit,
                 max_selected=config.recall_max_selected,
+                clock=clock,
             )
             if recall_model is not None
             else None

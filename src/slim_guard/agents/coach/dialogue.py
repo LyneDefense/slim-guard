@@ -8,7 +8,7 @@ from slim_guard.runtime.invocation import InvocationRunResult
 
 from .contracts import CoachReply
 
-DIALOGUE_POLICY_VERSION = "coach-dialogue-v1"
+DIALOGUE_POLICY_VERSION = "coach-dialogue-v2-style-advisory"
 
 
 class CoachTurnPort(Protocol):
@@ -37,8 +37,6 @@ async def respond(
     turn: CoachTurnPort, *, feedback: tuple[dict[str, object], ...] = ()
 ) -> CoachDialogueResult:
     previous = None
-    safe_reply = None
-    safe_attempt = None
     checks: list[dict[str, object]] = []
     calls = tokens = 0
     failure = "coach_generation_failed"
@@ -68,34 +66,32 @@ async def respond(
                 "review": check.model_dump(mode="json") if check else None,
             }
         )
-        if grounded:
-            safe_reply = generated.output
-            safe_attempt = attempt
-            if check is not None and check.expression_passed:
-                return CoachDialogueResult(
-                    safe_reply,
-                    tuple(checks),
-                    calls,
-                    tokens,
-                    None,
-                    attempt == 2,
-                    adopted_attempt=attempt,
-                )
+        if grounded and check is not None:
+            # An answer already reviewed for evidence and role boundaries is
+            # deliverable. Style preferences remain observable without another
+            # generation/review round on the user's critical path.
+            return CoachDialogueResult(
+                generated.output,
+                tuple(checks),
+                calls,
+                tokens,
+                None,
+                attempt == 2,
+                style_advisory=not check.expression_passed,
+                adopted_attempt=attempt,
+            )
         failure = reviewed.failure_code or "coach_grounding_rejected"
         if check is None:
             break
         feedback = tuple(i.model_dump(mode="json") for i in check.issues)
         if any(i.severity == "blocking" and i.dimension != "expression" for i in check.issues):
             break
-    # A style-only disagreement cannot erase a previously safety/role-reviewed
-    # answer. Never use an unreviewed or factually rejected candidate as fallback.
+    # Never deliver an unreviewed or factually/role-rejected candidate as fallback.
     return CoachDialogueResult(
-        safe_reply,
+        None,
         tuple(checks),
         calls,
         tokens,
-        None if safe_reply else failure,
+        failure,
         attempt == 2,
-        style_advisory=safe_reply is not None,
-        adopted_attempt=safe_attempt,
     )

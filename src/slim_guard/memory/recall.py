@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -87,6 +87,7 @@ class LongTermMemoryRecaller:
         search_limit: int = 12,
         max_selected: int = 8,
         max_output_tokens: int = 600,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if search_limit < 1 or max_selected < 1:
             raise ValueError("Memory recall limits must be positive")
@@ -98,6 +99,7 @@ class LongTermMemoryRecaller:
         self._search_limit = search_limit
         self._max_selected = max_selected
         self._max_output_tokens = max_output_tokens
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     @usage_operation("memory_recall")
     async def recall(
@@ -173,14 +175,16 @@ class LongTermMemoryRecaller:
             score_by_id=score_by_id,
         )
         try:
+            started_at = self._clock()
             response = await self._model.complete(request)
+            completed_at = self._clock()
             await self._recorder.record_model_response(
                 turn_id=initialized.turn.id,
                 request=request,
                 response=response,
                 call_index=0,
-                started_at=current_time,
-                completed_at=current_time,
+                started_at=started_at,
+                completed_at=completed_at,
             )
             selection = self._selection(response.message.content, response.message.tool_calls)
             available = {memory.id: memory for memory in candidates}

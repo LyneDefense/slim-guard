@@ -74,36 +74,46 @@ async def test_fact_and_role_failures_never_become_expression_advisories(dimensi
 
 
 @pytest.mark.parametrize("severity", ["repairable", "blocking"])
-async def test_style_only_disagreement_can_repair_but_cannot_hide_reviewed_doctor(severity):
+async def test_style_only_disagreement_adopts_reviewed_reply_without_more_calls(severity):
     turn = Turn(
-        [result(CoachReply(text="有依据但风格不够好"))] * 2,
-        [result(check("expression", severity))] * 2,
+        [result(CoachReply(text="有依据但风格不够好"))],
+        [result(check("expression", severity))],
     )
     outcome = await respond(turn)
     assert outcome.reply.text == "有依据但风格不够好"
     assert outcome.failure_code is None and outcome.style_advisory
-    assert outcome.model_call_count == 4
+    assert outcome.model_call_count == 2 and outcome.total_token_count == 20
+    assert not outcome.repair_attempted and outcome.adopted_attempt == 1
+    assert len(turn.calls) == 1 and len(outcome.checks) == 1
 
 
-async def test_style_repair_can_be_adopted_without_rewriting_a_neutral_draft():
+@pytest.mark.parametrize("dimension", ["fidelity", "role"])
+@pytest.mark.parametrize("expression_passes", [True, False])
+async def test_safe_repaired_reply_is_adopted_even_with_style_advisory(
+    dimension, expression_passes
+):
     turn = Turn(
-        [result(CoachReply(text="铺垫")), result(CoachReply(text="直接回答"))],
-        [result(check("expression")), result(check())],
+        [result(CoachReply(text="无依据或越界的回答")), result(CoachReply(text="有依据的回答"))],
+        [result(check(dimension)), result(check(None if expression_passes else "expression"))],
     )
     outcome = await respond(turn)
-    assert outcome.reply.text == "直接回答" and not outcome.style_advisory
+    assert outcome.reply.text == "有依据的回答"
+    assert outcome.style_advisory is not expression_passes
+    assert outcome.repair_attempted and outcome.adopted_attempt == 2
+    assert outcome.model_call_count == 4 and len(turn.calls) == 2
+    assert turn.calls[1]["previous_reply"] == "无依据或越界的回答"
+    assert turn.calls[1]["feedback"][0]["dimension"] == dimension
 
 
 @pytest.mark.parametrize("second", ["generation_failure", "review_failure", "unsafe"])
-async def test_only_previously_reviewed_safe_reply_can_be_preserved(second):
-    safe = result(CoachReply(text="已通过事实和职责审查"))
+async def test_failed_safety_repair_never_delivers_an_unreviewed_or_rejected_reply(second):
     generations = [
-        safe,
+        result(CoachReply(text="事实审查未通过")),
         result(None, "model_gateway_error")
         if second == "generation_failure"
         else result(CoachReply(text="未通过的新回答")),
     ]
-    reviews = [result(check("expression"))]
+    reviews = [result(check("fidelity"))]
     if second != "generation_failure":
         reviews.append(
             result(None, "structured_output_invalid")
@@ -111,7 +121,24 @@ async def test_only_previously_reviewed_safe_reply_can_be_preserved(second):
             else result(check("fidelity", "blocking"))
         )
     outcome = await respond(Turn(generations, reviews))
-    assert outcome.reply.text == safe.output.text and outcome.style_advisory
+    assert outcome.reply is None and outcome.failure_code
+    assert not outcome.style_advisory and outcome.adopted_attempt is None
+    assert outcome.repair_attempted
+    assert outcome.model_call_count == (3 if second == "generation_failure" else 4)
+
+
+@pytest.mark.parametrize("dimension", ["fidelity", "role"])
+async def test_safety_failure_with_style_failure_still_requires_repair(dimension):
+    verdict = check(dimension).model_dump()
+    verdict["expression_passed"] = False
+    verdict["issues"] += [issue.model_dump() for issue in check("expression").issues]
+    turn = Turn(
+        [result(CoachReply(text="仍有安全问题"))] * 2,
+        [result(ReplyCheck.model_validate(verdict))] * 2,
+    )
+    outcome = await respond(turn)
+    assert outcome.reply is None and not outcome.style_advisory
+    assert outcome.repair_attempted and outcome.model_call_count == 4
 
 
 async def test_broken_reviewer_cannot_justify_delivering_unreviewed_text():
@@ -121,8 +148,9 @@ async def test_broken_reviewer_cannot_justify_delivering_unreviewed_text():
     assert outcome.reply is None and outcome.failure_code == "structured_output_invalid"
 
 
-async def test_blocking_unsafe_answer_is_not_retried_or_delivered():
-    turn = Turn([result(CoachReply(text="危险建议"))], [result(check("fidelity", "blocking"))])
+@pytest.mark.parametrize("dimension", ["fidelity", "role"])
+async def test_blocking_unsafe_answer_is_not_retried_or_delivered(dimension):
+    turn = Turn([result(CoachReply(text="危险建议"))], [result(check(dimension, "blocking"))])
     outcome = await respond(turn)
     assert outcome.reply is None and not outcome.repair_attempted
     assert len(turn.calls) == 1

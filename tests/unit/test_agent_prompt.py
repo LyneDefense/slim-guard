@@ -1,8 +1,14 @@
+import json
+
+import pytest
+from pydantic import ValidationError
+
 from slim_guard.agent.prompt import SLIM_GUARD_HARNESS_PROMPT, SLIM_GUARD_PROMPT_VERSION
+from slim_guard.agents.core.contracts import CoreCompletion
 
 
 def test_core_prompt_is_short_and_keeps_conversation_out_of_core() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION == "core-orchestration-v37"
+    assert SLIM_GUARD_PROMPT_VERSION == "core-orchestration-v38"
     assert "CoreCompletion" in SLIM_GUARD_HARNESS_PROMPT
     assert "Conversation Agent" not in SLIM_GUARD_HARNESS_PROMPT
     assert "CoachStyleRenderer" not in SLIM_GUARD_HARNESS_PROMPT
@@ -10,6 +16,23 @@ def test_core_prompt_is_short_and_keeps_conversation_out_of_core() -> None:
     assert "不输出原始工具调用文本" in SLIM_GUARD_HARNESS_PROMPT
     assert "真人教练一样说话" not in SLIM_GUARD_HARNESS_PROMPT
     assert len(SLIM_GUARD_HARNESS_PROMPT.splitlines()) < 70
+
+
+def test_core_handoff_example_is_valid_and_cannot_replace_tool_execution() -> None:
+    example = '{"operation_question":null,"failed_operation_refs":[]}'
+    assert example in SLIM_GUARD_HARNESS_PROMPT
+    assert CoreCompletion.model_validate_json(example) == CoreCompletion()
+    assert "只有 operation_question 和 failed_operation_refs 两个顶层字段" in (
+        SLIM_GUARD_HARNESS_PROMPT
+    )
+    assert "不要添加 answer、text 或其他字段" in SLIM_GUARD_HARNESS_PROMPT
+    assert "仍通过平台工具调用机制发送 tool_calls 并等待结果" in SLIM_GUARD_HARNESS_PROMPT
+    assert "示例仅用于编排完成后的最终交接，不得提前结束操作" in SLIM_GUARD_HARNESS_PROMPT
+    assert "只返回一个 JSON 对象，不加 Markdown 代码围栏、解释或额外文本" in (
+        SLIM_GUARD_HARNESS_PROMPT
+    )
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        CoreCompletion.model_validate({**json.loads(example), "answer": "多余的回答"})
 
 
 def test_core_prompt_delegates_domain_parameters_to_contracts() -> None:

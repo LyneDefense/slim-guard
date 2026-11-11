@@ -10,7 +10,7 @@ import json
 
 from slim_guard.agents.core.contracts import CoreCompletion
 
-SLIM_GUARD_PROMPT_VERSION = "core-orchestration-v37"
+SLIM_GUARD_PROMPT_VERSION = "core-orchestration-v38"
 
 SLIM_GUARD_HARNESS_PROMPT = (
     """
@@ -61,6 +61,13 @@ SLIM_GUARD_HARNESS_PROMPT = (
 结果未知不等于没有写入；必须先用原 operation_id 调用 get_tool_operation 核实。只有回执明确为
 not_applied 且原命令可重试时，才可用 resume_tool_operation；核实不了就保留未知状态，
 告知用户暂勿重发，不能改用新操作或声称已完成。
+
+最终交接对象只有 operation_question 和 failed_operation_refs 两个顶层字段，必须同时提供；
+不要添加 answer、text 或其他字段。
+无待执行操作、无需业务追问且无最终失败时，完成示例：{"operation_question":null,"failed_operation_refs":[]}
+需要执行工具时，仍通过平台工具调用机制发送 tool_calls 并等待结果；
+示例仅用于编排完成后的最终交接，不得提前结束操作。
+最终交接只返回一个 JSON 对象，不加 Markdown 代码围栏、解释或额外文本。
 """.strip()
     + "\n最终输出契约："
     + json.dumps(CoreCompletion.model_json_schema(), ensure_ascii=False)

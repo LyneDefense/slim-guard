@@ -381,17 +381,20 @@ async def test_core_format_failure_after_write_keeps_receipt_without_reexecution
 async def test_expression_only_rejection_preserves_doctor_and_adoption_trace(chat):
     db, run = chat
     text = "有依据的回答，只是语气还不够简洁。"
-    result, _ = await run(
+    result, model = await run(
         [
             reply({}),
-            reply({"text": text}),
-            reply(rejection(text, dimension="expression")),
             reply({"text": text}),
             reply(rejection(text, dimension="expression")),
         ]
     )
     assert result.failure_code is None
     assert [(m.participant.value, m.text) for m in result.messages] == [("coach", text)]
+    assert [request.purpose for request in model.requests] == [
+        ModelPurpose.HARNESS_TURN,
+        ModelPurpose.COACH_RESPONSE,
+        ModelPurpose.COACH_REVIEW,
+    ]
     async with db.session() as session:
         final = await session.scalar(
             select(AgentArtifactRecord).where(
@@ -400,22 +403,23 @@ async def test_expression_only_rejection_preserves_doctor_and_adoption_trace(cha
             )
         )
         payload = json.loads(final.payload_json)
-        assert payload["style_advisory"] is True and payload["adopted_attempt"] == 2
+        assert payload["style_advisory"] is True and payload["adopted_attempt"] == 1
 
 
-async def test_failed_style_repair_adopts_only_previously_grounded_candidate(chat):
+async def test_safety_repair_adopts_second_reviewed_reply_with_style_advisory(chat):
     db, run = chat
-    safe, unsafe = "可以休息一天。", "虚构的危险回答。"
-    result, _ = await run(
+    unsafe, safe = "虚构的危险回答。", "可以休息一天。"
+    result, model = await run(
         [
             reply({}),
+            reply({"text": unsafe}),
+            reply(rejection(unsafe, dimension="fidelity")),
             reply({"text": safe}),
             reply(rejection(safe, dimension="expression")),
-            reply({"text": unsafe}),
-            reply(rejection(unsafe, dimension="fidelity", severity="blocking")),
         ]
     )
     assert result.failure_code is None and result.messages[0].text == safe
+    assert len(model.requests) == 5
     async with db.session() as session:
         artifacts = list(
             await session.scalars(
@@ -425,7 +429,8 @@ async def test_failed_style_repair_adopts_only_previously_grounded_candidate(cha
             )
         )
         final = next(a for a in artifacts if a.artifact_type == "outgoing_messages")
-        assert json.loads(final.payload_json)["adopted_attempt"] == 1
+        assert json.loads(final.payload_json)["adopted_attempt"] == 2
+        assert json.loads(final.payload_json)["style_advisory"] is True
         adopted_parents = json.loads(final.parent_artifact_ids_json)
         safe_artifact = next(
             a

@@ -245,3 +245,29 @@ async def test_recall_model_failure_does_not_inject_unfiltered_private_context()
     assert result.selected_count == 0
     assert "long_term_memory" not in result.context
     assert result.context["profile"] == {"nickname": "小胡"}
+
+
+async def test_recall_trace_records_elapsed_model_time_independently_of_business_time() -> None:
+    from datetime import timedelta
+
+    class TimedRecorder(NullHarnessRunRecorder):
+        def __init__(self) -> None:
+            self.timings = []
+
+        async def record_model_response(self, **kwargs) -> None:
+            self.timings.append((kwargs["started_at"], kwargs["completed_at"]))
+
+    started = NOW + timedelta(hours=2)
+    completed = started + timedelta(seconds=2.5)
+    clock = iter((started, completed))
+    recorder = TimedRecorder()
+    recaller = LongTermMemoryRecaller(
+        model=RecallGateway(("family",)),
+        model_name="glm-test",
+        recorder=recorder,
+        memories=MemoryStore((memory("family", "用户周日通常和家人聚餐。"),)),  # type: ignore[arg-type]
+        clock=lambda: next(clock),
+    )
+    result = await recaller.recall(initialized=initialized(), current_time=NOW, context={})
+    assert result.selected_count == 1
+    assert recorder.timings == [(started, completed)]

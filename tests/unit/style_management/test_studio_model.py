@@ -156,6 +156,37 @@ async def test_preview_uses_actual_history_and_shared_live_safety_review():
     assert all(not r.tools for r in gateway.requests)
 
 
+async def test_preview_style_only_advisory_keeps_reviewed_reply_in_two_calls():
+    text = "那就先歇会儿。"
+    gateway = ScriptedModelGateway(
+        [
+            response({"text": text}),
+            response(
+                {
+                    **PASS,
+                    "expression_passed": False,
+                    "issues": [
+                        {
+                            "dimension": "expression",
+                            "severity": "repairable",
+                            "code": "tone_preference",
+                            "explanation": "表达还可以更直接",
+                            "source_excerpt": "",
+                            "output_excerpt": text,
+                            "repair_requirement": "减少口头语",
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+    result = await model(gateway).preview(content=content(), user_input="有点累", history=())
+    assert result["text"] == text and result["passed"] and result["style_advisory"]
+    assert result["model_calls"] == 2 and not result["repair_attempted"]
+    assert result["checks"][0]["adopted"]
+    gateway.assert_exhausted()
+
+
 async def test_preview_never_returns_an_answer_rejected_by_safety_review():
     issue = {
         "dimension": "fidelity",
