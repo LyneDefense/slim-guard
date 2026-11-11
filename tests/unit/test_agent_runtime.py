@@ -776,7 +776,9 @@ async def test_runtime_preserves_truthful_partial_success_reply(tmp_path: Path) 
         )
         items = await HarnessStateRepository(database).list_items(result.turn_id)
 
-        assert result.messages[0].text == "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
+        assert result.messages[0].text == (
+            "已记住你目前不运动；目标体重没有保存成功，请再告诉我一次。"
+        )
         assert any(m.notice_text == "资料未完成，未保存本次修改。" for m in result.messages)
         assert not any(item.item_type is ItemType.OUTPUT_GUARD for item in items)
     finally:
@@ -954,10 +956,19 @@ async def test_runtime_supplies_recent_visible_dialogue_on_the_next_turn(
         )
 
         assert json.loads(working_context)["type"] == "historical_user_message"
-        assert any(
-            message.role is MessageRole.ASSISTANT
-            and message.content == "先从一周三次快走开始，每次二十分钟。"
+        historical_assistant = next(
+            json.loads(message.content or "")
             for message in model.requests[1].messages
+            if message.role is MessageRole.USER
+            and "先从一周三次快走开始，每次二十分钟。" in (message.content or "")
+        )
+        assert historical_assistant == {
+            "type": "historical_assistant_message",
+            "speaker": "assistant",
+            "text": "先从一周三次快走开始，每次二十分钟。",
+        }
+        assert not any(
+            message.role is MessageRole.ASSISTANT for message in model.requests[1].messages
         )
         assert not any(
             "刚才那个继续" in (message.content or "") for message in model.requests[1].messages[:-1]

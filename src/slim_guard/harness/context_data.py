@@ -26,7 +26,7 @@ from slim_guard.memory.working import ConversationWindowRepository
 from slim_guard.tasks.ports import TaskStore
 from slim_guard.tasks.presentation import task_summary
 
-CONTEXT_POLICY_VERSION = "model-ranked-authoritative-message-attachments-tasks-v12"
+CONTEXT_POLICY_VERSION = "model-ranked-authoritative-message-attachments-tasks-v13"
 
 
 class ContextDataProvider(Protocol):

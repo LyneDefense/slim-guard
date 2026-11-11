@@ -8,7 +8,7 @@ from slim_guard.agents.core.contracts import CoreCompletion
 
 
 def test_core_prompt_is_short_and_keeps_conversation_out_of_core() -> None:
-    assert SLIM_GUARD_PROMPT_VERSION == "core-orchestration-v38"
+    assert SLIM_GUARD_PROMPT_VERSION == "core-orchestration-v39"
     assert "CoreCompletion" in SLIM_GUARD_HARNESS_PROMPT
     assert "Conversation Agent" not in SLIM_GUARD_HARNESS_PROMPT
     assert "CoachStyleRenderer" not in SLIM_GUARD_HARNESS_PROMPT
@@ -42,7 +42,7 @@ def test_core_prompt_delegates_domain_parameters_to_contracts() -> None:
     assert "不要在回复中重复工具手册" in SLIM_GUARD_HARNESS_PROMPT
     assert "工具参数必须来自用户原话" in SLIM_GUARD_HARNESS_PROMPT
     assert "必须先用原 operation_id 调用 get_tool_operation 核实" in SLIM_GUARD_HARNESS_PROMPT
-    assert "告知用户暂勿重发" in SLIM_GUARD_HARNESS_PROMPT
+    assert "依据真实回执提示用户暂勿重发" in SLIM_GUARD_HARNESS_PROMPT
 
 
 def test_core_prompt_respects_explicit_meal_type_and_separate_submissions() -> None:

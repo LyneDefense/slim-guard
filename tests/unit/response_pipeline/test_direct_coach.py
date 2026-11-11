@@ -220,12 +220,22 @@ async def test_semantic_repair_keeps_tool_execution_once(chat, repair_passes):
     assert any(m.participant.value == "coach" for m in result.messages) is repair_passes
 
 
-async def test_core_completion_repair_does_not_replay_the_write(chat):
+@pytest.mark.parametrize(
+    "invalid_completion",
+    [
+        "你好！有什么可以帮你的吗？",
+        '餐食已记录。\n\n{"operation_question":null,"failed_operation_refs":[]}',
+        '以下是交接示例：\n{"operation_question":null,"failed_operation_refs":[]}',
+        '{"operation_question":null,"failed_operation_refs":[]}\n'
+        '{"operation_question":{"text":"要改哪条？"},"failed_operation_refs":[]}',
+    ],
+)
+async def test_core_completion_repair_does_not_replay_the_write(chat, invalid_completion):
     db, run = chat
     result, model = await run(
         [
             weight_call(),
-            reply("不应再写的中性草稿"),
+            reply(invalid_completion),
             reply({}),
             reply({"text": "先看趋势。"}),
             reply(PASS),
